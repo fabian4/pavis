@@ -1,0 +1,16 @@
+[package]
+name = "raven"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rune = { path = "../rune" }
+tonic = { version = "0.11", features = ["tls"] }
+prost = "0.12"
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+tonic-build = "0.11"

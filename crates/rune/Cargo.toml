@@ -1,0 +1,9 @@
+[package]
+name = "rune"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+rkyv = { version = "0.7", features = ["validation"] }
+tracing = { workspace = true }

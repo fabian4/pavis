@@ -1,0 +1,14 @@
+[package]
+name = "aegis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rune = { path = "../rune" }
+pingora = { version = "0.6.0", features = ["proxy"] }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
