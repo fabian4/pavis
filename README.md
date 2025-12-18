@@ -15,27 +15,6 @@
 
 Asgard moves away from the monolithic "Smart Proxy" model (Envoy) to a **"Smart Bridge, Fast Proxy"** architecture.
 
-```mermaid
-graph TD
-    subgraph "Control Plane Layer"
-        Istio[Istio / Control Plane] -- xDS (gRPC) --> Raven
-    end
-
-    subgraph "Translation Layer"
-        Raven[🦅 Raven: The Bridge]
-        Raven -- "Writes .rune" --> RuneProto
-    end
-
-    subgraph "Data Plane Layer (The Pod)"
-        RuneProto{ᛉ Rune Protocol} -- "Reads .rune" --> Aegis
-        Aegis[🛡️ Aegis: The Sidecar] --> App[User Application]
-    end
-
-    style Raven fill:#333,stroke:#fff,stroke-width:2px
-    style Aegis fill:#2a5,stroke:#fff,stroke-width:2px
-    style RuneProto fill:#d4af37,stroke:#333,stroke-width:1px
-```
-
 ---
 
 ## ⚔️ The Components
