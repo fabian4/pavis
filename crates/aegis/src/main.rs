@@ -3,8 +3,10 @@ use async_trait::async_trait;
 use clap::Parser;
 use pingora::prelude::*;
 use pingora::proxy::{http_proxy_service, ProxyHttp, Session};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+mod config;
+use config::AegisConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -13,14 +15,8 @@ struct Args {
     config: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Config {
-    pub listen: String,
-    pub upstream: String,
-}
-
 pub struct MyProxy {
-    pub config: Arc<Config>,
+    pub config: Arc<AegisConfig>,
 }
 
 #[async_trait]
@@ -33,8 +29,23 @@ impl ProxyHttp for MyProxy {
         _session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let peer = Box::new(HttpPeer::new(&self.config.upstream, false, String::new()));
-        Ok(peer)
+        // MVP: Just pick the first endpoint of the first upstream
+        // In the future, we will implement full routing (Host -> Path -> Split)
+        if let Some(upstream) = self.config.upstreams.first() {
+            if let Some(endpoint) = upstream.endpoints.first() {
+                let addr = format!("{}:{}", endpoint.ip, endpoint.port);
+                let peer = Box::new(HttpPeer::new(
+                    &addr,
+                    false, // TLS disabled for now
+                    "localhost".to_string(),
+                ));
+                return Ok(peer);
+            }
+        }
+
+        // Fallback or error if no upstream found
+        // For MVP, we'll error out if config is empty, but safely.
+        pingora::Error::e_explain(pingora::ErrorType::InternalError, "No upstream configured")
     }
 
     async fn upstream_request_filter(
@@ -58,7 +69,7 @@ fn main() -> Result<()> {
 
     let config_content = std::fs::read_to_string(&args.config)
         .with_context(|| format!("Failed to read config file: {}", args.config))?;
-    let config: Config = serde_yaml::from_str(&config_content)
+    let config: AegisConfig = serde_yaml::from_str(&config_content)
         .with_context(|| format!("Failed to parse config file: {}", args.config))?;
     let config = Arc::new(config);
 
@@ -73,7 +84,7 @@ fn main() -> Result<()> {
             config: config.clone(),
         },
     );
-    my_proxy.add_tcp(&config.listen);
+    my_proxy.add_tcp(&config.server.listen_addr);
 
     my_server.add_service(my_proxy);
     my_server.run_forever();

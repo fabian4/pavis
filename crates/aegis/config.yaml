@@ -1,2 +1,117 @@
-listen: "0.0.0.0:8080"
-upstream: "1.1.1.1:80"
+# ==============================================================================
+# AEGIS CONFIGURATION (RUNE v1)
+# ==============================================================================
+# This represents the "State of the World" for one sidecar.
+# Raven (The Bridge) will generate this from Istio xDS and push it to Aegis.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. LISTENER (The Entry Point)
+# Equivalent to Envoy: `listeners` -> `filter_chains` -> `http_connection_manager`
+# ------------------------------------------------------------------------------
+server:
+  listen_addr: "0.0.0.0:8080"
+  worker_threads: 4  # Leveraging Pingora's multi-threading
+  # TLS Termination (Optional - usually handled by Ztunnel in Ambient Mesh, but good to have)
+  tls:
+    enabled: false
+    # cert_path: "/etc/certs/server.crt"
+    # key_path: "/etc/certs/server.key"
+
+# ------------------------------------------------------------------------------
+# 2. OBSERVABILITY (The Eyes)
+# Equivalent to Envoy: `stats_config` and `access_log`
+# ------------------------------------------------------------------------------
+telemetry:
+  service_name: "payment-service"
+  prometheus_addr: "0.0.0.0:9090" # Scrape endpoint for Prometheus
+  access_log: "stdout" # Structured JSON logging
+  tracing:
+    enabled: true
+    provider: "opentelemetry"
+    sampling_rate: 1.0 # 100% trace sampling
+
+# ------------------------------------------------------------------------------
+# 3. UPSTREAMS (The Clusters)
+# Equivalent to Envoy: `clusters` -> `ClusterLoadAssignment`
+# Defines "Where traffic can go" and "How to keep it healthy".
+# ------------------------------------------------------------------------------
+upstreams:
+  - name: "inventory-service-v1"
+    # Load Balancing: 'round_robin', 'random', 'least_request'
+    load_balancer: "least_request" 
+    
+    # Circuit Breaking (Envoy Parity)
+    circuit_breaker:
+      max_connections: 1024
+      max_pending_requests: 500
+      max_retries: 3
+    
+    # Active Health Checking (Pingora Native)
+    health_check:
+      path: "/healthz"
+      interval: "5s"
+      timeout: "1s"
+      unhealthy_threshold: 3
+      healthy_threshold: 1
+
+    # The actual IP list (Raven resolves DNS to IPs before writing this config)
+    endpoints:
+      - ip: "10.0.1.5"
+        port: 80
+        weight: 1
+      - ip: "10.0.1.6"
+        port: 80
+        weight: 1
+
+  - name: "inventory-service-v2"
+    load_balancer: "round_robin"
+    health_check:
+      path: "/healthz"
+      interval: "5s"
+    endpoints:
+      - ip: "10.0.2.10"
+        port: 80
+
+# ------------------------------------------------------------------------------
+# 4. ROUTING (The Logic)
+# Equivalent to Envoy: `route_config` -> `virtual_hosts` -> `routes`
+# ------------------------------------------------------------------------------
+routes:
+  # HOST MATCHING
+  - host: "inventory.internal"
+    paths:
+      # PATH MATCHING (Exact, Prefix, Regex)
+      - match_type: "prefix"
+        path: "/api/v1/items"
+        
+        # TIMEOUTS (Resilience)
+        timeout_ms: 2000 # Kill request if backend takes > 2s
+        
+        # RETRY POLICY (Resilience - Critical Sidecar Feature)
+        retry:
+          attempts: 3
+          retry_on: [500, 502, 503, "gateway_error", "connect_failure"]
+          per_try_timeout_ms: 500
+
+        # HEADER MANIPULATION
+        headers:
+          add:
+            x-sidecar-proxy: "aegis"
+          remove:
+            - "x-internal-token"
+
+        # TRAFFIC SPLITTING (Canary Deployment)
+        # 90% traffic to v1, 10% to v2
+        destinations:
+          - upstream: "inventory-service-v1"
+            weight: 90
+          - upstream: "inventory-service-v2"
+            weight: 10
+
+      # Fallback Route
+      - match_type: "prefix"
+        path: "/"
+        destinations:
+          - upstream: "inventory-service-v1"
+            weight: 100
