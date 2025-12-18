@@ -1,8 +1,8 @@
 use anyhow::Result;
-use clap::Parser;
 use async_trait::async_trait;
+use clap::Parser;
 use pingora::prelude::*;
-use pingora::proxy::{ProxyHttp, http_proxy_service, Session};
+use pingora::proxy::{http_proxy_service, ProxyHttp, Session};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -38,7 +38,7 @@ impl ProxyHttp for MyProxy {
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
-    
+
     println!("Starting proxy with config: {}", args.config);
 
     let mut my_server = Server::new(None)?;
