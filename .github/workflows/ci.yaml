@@ -26,10 +26,10 @@ jobs:
         components: clippy, rustfmt
 
     - name: Check formatting
-      run: cargo fmt -- --check
-
-    - name: Run tests
-      run: cargo test --workspace
+      run: make fmt-check
 
     - name: Run Clippy
-      run: cargo clippy --workspace -- -D warnings
+      run: make lint
+
+    - name: Run tests
+      run: make test

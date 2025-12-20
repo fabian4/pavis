@@ -29,6 +29,7 @@ impl ProxyHttp for MyProxy {
         _session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
+        tracing::info!("Selecting upstream peer");
         // MVP: Just pick the first endpoint of the first upstream
         // In the future, we will implement full routing (Host -> Path -> Split)
         if let Some(upstream) = self.config.upstreams.first() {
@@ -54,6 +55,7 @@ impl ProxyHttp for MyProxy {
         upstream_request: &mut RequestHeader,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
+        // tracing::info!("Filtering upstream request: method={}, uri={}", upstream_request.method, upstream_request.uri);
         // Basic header forwarding / modification
         upstream_request.insert_header("X-Proxy-By", "Aegis")?;
         Ok(())
@@ -61,10 +63,6 @@ impl ProxyHttp for MyProxy {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
     let args = Args::parse();
 
     let config_content = std::fs::read_to_string(&args.config)
@@ -73,7 +71,21 @@ fn main() -> Result<()> {
         .with_context(|| format!("Failed to parse config file: {}", args.config))?;
     let config = Arc::new(config);
 
-    tracing::info!("Starting proxy with config: {:?}", config);
+    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    if !config.telemetry.pingora_log {
+        // Disable pingora logs if pingora_log is false
+        filter = filter
+            .add_directive("pingora=off".parse().unwrap())
+            .add_directive("pingora_core=off".parse().unwrap());
+    }
+
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+
+    tracing::info!(
+        "Aegis starts on {} using {}",
+        config.server.listen_addr,
+        args.config
+    );
 
     let mut my_server = Server::new(None)?;
     my_server.bootstrap();

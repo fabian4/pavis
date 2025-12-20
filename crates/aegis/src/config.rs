@@ -28,6 +28,7 @@ pub struct TelemetryConfig {
     pub service_name: String,
     pub prometheus_addr: String,
     pub access_log: String,
+    pub pingora_log: bool,
     pub tracing: TracingConfig,
 }
 
