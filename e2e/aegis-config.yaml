@@ -1,0 +1,45 @@
+server:
+  listen_addr: "0.0.0.0:8080"
+  worker_threads: 2
+  tls:
+    enabled: false
+
+telemetry:
+  service_name: "aegis-e2e"
+  prometheus_addr: "0.0.0.0:9091"
+  access_log: "stdout"
+  pingora_log: true
+  tracing:
+    enabled: true
+    provider: "opentelemetry"
+    sampling_rate: 1.0
+
+upstreams:
+  - name: "backend-v1"
+    load_balancer: "round_robin"
+    endpoints:
+      - ip: "backend-v1"
+        port: 80
+        weight: 1
+
+  - name: "backend-v2"
+    load_balancer: "round_robin"
+    endpoints:
+      - ip: "backend-v2"
+        port: 80
+        weight: 1
+
+routes:
+  - host: "localhost" 
+    paths:
+      - match_type: "prefix"
+        path: "/"
+        headers:
+          add:
+            x-sidecar-proxy: "aegis-e2e"
+            x-e2e-test: "true"
+        destinations:
+          - upstream: "inventory-service-v1"
+            weight: 50
+          - upstream: "inventory-service-v2"
+            weight: 50

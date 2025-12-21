@@ -1,7 +1,8 @@
+#![allow(dead_code)]
 use serde::Deserialize;
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct AegisConfig {
     pub server: ServerConfig,
     pub telemetry: TelemetryConfig,
@@ -9,53 +10,54 @@ pub struct AegisConfig {
     pub routes: Vec<VirtualHost>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct ServerConfig {
     pub listen_addr: String,
     pub worker_threads: Option<usize>,
-    pub tls: TlsConfig,
+    pub tls: Option<TlsConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct TlsConfig {
     pub enabled: bool,
     pub cert_path: Option<String>,
     pub key_path: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct TelemetryConfig {
-    pub service_name: String,
-    pub prometheus_addr: String,
-    pub access_log: String,
-    pub pingora_log: bool,
-    pub tracing: TracingConfig,
+    pub level: Option<String>,
+    pub pingora: Option<String>,
+    pub service_name: Option<String>,
+    pub prometheus_addr: Option<String>,
+    pub access_log: Option<String>,
+    pub tracing: Option<TracingConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct TracingConfig {
     pub enabled: bool,
     pub provider: String,
     pub sampling_rate: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Upstream {
     pub name: String,
-    pub load_balancer: String,
+    pub load_balancer: Option<String>,
     pub circuit_breaker: Option<CircuitBreaker>,
     pub health_check: Option<HealthCheck>,
     pub endpoints: Vec<Endpoint>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CircuitBreaker {
     pub max_connections: usize,
     pub max_pending_requests: usize,
     pub max_retries: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct HealthCheck {
     pub path: String,
     pub interval: String,
@@ -64,20 +66,20 @@ pub struct HealthCheck {
     pub healthy_threshold: Option<usize>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Endpoint {
     pub ip: String,
     pub port: u16,
     pub weight: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct VirtualHost {
     pub host: String,
     pub paths: Vec<Route>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Route {
     pub match_type: String,
     pub path: String,
@@ -87,7 +89,7 @@ pub struct Route {
     pub destinations: Vec<WeightedDestination>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct RetryPolicy {
     pub attempts: usize,
     // Using serde_yaml::Value or similar for mixed types might be needed if retry_on contains strings and ints,
@@ -100,13 +102,13 @@ pub struct RetryPolicy {
     pub per_try_timeout_ms: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct HeaderOperations {
     pub add: Option<HashMap<String, String>>,
     pub remove: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct WeightedDestination {
     pub upstream: String,
     pub weight: u32,

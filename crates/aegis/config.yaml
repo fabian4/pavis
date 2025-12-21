@@ -1,72 +1,71 @@
 server:
   listen_addr: "0.0.0.0:8080"
-  worker_threads: 4
-  tls:
-    enabled: false
+  # worker_threads: 4
+  # tls:
+  #   enabled: false
 
 telemetry:
-  service_name: "payment-service"
-  prometheus_addr: "0.0.0.0:9090"
-  access_log: "stdout"
-  pingora_log: true
-  tracing:
-    enabled: true
-    provider: "opentelemetry"
-    sampling_rate: 1.0
+  level: "debug"
+  pingora: "warn"
+  # service_name: "payment-service"
+  # tracing:
+  #   enabled: true
+  #   provider: "opentelemetry"
+  #   sampling_rate: 1.0
 
 upstreams:
-  - name: "inventory-service-v1"
-    load_balancer: "least_request"
-    circuit_breaker:
-      max_connections: 1024
-      max_pending_requests: 500
-      max_retries: 3
-    health_check:
-      path: "/healthz"
-      interval: "5s"
-      timeout: "1s"
-      unhealthy_threshold: 3
-      healthy_threshold: 1
+  - name: "backend-v1"
+    # load_balancer: "least_request"
+    # circuit_breaker:
+    #   max_connections: 1024
+    #   max_pending_requests: 500
+    #   max_retries: 3
+    # health_check:
+    #   path: "/healthz"
+    #   interval: "5s"
+    #   timeout: "1s"
+    #   unhealthy_threshold: 3
+    #   healthy_threshold: 1
     endpoints:
-      - ip: "10.0.1.5"
-        port: 80
-        weight: 1
-      - ip: "10.0.1.6"
-        port: 80
-        weight: 1
+      - ip: "127.0.0.1"
+        port: 8081
+        # weight: 1
+#      - ip: "10.0.1.6"
+#        port: 80
+        # weight: 1
 
-  - name: "inventory-service-v2"
-    load_balancer: "round_robin"
-    health_check:
-      path: "/healthz"
-      interval: "5s"
+  - name: "backend-v1"
+    # load_balancer: "round_robin"
+    # health_check:
+    #   path: "/healthz"
+    #   interval: "5s"
     endpoints:
-      - ip: "10.0.2.10"
-        port: 80
+      - ip: "127.0.0.1"
+        port: 8082
 
 routes:
-  - host: "inventory.internal"
+  - host: "backend"
     paths:
       - match_type: "prefix"
-        path: "/api/v1/items"
-        timeout_ms: 2000
-        retry:
-          attempts: 3
-          retry_on: [500, 502, 503, "gateway_error", "connect_failure"]
-          per_try_timeout_ms: 500
+        path: "/api/v1"
+        # timeout_ms: 2000
+        # retry:
+        #   attempts: 3
+        #   retry_on: [500, 502, 503, "gateway_error", "connect_failure"]
+        #   per_try_timeout_ms: 500
         headers:
           add:
             x-sidecar-proxy: "aegis"
           remove:
             - "x-internal-token"
         destinations:
-          - upstream: "inventory-service-v1"
-            weight: 90
-          - upstream: "inventory-service-v2"
-            weight: 10
+          - upstream: "backend-v1"
+            weight: 100
+#          - upstream: "inventory-service-v2"
+#            weight: 10
 
       - match_type: "prefix"
-        path: "/"
+        path: "/api/v2"
         destinations:
-          - upstream: "inventory-service-v1"
+          - upstream: "backend-v2"
             weight: 100

@@ -1,4 +1,4 @@
-.PHONY: all build test fmt lint clean run-aegis run-raven help
+.PHONY: all build test fmt lint clean run-aegis run-raven help e2e e2e-down
 
 # Default target
 all: build
@@ -23,9 +23,22 @@ fmt-check:
 lint:
 	cargo clippy --workspace -- -D warnings
 
+# CI pipeline (format check, test, lint)
+ci: fmt-check test lint
+
+# Run E2E Environment (Docker Compose)
+e2e:
+	cd e2e && docker-compose up --build -d
+	@echo "Environment started. Running tests..."
+	./e2e/test.sh
+
+# Stop E2E Environment
+e2e-down:
+	cd e2e && docker-compose down
+
 # Run Aegis (Engine)
 run-aegis:
-	RUST_LOG=info cargo run -p aegis -- --config crates/aegis/config.yaml
+	RUST_LOG=debug cargo run -p aegis -- --config crates/aegis/config.yaml
 
 # Run Raven (Controller)
 run-raven:

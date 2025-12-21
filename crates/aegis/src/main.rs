@@ -1,65 +1,20 @@
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use clap::Parser;
 use pingora::prelude::*;
-use pingora::proxy::{http_proxy_service, ProxyHttp, Session};
+use pingora::proxy::http_proxy_service;
 use std::sync::Arc;
 
 mod config;
+mod proxy;
+
 use config::AegisConfig;
+use proxy::MyProxy;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(short, long)]
     config: String,
-}
-
-pub struct MyProxy {
-    pub config: Arc<AegisConfig>,
-}
-
-#[async_trait]
-impl ProxyHttp for MyProxy {
-    type CTX = ();
-    fn new_ctx(&self) -> Self::CTX {}
-
-    async fn upstream_peer(
-        &self,
-        _session: &mut Session,
-        _ctx: &mut Self::CTX,
-    ) -> pingora::Result<Box<HttpPeer>> {
-        tracing::info!("Selecting upstream peer");
-        // MVP: Just pick the first endpoint of the first upstream
-        // In the future, we will implement full routing (Host -> Path -> Split)
-        if let Some(upstream) = self.config.upstreams.first() {
-            if let Some(endpoint) = upstream.endpoints.first() {
-                let addr = format!("{}:{}", endpoint.ip, endpoint.port);
-                let peer = Box::new(HttpPeer::new(
-                    &addr,
-                    false, // TLS disabled for now
-                    "localhost".to_string(),
-                ));
-                return Ok(peer);
-            }
-        }
-
-        // Fallback or error if no upstream found
-        // For MVP, we'll error out if config is empty, but safely.
-        pingora::Error::e_explain(pingora::ErrorType::InternalError, "No upstream configured")
-    }
-
-    async fn upstream_request_filter(
-        &self,
-        _session: &mut Session,
-        upstream_request: &mut RequestHeader,
-        _ctx: &mut Self::CTX,
-    ) -> pingora::Result<()> {
-        // tracing::info!("Filtering upstream request: method={}, uri={}", upstream_request.method, upstream_request.uri);
-        // Basic header forwarding / modification
-        upstream_request.insert_header("X-Proxy-By", "Aegis")?;
-        Ok(())
-    }
 }
 
 fn main() -> Result<()> {
@@ -71,12 +26,14 @@ fn main() -> Result<()> {
         .with_context(|| format!("Failed to parse config file: {}", args.config))?;
     let config = Arc::new(config);
 
-    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
-    if !config.telemetry.pingora_log {
-        // Disable pingora logs if pingora_log is false
+    let log_level = config.telemetry.level.as_deref().unwrap_or("info");
+    let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
+
+    if let Some(p_level) = &config.telemetry.pingora {
         filter = filter
-            .add_directive("pingora=off".parse().unwrap())
-            .add_directive("pingora_core=off".parse().unwrap());
+            .add_directive(format!("pingora={}", p_level).parse().unwrap())
+            .add_directive(format!("pingora_core={}", p_level).parse().unwrap());
     }
 
     tracing_subscriber::fmt().with_env_filter(filter).init();

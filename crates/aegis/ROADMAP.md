@@ -9,24 +9,24 @@
 ## 🚧 Phase 1: The Foundation (MVP)
 **Goal:** A functional HTTP proxy handling traffic based on static configuration.
 
-- [ ] **Core Setup**
+- [x] **Core Setup**
     - [x] Initialize Rust crate with Pingora dependencies.
     - [x] Basic CLI setup (`clap`) to accept configuration paths.
     - [x] Setup `tracing` for structured logging.
 
-- [ ] **Proxy Implementation (Pingora Traits)**
+- [x] **Proxy Implementation (Pingora Traits)**
     - [x] Implement `ProxyHttp` trait.
     - [x] Implement `upstream_peer()`: Select upstream host based on static config.
     - [x] Implement `upstream_request_filter()`: Basic header forwarding.
 
 - [ ] **Configuration (Static)**
     - [x] Define a temporary `yaml` or `json` config loader for development (before full Rune integration).
-    - [ ] Support defining:
+    - [x] Support defining:
         - Listener port.
         - Upstream cluster (IP:Port).
 
 - [ ] **Deployment**
-    - [ ] Create a `Dockerfile` for Aegis.
+    - [x] Create a `Dockerfile` for Aegis.
     - [ ] `docker-compose` setup to test Aegis sitting in front of a dummy backend (e.g., `echo-server`).
 
 ---
