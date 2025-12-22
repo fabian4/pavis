@@ -115,7 +115,7 @@ impl ProxyHttp for MyProxy {
             }
         }
 
-        let _ = session.respond_error(404);
+        let _ = session.respond_error(404).await;
         Ok(true)
     }
 
