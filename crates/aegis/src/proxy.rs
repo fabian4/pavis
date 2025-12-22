@@ -79,7 +79,7 @@ impl ProxyHttp for MyProxy {
 
         for vhost in &self.config.routes {
             if vhost.host == "*" || Some(vhost.host.as_str()) == host_header {
-                for (_idx, route) in vhost.paths.iter().enumerate() {
+                for route in vhost.paths.iter() {
                     let is_match = match route.match_type.as_str() {
                         "prefix" => uri_path.starts_with(&route.path),
                         "exact" => uri_path == route.path,

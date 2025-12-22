@@ -32,8 +32,8 @@ fn main() -> Result<()> {
 
     if let Some(p_level) = &config.telemetry.pingora {
         filter = filter
-            .add_directive(format!("pingora={}", p_level).parse().unwrap())
-            .add_directive(format!("pingora_core={}", p_level).parse().unwrap());
+            .add_directive(format!("pingora={}", p_level).parse()?)
+            .add_directive(format!("pingora_core={}", p_level).parse()?);
     }
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
