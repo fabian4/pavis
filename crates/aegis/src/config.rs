@@ -113,3 +113,49 @@ pub struct WeightedDestination {
     pub upstream: String,
     pub weight: u32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_deserialization() {
+        let mut config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        config_path.push("config.yaml");
+
+        let config_content =
+            std::fs::read_to_string(config_path).expect("Failed to read config file");
+        let config: AegisConfig =
+            serde_yaml::from_str(&config_content).expect("Failed to deserialize config");
+
+        assert_eq!(config.server.listen_addr, "0.0.0.0:8080");
+        assert_eq!(config.server.worker_threads, None);
+        assert!(config.server.tls.is_none());
+
+        assert_eq!(config.telemetry.level, Some("debug".to_string()));
+        assert_eq!(config.telemetry.pingora, Some("warn".to_string()));
+
+        assert_eq!(config.upstreams.len(), 2);
+        assert_eq!(config.upstreams[0].name, "backend-v1");
+        assert_eq!(config.upstreams[0].endpoints.len(), 1);
+        assert_eq!(config.upstreams[0].endpoints[0].port, 8081);
+
+        assert_eq!(config.routes.len(), 1);
+        assert_eq!(config.routes[0].host, "backend");
+        assert_eq!(config.routes[0].paths.len(), 2);
+
+        assert_eq!(config.routes[0].paths[0].match_type, "prefix");
+        assert_eq!(config.routes[0].paths[0].path, "/api/v1");
+        assert_eq!(
+            config.routes[0].paths[0].destinations[0].upstream,
+            "backend-v1"
+        );
+
+        assert_eq!(config.routes[0].paths[1].match_type, "prefix");
+        assert_eq!(config.routes[0].paths[1].path, "/api/v2");
+        assert_eq!(
+            config.routes[0].paths[1].destinations[0].upstream,
+            "backend-v2"
+        );
+    }
+}

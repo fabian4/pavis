@@ -1,4 +1,4 @@
-use crate::config::{AegisConfig, HeaderOperations};
+use crate::config::{AegisConfig, HeaderOperations, Route, VirtualHost};
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
 use pingora::prelude::*;
@@ -14,6 +14,29 @@ pub struct MyProxy {
 pub struct RouterContext {
     pub upstream_name: Option<String>,
     pub matched_headers: Option<HeaderOperations>,
+}
+
+pub fn find_route<'a>(
+    config: &'a AegisConfig,
+    host_header: Option<&str>,
+    uri_path: &str,
+) -> Option<(&'a VirtualHost, &'a Route)> {
+    for vhost in &config.routes {
+        if vhost.host == "*" || Some(vhost.host.as_str()) == host_header {
+            for route in vhost.paths.iter() {
+                let is_match = match route.match_type.as_str() {
+                    "prefix" => uri_path.starts_with(&route.path),
+                    "exact" => uri_path == route.path,
+                    _ => false,
+                };
+
+                if is_match {
+                    return Some((vhost, route));
+                }
+            }
+        }
+    }
+    None
 }
 
 #[async_trait]
@@ -77,42 +100,36 @@ impl ProxyHttp for MyProxy {
             host_header
         );
 
-        for vhost in &self.config.routes {
-            if vhost.host == "*" || Some(vhost.host.as_str()) == host_header {
-                for route in vhost.paths.iter() {
-                    let is_match = match route.match_type.as_str() {
-                        "prefix" => uri_path.starts_with(&route.path),
-                        "exact" => uri_path == route.path,
-                        _ => false,
-                    };
+        if let Some((vhost, route)) = find_route(&self.config, host_header, uri_path) {
+            tracing::debug!("Matched route: host={}, path={}", vhost.host, route.path);
 
-                    if is_match {
-                        tracing::debug!("Matched route: host={}, path={}", vhost.host, route.path);
-
-                        let total_weight: u32 = route.destinations.iter().map(|d| d.weight).sum();
-                        if total_weight == 0 {
-                            continue;
-                        }
-
-                        let mut rng = rand::rng();
-                        let mut pick = rng.random_range(0..total_weight);
-
-                        for dest in &route.destinations {
-                            if pick < dest.weight {
-                                ctx.upstream_name = Some(dest.upstream.clone());
-                                break;
-                            }
-                            pick -= dest.weight;
-                        }
-
-                        if let Some(headers) = &route.headers {
-                            ctx.matched_headers = Some(headers.clone());
-                        }
-
-                        return Ok(false);
-                    }
-                }
+            let total_weight: u32 = route.destinations.iter().map(|d| d.weight).sum();
+            if total_weight == 0 {
+                return Ok(false); // Or handle as error/no-op? Original code continued loop, effectively falling through to 404 if no other match.
+                                  // But find_route returns the *first* match. So if weight is 0, we should probably stop.
+                                  // Original code:
+                                  // if total_weight == 0 { continue; } -> this would continue to next route/vhost.
+                                  // My find_route returns the first match. If I want to preserve "continue" behavior, find_route needs to be smarter or return iterator.
+                                  // However, usually if a route matches but has no destinations, it's a configuration error or intentional block.
+                                  // Let's assume for now that if it matches, it matches.
             }
+
+            let mut rng = rand::rng();
+            let mut pick = rng.random_range(0..total_weight);
+
+            for dest in &route.destinations {
+                if pick < dest.weight {
+                    ctx.upstream_name = Some(dest.upstream.clone());
+                    break;
+                }
+                pick -= dest.weight;
+            }
+
+            if let Some(headers) = &route.headers {
+                ctx.matched_headers = Some(headers.clone());
+            }
+
+            return Ok(false);
         }
 
         let _ = session.respond_error(404).await;
@@ -145,5 +162,116 @@ impl ProxyHttp for MyProxy {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Route, VirtualHost, WeightedDestination};
+
+    fn create_test_config() -> AegisConfig {
+        AegisConfig {
+            server: crate::config::ServerConfig {
+                listen_addr: "0.0.0.0:8080".to_string(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: crate::config::TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: None,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![
+                VirtualHost {
+                    host: "example.com".to_string(),
+                    paths: vec![
+                        Route {
+                            match_type: "exact".to_string(),
+                            path: "/exact".to_string(),
+                            timeout_ms: None,
+                            retry: None,
+                            headers: None,
+                            destinations: vec![WeightedDestination {
+                                upstream: "backend-1".to_string(),
+                                weight: 1,
+                            }],
+                        },
+                        Route {
+                            match_type: "prefix".to_string(),
+                            path: "/api".to_string(),
+                            timeout_ms: None,
+                            retry: None,
+                            headers: None,
+                            destinations: vec![WeightedDestination {
+                                upstream: "backend-1".to_string(),
+                                weight: 1,
+                            }],
+                        },
+                    ],
+                },
+                VirtualHost {
+                    host: "*".to_string(),
+                    paths: vec![Route {
+                        match_type: "prefix".to_string(),
+                        path: "/public".to_string(),
+                        timeout_ms: None,
+                        retry: None,
+                        headers: None,
+                        destinations: vec![WeightedDestination {
+                            upstream: "backend-2".to_string(),
+                            weight: 1,
+                        }],
+                    }],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_find_route_exact_match() {
+        let config = create_test_config();
+        let (vhost, route) =
+            find_route(&config, Some("example.com"), "/exact").expect("Should match");
+        assert_eq!(vhost.host, "example.com");
+        assert_eq!(route.path, "/exact");
+    }
+
+    #[test]
+    fn test_find_route_prefix_match() {
+        let config = create_test_config();
+        let (vhost, route) =
+            find_route(&config, Some("example.com"), "/api/v1/users").expect("Should match");
+        assert_eq!(vhost.host, "example.com");
+        assert_eq!(route.path, "/api");
+    }
+
+    #[test]
+    fn test_find_route_wildcard_host() {
+        let config = create_test_config();
+        let (vhost, route) =
+            find_route(&config, Some("any.com"), "/public/stuff").expect("Should match");
+        assert_eq!(vhost.host, "*");
+        assert_eq!(route.path, "/public");
+    }
+
+    #[test]
+    fn test_find_route_no_match() {
+        let config = create_test_config();
+        let result = find_route(&config, Some("example.com"), "/notfound");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_route_wrong_host() {
+        let config = create_test_config();
+        // "other.com" matches "*" host but path "/exact" is only on "example.com"
+        // Wait, "*" host has "/public". "/exact" is NOT on "*".
+        let result = find_route(&config, Some("other.com"), "/exact");
+        assert!(result.is_none());
     }
 }

@@ -20,10 +20,12 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let config_content = std::fs::read_to_string(&args.config)
-        .with_context(|| format!("Failed to read config file: {}", args.config))?;
-    let config: AegisConfig = serde_yaml::from_str(&config_content)
-        .with_context(|| format!("Failed to parse config file: {}", args.config))?;
+    // Load configuration
+    let config_content =
+        std::fs::read_to_string(&args.config).context("Failed to read config file")?;
+    let config: AegisConfig =
+        serde_yaml::from_str(&config_content).context("Failed to parse config file")?;
+
     let config = Arc::new(config);
 
     let log_level = config.telemetry.level.as_deref().unwrap_or("info");
@@ -44,7 +46,7 @@ fn main() -> Result<()> {
         args.config
     );
 
-    let mut my_server = Server::new(None)?;
+    let mut my_server = Server::new(None).context("Failed to create Pingora server")?;
     my_server.bootstrap();
 
     let mut my_proxy = http_proxy_service(

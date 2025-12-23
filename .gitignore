@@ -15,3 +15,4 @@ target
 
 # RustRover
 .idea/
+/crates/aegis/tests/generated_config.yaml

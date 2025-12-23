@@ -1,7 +1,14 @@
-# Build Stage
-FROM rust:1.81-slim-bookworm AS builder
+# syntax=docker/dockerfile:1.7
 
-# Install dependencies for Pingora/OpenSSL
+FROM lukemathwalker/cargo-chef:latest-rust-1.84 AS chef
+WORKDIR /app
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
 RUN apt-get update && apt-get install -y \
     cmake \
     g++ \
@@ -9,23 +16,23 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /usr/src/asgard
+COPY --from=planner /app/recipe.json recipe.json
+
+RUN --mount=type=cache,target=/app/target \
+    --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo chef cook --release --recipe-path recipe.json
+
 COPY . .
+RUN --mount=type=cache,target=/app/target \
+    cargo build --release -p aegis && \
+    cp /app/target/release/aegis /tmp/aegis_tmp
 
-# Build only aegis
-RUN cargo build --release -p aegis
+FROM builder AS final
 
-# Runtime Stage
-FROM debian:bookworm-slim
+FROM gcr.io/distroless/cc-debian12
+COPY --from=builder /tmp/aegis_tmp /usr/local/bin/aegis
 
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /usr/src/asgard/target/release/aegis /usr/local/bin/aegis
-
-# Default config path
 ENV AEGIS_CONFIG=/etc/aegis/config.yaml
 
 ENTRYPOINT ["aegis"]

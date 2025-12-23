@@ -1,0 +1,29 @@
+services:
+  # Upstream Service V1 (Echo Server)
+  backend-v1:
+    image: ealen/echo-server
+    environment:
+      - PORT=8081
+      - SERVICE_NAME=backend-v1
+    ports:
+      - "8081:8081"
+
+  # Upstream Service V2 (Echo Server)
+  backend-v2:
+    image: ealen/echo-server
+    environment:
+      - PORT=8082
+      - SERVICE_NAME=backend-v2
+    ports:
+      - "8082:8082"
+
+  # Aegis Sidecar (The System Under Test)
+  aegis:
+    image: aegis:ci
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./generated_config.yaml:/etc/aegis/config.yaml
+    depends_on:
+      - backend-v1
+      - backend-v2

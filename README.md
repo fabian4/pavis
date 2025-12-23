@@ -59,18 +59,3 @@ Rune is the binary protocol that connects Raven to Aegis.
 | **Architecture** | Monolithic (Parses xDS in every pod) | Decoupled (Parses xDS once in Raven) |
 | **Concurrency** | Thread-per-connection | Work-Stealing (Tokio/Pingora) |
 | **Config Load** | Heavy (Protobuf parsing overhead) | Instant (Zero-copy `Rune` loading) |
-
----
-
-## 🗺️ Roadmap
-
-- [ ] **Phase 1: The Foundation**
-    - [ ] **Aegis:** Basic HTTP Proxying with Pingora.
-    - [ ] **Rune:** Define the `Route` and `Cluster` structs.
-    - [ ] **Raven:** Generate a static `.rune` file for Aegis to read.
-- [ ] **Phase 2: The Connection**
-    - [ ] **Raven:** Implement xDS Client (LDS/CDS) to talk to Istiod.
-    - [ ] **Aegis:** Implement Hot-Reloading of Rune config.
-- [ ] **Phase 3: The Ecosystem**
-    - [ ] Full integration with Kubernetes.
-    - [ ] Smart retries and circuit breaking.
