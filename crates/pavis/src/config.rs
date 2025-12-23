@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct AegisConfig {
+pub struct PavisConfig {
     pub server: ServerConfig,
     pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
@@ -125,7 +125,7 @@ mod tests {
 
         let config_content =
             std::fs::read_to_string(config_path).expect("Failed to read config file");
-        let config: AegisConfig =
+        let config: PavisConfig =
             serde_yaml::from_str(&config_content).expect("Failed to deserialize config");
 
         assert_eq!(config.server.listen_addr, "0.0.0.0:8080");

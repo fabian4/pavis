@@ -1,4 +1,4 @@
-use crate::config::{AegisConfig, HeaderOperations, Route, VirtualHost};
+use crate::config::{HeaderOperations, PavisConfig, Route, VirtualHost};
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
 use pingora::prelude::*;
@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 pub struct MyProxy {
-    pub config: Arc<AegisConfig>,
+    pub config: Arc<PavisConfig>,
 }
 
 pub struct RouterContext {
@@ -17,7 +17,7 @@ pub struct RouterContext {
 }
 
 pub fn find_route<'a>(
-    config: &'a AegisConfig,
+    config: &'a PavisConfig,
     host_header: Option<&str>,
     uri_path: &str,
 ) -> Option<(&'a VirtualHost, &'a Route)> {
@@ -105,13 +105,7 @@ impl ProxyHttp for MyProxy {
 
             let total_weight: u32 = route.destinations.iter().map(|d| d.weight).sum();
             if total_weight == 0 {
-                return Ok(false); // Or handle as error/no-op? Original code continued loop, effectively falling through to 404 if no other match.
-                                  // But find_route returns the *first* match. So if weight is 0, we should probably stop.
-                                  // Original code:
-                                  // if total_weight == 0 { continue; } -> this would continue to next route/vhost.
-                                  // My find_route returns the first match. If I want to preserve "continue" behavior, find_route needs to be smarter or return iterator.
-                                  // However, usually if a route matches but has no destinations, it's a configuration error or intentional block.
-                                  // Let's assume for now that if it matches, it matches.
+                return Ok(false); // Or handle as error/no-op?
             }
 
             let mut rng = rand::rng();
@@ -142,7 +136,7 @@ impl ProxyHttp for MyProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        upstream_request.insert_header("X-Proxy-By", "Aegis")?;
+        upstream_request.insert_header("X-Proxy-By", "Pavis")?;
 
         if let Some(headers) = &ctx.matched_headers {
             if let Some(add_map) = &headers.add {
@@ -170,8 +164,8 @@ mod tests {
     use super::*;
     use crate::config::{Route, VirtualHost, WeightedDestination};
 
-    fn create_test_config() -> AegisConfig {
-        AegisConfig {
+    fn create_test_config() -> PavisConfig {
+        PavisConfig {
             server: crate::config::ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,

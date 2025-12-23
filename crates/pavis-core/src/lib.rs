@@ -1,26 +1,26 @@
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
-/// Magic Bytes "ASGD" (Asgard) to identify valid Rune files.
-pub const RUNE_MAGIC: &[u8; 4] = b"ASGD";
+/// Magic Bytes "PAVS" (Pavilion) to identify valid Pavis Core files.
+pub const PAVIS_MAGIC: &[u8; 4] = b"PAVS";
 
 /// Current Protocol Version. Increment this when breaking changes occur.
-pub const RUNE_VERSION: u32 = 1;
+pub const PAVIS_VERSION: u32 = 1;
 
-/// The Header of a Rune configuration file.
+/// The Header of a Pavis configuration file.
 /// Always present at the beginning of the binary blob.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Serialize, Deserialize, Debug, Clone, Copy)]
 #[archive(check_bytes)]
-pub struct RuneHeader {
+pub struct PavisHeader {
     pub magic: [u8; 4],
     pub version: u32,
 }
 
-impl Default for RuneHeader {
+impl Default for PavisHeader {
     fn default() -> Self {
         Self {
-            magic: *RUNE_MAGIC,
-            version: RUNE_VERSION,
+            magic: *PAVIS_MAGIC,
+            version: PAVIS_VERSION,
         }
     }
 }
@@ -29,7 +29,7 @@ impl Default for RuneHeader {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Serialize, Deserialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ProxyConfig {
-    pub header: RuneHeader,
+    pub header: PavisHeader,
     pub listen_addr: String,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,

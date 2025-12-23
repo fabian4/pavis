@@ -25,15 +25,15 @@ RUN --mount=type=cache,target=/app/target \
 
 COPY . .
 RUN --mount=type=cache,target=/app/target \
-    cargo build --release -p aegis && \
-    cp /app/target/release/aegis /tmp/aegis_tmp
+    cargo build --release -p pavis && \
+    cp /app/target/release/pavis /tmp/pavis_tmp
 
 FROM builder AS final
 
 FROM gcr.io/distroless/cc-debian12
-COPY --from=builder /tmp/aegis_tmp /usr/local/bin/aegis
+COPY --from=builder /tmp/pavis_tmp /usr/local/bin/pavis
 
-ENV AEGIS_CONFIG=/etc/aegis/config.yaml
+ENV PAVIS_CONFIG=/etc/pavis/config.yaml
 
-ENTRYPOINT ["aegis"]
-CMD ["--config", "/etc/aegis/config.yaml"]
+ENTRYPOINT ["pavis"]
+CMD ["--config", "/etc/pavis/config.yaml"]

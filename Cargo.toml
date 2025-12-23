@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "crates/aegis",
-    "crates/raven",
-    "crates/rune",
+    "crates/pavis",
+    "crates/pavis-xds",
+    "crates/pavis-core",
 ]
 resolver = "2"
 

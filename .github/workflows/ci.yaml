@@ -46,7 +46,7 @@ jobs:
 
       - name: Log Image Size
         run: |
-          echo "Final Image Size: $(docker images --format '{{.Size}}' aegis:ci)"
+          echo "Final Image Size: $(docker images --format '{{.Size}}' pavis:ci)"
 
       - name: Run E2E Tests in Docker
         run: make e2e-docker

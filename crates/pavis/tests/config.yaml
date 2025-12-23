@@ -7,7 +7,7 @@ server:
 telemetry:
   level: "info"
   pingora: "info"
-  service_name: "aegis-e2e-${TEST_MODE}"
+  service_name: "pavis-e2e-${TEST_MODE}"
   prometheus_addr: "0.0.0.0:9091"
   access_log: "stdout"
   tracing:
@@ -37,7 +37,7 @@ routes:
         path: "/"
         headers:
           add:
-            x-sidecar-proxy: "aegis-e2e-${TEST_MODE}"
+            x-sidecar-proxy: "pavis-e2e-${TEST_MODE}"
             x-e2e-test: "true"
         destinations:
           - upstream: "backend-v1"

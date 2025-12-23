@@ -1,61 +1,34 @@
-# Asgard
-**The Next-Generation Service Mesh Data Plane**
+# Pavis - A Lightweight Service Mesh Sidecar
 
-![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)
-![Language](https://img.shields.io/badge/language-Rust-orange.svg)
-![Engine](https://img.shields.io/badge/engine-Pingora-purple.svg)
+[![Crates.io](https://img.shields.io/crates/v/pavis.svg)](https://crates.io/crates/pavis)
+[![License](https://img.shields.io/crates/l/pavis.svg)](./LICENSE)
+## 🎯 Project Goal
+Build a lightweight, crash-safe, and memory-efficient service mesh sidecar to replace Envoy.
+**Core Philosophy:** Decoupled Architecture ("Smart Bridge, Dumb Proxy").
 
-> *"Welcome to Asgard. Here is the Shield (Aegis), here is the Messenger (Raven), and here is the Language (Rune)."*
+## 🚀 Why this Split?
+Standard sidecars (Envoy) do **too much**. They have to parse massive Protobuf configs, handle xDS streams, and manage complex internal state.
+*   **Pavis xDS** takes the burden of complexity.
+*   **Pavis** stays simple, fast, and dumb.
 
-**Asgard** is a modular, memory-safe alternative to the Envoy sidecar ecosystem. Built on **Rust** and **Cloudflare Pingora**, it decouples the heavy control-plane logic from the data path, resulting in a sidecar that consumes a fraction of the resources while eliminating entire classes of memory safety vulnerabilities.
+## 📊 Comparison
 
----
-
-## 🏛 The Architecture
-
-Asgard moves away from the monolithic "Smart Proxy" model (Envoy) to a **"Smart Bridge, Fast Proxy"** architecture.
-
----
-
-## ⚔️ The Components
-
-This repository is a **Cargo Workspace** containing three distinct components:
-
-### 1. 🦅 Raven (The Messenger)
-**Location:** `/raven`  
-**Role:** The Bridge / Control Plane Adapter.
-
-Raven is the "Brain" of the operation. It connects to the existing Service Mesh Control Plane (like Istio) via standard xDS.
-*   **Translation:** It parses complex Envoy xDS configurations.
-*   **Optimization:** It filters out unused config and compiles the routing logic into the optimized `Rune` format.
-*   **Efficiency:** Runs as a centralized Deployment (one per cluster), keeping the heavy xDS processing out of the sidecars.
-
-### 2. 🛡️ Aegis (The Shield)
-**Location:** `/aegis`  
-**Role:** The Data Plane / Sidecar Proxy.
-
-Aegis is the "Muscle." It is a lightweight L7 proxy built on top of **Cloudflare Pingora**.
-*   **Engine:** Uses Pingora’s work-stealing runtime to handle "Thundering Herd" traffic spikes.
-*   **Protocol:** Does **not** speak xDS. It only understands **Rune**.
-*   **Performance:** Designed to run with minimal memory footprint (~20MB) and near-instant startup time.
-*   **Safety:** 100% Rust. No buffer overflows. No C++ legacy.
-
-### 3. ᛉ Rune (The Language)
-**Location:** `/rune`  
-**Role:** The Shared Protocol.
-
-Rune is the binary protocol that connects Raven to Aegis.
-*   **Zero-Copy:** Uses `rkyv` to guarantee that configuration loading requires zero parsing overhead.
-*   **Type-Safe:** Shared Rust structs ensure the Bridge and the Proxy are always in sync.
-*   **Format:** Compact binary representation of routing tables, clusters, and resilience policies.
-
----
-
-## 🚀 Why Asgard?
-
-| Feature | Legacy (Envoy C++) | Asgard (Rust) |
+| Feature | Envoy | Pavis (Goal) |
 | :--- | :--- | :--- |
-| **Memory Safety** | ❌ Vulnerable to C++ memory CVEs | ✅ Rust Memory Safety Guarantees |
-| **Architecture** | Monolithic (Parses xDS in every pod) | Decoupled (Parses xDS once in Raven) |
-| **Concurrency** | Thread-per-connection | Work-Stealing (Tokio/Pingora) |
-| **Config Load** | Heavy (Protobuf parsing overhead) | Instant (Zero-copy `Rune` loading) |
+| **Language** | C++ | Rust (Safe) |
+| **Memory** | 100MB+ | ~20MB |
+| **Config Load** | Heavy (Protobuf parsing overhead) | Instant (Zero-copy `Pavis Core` loading) |
+| **Architecture** | Monolithic Sidecar | Decoupled (Controller + Proxy) |
+
+## 🛠 Tech Stack
+*   **Language:** Rust
+*   **Proxy Engine:** [Cloudflare Pingora](https://github.com/cloudflare/pingora)
+*   **Control Plane Communication:** `tonic` (gRPC)
+*   **Serialization:** `rkyv` (Zero-Copy)
+
+## 🏃 Quick Start
+
+### Prerequisites
+*   Rust 1.75+
+*   `cmake` (for Pingora)
+*   Docker & Docker Compose (for E2E tests)

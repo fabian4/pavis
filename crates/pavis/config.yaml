@@ -55,7 +55,7 @@ routes:
         #   per_try_timeout_ms: 500
         headers:
           add:
-            x-sidecar-proxy: "aegis"
+            x-sidecar-proxy: "pavis"
           remove:
             - "x-internal-token"
         destinations:

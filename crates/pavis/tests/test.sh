@@ -6,7 +6,7 @@ MAX_RETRIES=30
 count=0
 
 echo "🚀 Starting E2E Tests..."
-echo "Waiting for Aegis to be ready at $URL..."
+echo "Waiting for Pavis to be ready at $URL..."
 
 # Wait for the service to return a 200 OK (or any success code)
 until curl -s -f -o /dev/null "$URL" || [ $count -eq $MAX_RETRIES ]; do
@@ -17,11 +17,11 @@ done
 echo ""
 
 if [ $count -eq $MAX_RETRIES ]; then
-  echo "❌ Timeout waiting for Aegis to start."
+  echo "❌ Timeout waiting for Pavis to start."
   exit 1
 fi
 
-echo "✅ Aegis is up!"
+echo "✅ Pavis is up!"
 echo "---------------------------------------------------"
 echo "📡 Sending 10 requests..."
 echo "---------------------------------------------------"

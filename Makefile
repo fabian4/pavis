@@ -1,6 +1,6 @@
 BUILDER ?= builder
 
-.PHONY: all build test fmt lint clean run-aegis run-raven help e2e e2e-down
+.PHONY: all build test fmt lint clean run-pavis run-pavis-xds help e2e e2e-down
 
 # Default target
 all: build
@@ -26,7 +26,7 @@ lint:
 	cargo clippy --workspace -- -D warnings
 
 # CI pipeline (format check, test, lint)
-ci: fmt-check test lint
+ci: fmt-check lint test
 
 # Build release binary
 binary-build:
@@ -36,8 +36,8 @@ binary-build:
 docker-build-local:
 	DOCKER_BUILDKIT=1 docker buildx build \
 		--builder $(BUILDER) \
-		--file crates/aegis/Dockerfile \
-		--tag aegis:local \
+		--file crates/pavis/Dockerfile \
+		--tag pavis:local \
 		--cache-from=type=local,src=.buildx-cache \
 		--cache-to=type=local,dest=.buildx-cache,mode=max \
 		--load \
@@ -46,8 +46,8 @@ docker-build-local:
 # Build Docker image with GitHub Actions cache
 docker-build-ci:
 	docker buildx build \
-		--file crates/aegis/Dockerfile \
-		--tag aegis:ci \
+		--file crates/pavis/Dockerfile \
+		--tag pavis:ci \
 		--cache-from=type=gha \
 		--cache-to=type=gha,mode=max \
 		--load \
@@ -56,25 +56,25 @@ docker-build-ci:
 # Run E2E Tests (Binary Mode - Default)
 e2e: e2e-binary
 
-# Run E2E Tests (Binary Mode: Local Aegis + Docker Backends)
+# Run E2E Tests (Binary Mode: Local Pavis + Docker Backends)
 e2e-binary:
-	TEST_MODE=binary bash ./crates/aegis/tests/e2e.sh
+	TEST_MODE=binary bash ./crates/pavis/tests/e2e.sh
 
 # Run E2E Tests (Docker Mode: All Containers)
 e2e-docker:
-	TEST_MODE=docker bash ./crates/aegis/tests/e2e.sh
+	TEST_MODE=docker bash ./crates/pavis/tests/e2e.sh
 
 # Stop E2E Environment
 e2e-down:
-	cd crates/aegis/tests && docker compose down
+	cd crates/pavis/tests && docker compose down
 
-# Run Aegis (Engine)
-run-aegis:
-	RUST_LOG=debug cargo run -p aegis -- --config crates/aegis/config.yaml
+# Run Pavis (Engine)
+run-pavis:
+	RUST_LOG=debug cargo run -p pavis -- --config crates/pavis/config.yaml
 
-# Run Raven (Controller)
-run-raven:
-	cargo run -p raven
+# Run Pavis xDS (Controller)
+run-pavis-xds:
+	cargo run -p pavis-xds
 
 # Clean build artifacts
 clean:
@@ -95,6 +95,6 @@ help:
 	@echo "  e2e-binary         - Run E2E tests with local binary and Docker backends"
 	@echo "  e2e-docker         - Run E2E tests fully containerized"
 	@echo "  e2e-down           - Stop E2E environment"
-	@echo "  run-aegis          - Run the Aegis application"
-	@echo "  run-raven          - Run the Raven application"
+	@echo "  run-pavis          - Run the Pavis application"
+	@echo "  run-pavis-xds      - Run the Pavis xDS application"
 	@echo "  clean              - Clean build artifacts"

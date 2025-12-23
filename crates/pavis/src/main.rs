@@ -7,7 +7,7 @@ use std::sync::Arc;
 mod config;
 mod proxy;
 
-use config::AegisConfig;
+use config::PavisConfig;
 use proxy::MyProxy;
 
 #[derive(Parser, Debug)]
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     // Load configuration
     let config_content =
         std::fs::read_to_string(&args.config).context("Failed to read config file")?;
-    let config: AegisConfig =
+    let config: PavisConfig =
         serde_yaml::from_str(&config_content).context("Failed to parse config file")?;
 
     let config = Arc::new(config);
@@ -41,7 +41,7 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     tracing::info!(
-        "Aegis starts on {} using {}",
+        "Pavis starts on {} using {}",
         config.server.listen_addr,
         args.config
     );

@@ -14,10 +14,10 @@ CONFIG_OUT="$SCRIPT_DIR/generated_config.yaml"
 # Cleanup function
 cleanup() {
   echo "🧹 Cleaning up..."
-  if [ -f aegis.pid ]; then
-    echo "Killing local Aegis process..."
-    kill $(cat aegis.pid) || true
-    rm aegis.pid
+  if [ -f pavis.pid ]; then
+    echo "Killing local Pavis process..."
+    kill $(cat pavis.pid) || true
+    rm pavis.pid
   fi
   
   echo "Stopping Docker containers..."
@@ -30,12 +30,12 @@ trap cleanup EXIT
 
 # 1. Setup Environment Variables & Config
 if [ "$TEST_MODE" == "docker" ]; then
-    # In Docker, Aegis talks to other containers by name
+    # In Docker, Pavis talks to other containers by name
     export BACKEND_V1_HOST="backend-v1"
     export BACKEND_V2_HOST="backend-v2"
     
 elif [ "$TEST_MODE" == "binary" ]; then
-    # In Binary, Aegis talks to localhost
+    # In Binary, Pavis talks to localhost
     export BACKEND_V1_HOST="127.0.0.1"
     export BACKEND_V2_HOST="127.0.0.1"
 else
@@ -51,10 +51,10 @@ sed -e "s|\${BACKEND_V1_HOST}|$BACKEND_V1_HOST|g" \
 
 # 2. Start Infrastructure
 if [ "$TEST_MODE" == "docker" ]; then
-    echo "🐳 Building and Starting Full Stack (Aegis + Backends)..."
+    echo "🐳 Building and Starting Full Stack (Pavis + Backends)..."
     cd "$SCRIPT_DIR"
-    # We need to ensure the aegis container sees the generated config.
-    # The docker-compose mounts ./generated_config.yaml:/etc/aegis/config.yaml
+    # We need to ensure the pavis container sees the generated config.
+    # The docker-compose mounts ./generated_config.yaml:/etc/pavis/config.yaml
     docker compose up -d
     
 elif [ "$TEST_MODE" == "binary" ]; then
@@ -77,29 +77,29 @@ elif [ "$TEST_MODE" == "binary" ]; then
         exit 1
     fi
 
-    echo "🚀 Starting Aegis Binary..."
+    echo "🚀 Starting Pavis Binary..."
     cd ../../.. # Go to root
     
-    AEGIS_BIN="./target/release/aegis"
-    if [ ! -f "$AEGIS_BIN" ]; then
-        echo "🦀 Aegis binary not found, building..."
-        cargo build -p aegis --release
+    PAVIS_BIN="./target/release/pavis"
+    if [ ! -f "$PAVIS_BIN" ]; then
+        echo "🦀 Pavis binary not found, building..."
+        cargo build -p pavis --release
     fi
     
     # Run in background with generated config
-    $AEGIS_BIN --config "$CONFIG_OUT" &
-    echo $! > aegis.pid
+    $PAVIS_BIN --config "$CONFIG_OUT" &
+    echo $! > pavis.pid
     
-    echo "⏳ Giving Aegis a moment to initialize..."
+    echo "⏳ Giving Pavis a moment to initialize..."
     sleep 2
 fi
 
 # 3. Run Tests
 echo "🧪 Delegating to shared verification script..."
 # Ensure we are in the root or correct relative path for the test script if it relies on it
-# The test script is in crates/aegis/tests/test.sh.
+# The test script is in crates/pavis/tests/test.sh.
 # We are currently in either $SCRIPT_DIR or root depending on the block above.
 # Let's standardize to root.
 cd "$SCRIPT_DIR/../../.."
 
-bash crates/aegis/tests/test.sh
+bash crates/pavis/tests/test.sh

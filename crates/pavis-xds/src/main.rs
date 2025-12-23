@@ -4,9 +4,9 @@ use rkyv::ser::{serializers::AllocSerializer, Serializer};
 use std::fs;
 use std::path::PathBuf;
 
-// We need temporary structs to deserialize the YAML before converting to Rune.
-// Ideally, we would share these with Aegis, but Aegis is moving to Rune-only loading.
-// So Raven owns the "Source" (YAML) definition now.
+// We need temporary structs to deserialize the YAML before converting to Pavis.
+// Ideally, we would share these with Pavis, but Pavis is moving to Pavis-Core-only loading.
+// So Pavis xDS owns the "Source" (YAML) definition now.
 mod yaml_model {
     use serde::Deserialize;
     use std::collections::HashMap;
@@ -65,8 +65,8 @@ mod yaml_model {
 }
 
 #[derive(Parser)]
-#[command(name = "raven")]
-#[command(about = "The Control Plane & Compiler for Aegis", long_about = None)]
+#[command(name = "pavis-xds")]
+#[command(about = "The Control Plane & Compiler for Pavis", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -74,13 +74,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Compile a YAML config file into a Rune binary
+    /// Compile a YAML config file into a Pavis binary
     Compile {
         /// Input YAML file
         #[arg(short, long)]
         input: PathBuf,
 
-        /// Output Rune file
+        /// Output Pavis file
         #[arg(short, long)]
         output: PathBuf,
     },
@@ -103,14 +103,14 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let yaml_config: yaml_model::Config =
         serde_yaml::from_str(&content).context("Failed to parse YAML")?;
 
-    // 2. Convert to Rune Structs
-    let rune_config = convert_to_rune(yaml_config)?;
+    // 2. Convert to Pavis Structs
+    let pavis_config = convert_to_pavis(yaml_config)?;
 
     // 3. Serialize to Bytes
     let mut serializer = AllocSerializer::<1024>::default();
     serializer
-        .serialize_value(&rune_config)
-        .context("Failed to serialize to Rune")?;
+        .serialize_value(&pavis_config)
+        .context("Failed to serialize to Pavis")?;
     let bytes = serializer.into_serializer().into_inner();
 
     // 4. Write to Disk
@@ -124,24 +124,24 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn convert_to_rune(src: yaml_model::Config) -> Result<rune::ProxyConfig> {
+fn convert_to_pavis(src: yaml_model::Config) -> Result<pavis_core::ProxyConfig> {
     let mut upstreams = Vec::new();
     for u in src.upstreams {
         let lb = match u.load_balancer.as_deref() {
-            Some("random") => rune::LoadBalancer::Random,
-            _ => rune::LoadBalancer::RoundRobin, // Default
+            Some("random") => pavis_core::LoadBalancer::Random,
+            _ => pavis_core::LoadBalancer::RoundRobin, // Default
         };
 
         let mut endpoints = Vec::new();
         for e in u.endpoints {
-            endpoints.push(rune::Endpoint {
+            endpoints.push(pavis_core::Endpoint {
                 ip: e.ip,
                 port: e.port,
                 weight: e.weight.unwrap_or(1),
             });
         }
 
-        upstreams.push(rune::Upstream {
+        upstreams.push(pavis_core::Upstream {
             name: u.name,
             load_balancer: lb,
             endpoints,
@@ -153,15 +153,15 @@ fn convert_to_rune(src: yaml_model::Config) -> Result<rune::ProxyConfig> {
         let mut paths = Vec::new();
         for p in v.paths {
             let match_type = match p.match_type.as_str() {
-                "exact" => rune::MatchType::Exact,
-                "regex" => rune::MatchType::Regex,
-                _ => rune::MatchType::Prefix,
+                "exact" => pavis_core::MatchType::Exact,
+                "regex" => pavis_core::MatchType::Regex,
+                _ => pavis_core::MatchType::Prefix,
             };
 
             let headers = if let Some(h) = p.headers {
                 let add: Vec<(String, String)> = h.add.unwrap_or_default().into_iter().collect();
                 let remove = h.remove.unwrap_or_default();
-                Some(rune::HeaderOperations { add, remove })
+                Some(pavis_core::HeaderOperations { add, remove })
             } else {
                 None
             };
@@ -169,13 +169,13 @@ fn convert_to_rune(src: yaml_model::Config) -> Result<rune::ProxyConfig> {
             let destinations = p
                 .destinations
                 .into_iter()
-                .map(|d| rune::WeightedDestination {
+                .map(|d| pavis_core::WeightedDestination {
                     upstream: d.upstream,
                     weight: d.weight,
                 })
                 .collect();
 
-            paths.push(rune::Route {
+            paths.push(pavis_core::Route {
                 match_type,
                 path: p.path,
                 headers,
@@ -183,14 +183,14 @@ fn convert_to_rune(src: yaml_model::Config) -> Result<rune::ProxyConfig> {
             });
         }
 
-        routes.push(rune::VirtualHost {
+        routes.push(pavis_core::VirtualHost {
             host: v.host,
             paths,
         });
     }
 
-    Ok(rune::ProxyConfig {
-        header: rune::RuneHeader::default(),
+    Ok(pavis_core::ProxyConfig {
+        header: pavis_core::PavisHeader::default(),
         listen_addr: src.server.listen_addr,
         upstreams,
         routes,
