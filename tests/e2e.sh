@@ -97,7 +97,7 @@ fi
 # 3. Run Tests
 echo "🧪 Delegating to shared verification script..."
 # Ensure we are in the root or correct relative path for the test script if it relies on it
-# The test script is in crates/pavis/tests/test.sh.
+# The test script is in tests/test.sh.
 # We are currently in either $SCRIPT_DIR or root depending on the block above.
 # Let's standardize to root.
 cd "$SCRIPT_DIR/.."

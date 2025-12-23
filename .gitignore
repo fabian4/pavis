@@ -15,5 +15,4 @@ target
 
 # RustRover
 .idea/
-/crates/pavis/tests/generated_config.yaml
 /.buildx-cache/
