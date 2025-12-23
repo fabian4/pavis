@@ -1,3 +1,5 @@
+BUILDER ?= builder
+
 .PHONY: all build test fmt lint clean run-aegis run-raven help e2e e2e-down
 
 # Default target
@@ -33,6 +35,7 @@ binary-build:
 # Build Docker image with local cache
 docker-build-local:
 	DOCKER_BUILDKIT=1 docker buildx build \
+		--builder $(BUILDER) \
 		--file crates/aegis/Dockerfile \
 		--tag aegis:local \
 		--cache-from=type=local,src=.buildx-cache \

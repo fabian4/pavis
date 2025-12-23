@@ -1894,8 +1894,12 @@ name = "raven"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "clap 4.5.53",
  "prost",
+ "rkyv",
  "rune",
+ "serde",
+ "serde_yaml 0.9.34+deprecated",
  "tokio",
  "tonic",
  "tonic-build",
