@@ -1,0 +1,19 @@
+# Rust build artifacts
+target/
+**/target/
+
+# Git
+.git
+.gitignore
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local caches
+.buildx-cache/
+
+# Logs / temp（按需）
+logs/
+tmp/
