@@ -78,7 +78,7 @@ elif [ "$TEST_MODE" == "binary" ]; then
     fi
 
     echo "🚀 Starting Pavis Binary..."
-    cd ../../.. # Go to root
+    cd .. # Go to root
     
     PAVIS_BIN="./target/release/pavis"
     if [ ! -f "$PAVIS_BIN" ]; then
@@ -100,6 +100,6 @@ echo "🧪 Delegating to shared verification script..."
 # The test script is in crates/pavis/tests/test.sh.
 # We are currently in either $SCRIPT_DIR or root depending on the block above.
 # Let's standardize to root.
-cd "$SCRIPT_DIR/../../.."
+cd "$SCRIPT_DIR/.."
 
-bash crates/pavis/tests/test.sh
+bash tests/test.sh

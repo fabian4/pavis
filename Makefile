@@ -58,15 +58,15 @@ e2e: e2e-binary
 
 # Run E2E Tests (Binary Mode: Local Pavis + Docker Backends)
 e2e-binary:
-	TEST_MODE=binary bash ./crates/pavis/tests/e2e.sh
+	TEST_MODE=binary bash ./tests/e2e.sh
 
 # Run E2E Tests (Docker Mode: All Containers)
 e2e-docker:
-	TEST_MODE=docker bash ./crates/pavis/tests/e2e.sh
+	TEST_MODE=docker bash ./tests/e2e.sh
 
 # Stop E2E Environment
 e2e-down:
-	cd crates/pavis/tests && docker compose down
+	cd tests && docker compose down
 
 # Run Pavis (Engine)
 run-pavis:

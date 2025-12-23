@@ -26,6 +26,5 @@ services:
     volumes:
       - ./generated_config.yaml:/etc/pavis/config.yaml
     depends_on:
-      - echo-server
-    networks:
-      - e2e-net
+      - backend-v1
+      - backend-v2
