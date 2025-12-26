@@ -95,9 +95,8 @@ format_delta() {
 }
 
 # Capture Git metadata
-GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "no-tag")
-GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-GIT_DIRTY=$(git diff --quiet 2>/dev/null || echo "-dirty")
+GIT_TAG=${PAVIS_TAG:-bench}
+GIT_COMMIT=${PAVIS_COMMIT:-unknown}
 
 generate_report() {
     # ===================
@@ -127,7 +126,7 @@ generate_report() {
 
 **Generated:** \`$TIMESTAMP\` ｜ **Runs:** \`$TOTAL_ROWS\` · **Baseline:** \`envoy\`
 
-**Version:** \`$GIT_TAG\` (\`$GIT_COMMIT\`$GIT_DIRTY)
+**Version:** \`$GIT_TAG\` (\`$GIT_COMMIT\`)
 
 > Proxies: $proxies_fmt  
 > Workloads: $workloads_fmt  
