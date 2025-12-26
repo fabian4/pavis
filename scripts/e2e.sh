@@ -19,9 +19,15 @@ cleanup() {
   docker compose -f "$COMPOSE_FILE" down > /dev/null 2>&1 || true
   # Cleanup generated configs logic handled by Rust TestEnv drop, 
   # but we can do a sweep here just in case of panic aborts.
-  rm -f "$CONFIG_DIR"/generated_*.yaml
+  # Use docker to remove potentially root-owned files
+  if [ -d "$CONFIG_DIR" ]; then
+      docker run --rm -v "$CONFIG_DIR":/work alpine rm -rf /work/certs /work/generated_*.yaml || true
+  fi
 }
 trap cleanup EXIT
+
+# 0. Pre-cleanup to ensure clean slate
+cleanup
 
 # 1. Setup Environment Variables
 setup_env() {
