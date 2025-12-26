@@ -91,7 +91,11 @@ calc_delta() {
 format_delta() {
     local val=$1
     [ -z "$val" ] && echo "N/A" && return
-    awk -v v="$val" 'BEGIN { printf "%s%.1f%%", (v >= 0 ? "+" : ""), v }'
+    awk -v v="$val" 'BEGIN {
+        if (v == 0) printf "0.0%%"
+        else if (v > 0) printf "+%.1f%%", v
+        else printf "%.1f%%", v
+    }'
 }
 
 # Capture Git metadata
@@ -354,6 +358,19 @@ EOF
             row_out+=" $err |"
         done
         echo "$row_out"
+
+        # Add extra rows for 2x intensity workloads
+        if [ "$workload" = "latency" ] || [ "$workload" = "concurrency" ]; then
+             local conn_2x=$([ "$workload" = "latency" ] && echo "1000" || echo "10000")
+             local row_2x_out="| $workload (2x) | $conn_2x |"
+             for proxy in "${PROXIES[@]}"; do
+                 local row_2x=$(get_row "$proxy" "$workload" "baseline" "$BASELINE_DURATION" "$conn_2x")
+                 local err_2x=$(get_field "$row_2x" 22)
+                 [ -z "$err_2x" ] && err_2x="N/A"
+                 row_2x_out+=" $err_2x |"
+             done
+             echo "$row_2x_out"
+        fi
     done
     echo ""
     echo "---"
