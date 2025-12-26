@@ -31,7 +31,6 @@
 # | avg_cpu_pct      | txt: "Resource Stats:" (avg CPU %)       |
 # | peak_mem_mib     | txt: "Resource Stats:" (max Mem MiB)     |
 # | avg_mem_mib      | txt: "Resource Stats:" (avg Mem MiB)     |
-# | timestamp        | txt header: "# Generated:"               |
 
 RESULTS_DIR="${RESULTS_DIR:-bench/output}"
 OUTPUT_DIR="${RESULTS_DIR}"
@@ -169,8 +168,8 @@ process_wrk_block() {
     : "${errors:=0}"
     
     # Output CSV row
-    # Order: proxy, run_id, workload, resource, duration, ... metrics ..., timestamp
-    echo "${proxy_display},${config},${workload},${resource},${duration},${connections},${threads},${keepalive},${rps},${avg_lat},${stdev_lat},${max_lat},${p50},${p75},${p90},${p99},${total_req},${total_bytes},${transfer},${avg_rps_thr},${stdev_rps_thr},${errors},${peak_cpu},${avg_cpu},${peak_mem},${avg_mem},${TIMESTAMP}" >> "$OUTPUT_FILE"
+    # Order: proxy, run_id, workload, resource, duration, ... metrics ...
+    echo "${proxy_display},${config},${workload},${resource},${duration},${connections},${threads},${keepalive},${rps},${avg_lat},${stdev_lat},${max_lat},${p50},${p75},${p90},${p99},${total_req},${total_bytes},${transfer},${avg_rps_thr},${stdev_rps_thr},${errors},${peak_cpu},${avg_cpu},${peak_mem},${avg_mem}" >> "$OUTPUT_FILE"
 }
 
 # Process consolidated txt file (pavis.txt, envoy.txt, etc.)
@@ -209,7 +208,7 @@ process_consolidated_txt() {
 }
 
 # CSV header
-CSV_HEADER="proxy,run_id,workload,resource_profile,duration_s,connections,threads,keepalive,rps,avg_latency_ms,stdev_latency_ms,max_latency_ms,p50_ms,p75_ms,p90_ms,p99_ms,total_requests,total_bytes,transfer_kb_s,avg_rps_thread,stdev_rps_thread,errors,peak_cpu_pct,avg_cpu_pct,peak_mem_mib,avg_mem_mib,timestamp"
+CSV_HEADER="proxy,run_id,workload,resource_profile,duration_s,connections,threads,keepalive,rps,avg_latency_ms,stdev_latency_ms,max_latency_ms,p50_ms,p75_ms,p90_ms,p99_ms,total_requests,total_bytes,transfer_kb_s,avg_rps_thread,stdev_rps_thread,errors,peak_cpu_pct,avg_cpu_pct,peak_mem_mib,avg_mem_mib"
 
 # Single output file
 OUTPUT_FILE="${OUTPUT_DIR}/results.csv"

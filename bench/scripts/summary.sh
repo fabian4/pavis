@@ -51,7 +51,7 @@ get_version() {
 # 6:connections, 7:threads, 8:keepalive, 9:rps, 10:avg_latency_ms, 11:stdev_latency_ms
 # 12:max_latency_ms, 13:p50_ms, 14:p75_ms, 15:p90_ms, 16:p99_ms, 17:total_requests
 # 18:total_bytes, 19:transfer_kb_s, 20:avg_rps_thread, 21:stdev_rps_thread, 22:errors
-# 23:peak_cpu_pct, 24:avg_cpu_pct, 25:peak_mem_mib, 26:avg_mem_mib, 27:timestamp
+# 23:peak_cpu_pct, 24:avg_cpu_pct, 25:peak_mem_mib, 26:avg_mem_mib
 
 TOTAL_ROWS=$(tail -n +2 "$CSV_FILE" | wc -l | tr -d ' ')
 PROXIES=($(tail -n +2 "$CSV_FILE" | cut -d',' -f1 | sort -u))
@@ -207,8 +207,8 @@ EOF
         
         echo "### ${workload^} (baseline, ${BASELINE_DURATION}s, $conn connections)"
         echo ""
-        echo "| Proxy | RPS (Δ) | P99 Latency (ms) | Errors | RPS/CPU | RPS/MiB |"
-        echo "|-------|------------------|------------------|--------|---------|---------|"
+        echo "| Proxy | RPS (Δ) | P99 Latency (ms) | Errors | Avg CPU (RPS/CPU) | Avg Mem (RPS/MiB) |"
+        echo "|-------|------------------|------------------|--------|-------------------|-------------------|"
         
         for proxy in "${PROXIES[@]}"; do
             local row=$(get_row "$proxy" "$workload" "baseline" "$BASELINE_DURATION" "$conn")
@@ -229,7 +229,7 @@ EOF
                 rps_display="$rps ($delta)"
             fi
             local proxy_name=$(echo "$proxy" | sed 's/([^)]*)//g')
-            echo "| $proxy_name | $rps_display | $p99 | $errors | $rps_cpu | $rps_mem |"
+            echo "| $proxy_name | $rps_display | $p99 | $errors | $avg_cpu ($rps_cpu) | $avg_mem ($rps_mem) |"
         done
         echo ""
 
@@ -237,8 +237,8 @@ EOF
         if [ "$workload" = "concurrency" ]; then
             echo "### Concurrency (2x intensity, 30s, 10000 connections)"
             echo ""
-            echo "| Proxy | RPS (Δ) | P99 Latency (ms) | Errors | RPS/CPU | RPS/MiB |"
-            echo "|-------|------------------|------------------|--------|---------|---------|"
+            echo "| Proxy | RPS (Δ) | P99 Latency (ms) | Errors | Avg CPU (RPS/CPU) | Avg Mem (RPS/MiB) |"
+            echo "|-------|------------------|------------------|--------|-------------------|-------------------|"
             
             local conn_2x="10000"
             local workload_2x="concurrency"
@@ -270,7 +270,7 @@ EOF
                     rps_display="$rps ($delta)"
                 fi
                 local proxy_name=$(echo "$proxy" | sed 's/([^)]*)//g')
-                echo "| $proxy_name | $rps_display | $p99 | $errors | $rps_cpu | $rps_mem |"
+                echo "| $proxy_name | $rps_display | $p99 | $errors | $avg_cpu ($rps_cpu) | $avg_mem ($rps_mem) |"
             done
             echo ""
         fi

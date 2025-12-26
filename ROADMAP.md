@@ -1,21 +1,23 @@
-# Pavis Roadmap
+# Roadmap
 
-> See [Architecture.md](./Architecture.md) for technical details on components and protocols.
+> **Reference:** [Architecture.md](./Architecture.md) for technical details on components and protocols.
 
 ## Overview
 
 | Phase | Focus | Status |
-|-------|-------|--------|
-| 1 | Foundation (Pingora proxy) | 🚧 In Progress |
-| 2 | Protocol (`.pvs` format, `pavis-core`, `pavis-cli`) | 🚧 In Progress |
-| 3 | Long Polling (dynamic config updates) | ⏳ Planned |
-| 4 | xDS Bridge (Istio integration) | ⏳ Planned |
-| 5 | Traffic Management (retries, timeouts, load balancing) | ⏳ Planned |
-| 6 | Security (mTLS, RBAC) | ⏳ Planned |
-| 7 | Observability (metrics, tracing, logging) | ⏳ Planned |
-| 8 | Operations (health checks, graceful shutdown) | ⏳ Planned |
-| 9 | Advanced Features (rate limiting, fault injection, WASM) | ⏳ Planned |
-| 10 | Kubernetes Integration (operator, sidecar injection) | ⏳ Planned |
+|:-----:|-------|:------:|
+| 1 | Foundation (Pingora proxy) | 🚧 |
+| 2 | Protocol (`.pvs` format, `pavis-core`, `pavis-cli`) | 🚧 |
+| 3 | Long Polling (dynamic config updates) | ⏳ |
+| 4 | xDS Bridge (Istio integration) | ⏳ |
+| 5 | Traffic Management (retries, timeouts, load balancing) | ⏳ |
+| 6 | Security (mTLS, RBAC) | ⏳ |
+| 7 | Observability (metrics, tracing, logging) | ⏳ |
+| 8 | Operations (health checks, graceful shutdown) | ⏳ |
+| 9 | Advanced Features (rate limiting, fault injection, WASM) | ⏳ |
+| 10 | Kubernetes Integration (operator, sidecar injection) | ⏳ |
+
+**Legend:** 🚧 In Progress · ⏳ Planned · ✅ Complete
 
 ---
 

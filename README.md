@@ -1,13 +1,27 @@
 # Pavis
-**The High-Performance, Memory-Safe Service Mesh Data Plane**
 
-![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)
-![Language](https://img.shields.io/badge/language-Rust-orange.svg)
-![Engine](https://img.shields.io/badge/engine-Pingora-purple.svg)
-![Status](https://img.shields.io/badge/status-Pre--Alpha-red.svg)
+**High-Performance, Memory-Safe Service Mesh Data Plane**
+
+[![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](./LICENSE)
+[![Language](https://img.shields.io/badge/language-Rust-orange.svg)](https://www.rust-lang.org/)
+[![Engine](https://img.shields.io/badge/engine-Pingora-purple.svg)](https://github.com/cloudflare/pingora)
+[![Status](https://img.shields.io/badge/status-Pre--Alpha-red.svg)](#status)
 [![Crates.io](https://img.shields.io/crates/v/pavis.svg)](https://crates.io/crates/pavis)
 
-**Pavis** is a next-generation Service Mesh sidecar proxy built on **Rust** and **Cloudflare Pingora**. It replaces heavy C++ sidecars (like Envoy) with a lightweight, crash-safe alternative using a **"Split Data Plane"** architecture.
+**Pavis** is an experimental, next-generation **Service Mesh sidecar proxy** built on **Rust** and **Cloudflare Pingora**. It explores a **Split Data Plane** architecture to replace traditional monolithic C++ sidecars (e.g., Envoy) with a **lighter, memory-safe, and crash-resilient** alternative.
+
+## Why Pavis?
+
+| Feature | Description |
+|---------|-------------|
+| 🛡️ **Memory Safety** | Rust eliminates entire classes of memory corruption issues |
+| 🪶 **Minimal Footprint** | Optimized for sidecar and resource-constrained environments |
+| 🔀 **Split Data Plane** | Separates control-heavy logic from the hot data path |
+| ⚡ **Pingora Runtime** | Battle-tested async networking primitives from Cloudflare |
+
+## Status
+
+> ⚠️ **Pre-Alpha** – APIs, behavior, and performance characteristics are still evolving.
 
 ## Quick Start
 
@@ -25,5 +39,8 @@ cargo run -p pavis -- --config config.pvs
 
 ## Documentation
 
-- **[Architecture.md](./Architecture.md)** - System design, protocol specification, and component details
-- **[ROADMAP.md](./ROADMAP.md)** - Development phases and progress tracking
+| Document | Description |
+|----------|-------------|
+| [Architecture](./Architecture.md) | System design, protocol specification, component details |
+| [Roadmap](./ROADMAP.md) | Development phases and progress tracking |
+| [Benchmarks](./bench/BENCHMARKS.md) | Performance comparison with Envoy, Nginx, HAProxy |
