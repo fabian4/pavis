@@ -13,6 +13,14 @@ build:
 test:
 	cargo test --workspace --exclude pavis-e2e
 
+# Run integration tests
+test-integration:
+	cargo test --test integration
+
+# Run CLI tests (requires binary build)
+test-cli: build
+	cargo test --test cli
+
 # Format code
 fmt:
 	cargo fmt
