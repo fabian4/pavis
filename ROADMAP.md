@@ -52,11 +52,12 @@
 **E2E Tests** (`tests/`)
 - [x] Basic proxy startup and request forwarding
 - [x] Multi-backend routing verification
-- [ ] Test prefix vs exact route matching
+- [x] Test prefix vs exact route matching
 - [x] Test weighted traffic distribution (statistical)
 - [x] Test header add/remove verification
-- [ ] Test 404 for unmatched routes
-- [ ] Test wildcard host matching
+- [x] Test 404 for unmatched routes
+- [x] Test wildcard host matching
+- [x] Test regex route matching
 
 ---
 
