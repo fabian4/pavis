@@ -81,14 +81,7 @@ fn test_process_lifecycle_sigint() {
     // Create a valid config file for this test
     let temp_dir = std::env::temp_dir();
     let config_path = temp_dir.join("pavis_lifecycle_test.yaml");
-    let config_content = r#"
-server:
-  listen_addr: "127.0.0.1:0" # Random port
-telemetry:
-  access_log: false
-upstreams: []
-routes: []
-"#;
+    let config_content = include_str!("fixtures/lifecycle.yaml");
     std::fs::write(&config_path, config_content).expect("Failed to write config");
 
     let mut child = Command::new(binary)

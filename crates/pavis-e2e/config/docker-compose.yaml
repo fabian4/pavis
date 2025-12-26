@@ -17,14 +17,25 @@ services:
     ports:
       - "8082:8082"
 
+  # Upstream Service TLS (OpenSSL s_server)
+  backend-tls:
+    image: alpine/openssl
+    volumes:
+      - ./certs:/certs
+    command: s_server -cert /certs/upstream_tls.pem -key /certs/upstream_tls.key -accept 8443 -www -quiet
+    expose:
+      - "8443"
+
   # Pavis Sidecar (The System Under Test)
   pavis:
     image: pavis:ci
     ports:
       - "8080:8080"  # Proxy Port
+      - "8443:8443"  # TLS Proxy Port
       - "9091:9091"  # Prometheus Metrics
     volumes:
       - ./generated_config.yaml:/etc/pavis/config.yaml
+      - ./certs:/etc/pavis/certs
     depends_on:
       - backend-v1
       - backend-v2

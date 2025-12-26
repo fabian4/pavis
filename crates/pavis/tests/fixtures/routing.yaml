@@ -1,0 +1,17 @@
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  access_log: false
+upstreams:
+  - name: "backend-a"
+    type: "static"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+routes:
+  - host: "*"
+    paths:
+      - path: "/api"
+        destinations:
+          - upstream: "backend-a"
+            weight: 1

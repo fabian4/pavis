@@ -1,0 +1,20 @@
+server:
+  listen_addr: "127.0.0.1:{}"
+telemetry:
+  access_log: "stdout"
+upstreams:
+  - name: "backend-tls"
+    tls:
+      enabled: true
+      verify_hostname: false
+      verify_cert: false
+    endpoints:
+      - ip: "127.0.0.1"
+        port: {}
+routes:
+  - host: "*"
+    paths:
+      - path: "/"
+        destinations:
+          - upstream: "backend-tls"
+            weight: 1

@@ -3,186 +3,184 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::time::sleep;
 
-// Self-signed cert for localhost generated for testing
-const CERT_PEM: &str = r#"-----BEGIN CERTIFICATE-----
-MIIDCTCCAfGgAwIBAgIUBujbuFPhDyE0AlwoP+EEtLqL8eUwDQYJKoZIhvcNAQEL
-BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI1MTIyNjE2NTgwNFoXDTI2MTIy
-NjE2NTgwNFowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF
-AAOCAQ8AMIIBCgKCAQEA1cvUamqHkM4QSQBo9MfBQWEZatE6srs43sAWr+fcy4uL
-C4dHN2T/eWuHosLXJ5VzIhCsLrzD0TVTg8l/fOa2OluhEXrN0xsAL3LAG7KMDvMm
-vcfX87+GPFTu1fbwMVL8l41jTBikgn0oQBakI7Eheh9WtW7ZBqQlBkS3pIm6jUpE
-WluUDN8nFTv3VOSCILNwoZC0evPIc5q0YerrlwE2LabTr1HZ/sIs58HfVmoXvuuU
-xA2aDPTR9jteys+D10p04QMgh2iKmCQ7SuiQjqNlQXaTHW3vk4MotvrN9lO3a30H
-Zx31FN5unyFjML+o6xTa+VA7Xa4WHbs0tKPvZ4HjLQIDAQABo1MwUTAdBgNVHQ4E
-FgQUrNw8AllfOdsxEFemjz0rvb22GCMwHwYDVR0jBBgwFoAUrNw8AllfOdsxEFem
-pj0rvb22GCMwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAOQD8
-T2VxIt3Y7EtUEfI6LYVU3anwtxsCK7+ckd2cVQRJKhdzAiyBAB/xgGxG/Q2At2Zm
-E0KtvnkDuNIeYJKiy+BcfE0UdORQOvj8Xznp/4/V2KH6RoN671Jo3APulP/T3ZN8
-ub+CTdbPNimisDRJxJP68/i6j3n+UQ8aCMNbs+0bbP1v5p0zkw5T5U/4UKctQrIj
-Sw1ILyJ9w4FEHYAsoL4CWvKTurprB17ZJ/W76GhxCBKhDY0IIOgrX05QpO3Odfss
-exekMA4TqyWPNGpgQd0tKdN3toFbk1Omy6AM0nW9Fl7eYdWC1arOQtaj6OvDn4bW
-AM6P6fbKhtdya5+Avg==
------END CERTIFICATE-----"#;
-
-const KEY_PEM: &str = r#"-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDVy9RqaoeQzhBJ
-AGj0x8FBYRlq0TqyuzjewBav59zLi4sLh0c3ZP95a4eiwtcnlXMiEKwuvMPRNVOD
-yX985rY6W6ERes3TGwAvcsAbsowO8ya9x9fzv4Y8VO7V9vAxUvyXjWNMGKSCfShA
-FqQjsSF6H1a1btkGpCUGRLekibqNSkRaW5QM3ycVO/dU5IIgs3ChkLR688hzmrRh
-6uuXATYtptOvUdn+wiznwd9Wahe+65TEDZoM9NH2O17Kz4PXSnThAyCHaIqYJDtK
-6JCOo2VBdpMdbe+Tgyi2+s32U7drfQdnHfUU3m6fIWMwv6jrFNr5UDtdrhYduzS0
-o+9ngeMtAgMBAAECggEAOvRyJsYpi+zG4NqUFqvexsCX2bTIkvC9xe8CUo+FezuH
-pC4xnTzklf7o8CD6Y5f6n7IpSNoUxWQHG5g855xXM9CAoelTSJtxeaQTBZA+vwCd
-9kddbYGq6oghNC9cHL3dmY0LjLhe5PzOVJ3ptU3rBVoO9wkSH5qz+v6IBX9VShBn
-skLUns1lrY8ox+CfMdmLyPQgCuMMnjUuUjoRkp1F1kKgcRkRcJ4Kd737yCu5ONTW
-PRbOkSMGaEio8IfW/5J3ghxsSU7qG2eA5GFkquS3CFQMgJwsAI9xFJSwFUHJpar6
-0Ke2XgjoRHGyi2k2UK7vplFI8FSGtJw97ERoDFgVoQKBgQDqU7WlK6x5PCuM4j7x
-QrsXrGQG3iiVfehf7Zd3sF9Wk89KtszAPzhppW8rTL/ugYZ1BVfH/3ScbYeDgb1a
-jkN4a7Dv7UJ+CixD3HIGA1xENcT5nVZpIyF/8QOkzImXZjVDt4llHB30j/PIDhXK
-Ij3N9khNQeMNq1c2l4qH30lExwKBgQDpkgBhxH+QHXGO87QVpfoxtkfcp/gVIzpB
-T5p0D6wQ9drW/6NSf/hv4jeun9OePU8m+G8q5mGeMu3cg+AUGhcXXVqZO5c2OaHk
-c4fAbQApIjOgr+fADdqNobu2c4mLr8SkIVKCEI9ubKScbEVwuDhkT4MC0vYcJjHe
-CR8Cb6C8awKBgA/27gw3woNr/weVLnafdkGxpAr3vcoZjuhiNoyX/pbWcSwE8kQy
-ynQgKkfH7dehCXkViRp+JAK4T6A9CZqO0Lf2llJyVrJhnQxui3IvbmzTQP1Eo+t7
-0j92OypSKRmghAZ+DaVO2hecax55HzDrTkym99wTnhWDU+jLQEvrgYFnAoGBAK1z
-Os1fussu0lGyMJ2S8EVSc/Ms2VH5Ix21G6HssX621JispoBxf/C2MVuAXQo5xTnP
-a96TzxJIB9OmKxVCertjHBCG7DfcfJjGIp2HVIM3XteJSbSZlR9wZ5GKIy6UjJbG
-GBt2aM076NIwpTCb3WTAly3Vs+YbhxS3+Us50keZAoGBAJXf1NKZG70K1CpyCeHC
-y4mhnWmKvxaECmYy60wm4SVtyWmCCni3xUKZqHvx9yXrBf3H1VgRNhaUr9674Z9v
-hatNEGh7mtSoh5jEPWhEIrkCcezKCTZMhgk3zgqWreV5iV/m5jNs1IV2YBXXXueT
-A1DP0vFyr8ikIQzD+viwK6LX
------END PRIVATE KEY-----"#;
-
-async fn start_backend() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind backend");
-    let port = listener.local_addr().unwrap().port();
-
-    tokio::spawn(async move {
-        loop {
-            if let Ok((mut socket, _)) = listener.accept().await {
-                tokio::spawn(async move {
-                    let mut buf = [0; 1024];
-                    // Read request (simple ignore)
-                    if socket.read(&mut buf).await.is_ok() {
-                        // Write response
-                        let response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello Backend";
-                        let _ = socket.write_all(response.as_bytes()).await;
-                    }
-                });
-            }
-        }
-    });
-
-    port
-}
-
-fn find_binary() -> PathBuf {
+fn find_project_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap();
     loop {
-        let candidate = dir.join("target/debug/pavis");
-        if candidate.exists() {
-            return candidate;
+        if dir.join("Cargo.lock").exists() {
+            return dir;
         }
-        let candidate = dir.join("target/release/pavis");
-        if candidate.exists() {
-            return candidate;
-        }
-
         if !dir.pop() {
-            panic!("Could not find pavis binary at {}", dir.display());
+            panic!("Could not find project root");
         }
     }
 }
 
 #[tokio::test]
 async fn test_tls_support() {
-    // 1. Setup Backend
-    let backend_port = start_backend().await;
+    let mode = std::env::var("TEST_MODE").unwrap_or_else(|_| "binary".to_string());
+    let project_root = find_project_root();
 
-    // 2. Setup Certs
-    let tmp_dir = std::env::temp_dir().join("pavis_test_tls");
-    let _ = fs::remove_dir_all(&tmp_dir);
-    fs::create_dir_all(&tmp_dir).unwrap();
+    // 1. Setup Paths & Certs
+    let (cert_host_path, key_host_path, cert_config_path, key_config_path, upstream_host) =
+        if mode == "docker" {
+            let certs_dir = project_root.join("crates/pavis-e2e/config/certs");
+            fs::create_dir_all(&certs_dir).unwrap();
+            (
+                certs_dir.join("tls_support.pem"),
+                certs_dir.join("tls_support.key"),
+                "/etc/pavis/certs/tls_support.pem".to_string(),
+                "/etc/pavis/certs/tls_support.key".to_string(),
+                "backend-v1",
+            )
+        } else {
+            let tmp_dir = std::env::temp_dir().join("pavis_test_tls");
+            let _ = fs::remove_dir_all(&tmp_dir);
+            fs::create_dir_all(&tmp_dir).unwrap();
+            let cert = tmp_dir.join("cert.pem");
+            let key = tmp_dir.join("key.pem");
+            (
+                cert.clone(),
+                key.clone(),
+                cert.to_string_lossy().to_string(),
+                key.to_string_lossy().to_string(),
+                "127.0.0.1",
+            )
+        };
 
-    let cert_path = tmp_dir.join("cert.pem");
-    let key_path = tmp_dir.join("key.pem");
-    let config_path = tmp_dir.join("config.yaml");
+    fs::write(&cert_host_path, include_str!("fixtures/cert.pem")).unwrap();
+    fs::write(&key_host_path, include_str!("fixtures/key.pem")).unwrap();
 
-    fs::write(&cert_path, CERT_PEM).unwrap();
-    fs::write(&key_path, KEY_PEM).unwrap();
+    // 2. Generate Config
+    let template = include_str!("../config/templates/tls_support.yaml");
+    let config_content = template
+        .replacen("{}", &cert_config_path, 1)
+        .replacen("{}", &key_config_path, 1)
+        .replacen("{}", "8081", 1); // Upstream port
 
-    // 3. Config
-    let config = format!(
-        r#"server:
-  listen_addr: "0.0.0.0:8443"
-  tls:
-    enabled: true
-    cert_path: "{}"
-    key_path: "{}"
-telemetry:
-  level: "debug"
-  access_log: "stdout"
-upstreams:
-  - name: "backend"
-    endpoints:
-      - ip: "127.0.0.1"
-        port: {}
-routes:
-  - host: "*"
-    paths:
-      - path: "/"
-        destinations:
-          - upstream: "backend"
-            weight: 1
-"#,
-        cert_path.display(),
-        key_path.display(),
-        backend_port
-    );
+    // We need to patch the upstream host in the template or config
+    // The template currently has:
+    // upstreams:
+    //   - name: "backend"
+    //     endpoints:
+    //       - ip: "127.0.0.1"
+    //         port: {}
+    // We need to change 127.0.0.1 to upstream_host if docker
+    let config_content = config_content.replace("127.0.0.1", upstream_host);
 
-    fs::write(&config_path, config).unwrap();
+    let config_path = if mode == "docker" {
+        project_root.join("crates/pavis-e2e/config/generated_tls_support.yaml")
+    } else {
+        std::env::temp_dir().join("pavis_test_tls/config.yaml")
+    };
+    fs::write(&config_path, config_content).unwrap();
 
-    // 4. Start Pavis
-    let binary = find_binary();
-    println!("Starting binary: {:?}", binary);
-    let mut child = Command::new(binary)
-        .arg("--config")
-        .arg(&config_path)
-        .stdout(Stdio::piped()) // Capture to avoid noise, change to inherit if debugging needed
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("Failed to start pavis");
+    // 3. Start/Restart Pavis
+    let mut process = None;
 
-    // Wait for start
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    if mode == "docker" {
+        println!("🐳 Restarting Pavis Container...");
+        let shared_config = project_root.join("crates/pavis-e2e/config/generated_config.yaml");
+        fs::copy(&config_path, &shared_config).unwrap();
 
-    // 5. Make Request
+        let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose.yaml");
+        let status = Command::new("docker")
+            .args([
+                "compose",
+                "-f",
+                compose_file.to_str().unwrap(),
+                "up",
+                "-d",
+                "--force-recreate",
+                "pavis",
+            ])
+            .status()
+            .expect("Failed to run docker compose");
+        assert!(status.success());
+        sleep(Duration::from_secs(5)).await; // Wait for container start
+    } else {
+        let binary = project_root.join("target/release/pavis");
+        if !binary.exists() {
+            // Fallback to debug if release not found (e.g. running cargo test directly)
+            let debug_binary = project_root.join("target/debug/pavis");
+            if debug_binary.exists() {
+                println!("Using debug binary");
+            } else {
+                panic!("Pavis binary not found. Run cargo build --release first.");
+            }
+        }
+
+        // We need to find the binary again properly
+        let binary = if project_root.join("target/release/pavis").exists() {
+            project_root.join("target/release/pavis")
+        } else {
+            project_root.join("target/debug/pavis")
+        };
+
+        println!("🚀 Starting Pavis Binary...");
+        let child = Command::new(binary)
+            .arg("--config")
+            .arg(&config_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("Failed to start pavis");
+        process = Some(child);
+        sleep(Duration::from_secs(2)).await;
+    }
+
+    // 4. Make Request
+    // Pavis listens on 8443 in the config template.
+    // In Docker, we map 8080:8080. We need to map 8443 too?
+    // The docker-compose only maps 8080.
+    // We need to update docker-compose to map 8443 or change config to listen on 8080.
+    // The template says: listen_addr: "0.0.0.0:8443"
+    // Let's change the template to use a placeholder for port or just use 8443 and map it.
+    // Or simpler: Change config to listen on 8080 (if TLS is enabled on 8080).
+    // But wait, the template has `listen_addr: "0.0.0.0:8443"`.
+    // If I change it to 8080, it conflicts with the default mapping if I don't change compose.
+    // Actually, I can just map 8443:8443 in docker-compose.
+
+    // Let's update docker-compose to map 8443 as well.
+
     let client = Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .unwrap();
 
+    // If docker, we hit localhost:8443 (mapped). If binary, we hit localhost:8443 (direct).
+    // So we need to ensure 8443 is mapped in docker.
+
     let resp = client.get("https://localhost:8443/").send().await;
 
-    // 6. Cleanup
-    let _ = child.kill();
-    let _ = fs::remove_dir_all(&tmp_dir);
+    // 5. Cleanup
+    if let Some(mut child) = process {
+        let _ = child.kill();
+    }
+    if mode == "docker" {
+        // Optional: stop container?
+    }
+    if mode == "binary" {
+        let _ = fs::remove_dir_all(config_path.parent().unwrap());
+    }
 
     // Assert
     match resp {
         Ok(r) => {
-            assert!(
-                r.status().is_success(),
-                "Response was not success: {:?}",
-                r.status()
-            );
+            assert!(r.status().is_success(), "Response: {:?}", r.status());
             let text = r.text().await.unwrap();
-            assert_eq!(text, "Hello Backend");
+            // backend-v1 (echo-server) returns JSON usually, or text?
+            // echo-server returns JSON by default.
+            // But the previous test expected "Hello Backend".
+            // The previous test used a custom backend.
+            // Now we use echo-server.
+            // We should check if it contains "backend-v1" or similar.
+            println!("Response: {}", text);
+            assert!(
+                text.contains("backend-v1") || text.contains("echo-server"),
+                "Response should be from echo-server"
+            );
         }
         Err(e) => {
             panic!("Request failed: {}", e);

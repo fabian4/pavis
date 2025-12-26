@@ -145,11 +145,22 @@ impl ProxyHttp for Proxy {
             "forwarding request"
         );
 
-        let mut peer = HttpPeer::new(
-            &addr,
-            false, // TODO: Implement TLS upstream support
-            "localhost".to_string(),
-        );
+        let tls_config = upstream.tls.as_ref();
+        let use_tls = tls_config.map(|c| c.enabled).unwrap_or(false);
+        let sni = tls_config
+            .and_then(|c| c.sni.clone())
+            .unwrap_or_else(|| "localhost".to_string());
+
+        let mut peer = HttpPeer::new(&addr, use_tls, sni);
+
+        if let Some(c) = tls_config {
+            if let Some(verify) = c.verify_hostname {
+                peer.options.verify_hostname = verify;
+            }
+            if let Some(verify) = c.verify_cert {
+                peer.options.verify_cert = verify;
+            }
+        }
 
         // Configure HTTP version
         match upstream.http_version {
@@ -426,6 +437,7 @@ mod tests {
             load_balancer: LoadBalancer::RoundRobin,
             http_version: crate::config::HttpVersion::H1,
             connection_pool: crate::config::ConnectionPoolConfig::default(),
+            tls: None,
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![
@@ -459,6 +471,7 @@ mod tests {
             load_balancer: LoadBalancer::RoundRobin,
             http_version: crate::config::HttpVersion::H1,
             connection_pool: crate::config::ConnectionPoolConfig::default(),
+            tls: None,
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![
@@ -505,6 +518,7 @@ mod tests {
             load_balancer: LoadBalancer::RoundRobin,
             http_version: crate::config::HttpVersion::H1,
             connection_pool: crate::config::ConnectionPoolConfig::default(),
+            tls: None,
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![

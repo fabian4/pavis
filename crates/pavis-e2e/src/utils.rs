@@ -116,7 +116,7 @@ impl Drop for TestEnv {
     }
 }
 
-fn find_project_root() -> Result<PathBuf> {
+pub fn find_project_root() -> Result<PathBuf> {
     let mut dir = env::current_dir()?;
     loop {
         if dir.join("Cargo.lock").exists() {

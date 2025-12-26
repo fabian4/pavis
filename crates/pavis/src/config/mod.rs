@@ -163,11 +163,26 @@ pub struct Upstream {
     /// Connection pool settings
     #[serde(default)]
     pub connection_pool: ConnectionPoolConfig,
+    /// TLS configuration for upstream connections
+    pub tls: Option<UpstreamTlsConfig>,
     // TODO: Implement circuit breaker logic
     pub circuit_breaker: Option<CircuitBreaker>,
     // TODO: Implement health check logic
     pub health_check: Option<HealthCheck>,
     pub endpoints: Vec<Endpoint>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct UpstreamTlsConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub verify_hostname: Option<bool>,
+    pub verify_cert: Option<bool>,
+    pub sni: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Connection pool configuration for upstream connections
@@ -552,6 +567,7 @@ routes: []
             load_balancer: LoadBalancer::RoundRobin,
             http_version: HttpVersion::H1,
             connection_pool: ConnectionPoolConfig::default(),
+            tls: None,
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![Endpoint {
