@@ -212,6 +212,14 @@ impl ProxyHttp for Proxy {
             HttpVersion::H2H1 => peer.options.set_http_version(2, 1),
         }
 
+        // Configure connection pooling
+        peer.options.idle_timeout = Some(std::time::Duration::from_secs(
+            upstream.connection_pool.idle_timeout_secs,
+        ));
+        peer.options.connection_timeout = Some(std::time::Duration::from_secs(
+            upstream.connection_pool.connection_timeout_secs,
+        ));
+
         Ok(Box::new(peer))
     }
 
@@ -494,6 +502,7 @@ mod tests {
             name: "weighted-upstream".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
             http_version: crate::config::HttpVersion::H1,
+            connection_pool: crate::config::ConnectionPoolConfig::default(),
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![
@@ -536,6 +545,7 @@ mod tests {
             name: "test-upstream".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
             http_version: crate::config::HttpVersion::H1,
+            connection_pool: crate::config::ConnectionPoolConfig::default(),
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![

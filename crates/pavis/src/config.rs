@@ -119,9 +119,40 @@ pub struct Upstream {
     /// HTTP version for upstream connections (h1, h2, h2h1). Default: h1
     #[serde(default)]
     pub http_version: HttpVersion,
+    /// Connection pool settings
+    #[serde(default)]
+    pub connection_pool: ConnectionPoolConfig,
     pub circuit_breaker: Option<CircuitBreaker>,
     pub health_check: Option<HealthCheck>,
     pub endpoints: Vec<Endpoint>,
+}
+
+/// Connection pool configuration for upstream connections
+#[derive(Debug, Deserialize, Clone)]
+pub struct ConnectionPoolConfig {
+    /// Idle timeout in seconds for pooled connections. Default: 60
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+    /// Connection timeout in seconds. Default: 5
+    #[serde(default = "default_connection_timeout_secs")]
+    pub connection_timeout_secs: u64,
+}
+
+fn default_idle_timeout_secs() -> u64 {
+    60
+}
+
+fn default_connection_timeout_secs() -> u64 {
+    5
+}
+
+impl Default for ConnectionPoolConfig {
+    fn default() -> Self {
+        Self {
+            idle_timeout_secs: default_idle_timeout_secs(),
+            connection_timeout_secs: default_connection_timeout_secs(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -327,6 +358,52 @@ routes: []
         assert_eq!(
             config.telemetry.access_log,
             AccessLogConfig::File("/var/log/pavis/access.log".to_string())
+        );
+    }
+
+    #[test]
+    fn test_connection_pool_deserialization() {
+        // Test default values
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  level: "info"
+upstreams:
+  - name: "backend"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8080
+routes: []
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        assert_eq!(config.upstreams[0].connection_pool.idle_timeout_secs, 60);
+        assert_eq!(
+            config.upstreams[0].connection_pool.connection_timeout_secs,
+            5
+        );
+
+        // Test custom values
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  level: "info"
+upstreams:
+  - name: "backend"
+    connection_pool:
+      idle_timeout_secs: 120
+      connection_timeout_secs: 10
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8080
+routes: []
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        assert_eq!(config.upstreams[0].connection_pool.idle_timeout_secs, 120);
+        assert_eq!(
+            config.upstreams[0].connection_pool.connection_timeout_secs,
+            10
         );
     }
 }

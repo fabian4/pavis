@@ -18,6 +18,9 @@ upstreams:
   - name: "backend-v1"
     # load_balancer: "round-robin"
     # http_version: "h1"  # Options: h1, h2, h2h1 (default: h1)
+    # connection_pool:
+    #   idle_timeout_secs: 60      # Keep connections alive for 60s (default)
+    #   connection_timeout_secs: 5  # Connection timeout (default: 5s)
     # circuit_breaker:
     #   max_connections: 1024
     #   max_pending_requests: 500

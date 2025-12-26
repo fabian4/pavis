@@ -38,9 +38,9 @@
 - [x] Regex route matching
 
 **Performance-Critical (for fair benchmarking)**
-- [ ] Connection pooling to upstreams (keep-alive)
-  - Pingora `HttpPeer` with connection reuse
-  - Without this: 50%+ slower than Envoy
+- [x] Connection pooling to upstreams (keep-alive)
+  - Uses Pingora's built-in connection pool (default: 128 connections)
+  - Config: `connection_pool.idle_timeout_secs` (default: 60)
 - [x] HTTP/2 upstream support
   - Config: `http_version: h2` (or `h1`, `h2h1`)
   - Multiplexed requests via Pingora ALPN
