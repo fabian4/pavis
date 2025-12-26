@@ -1,6 +1,8 @@
 use crate::config::AccessLogConfig;
-use anyhow::Result;
+use async_trait::async_trait;
 use pingora::proxy::Session;
+use pingora::services::Service;
+use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
@@ -10,58 +12,93 @@ pub struct AccessLog {
     enabled: bool,
 }
 
-impl AccessLog {
-    pub async fn new(config: &AccessLogConfig) -> Result<Self> {
-        let (tx, mut rx) = mpsc::channel::<String>(4096);
-        let enabled = *config != AccessLogConfig::False;
+pub struct AccessLogWorker {
+    rx: Option<mpsc::Receiver<String>>,
+    config: AccessLogConfig,
+}
 
-        let config = config.clone();
+#[async_trait]
+impl Service for AccessLogWorker {
+    async fn start_service(
+        &mut self,
+        _fds: Option<Arc<tokio::sync::Mutex<pingora::server::Fds>>>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+        _threads: usize,
+    ) {
+        let mut rx = self.rx.take().expect("Worker started twice");
 
-        // Spawn background writer
-        tokio::spawn(async move {
-            let mut file_writer = if let AccessLogConfig::File(path) = &config {
-                match std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                {
-                    Ok(f) => Some(BufWriter::new(File::from_std(f))),
-                    Err(e) => {
-                        eprintln!("Failed to open access log file: {}", e);
-                        None
-                    }
+        let mut file_writer = if let AccessLogConfig::File(path) = &self.config {
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                Ok(f) => Some(BufWriter::new(File::from_std(f))),
+                Err(e) => {
+                    eprintln!("Failed to open access log file: {}", e);
+                    None
                 }
-            } else {
-                None
-            };
+            }
+        } else {
+            None
+        };
 
-            while let Some(log_line) = rx.recv().await {
-                match &config {
-                    AccessLogConfig::Stdout => {
-                        // println! can block, but for now it's the standard way.
-                        // Ideally we'd use tokio::io::stdout() but that requires locking too.
-                        print!("{}", log_line);
-                    }
-                    AccessLogConfig::File(_) =>
-                    {
-                        #[allow(clippy::collapsible_if)]
-                        if let Some(w) = &mut file_writer {
-                            if let Err(e) = w.write_all(log_line.as_bytes()).await {
-                                eprintln!("Failed to write to access log: {}", e);
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    // Shutdown signal received
+                    // Check if we should exit immediately or drain?
+                    // Usually shutdown signal means "stop accepting new work".
+                    // But for access log, we might want to drain?
+                    // For now, let's just break.
+                    break;
+                }
+                msg = rx.recv() => {
+                    match msg {
+                        Some(log_line) => {
+                            match &self.config {
+                                AccessLogConfig::Stdout => {
+                                    print!("{}", log_line);
+                                }
+                                AccessLogConfig::File(_) => {
+                                    #[allow(clippy::collapsible_if)]
+                                    if let Some(w) = &mut file_writer {
+                                        if let Err(e) = w.write_all(log_line.as_bytes()).await {
+                                            eprintln!("Failed to write to access log: {}", e);
+                                        }
+                                    }
+                                }
+                                AccessLogConfig::False => {}
                             }
                         }
+                        None => break,
                     }
-                    AccessLogConfig::False => {}
                 }
             }
+        }
 
-            // Flush on exit
-            if let Some(mut w) = file_writer {
-                let _ = w.flush().await;
-            }
-        });
+        // Flush on exit
+        if let Some(mut w) = file_writer {
+            let _ = w.flush().await;
+        }
+    }
 
-        Ok(Self { tx, enabled })
+    fn name(&self) -> &str {
+        "access_log"
+    }
+}
+
+impl AccessLog {
+    pub fn new(config: &AccessLogConfig) -> (Self, AccessLogWorker) {
+        let (tx, rx) = mpsc::channel::<String>(4096);
+        let enabled = *config != AccessLogConfig::False;
+
+        let worker = AccessLogWorker {
+            rx: Some(rx),
+            config: config.clone(),
+        };
+
+        (Self { tx, enabled }, worker)
     }
 
     pub async fn log(

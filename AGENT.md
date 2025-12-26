@@ -6,7 +6,8 @@
 |----------|-------------|
 | [README.md](./README.md) | Project overview and quick start |
 | [Architecture.md](./Architecture.md) | System design and protocol details |
-| [ROADMAP.md](./ROADMAP.md) | Development phases and progress |
+| [ROADMAP.md](doc/ROADMAP.md) | Development phases and progress |
+| [CODE_REVIEW.md](doc/CODE_REVIEW.md) | Action plan and technical debt tracking |
 | [Cargo.toml](./Cargo.toml) | Workspace configuration and dependencies |
 
 ## Rules
@@ -19,6 +20,7 @@
 6. **Preserve structure** – Do not reorganize code unless explicitly requested
 7. **No git commit/push** – Never run `git commit` or `git push`; user handles version control
 8. **Respect manual edits** – If file content differs from your last read, user modified it; preserve their changes
+9. **Continuous Code Review** – Consult `doc/CODE_REVIEW.md` for high-priority tasks. Update the document status when tasks are completed.
 
 ## Code Style
 

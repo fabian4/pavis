@@ -42,5 +42,5 @@ cargo run -p pavis -- --config config.pvs
 | Document | Description |
 |----------|-------------|
 | [Architecture](./Architecture.md) | System design, protocol specification, component details |
-| [Roadmap](./ROADMAP.md) | Development phases and progress tracking |
+| [Roadmap](doc/ROADMAP.md) | Development phases and progress tracking |
 | [Benchmarks](./bench/BENCHMARKS.md) | Performance comparison with Envoy, Nginx, HAProxy |

@@ -7,7 +7,6 @@
 //! 3. **Minimal Overhead**: The cost of disabled telemetry should be near zero.
 
 use crate::config::TelemetryConfig;
-use anyhow::Result;
 use std::sync::Arc;
 
 pub mod access_log;
@@ -17,8 +16,13 @@ pub struct Telemetry {
 }
 
 impl Telemetry {
-    pub async fn new(config: &TelemetryConfig) -> Result<Self> {
-        let access_log = Arc::new(access_log::AccessLog::new(&config.access_log).await?);
-        Ok(Self { access_log })
+    pub fn new(config: &TelemetryConfig) -> (Self, access_log::AccessLogWorker) {
+        let (access_log, worker) = access_log::AccessLog::new(&config.access_log);
+        (
+            Self {
+                access_log: Arc::new(access_log),
+            },
+            worker,
+        )
     }
 }

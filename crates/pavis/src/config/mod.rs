@@ -7,7 +7,7 @@
 //! 3. **Immutability**: Runtime configuration is generally immutable; dynamic updates should replace the entire config or use specific dynamic components.
 //!
 //! Some fields are defined but not yet used - they are planned for future phases.
-//! See ROADMAP.md for implementation timeline.
+//! See doc/ROADMAP.md for implementation timeline.
 
 // TODO: Remove this once all config fields are implemented
 #![allow(dead_code)]

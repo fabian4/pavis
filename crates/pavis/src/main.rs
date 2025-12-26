@@ -17,8 +17,7 @@ struct Args {
     config: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     // Load configuration
@@ -72,7 +71,8 @@ async fn main() -> Result<()> {
 
     let upstream_manager = Manager::new(&config.upstreams);
 
-    let telemetry = Arc::new(Telemetry::new(&config.telemetry).await?);
+    let (telemetry, access_log_worker) = Telemetry::new(&config.telemetry);
+    let telemetry = Arc::new(telemetry);
 
     let mut proxy_service = http_proxy_service(
         &server.configuration,
@@ -103,6 +103,7 @@ async fn main() -> Result<()> {
         proxy_service.add_tcp(&config.server.listen_addr);
     }
 
+    server.add_service(access_log_worker);
     server.add_service(proxy_service);
     server.run_forever();
 }
