@@ -35,7 +35,7 @@
 - [x] Request header manipulation (add/remove)
 - [x] Round-robin load balancing (currently random)
 - [x] Response header manipulation
-- [ ] Regex route matching
+- [x] Regex route matching
 
 **Performance-Critical (for fair benchmarking)**
 - [ ] Connection pooling to upstreams (keep-alive)

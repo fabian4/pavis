@@ -1,0 +1,52 @@
+server:
+  listen_addr: "0.0.0.0:8080"
+  worker_threads: 2
+  tls:
+    enabled: false
+
+telemetry:
+  level: "info"
+  pingora: "info"
+  service_name: "pavis-e2e-regex-matching"
+  prometheus_addr: "0.0.0.0:9091"
+  access_log: "stdout"
+  tracing:
+    enabled: true
+    provider: "opentelemetry"
+    sampling_rate: 1.0
+
+upstreams:
+  - name: "backend-v1"
+    load_balancer: "round-robin"
+    endpoints:
+      - ip: "${BACKEND_V1_HOST}"
+        port: 8081
+  - name: "backend-v2"
+    load_balancer: "round-robin"
+    endpoints:
+      - ip: "${BACKEND_V2_HOST}"
+        port: 8082
+
+routes:
+  - host: "*" 
+    paths:
+      # Regex: Match /api/v{N}/users/{id} where id is numeric
+      - match_type: "regex"
+        path: "^/api/v[0-9]+/users/[0-9]+$"
+        destinations:
+          - upstream: "backend-v1"
+            weight: 100
+
+      # Regex: Match /posts/{slug} where slug is alphanumeric with hyphens
+      - match_type: "regex"
+        path: "^/posts/[a-z0-9-]+$"
+        destinations:
+          - upstream: "backend-v2"
+            weight: 100
+
+      # Fallback prefix goes to v1
+      - match_type: "prefix"
+        path: "/"
+        destinations:
+          - upstream: "backend-v1"
+            weight: 100

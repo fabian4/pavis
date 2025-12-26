@@ -7,6 +7,7 @@ use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
+use regex::Regex;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -36,7 +37,9 @@ pub fn find_route<'a>(
                 let is_match = match route.match_type {
                     MatchType::Prefix => uri_path.starts_with(&route.path),
                     MatchType::Exact => uri_path == route.path,
-                    MatchType::Regex => false, // TODO: implement regex matching
+                    MatchType::Regex => Regex::new(&route.path)
+                        .map(|re| re.is_match(uri_path))
+                        .unwrap_or(false),
                 };
 
                 if is_match {
@@ -370,6 +373,59 @@ mod tests {
         // "other.com" matches "*" host but path "/exact" is only on "example.com"
         // Wait, "*" host has "/public". "/exact" is NOT on "*".
         let result = find_route(&config, Some("other.com"), "/exact");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_route_regex_match() {
+        let config = Config {
+            server: crate::config::ServerConfig {
+                listen_addr: "0.0.0.0:8080".to_string(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: crate::config::TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: None,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![VirtualHost {
+                host: "*".to_string(),
+                paths: vec![Route {
+                    match_type: MatchType::Regex,
+                    path: r"^/api/v[0-9]+/users/\d+$".to_string(),
+                    timeout_ms: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![WeightedDestination {
+                        upstream: "backend".to_string(),
+                        weight: 1,
+                    }],
+                }],
+            }],
+        };
+
+        // Should match
+        let result = find_route(&config, None, "/api/v1/users/123");
+        assert!(result.is_some());
+        let (_, route) = result.unwrap();
+        assert_eq!(route.match_type, MatchType::Regex);
+
+        // Should match v2
+        let result = find_route(&config, None, "/api/v2/users/456");
+        assert!(result.is_some());
+
+        // Should NOT match (missing user id)
+        let result = find_route(&config, None, "/api/v1/users/");
+        assert!(result.is_none());
+
+        // Should NOT match (non-numeric user id)
+        let result = find_route(&config, None, "/api/v1/users/abc");
         assert!(result.is_none());
     }
 

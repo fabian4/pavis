@@ -9,15 +9,15 @@
 > Run at: https://github.com/fabian4/pavis/actions/runs/20516504677
 ---
 
-Pavis demonstrates exceptional **memory efficiency** even under high stress, though it currently faces a **concurrency bottleneck** that limits its scaling potential compared to mature C++ or C based proxies.
+Pavis maintains relatively low memory usage under high load, though it currently exhibits a concurrency bottleneck that limits scaling compared to mature C++ or C-based proxies.
 
 ## Key Findings
 
-Focus: The following findings highlight areas where Pavis demonstrates clear advantages over industry proxies, as well as architectural gaps that currently limit scalability.
+Focus: The following findings compare Pavis to other industry proxies and identify scalability limitations.
 
 ### 1. Notable Memory Efficiency 🏆
 
-Pavis shows improved memory efficiency under throughput-oriented workloads, using less average and peak memory than several other evaluated proxies in the baseline profile.
+Pavis uses slightly less average and peak memory than several other evaluated proxies under throughput-oriented workloads in the baseline profile.
 
 * **Insight:** Pavis maintains a consistently low memory footprint during sustained throughput tests
 *   **Evidence:** *Throughput (baseline, 30s)*
