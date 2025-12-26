@@ -1,15 +1,34 @@
 //! Configuration types for Pavis proxy.
 //!
+//! # Architectural Invariants
+//!
+//! 1. **Validation First**: Configuration must be validated before being used by the runtime.
+//! 2. **Type Safety**: Use types (e.g., `ValidatedConfig`) to represent valid states and prevent invalid usage.
+//! 3. **Immutability**: Runtime configuration is generally immutable; dynamic updates should replace the entire config or use specific dynamic components.
+//!
 //! Some fields are defined but not yet used - they are planned for future phases.
 //! See ROADMAP.md for implementation timeline.
 
 // TODO: Remove this once all config fields are implemented
 #![allow(dead_code)]
 
+use anyhow::Result;
 use serde::Deserialize;
 use std::collections::HashMap;
-use anyhow::{Context, Result};
-use regex::Regex;
+use std::ops::Deref;
+
+mod validation;
+
+#[derive(Debug, Clone)]
+pub struct ValidatedConfig(Config);
+
+impl Deref for ValidatedConfig {
+    type Target = Config;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -20,18 +39,9 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn compile_routes(&mut self) -> Result<()> {
-        for vhost in &mut self.routes {
-            for route in &mut vhost.paths {
-                if route.match_type == MatchType::Regex {
-                    route.compiled_regex = Some(
-                        Regex::new(&route.path)
-                            .with_context(|| format!("Failed to compile regex for path: {}", route.path))?,
-                    );
-                }
-            }
-        }
-        Ok(())
+    pub fn validate(self) -> Result<ValidatedConfig> {
+        validation::validate(&self)?;
+        Ok(ValidatedConfig(self))
     }
 }
 
@@ -474,7 +484,7 @@ upstreams: []
 routes: []
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
-        
+
         assert!(config.server.tls.is_some());
         let tls = config.server.tls.unwrap();
         assert!(tls.enabled);
@@ -483,7 +493,23 @@ routes: []
     }
 
     #[test]
-    fn test_invalid_regex_compilation() {
+    fn test_empty_config_sections() {
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  access_log: false
+upstreams: []
+routes: []
+"#;
+        let config: Config =
+            serde_yaml::from_str(yaml).expect("Failed to deserialize empty sections");
+        assert!(config.upstreams.is_empty());
+        assert!(config.routes.is_empty());
+    }
+
+    #[test]
+    fn test_config_validation() {
         let mut config = Config {
             server: ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
@@ -502,34 +528,42 @@ routes: []
             routes: vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![Route {
-                    match_type: MatchType::Regex,
-                    path: "[unclosed".to_string(),
+                    match_type: MatchType::Prefix,
+                    path: "/".to_string(),
                     timeout_ms: None,
                     retry: None,
                     request_headers: None,
                     response_headers: None,
-                    destinations: vec![],
+                    destinations: vec![WeightedDestination {
+                        upstream: "non-existent".to_string(),
+                        weight: 1,
+                    }],
                     compiled_regex: None,
                 }],
             }],
         };
-        
-        assert!(config.compile_routes().is_err());
-    }
 
-    #[test]
-    fn test_empty_config_sections() {
-        let yaml = r#"
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  access_log: false
-upstreams: []
-routes: []
-"#;
-        let mut config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize empty sections");
-        assert!(config.upstreams.is_empty());
-        assert!(config.routes.is_empty());
-        assert!(config.compile_routes().is_ok());
+        // Should fail because upstream doesn't exist
+        assert!(config.clone().validate().is_err());
+
+        // Fix upstream
+        config.upstreams.push(Upstream {
+            name: "non-existent".to_string(),
+            load_balancer: LoadBalancer::RoundRobin,
+            http_version: HttpVersion::H1,
+            connection_pool: ConnectionPoolConfig::default(),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                ip: "127.0.0.1".to_string(),
+                port: 80,
+                weight: Some(1),
+            }],
+        });
+        assert!(config.clone().validate().is_ok());
+
+        // Test invalid listen addr
+        config.server.listen_addr = "invalid".to_string();
+        assert!(config.validate().is_err());
     }
 }

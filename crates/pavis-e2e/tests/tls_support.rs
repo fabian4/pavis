@@ -1,10 +1,10 @@
+use reqwest::Client;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use reqwest::Client;
 
 // Self-signed cert for localhost generated for testing
 const CERT_PEM: &str = r#"-----BEGIN CERTIFICATE-----
@@ -57,9 +57,11 @@ A1DP0vFyr8ikIQzD+viwK6LX
 -----END PRIVATE KEY-----"#;
 
 async fn start_backend() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind backend");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind backend");
     let port = listener.local_addr().unwrap().port();
-    
+
     tokio::spawn(async move {
         loop {
             if let Ok((mut socket, _)) = listener.accept().await {
@@ -75,7 +77,7 @@ async fn start_backend() -> u16 {
             }
         }
     });
-    
+
     port
 }
 
@@ -90,9 +92,9 @@ fn find_binary() -> PathBuf {
         if candidate.exists() {
             return candidate;
         }
-        
+
         if !dir.pop() {
-             panic!("Could not find pavis binary at {}", dir.display());
+            panic!("Could not find pavis binary at {}", dir.display());
         }
     }
 }
@@ -101,21 +103,22 @@ fn find_binary() -> PathBuf {
 async fn test_tls_support() {
     // 1. Setup Backend
     let backend_port = start_backend().await;
-    
+
     // 2. Setup Certs
     let tmp_dir = std::env::temp_dir().join("pavis_test_tls");
     let _ = fs::remove_dir_all(&tmp_dir);
     fs::create_dir_all(&tmp_dir).unwrap();
-    
+
     let cert_path = tmp_dir.join("cert.pem");
     let key_path = tmp_dir.join("key.pem");
     let config_path = tmp_dir.join("config.yaml");
-    
+
     fs::write(&cert_path, CERT_PEM).unwrap();
     fs::write(&key_path, KEY_PEM).unwrap();
-    
+
     // 3. Config
-    let config = format!(r#"server:
+    let config = format!(
+        r#"server:
   listen_addr: "0.0.0.0:8443"
   tls:
     enabled: true
@@ -136,10 +139,14 @@ routes:
         destinations:
           - upstream: "backend"
             weight: 1
-"#, cert_path.display(), key_path.display(), backend_port);
+"#,
+        cert_path.display(),
+        key_path.display(),
+        backend_port
+    );
 
     fs::write(&config_path, config).unwrap();
-    
+
     // 4. Start Pavis
     let binary = find_binary();
     println!("Starting binary: {:?}", binary);
@@ -150,31 +157,33 @@ routes:
         .stderr(Stdio::inherit())
         .spawn()
         .expect("Failed to start pavis");
-        
+
     // Wait for start
     tokio::time::sleep(Duration::from_secs(2)).await;
-    
+
     // 5. Make Request
     let client = Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .unwrap();
-        
-    let resp = client.get("https://localhost:8443/")
-        .send()
-        .await;
-        
+
+    let resp = client.get("https://localhost:8443/").send().await;
+
     // 6. Cleanup
     let _ = child.kill();
     let _ = fs::remove_dir_all(&tmp_dir);
-    
+
     // Assert
     match resp {
         Ok(r) => {
-            assert!(r.status().is_success(), "Response was not success: {:?}", r.status());
+            assert!(
+                r.status().is_success(),
+                "Response was not success: {:?}",
+                r.status()
+            );
             let text = r.text().await.unwrap();
             assert_eq!(text, "Hello Backend");
-        },
+        }
         Err(e) => {
             panic!("Request failed: {}", e);
         }

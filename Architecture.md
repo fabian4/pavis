@@ -20,6 +20,12 @@ Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data P
 pavis/
 ├── crates/
 │   ├── pavis/          # Proxy – Pingora-based traffic engine
+│   │   ├── src/
+│   │   │   ├── config/     # Domain: User Input (DTOs, Validation)
+│   │   │   ├── router/     # Domain: Traffic Steering (Matching)
+│   │   │   ├── upstream/   # Domain: Backend State (Clusters, LB)
+│   │   │   ├── telemetry/  # Domain: Observability (Logs, Metrics)
+│   │   │   └── proxy/      # Domain: Runtime Coordination
 │   ├── pavis-core/     # Protocol – Shared rkyv structs & validation
 │   ├── pavis-cli/      # CLI – YAML → .pvs compiler & inspector
 │   └── pavis-xds/      # Bridge – xDS translator & HTTP config server
@@ -28,12 +34,52 @@ pavis/
 
 | Component | Package | Type | Role |
 |-----------|---------|------|------|
-| **Proxy** | `pavis` | Binary | Pingora-based engine. Handles traffic, enforces policies, loads config via `mmap`. Does NOT understand xDS. |
+| **Proxy** | `pavis` | Binary/Lib | Pingora-based engine. Handles traffic, enforces policies. Now modularized into `config`, `router`, `upstream`, `telemetry`, and `proxy`. |
 | **Protocol** | `pavis-core` | Library | Shared interface. Defines `ProxyConfig` structs, `rkyv` serialization, validation rules. |
 | **Bridge** | `pavis-xds` | Binary | Controller. Connects to Istiod via xDS, translates Protobuf to `.pvs`, serves config via HTTP. |
 | **CLI** | `pavis-cli` | Binary | Developer tool. Compiles YAML to `.pvs` and inspects binary files for debugging. |
 
-## 3. Protocol (`.pvs`)
+## 3. Proxy Internal Architecture
+
+The `pavis` crate has been refactored into a **Domain-Driven Architecture** with strict module boundaries and invariants.
+
+### 3.1. Modules
+
+1.  **Config (`config`)**:
+    *   **Role**: Pure Data Transfer Objects (DTOs) and semantic validation.
+    *   **Invariant**: Configuration must be validated (`ValidatedConfig`) before being used by the runtime.
+    *   **Key Types**: `Config`, `ValidatedConfig`, `VirtualHost`.
+
+2.  **Router (`router`)**:
+    *   **Role**: Immutable request matching logic.
+    *   **Invariant**: Deterministic matching order. Regexes are pre-compiled at initialization (never on the hot path).
+    *   **Key Types**: `Router`, `matcher`.
+
+3.  **Upstream Manager (`upstream`)**:
+    *   **Role**: Ownership of backend clusters and mutable load balancing state.
+    *   **Invariant**: Thread-safe endpoint selection. Atomic updates to state. False sharing mitigation via cache-line alignment (`AlignedCounter`).
+    *   **Key Types**: `Manager`, `Cluster`, `AlignedCounter`.
+
+4.  **Telemetry (`telemetry`)**:
+    *   **Role**: Performance-oriented logging and metrics.
+    *   **Invariant**: **Non-blocking**. Operations must never block the request path (use `try_send` or background tasks). Failures result in dropped data, not crashes.
+    *   **Key Types**: `Telemetry`, `AccessLog`.
+
+5.  **Proxy Service (`proxy`)**:
+    *   **Role**: The "Thin Controller" that orchestrates the above modules.
+    *   **Invariant**: No business logic. No blocking calls. No ownership of mutable global state.
+    *   **Key Types**: `Proxy` (implements `Pingora::ProxyHttp`).
+
+### 3.2. Data Flow
+
+```
+Request -> Proxy -> Router (Match) -> Upstream Manager (Select Endpoint) -> Cluster -> Endpoint
+             │
+             ▼
+        Telemetry (Log)
+```
+
+## 4. Protocol (`.pvs`)
 
 The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configuration format.
 
@@ -50,7 +96,7 @@ The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configu
 1. **Zero Parsing** – Pavis uses `mmap` to map the file directly into virtual memory. No parsing step.
 2. **Lazy Loading** – If config contains 10,000 routes (50MB) but the app only calls 2 services, the OS only loads the specific 4KB pages needed. The rest stays on disk.
 
-## 4. Communication (Long Polling)
+## 5. Communication (Long Polling)
 
 Pavis avoids the complexity of gRPC bidirectional streams in the sidecar. It uses HTTP Long Polling.
 
@@ -74,7 +120,7 @@ pavis-proxy                              pavis-xds
      ▼  verify checksum, write config.pvs   ▼
 ```
 
-## 5. Resilience & Safety
+## 6. Resilience & Safety
 
 ### Crash-Loop Protection
 
@@ -86,7 +132,7 @@ pavis-proxy                              pavis-xds
 - **Rust** prevents buffer overflows and use-after-free errors common in C++ proxies
 - **Validation** – `rkyv` performs `check_bytes` on the memory map to ensure file integrity before use
 
-## 6. Strategic Filtering
+## 7. Strategic Filtering
 
 To prevent "Config Bloat" (a major issue in Envoy), the Bridge (`pavis-xds`) performs aggressive filtering before compiling the `.pvs` file.
 

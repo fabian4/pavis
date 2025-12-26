@@ -4,11 +4,11 @@ use pingora::prelude::*;
 use pingora::proxy::http_proxy_service;
 use std::sync::Arc;
 
-mod config;
-mod proxy;
-
-use config::{AccessLogConfig, Config};
-use proxy::Proxy;
+use pavis::config::{AccessLogConfig, Config};
+use pavis::proxy::Proxy;
+use pavis::router::Router;
+use pavis::telemetry::Telemetry;
+use pavis::upstream::Manager;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -17,18 +17,21 @@ struct Args {
     config: String,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Load configuration
     // TODO: Support config file watching for hot reload
     let config_content =
         std::fs::read_to_string(&args.config).context("Failed to read config file")?;
-    let mut config: Config =
+    let config: Config =
         serde_yaml::from_str(&config_content).context("Failed to parse config file")?;
 
-    // Compile regex routes
-    config.compile_routes()?;
+    let config = config.validate().context("Config validation failed")?;
+
+    // Initialize Router (compiles regexes)
+    let router = Arc::new(Router::new(&config.routes)?);
 
     // TODO: Validate config (e.g., upstreams referenced in routes exist)
     let config = Arc::new(config);
@@ -59,6 +62,7 @@ fn main() -> Result<()> {
     );
 
     let mut server = Server::new(None).context("Failed to create Pingora server")?;
+    #[allow(clippy::collapsible_if)]
     if let Some(threads) = config.server.worker_threads {
         if let Some(conf) = Arc::get_mut(&mut server.configuration) {
             conf.threads = threads;
@@ -66,36 +70,16 @@ fn main() -> Result<()> {
     }
     server.bootstrap();
 
-    let mut upstream_counters = std::collections::HashMap::new();
-    let mut upstreams = std::collections::HashMap::new();
-    for upstream in &config.upstreams {
-        upstream_counters.insert(
-            upstream.name.clone(),
-            std::sync::atomic::AtomicUsize::new(0),
-        );
-        upstreams.insert(upstream.name.clone(), upstream.clone());
-    }
+    let upstream_manager = Manager::new(&config.upstreams);
 
-    let access_log_file = if let AccessLogConfig::File(path) = &config.telemetry.access_log {
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .context("Failed to open access log file")?;
-        Some(Arc::new(tokio::sync::Mutex::new(tokio::io::BufWriter::new(
-            tokio::fs::File::from_std(file),
-        ))))
-    } else {
-        None
-    };
+    let telemetry = Arc::new(Telemetry::new(&config.telemetry).await?);
 
     let mut proxy_service = http_proxy_service(
         &server.configuration,
         Proxy {
-            config: config.clone(),
-            upstreams,
-            upstream_counters,
-            access_log_file,
+            router,
+            upstream_manager,
+            telemetry,
         },
     );
     // TODO: Support multiple listen addresses

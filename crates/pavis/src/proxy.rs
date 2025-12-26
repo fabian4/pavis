@@ -1,28 +1,32 @@
-use crate::config::{
-    AccessLogConfig, Config, HeaderOperations, HttpVersion, LoadBalancer, MatchType, Route,
-    Upstream, VirtualHost,
-};
+//! Proxy module: The runtime coordination layer.
+//!
+//! # Architectural Invariants
+//!
+//! 1. **No Business Logic**: This module orchestrates `router`, `upstream`, and `telemetry`.
+//!    It should not contain complex logic for matching or load balancing.
+//! 2. **Non-Blocking**: All operations must be async and non-blocking.
+//!    - No `std::sync::Mutex` (use `tokio::sync::Mutex` if absolutely necessary, but prefer lock-free).
+//!    - No blocking I/O (file, network).
+//! 3. **No Mutable Global State**: State should be encapsulated in components (`Router`, `Manager`).
+//! 4. **Validated Configuration**: The proxy assumes configuration is valid and immutable.
+
+use crate::config::{HeaderOperations, HttpVersion};
+use crate::router::Router;
+use crate::telemetry::Telemetry;
+use crate::upstream::Manager;
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
-use regex::Regex;
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::fs::File;
-use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::sync::Mutex;
 
 pub struct Proxy {
-    pub config: Arc<Config>,
-    /// Pre-built HashMap for O(1) upstream lookup
-    pub upstreams: HashMap<String, Upstream>,
-    pub upstream_counters: HashMap<String, AtomicUsize>,
-    pub access_log_file: Option<Arc<Mutex<BufWriter<File>>>>,
+    pub router: Arc<Router>,
+    pub upstream_manager: Manager,
+    pub telemetry: Arc<Telemetry>,
 }
 
 pub struct RouterContext {
@@ -30,37 +34,6 @@ pub struct RouterContext {
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
     pub start_time: std::time::Instant,
-}
-
-pub fn find_route<'a>(
-    config: &'a Config,
-    host_header: Option<&str>,
-    uri_path: &str,
-) -> Option<(&'a VirtualHost, &'a Route)> {
-    for vhost in &config.routes {
-        if vhost.host == "*" || Some(vhost.host.as_str()) == host_header {
-            for route in vhost.paths.iter() {
-                let is_match = match route.match_type {
-                    MatchType::Prefix => uri_path.starts_with(&route.path),
-                    MatchType::Exact => uri_path == route.path,
-                    MatchType::Regex => route
-                        .compiled_regex
-                        .as_ref()
-                        .map(|re| re.is_match(uri_path))
-                        .unwrap_or_else(|| {
-                            Regex::new(&route.path)
-                                .map(|re| re.is_match(uri_path))
-                                .unwrap_or(false)
-                        }),
-                };
-
-                if is_match {
-                    return Some((vhost, route));
-                }
-            }
-        }
-    }
-    None
 }
 
 pub fn apply_request_headers(
@@ -125,60 +98,7 @@ pub fn apply_response_headers(
     Ok(())
 }
 
-impl Proxy {
-    pub fn select_endpoint_index(&self, upstream: &crate::config::Upstream) -> usize {
-        if upstream.endpoints.is_empty() {
-            return 0;
-        }
-
-        let total_weight: u32 = upstream
-            .endpoints
-            .iter()
-            .map(|e| e.weight.unwrap_or(1))
-            .sum();
-
-        if total_weight == 0 {
-            return 0;
-        }
-
-        match upstream.load_balancer {
-            LoadBalancer::RoundRobin => {
-                let counter = if let Some(c) = self.upstream_counters.get(&upstream.name) {
-                    c.fetch_add(1, Ordering::Relaxed)
-                } else {
-                    let mut rng = rand::rng();
-                    return rng.random_range(0..upstream.endpoints.len());
-                };
-
-                // Weighted Round Robin logic (Virtual Ring)
-                let mut current = (counter as u32) % total_weight;
-
-                for (i, endpoint) in upstream.endpoints.iter().enumerate() {
-                    let w = endpoint.weight.unwrap_or(1);
-                    if current < w {
-                        return i;
-                    }
-                    current -= w;
-                }
-                0
-            }
-            LoadBalancer::Random => {
-                // Weighted Random
-                let mut rng = rand::rng();
-                let mut pick = rng.random_range(0..total_weight);
-
-                for (i, endpoint) in upstream.endpoints.iter().enumerate() {
-                    let w = endpoint.weight.unwrap_or(1);
-                    if pick < w {
-                        return i;
-                    }
-                    pick -= w;
-                }
-                0
-            }
-        }
-    }
-}
+impl Proxy {}
 
 #[async_trait]
 impl ProxyHttp for Proxy {
@@ -203,18 +123,18 @@ impl ProxyHttp for Proxy {
             None => return Error::e_explain(InternalError, "No upstream selected"),
         };
 
-        // O(1) lookup using HashMap
-        let upstream = match self.upstreams.get(upstream_name) {
+        // O(1) lookup using Manager
+        let cluster = match self.upstream_manager.get(upstream_name) {
             Some(u) => u,
             None => return Error::e_explain(InternalError, "Upstream not found in config"),
         };
 
-        if upstream.endpoints.is_empty() {
-            return Error::e_explain(InternalError, "Upstream has no endpoints");
-        }
+        let endpoint = match cluster.select_endpoint() {
+            Some(e) => e,
+            None => return Error::e_explain(InternalError, "Upstream has no endpoints"),
+        };
 
-        let idx = self.select_endpoint_index(upstream);
-        let endpoint = &upstream.endpoints[idx];
+        let upstream = &cluster.config;
 
         let addr = format!("{}:{}", endpoint.ip, endpoint.port);
         tracing::debug!(
@@ -261,7 +181,7 @@ impl ProxyHttp for Proxy {
             "incoming request"
         );
 
-        if let Some((vhost, route)) = find_route(&self.config, host_header, uri_path) {
+        if let Some((vhost, route)) = self.router.match_request(host_header, uri_path) {
             tracing::trace!(host = %vhost.host, path = %route.path, "matched route");
 
             let total_weight: u32 = route.destinations.iter().map(|d| d.weight).sum();
@@ -309,72 +229,19 @@ impl ProxyHttp for Proxy {
     }
 
     async fn logging(&self, session: &mut Session, _e: Option<&Error>, ctx: &mut Self::CTX) {
-        match &self.config.telemetry.access_log {
-            AccessLogConfig::False => {}
-            AccessLogConfig::Stdout | AccessLogConfig::File(_) => {
-                let req = session.req_header();
-                let method = &req.method;
-                let path = req.uri.path();
-                let host = req
-                    .headers
-                    .get("host")
-                    .and_then(|h| h.to_str().ok())
-                    .unwrap_or("-");
-
-                let status = session
-                    .response_written()
-                    .map(|r| r.status.as_u16())
-                    .unwrap_or(0);
-
-                let upstream = ctx.upstream_name.as_deref().unwrap_or("-");
-                let response_time = ctx.start_time.elapsed().as_millis();
-                let client_ip = session
-                    .client_addr()
-                    .map(|a| a.to_string())
-                    .unwrap_or_else(|| "-".to_string());
-                let bytes_sent = session.body_bytes_sent();
-                let request_id = req
-                    .headers
-                    .get("x-request-id")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("-");
-
-                let log_line = format!(
-                    "{} {} {} {} {} {} {} {} {} {}\n",
-                    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ"),
-                    method,
-                    host,
-                    path,
-                    status,
-                    upstream,
-                    response_time,
-                    bytes_sent,
-                    client_ip,
-                    request_id
-                );
-
-                match &self.config.telemetry.access_log {
-                    AccessLogConfig::Stdout => {
-                        print!("{}", log_line);
-                    }
-                    AccessLogConfig::File(_) => {
-                        if let Some(writer) = &self.access_log_file {
-                            let mut w = writer.lock().await;
-                            let _ = w.write_all(log_line.as_bytes()).await;
-                            // We rely on BufWriter to flush when buffer is full for performance
-                        }
-                    }
-                    AccessLogConfig::False => {}
-                }
-            }
-        }
+        self.telemetry
+            .access_log
+            .log(session, ctx.upstream_name.as_deref(), ctx.start_time)
+            .await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{LoadBalancer, MatchType, Route, VirtualHost, WeightedDestination};
+    use crate::config::{Config, LoadBalancer, MatchType, Route, VirtualHost, WeightedDestination};
+    use crate::upstream::Cluster;
+    use std::collections::HashMap;
 
     fn create_test_config() -> Config {
         Config {
@@ -447,8 +314,10 @@ mod tests {
     #[test]
     fn test_find_route_exact_match() {
         let config = create_test_config();
-        let (vhost, route) =
-            find_route(&config, Some("example.com"), "/exact").expect("Should match");
+        let router = Router::new(&config.routes).unwrap();
+        let (vhost, route) = router
+            .match_request(Some("example.com"), "/exact")
+            .expect("Should match");
         assert_eq!(vhost.host, "example.com");
         assert_eq!(route.path, "/exact");
     }
@@ -456,8 +325,10 @@ mod tests {
     #[test]
     fn test_find_route_prefix_match() {
         let config = create_test_config();
-        let (vhost, route) =
-            find_route(&config, Some("example.com"), "/api/v1/users").expect("Should match");
+        let router = Router::new(&config.routes).unwrap();
+        let (vhost, route) = router
+            .match_request(Some("example.com"), "/api/v1/users")
+            .expect("Should match");
         assert_eq!(vhost.host, "example.com");
         assert_eq!(route.path, "/api");
     }
@@ -465,8 +336,10 @@ mod tests {
     #[test]
     fn test_find_route_wildcard_host() {
         let config = create_test_config();
-        let (vhost, route) =
-            find_route(&config, Some("any.com"), "/public/stuff").expect("Should match");
+        let router = Router::new(&config.routes).unwrap();
+        let (vhost, route) = router
+            .match_request(Some("any.com"), "/public/stuff")
+            .expect("Should match");
         assert_eq!(vhost.host, "*");
         assert_eq!(route.path, "/public");
     }
@@ -474,22 +347,24 @@ mod tests {
     #[test]
     fn test_find_route_no_match() {
         let config = create_test_config();
-        let result = find_route(&config, Some("example.com"), "/notfound");
+        let router = Router::new(&config.routes).unwrap();
+        let result = router.match_request(Some("example.com"), "/notfound");
         assert!(result.is_none());
     }
 
     #[test]
     fn test_find_route_wrong_host() {
         let config = create_test_config();
+        let router = Router::new(&config.routes).unwrap();
         // "other.com" matches "*" host but path "/exact" is only on "example.com"
         // Wait, "*" host has "/public". "/exact" is NOT on "*".
-        let result = find_route(&config, Some("other.com"), "/exact");
+        let result = router.match_request(Some("other.com"), "/exact");
         assert!(result.is_none());
     }
 
     #[test]
     fn test_find_route_regex_match() {
-        let mut config = Config {
+        let config = Config {
             server: crate::config::ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -522,27 +397,25 @@ mod tests {
             }],
         };
 
-        // Manually compile regex for test
-        config.routes[0].paths[0].compiled_regex =
-            Some(Regex::new(&config.routes[0].paths[0].path).unwrap());
+        let router = Router::new(&config.routes).unwrap();
 
         // Should match
-        let result = find_route(&config, None, "/api/v1/users/123");
+        let result = router.match_request(None, "/api/v1/users/123");
         assert!(result.is_some());
         let (_, route) = result.unwrap();
         assert_eq!(route.match_type, MatchType::Regex);
         assert!(route.compiled_regex.is_some());
 
         // Should match v2
-        let result = find_route(&config, None, "/api/v2/users/456");
+        let result = router.match_request(None, "/api/v2/users/456");
         assert!(result.is_some());
 
         // Should NOT match (missing user id)
-        let result = find_route(&config, None, "/api/v1/users/");
+        let result = router.match_request(None, "/api/v1/users/");
         assert!(result.is_none());
 
         // Should NOT match (non-numeric user id)
-        let result = find_route(&config, None, "/api/v1/users/abc");
+        let result = router.match_request(None, "/api/v1/users/abc");
         assert!(result.is_none());
     }
 
@@ -569,25 +442,14 @@ mod tests {
             ],
         };
 
-        let mut counters = HashMap::new();
-        counters.insert(
-            "weighted-upstream".to_string(),
-            std::sync::atomic::AtomicUsize::new(0),
-        );
-
-        let proxy = Proxy {
-            config: Arc::new(create_test_config()),
-            upstreams: HashMap::new(),
-            upstream_counters: counters,
-            access_log_file: None,
-        };
+        let cluster = Cluster::new(upstream);
 
         // Total weight = 4. Pattern should be A, A, A, B
-        assert_eq!(proxy.select_endpoint_index(&upstream), 0, "0 -> A");
-        assert_eq!(proxy.select_endpoint_index(&upstream), 0, "1 -> A");
-        assert_eq!(proxy.select_endpoint_index(&upstream), 0, "2 -> A");
-        assert_eq!(proxy.select_endpoint_index(&upstream), 1, "3 -> B");
-        assert_eq!(proxy.select_endpoint_index(&upstream), 0, "4 -> A");
+        assert_eq!(cluster.select_endpoint().unwrap().ip, "A"); // 0
+        assert_eq!(cluster.select_endpoint().unwrap().ip, "A"); // 1
+        assert_eq!(cluster.select_endpoint().unwrap().ip, "A"); // 2
+        assert_eq!(cluster.select_endpoint().unwrap().ip, "B"); // 3
+        assert_eq!(cluster.select_endpoint().unwrap().ip, "A"); // 4
     }
 
     #[test]
@@ -618,41 +480,69 @@ mod tests {
             ],
         };
 
-        let mut counters = HashMap::new();
-        counters.insert(
-            "test-upstream".to_string(),
-            std::sync::atomic::AtomicUsize::new(0),
-        );
+        let cluster = Cluster::new(upstream);
 
-        let proxy = Proxy {
-            config: Arc::new(crate::config::Config {
-                server: crate::config::ServerConfig {
-                    listen_addr: "".to_string(),
-                    worker_threads: None,
-                    tls: None,
-                },
-                telemetry: crate::config::TelemetryConfig {
-                    level: None,
-                    pingora: None,
-                    service_name: None,
-                    prometheus_addr: None,
-                    access_log: crate::config::AccessLogConfig::False,
-                    tracing: None,
-                },
-                upstreams: vec![upstream.clone()],
-                routes: vec![],
-            }),
-            upstreams: HashMap::new(),
-            upstream_counters: counters,
-            access_log_file: None,
-        };
+        // We can't easily check the index returned by select_endpoint because it returns &Endpoint.
+        // But we can check the port or ip.
 
-        assert_eq!(proxy.select_endpoint_index(&upstream), 0);
-        assert_eq!(proxy.select_endpoint_index(&upstream), 1);
-        assert_eq!(proxy.select_endpoint_index(&upstream), 2);
-        assert_eq!(proxy.select_endpoint_index(&upstream), 0);
+        let e1 = cluster.select_endpoint().unwrap();
+        assert_eq!(e1.port, 8081);
+
+        let e2 = cluster.select_endpoint().unwrap();
+        assert_eq!(e2.port, 8082);
+
+        let e3 = cluster.select_endpoint().unwrap();
+        assert_eq!(e3.port, 8083);
+
+        let e4 = cluster.select_endpoint().unwrap();
+        assert_eq!(e4.port, 8081);
     }
 
+    #[test]
+    fn test_concurrent_round_robin() {
+        let upstream = crate::config::Upstream {
+            name: "concurrent-upstream".to_string(),
+            load_balancer: LoadBalancer::RoundRobin,
+            http_version: crate::config::HttpVersion::H1,
+            connection_pool: crate::config::ConnectionPoolConfig::default(),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![
+                crate::config::Endpoint {
+                    ip: "A".to_string(),
+                    port: 80,
+                    weight: None,
+                },
+                crate::config::Endpoint {
+                    ip: "B".to_string(),
+                    port: 80,
+                    weight: None,
+                },
+            ],
+        };
+
+        let cluster = Arc::new(Cluster::new(upstream));
+
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let c = cluster.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    let _ = c.select_endpoint();
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let count = cluster
+            .rr_counter
+            .0
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(count, 1000);
+    }
     #[test]
     fn test_apply_headers() {
         let mut req = RequestHeader::build("GET", b"/", None).unwrap();
@@ -719,64 +609,5 @@ mod tests {
 
         // Check removed header
         assert!(resp.headers.get("X-Remove-Resp").is_none());
-    }
-
-    #[test]
-    fn test_concurrent_round_robin() {
-        let upstream = crate::config::Upstream {
-            name: "concurrent-upstream".to_string(),
-            load_balancer: LoadBalancer::RoundRobin,
-            http_version: crate::config::HttpVersion::H1,
-            connection_pool: crate::config::ConnectionPoolConfig::default(),
-            circuit_breaker: None,
-            health_check: None,
-            endpoints: vec![
-                crate::config::Endpoint {
-                    ip: "A".to_string(),
-                    port: 80,
-                    weight: None,
-                },
-                crate::config::Endpoint {
-                    ip: "B".to_string(),
-                    port: 80,
-                    weight: None,
-                },
-            ],
-        };
-
-        let mut counters = HashMap::new();
-        counters.insert(
-            "concurrent-upstream".to_string(),
-            std::sync::atomic::AtomicUsize::new(0),
-        );
-
-        let proxy = Arc::new(Proxy {
-            config: Arc::new(create_test_config()),
-            upstreams: HashMap::new(),
-            upstream_counters: counters,
-            access_log_file: None,
-        });
-
-        let mut handles = vec![];
-        for _ in 0..10 {
-            let p = proxy.clone();
-            let u = upstream.clone();
-            handles.push(std::thread::spawn(move || {
-                for _ in 0..100 {
-                    let _ = p.select_endpoint_index(&u);
-                }
-            }));
-        }
-
-        for h in handles {
-            h.join().unwrap();
-        }
-
-        let count = proxy
-            .upstream_counters
-            .get("concurrent-upstream")
-            .unwrap()
-            .load(Ordering::Relaxed);
-        assert_eq!(count, 1000);
     }
 }
