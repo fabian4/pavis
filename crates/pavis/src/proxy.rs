@@ -10,23 +10,26 @@ use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
 use regex::Regex;
 use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::fs::File;
+use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::sync::Mutex;
 
 pub struct Proxy {
     pub config: Arc<Config>,
     /// Pre-built HashMap for O(1) upstream lookup
     pub upstreams: HashMap<String, Upstream>,
     pub upstream_counters: HashMap<String, AtomicUsize>,
+    pub access_log_file: Option<Arc<Mutex<BufWriter<File>>>>,
 }
 
 pub struct RouterContext {
     pub upstream_name: Option<String>,
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
+    pub start_time: std::time::Instant,
 }
 
 pub fn find_route<'a>(
@@ -40,9 +43,15 @@ pub fn find_route<'a>(
                 let is_match = match route.match_type {
                     MatchType::Prefix => uri_path.starts_with(&route.path),
                     MatchType::Exact => uri_path == route.path,
-                    MatchType::Regex => Regex::new(&route.path)
+                    MatchType::Regex => route
+                        .compiled_regex
+                        .as_ref()
                         .map(|re| re.is_match(uri_path))
-                        .unwrap_or(false),
+                        .unwrap_or_else(|| {
+                            Regex::new(&route.path)
+                                .map(|re| re.is_match(uri_path))
+                                .unwrap_or(false)
+                        }),
                 };
 
                 if is_match {
@@ -63,8 +72,16 @@ pub fn apply_request_headers(
     if let Some(headers) = headers {
         if let Some(add_map) = &headers.add {
             for (k, v) in add_map {
-                if let (Ok(key), Ok(val)) = (HeaderName::from_str(k), HeaderValue::from_str(v)) {
-                    req.insert_header(key, val)?;
+                match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
+                    (Ok(key), Ok(val)) => {
+                        req.insert_header(key, val)?;
+                    }
+                    (Err(e), _) => {
+                        tracing::warn!("Invalid request header name '{}': {}", k, e);
+                    }
+                    (_, Err(e)) => {
+                        tracing::warn!("Invalid request header value for '{}': {}", k, e);
+                    }
                 }
             }
         }
@@ -86,8 +103,16 @@ pub fn apply_response_headers(
     if let Some(headers) = headers {
         if let Some(add_map) = &headers.add {
             for (k, v) in add_map {
-                if let (Ok(key), Ok(val)) = (HeaderName::from_str(k), HeaderValue::from_str(v)) {
-                    resp.insert_header(key, val)?;
+                match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
+                    (Ok(key), Ok(val)) => {
+                        resp.insert_header(key, val)?;
+                    }
+                    (Err(e), _) => {
+                        tracing::warn!("Invalid response header name '{}': {}", k, e);
+                    }
+                    (_, Err(e)) => {
+                        tracing::warn!("Invalid response header value for '{}': {}", k, e);
+                    }
                 }
             }
         }
@@ -164,6 +189,7 @@ impl ProxyHttp for Proxy {
             upstream_name: None,
             request_headers: None,
             response_headers: None,
+            start_time: std::time::Instant::now(),
         }
     }
 
@@ -201,7 +227,7 @@ impl ProxyHttp for Proxy {
 
         let mut peer = HttpPeer::new(
             &addr,
-            false, // TLS disabled for now
+            false, // TODO: Implement TLS upstream support
             "localhost".to_string(),
         );
 
@@ -301,26 +327,41 @@ impl ProxyHttp for Proxy {
                     .unwrap_or(0);
 
                 let upstream = ctx.upstream_name.as_deref().unwrap_or("-");
+                let response_time = ctx.start_time.elapsed().as_millis();
+                let client_ip = session
+                    .client_addr()
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let bytes_sent = session.body_bytes_sent();
+                let request_id = req
+                    .headers
+                    .get("x-request-id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-");
 
                 let log_line = format!(
-                    "{} {} {} {} {} {}\n",
+                    "{} {} {} {} {} {} {} {} {} {}\n",
                     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ"),
                     method,
                     host,
                     path,
                     status,
-                    upstream
+                    upstream,
+                    response_time,
+                    bytes_sent,
+                    client_ip,
+                    request_id
                 );
 
                 match &self.config.telemetry.access_log {
                     AccessLogConfig::Stdout => {
                         print!("{}", log_line);
                     }
-                    AccessLogConfig::File(path) => {
-                        if let Ok(mut file) =
-                            OpenOptions::new().create(true).append(true).open(path)
-                        {
-                            let _ = file.write_all(log_line.as_bytes());
+                    AccessLogConfig::File(_) => {
+                        if let Some(writer) = &self.access_log_file {
+                            let mut w = writer.lock().await;
+                            let _ = w.write_all(log_line.as_bytes()).await;
+                            // We rely on BufWriter to flush when buffer is full for performance
                         }
                     }
                     AccessLogConfig::False => {}
@@ -366,6 +407,7 @@ mod tests {
                                 upstream: "backend-1".to_string(),
                                 weight: 1,
                             }],
+                            compiled_regex: None,
                         },
                         Route {
                             match_type: MatchType::Prefix,
@@ -378,6 +420,7 @@ mod tests {
                                 upstream: "backend-1".to_string(),
                                 weight: 1,
                             }],
+                            compiled_regex: None,
                         },
                     ],
                 },
@@ -394,6 +437,7 @@ mod tests {
                             upstream: "backend-2".to_string(),
                             weight: 1,
                         }],
+                        compiled_regex: None,
                     }],
                 },
             ],
@@ -445,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_find_route_regex_match() {
-        let config = Config {
+        let mut config = Config {
             server: crate::config::ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -473,15 +517,21 @@ mod tests {
                         upstream: "backend".to_string(),
                         weight: 1,
                     }],
+                    compiled_regex: None,
                 }],
             }],
         };
+
+        // Manually compile regex for test
+        config.routes[0].paths[0].compiled_regex =
+            Some(Regex::new(&config.routes[0].paths[0].path).unwrap());
 
         // Should match
         let result = find_route(&config, None, "/api/v1/users/123");
         assert!(result.is_some());
         let (_, route) = result.unwrap();
         assert_eq!(route.match_type, MatchType::Regex);
+        assert!(route.compiled_regex.is_some());
 
         // Should match v2
         let result = find_route(&config, None, "/api/v2/users/456");
@@ -529,6 +579,7 @@ mod tests {
             config: Arc::new(create_test_config()),
             upstreams: HashMap::new(),
             upstream_counters: counters,
+            access_log_file: None,
         };
 
         // Total weight = 4. Pattern should be A, A, A, B
@@ -593,6 +644,7 @@ mod tests {
             }),
             upstreams: HashMap::new(),
             upstream_counters: counters,
+            access_log_file: None,
         };
 
         assert_eq!(proxy.select_endpoint_index(&upstream), 0);
@@ -667,5 +719,64 @@ mod tests {
 
         // Check removed header
         assert!(resp.headers.get("X-Remove-Resp").is_none());
+    }
+
+    #[test]
+    fn test_concurrent_round_robin() {
+        let upstream = crate::config::Upstream {
+            name: "concurrent-upstream".to_string(),
+            load_balancer: LoadBalancer::RoundRobin,
+            http_version: crate::config::HttpVersion::H1,
+            connection_pool: crate::config::ConnectionPoolConfig::default(),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![
+                crate::config::Endpoint {
+                    ip: "A".to_string(),
+                    port: 80,
+                    weight: None,
+                },
+                crate::config::Endpoint {
+                    ip: "B".to_string(),
+                    port: 80,
+                    weight: None,
+                },
+            ],
+        };
+
+        let mut counters = HashMap::new();
+        counters.insert(
+            "concurrent-upstream".to_string(),
+            std::sync::atomic::AtomicUsize::new(0),
+        );
+
+        let proxy = Arc::new(Proxy {
+            config: Arc::new(create_test_config()),
+            upstreams: HashMap::new(),
+            upstream_counters: counters,
+            access_log_file: None,
+        });
+
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let p = proxy.clone();
+            let u = upstream.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    let _ = p.select_endpoint_index(&u);
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let count = proxy
+            .upstream_counters
+            .get("concurrent-upstream")
+            .unwrap()
+            .load(Ordering::Relaxed);
+        assert_eq!(count, 1000);
     }
 }

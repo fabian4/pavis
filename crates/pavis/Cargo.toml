@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "Pavis runtime"
 
 [dependencies]
-pingora = { version = "0.6.0", features = ["proxy"] }
+pingora = { version = "0.6.0", features = ["proxy", "openssl"] }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
@@ -18,3 +18,4 @@ rand = "0.9.2"
 http = "1.4.0"
 regex = "1"
 chrono = "0.4"
+tokio = { workspace = true, features = ["fs", "io-util", "sync"] }

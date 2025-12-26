@@ -3,10 +3,13 @@
 //! Some fields are defined but not yet used - they are planned for future phases.
 //! See ROADMAP.md for implementation timeline.
 
+// TODO: Remove this once all config fields are implemented
 #![allow(dead_code)]
 
 use serde::Deserialize;
 use std::collections::HashMap;
+use anyhow::{Context, Result};
+use regex::Regex;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -14,6 +17,22 @@ pub struct Config {
     pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
+}
+
+impl Config {
+    pub fn compile_routes(&mut self) -> Result<()> {
+        for vhost in &mut self.routes {
+            for route in &mut vhost.paths {
+                if route.match_type == MatchType::Regex {
+                    route.compiled_regex = Some(
+                        Regex::new(&route.path)
+                            .with_context(|| format!("Failed to compile regex for path: {}", route.path))?,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
@@ -80,14 +99,24 @@ impl<'de> Deserialize<'de> for AccessLogConfig {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        match s.as_str() {
-            "false" => Ok(AccessLogConfig::False),
-            "stdout" => Ok(AccessLogConfig::Stdout),
-            path if !path.is_empty() => Ok(AccessLogConfig::File(path.to_string())),
-            _ => Err(serde::de::Error::custom(
-                "access_log must be 'false', 'stdout', or a file path",
-            )),
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Helper {
+            Bool(bool),
+            String(String),
+        }
+
+        match Helper::deserialize(deserializer)? {
+            Helper::Bool(false) => Ok(AccessLogConfig::False),
+            Helper::Bool(true) => Err(serde::de::Error::custom("access_log cannot be true")),
+            Helper::String(s) => match s.as_str() {
+                "false" => Ok(AccessLogConfig::False),
+                "stdout" => Ok(AccessLogConfig::Stdout),
+                path if !path.is_empty() => Ok(AccessLogConfig::File(path.to_string())),
+                _ => Err(serde::de::Error::custom(
+                    "access_log must be 'false', 'stdout', or a file path",
+                )),
+            },
         }
     }
 }
@@ -97,10 +126,12 @@ pub struct TelemetryConfig {
     pub level: Option<String>,
     pub pingora: Option<String>,
     pub service_name: Option<String>,
+    // TODO: Implement prometheus metrics endpoint
     pub prometheus_addr: Option<String>,
     /// Access log: "off" (default), "stdout", or file path
     #[serde(default)]
     pub access_log: AccessLogConfig,
+    // TODO: Implement OpenTelemetry tracing
     pub tracing: Option<TracingConfig>,
 }
 
@@ -122,7 +153,9 @@ pub struct Upstream {
     /// Connection pool settings
     #[serde(default)]
     pub connection_pool: ConnectionPoolConfig,
+    // TODO: Implement circuit breaker logic
     pub circuit_breaker: Option<CircuitBreaker>,
+    // TODO: Implement health check logic
     pub health_check: Option<HealthCheck>,
     pub endpoints: Vec<Endpoint>,
 }
@@ -162,9 +195,11 @@ pub struct CircuitBreaker {
     pub max_retries: usize,
 }
 
+// TODO: Implement health check scheduling and endpoint status tracking
 #[derive(Debug, Deserialize, Clone)]
 pub struct HealthCheck {
     pub path: String,
+    // TODO: Parse duration string (e.g., "5s") into Duration
     pub interval: String,
     pub timeout: Option<String>,
     pub unhealthy_threshold: Option<usize>,
@@ -189,11 +224,15 @@ pub struct Route {
     #[serde(default)]
     pub match_type: MatchType,
     pub path: String,
+    // TODO: Implement request timeout
     pub timeout_ms: Option<u64>,
+    // TODO: Implement retry policy
     pub retry: Option<RetryPolicy>,
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
     pub destinations: Vec<WeightedDestination>,
+    #[serde(skip)]
+    pub compiled_regex: Option<regex::Regex>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -345,6 +384,19 @@ routes: []
         let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
         assert_eq!(config.telemetry.access_log, AccessLogConfig::False);
 
+        // Test boolean false
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  access_log: false
+upstreams: []
+routes: []
+"#;
+        let config: Config =
+            serde_yaml::from_str(yaml).expect("Failed to deserialize boolean false");
+        assert_eq!(config.telemetry.access_log, AccessLogConfig::False);
+
         // Test file path
         let yaml = r#"
 server:
@@ -405,5 +457,79 @@ routes: []
             config.upstreams[0].connection_pool.connection_timeout_secs,
             10
         );
+    }
+
+    #[test]
+    fn test_tls_config_deserialization() {
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8443"
+  tls:
+    enabled: true
+    cert_path: "/path/to/cert.pem"
+    key_path: "/path/to/key.pem"
+telemetry:
+  level: "info"
+upstreams: []
+routes: []
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        
+        assert!(config.server.tls.is_some());
+        let tls = config.server.tls.unwrap();
+        assert!(tls.enabled);
+        assert_eq!(tls.cert_path, Some("/path/to/cert.pem".to_string()));
+        assert_eq!(tls.key_path, Some("/path/to/key.pem".to_string()));
+    }
+
+    #[test]
+    fn test_invalid_regex_compilation() {
+        let mut config = Config {
+            server: ServerConfig {
+                listen_addr: "0.0.0.0:8080".to_string(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: AccessLogConfig::False,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![VirtualHost {
+                host: "*".to_string(),
+                paths: vec![Route {
+                    match_type: MatchType::Regex,
+                    path: "[unclosed".to_string(),
+                    timeout_ms: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![],
+                    compiled_regex: None,
+                }],
+            }],
+        };
+        
+        assert!(config.compile_routes().is_err());
+    }
+
+    #[test]
+    fn test_empty_config_sections() {
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  access_log: false
+upstreams: []
+routes: []
+"#;
+        let mut config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize empty sections");
+        assert!(config.upstreams.is_empty());
+        assert!(config.routes.is_empty());
+        assert!(config.compile_routes().is_ok());
     }
 }
