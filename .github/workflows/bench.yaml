@@ -61,8 +61,8 @@ jobs:
       
           echo "PAVIS_COMMIT=$COMMIT_HASH" >> "$GITHUB_ENV"
           echo "PAVIS_COMMIT_SHORT=$SHORT_HASH" >> "$GITHUB_ENV"
-      
-          echo "Resolved tag ${{ inputs.pavis_tag }} -> $COMMIT_HASH"
+          
+          echo "Resolved tag $PAVIS_TAG -> $COMMIT_HASH"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -126,7 +126,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: output-${{ inputs.pavis_tag }}
+          name: output-${{ env.PAVIS_TAG }}
           path: bench/output/
           retention-days: 30
 

@@ -18,11 +18,15 @@ async fn test_response_header_manipulation() -> Result<()> {
 
     // 1. Verify Addition
     assert_eq!(
-        headers.get("x-pavis-resp-added").and_then(|v| v.to_str().ok()),
+        headers
+            .get("x-pavis-resp-added")
+            .and_then(|v| v.to_str().ok()),
         Some("Verified")
     );
     assert_eq!(
-        headers.get("x-multi-word-resp").and_then(|v| v.to_str().ok()),
+        headers
+            .get("x-multi-word-resp")
+            .and_then(|v| v.to_str().ok()),
         Some("Hello World")
     );
     assert_eq!(

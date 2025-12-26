@@ -3,9 +3,9 @@ use crate::config::{
 };
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
+use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
-use pingora::http::ResponseHeader;
 use rand::Rng;
 use std::collections::HashMap;
 use std::str::FromStr;
