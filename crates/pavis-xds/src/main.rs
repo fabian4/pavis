@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use rkyv::ser::{serializers::AllocSerializer, Serializer};
+use rkyv::ser::{Serializer, serializers::AllocSerializer};
 use std::fs;
 use std::path::PathBuf;
 

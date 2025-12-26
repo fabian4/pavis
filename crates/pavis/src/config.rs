@@ -1,13 +1,36 @@
+//! Configuration types for Pavis proxy.
+//!
+//! Some fields are defined but not yet used - they are planned for future phases.
+//! See ROADMAP.md for implementation timeline.
+
 #![allow(dead_code)]
+
 use serde::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct PavisConfig {
+pub struct Config {
     pub server: ServerConfig,
     pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum MatchType {
+    #[default]
+    Prefix,
+    Exact,
+    Regex,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum LoadBalancer {
+    #[default]
+    Random,
+    RoundRobin,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -44,7 +67,8 @@ pub struct TracingConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Upstream {
     pub name: String,
-    pub load_balancer: Option<String>,
+    #[serde(default)]
+    pub load_balancer: LoadBalancer,
     pub circuit_breaker: Option<CircuitBreaker>,
     pub health_check: Option<HealthCheck>,
     pub endpoints: Vec<Endpoint>,
@@ -81,7 +105,8 @@ pub struct VirtualHost {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Route {
-    pub match_type: String,
+    #[serde(default)]
+    pub match_type: MatchType,
     pub path: String,
     pub timeout_ms: Option<u64>,
     pub retry: Option<RetryPolicy>,
@@ -125,7 +150,7 @@ mod tests {
 
         let config_content =
             std::fs::read_to_string(config_path).expect("Failed to read config file");
-        let config: PavisConfig =
+        let config: Config =
             serde_yaml::from_str(&config_content).expect("Failed to deserialize config");
 
         assert_eq!(config.server.listen_addr, "0.0.0.0:8080");
@@ -144,14 +169,14 @@ mod tests {
         assert_eq!(config.routes[0].host, "backend");
         assert_eq!(config.routes[0].paths.len(), 2);
 
-        assert_eq!(config.routes[0].paths[0].match_type, "prefix");
+        assert_eq!(config.routes[0].paths[0].match_type, MatchType::Prefix);
         assert_eq!(config.routes[0].paths[0].path, "/api/v1");
         assert_eq!(
             config.routes[0].paths[0].destinations[0].upstream,
             "backend-v1"
         );
 
-        assert_eq!(config.routes[0].paths[1].match_type, "prefix");
+        assert_eq!(config.routes[0].paths[1].match_type, MatchType::Prefix);
         assert_eq!(config.routes[0].paths[1].path, "/api/v2");
         assert_eq!(
             config.routes[0].paths[1].destinations[0].upstream,

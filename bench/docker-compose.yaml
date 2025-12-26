@@ -1,0 +1,110 @@
+# Benchmark Docker Compose Configuration
+# =======================================
+# Resource limits can be overridden via environment variables:
+#   CPU_LIMIT    - Number of CPU cores (default: 2)
+#   MEMORY_LIMIT - Memory limit (default: 512M)
+#
+# Proxies:
+#   - pavis:    Port 8080 (Rust, async)
+#   - envoy:    Port 8081 (C++, reference)
+#   - nginx:    Port 8082 (C, widely used)
+#   - haproxy:  Port 8083 (C, baseline control)
+
+services:
+  # Backend service (httpbin)
+  backend:
+    image: kennethreitz/httpbin:latest
+    container_name: bench-backend
+    ports:
+      - "8000:80"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:80/get\")'"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # Pavis Proxy (Rust, async - our project)
+  pavis:
+    image: pavis:${PAVIS_TAG}
+    build:
+      context: ..
+      dockerfile: crates/pavis/Dockerfile
+    container_name: bench-pavis
+    volumes:
+      - ./config/pavis.yaml:/etc/pavis/config.yaml:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '${CPU_LIMIT:-2}'
+          memory: ${MEMORY_LIMIT:-512M}
+        reservations:
+          cpus: '${CPU_LIMIT:-2}'
+          memory: ${MEMORY_LIMIT:-512M}
+
+  # Envoy Proxy (C++, industry standard)
+  envoy:
+    image: envoyproxy/envoy:${ENVOY_TAG}
+    container_name: bench-envoy
+    volumes:
+      - ./config/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "8081:8081"
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["-c", "/etc/envoy/envoy.yaml", "--concurrency", "${CPU_LIMIT:-2}"]
+    deploy:
+      resources:
+        limits:
+          cpus: '${CPU_LIMIT:-2}'
+          memory: ${MEMORY_LIMIT:-512M}
+        reservations:
+          cpus: '${CPU_LIMIT:-2}'
+          memory: ${MEMORY_LIMIT:-512M}
+
+  # Nginx (C, widely-used reverse proxy)
+  nginx:
+    image: nginx:${NGINX_TAG}
+    container_name: bench-nginx
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8082:8082"
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '${CPU_LIMIT:-2}'
+          memory: ${MEMORY_LIMIT:-512M}
+        reservations:
+          cpus: '${CPU_LIMIT:-2}'
+          memory: ${MEMORY_LIMIT:-512M}
+
+  # HAProxy (C, baseline control - mature, optimized)
+  # Note: nbthread=2 hardcoded; CPU actually limited via cgroups
+  haproxy:
+    image: haproxy:${HAPROXY_TAG}
+    container_name: bench-haproxy
+    volumes:
+      - ./config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "8083:8083"
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '${CPU_LIMIT:-2}'
+          memory: ${MEMORY_LIMIT:-512M}
+        reservations:
+          cpus: '${CPU_LIMIT:-2}'
+          memory: ${MEMORY_LIMIT:-512M}

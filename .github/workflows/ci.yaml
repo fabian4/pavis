@@ -29,6 +29,10 @@ jobs:
       - name: Build Release Binary
         run: make binary-build
 
+      - name: Log Binary Size
+        run: |
+          echo "Binary Size: $(du -h target/release/pavis | cut -f1)"
+
       - name: Run E2E Tests in Binary
         run: make e2e-binary
 

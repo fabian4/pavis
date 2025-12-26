@@ -1,0 +1,18 @@
+mod common;
+
+use anyhow::Result;
+use pavis_e2e::utils::get_upstream_name;
+
+#[tokio::test]
+async fn test_basic_routing() -> Result<()> {
+    let (client, _env) = common::setup("basic_routing.yaml").await;
+
+    for _ in 1..=10 {
+        let upstream = get_upstream_name(&client, "/").await?;
+        assert!(
+            upstream.contains("backend-v"),
+            "Upstream should be a backend"
+        );
+    }
+    Ok(())
+}

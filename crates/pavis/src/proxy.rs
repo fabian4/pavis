@@ -1,14 +1,21 @@
-use crate::config::{HeaderOperations, PavisConfig, Route, VirtualHost};
+use crate::config::{
+    Config, HeaderOperations, LoadBalancer, MatchType, Route, Upstream, VirtualHost,
+};
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub struct MyProxy {
-    pub config: Arc<PavisConfig>,
+pub struct Proxy {
+    pub config: Arc<Config>,
+    /// Pre-built HashMap for O(1) upstream lookup
+    pub upstreams: HashMap<String, Upstream>,
+    pub upstream_counters: HashMap<String, AtomicUsize>,
 }
 
 pub struct RouterContext {
@@ -17,17 +24,17 @@ pub struct RouterContext {
 }
 
 pub fn find_route<'a>(
-    config: &'a PavisConfig,
+    config: &'a Config,
     host_header: Option<&str>,
     uri_path: &str,
 ) -> Option<(&'a VirtualHost, &'a Route)> {
     for vhost in &config.routes {
         if vhost.host == "*" || Some(vhost.host.as_str()) == host_header {
             for route in vhost.paths.iter() {
-                let is_match = match route.match_type.as_str() {
-                    "prefix" => uri_path.starts_with(&route.path),
-                    "exact" => uri_path == route.path,
-                    _ => false,
+                let is_match = match route.match_type {
+                    MatchType::Prefix => uri_path.starts_with(&route.path),
+                    MatchType::Exact => uri_path == route.path,
+                    MatchType::Regex => false, // TODO: implement regex matching
                 };
 
                 if is_match {
@@ -39,8 +46,83 @@ pub fn find_route<'a>(
     None
 }
 
+pub fn apply_headers(req: &mut RequestHeader, headers: Option<&HeaderOperations>) -> Result<()> {
+    req.insert_header("X-Proxy-By", "Pavis")?;
+
+    if let Some(headers) = headers {
+        if let Some(add_map) = &headers.add {
+            for (k, v) in add_map {
+                if let (Ok(key), Ok(val)) = (HeaderName::from_str(k), HeaderValue::from_str(v)) {
+                    req.insert_header(key, val)?;
+                }
+            }
+        }
+        if let Some(remove_list) = &headers.remove {
+            for k in remove_list {
+                req.remove_header(k);
+            }
+        }
+    }
+    Ok(())
+}
+
+impl Proxy {
+    pub fn select_endpoint_index(&self, upstream: &crate::config::Upstream) -> usize {
+        if upstream.endpoints.is_empty() {
+            return 0;
+        }
+
+        let total_weight: u32 = upstream
+            .endpoints
+            .iter()
+            .map(|e| e.weight.unwrap_or(1))
+            .sum();
+
+        if total_weight == 0 {
+            return 0;
+        }
+
+        match upstream.load_balancer {
+            LoadBalancer::RoundRobin => {
+                let counter = if let Some(c) = self.upstream_counters.get(&upstream.name) {
+                    c.fetch_add(1, Ordering::Relaxed)
+                } else {
+                    let mut rng = rand::rng();
+                    return rng.random_range(0..upstream.endpoints.len());
+                };
+
+                // Weighted Round Robin logic (Virtual Ring)
+                let mut current = (counter as u32) % total_weight;
+
+                for (i, endpoint) in upstream.endpoints.iter().enumerate() {
+                    let w = endpoint.weight.unwrap_or(1);
+                    if current < w {
+                        return i;
+                    }
+                    current -= w;
+                }
+                0
+            }
+            LoadBalancer::Random => {
+                // Weighted Random
+                let mut rng = rand::rng();
+                let mut pick = rng.random_range(0..total_weight);
+
+                for (i, endpoint) in upstream.endpoints.iter().enumerate() {
+                    let w = endpoint.weight.unwrap_or(1);
+                    if pick < w {
+                        return i;
+                    }
+                    pick -= w;
+                }
+                0
+            }
+        }
+    }
+}
+
 #[async_trait]
-impl ProxyHttp for MyProxy {
+impl ProxyHttp for Proxy {
     type CTX = RouterContext;
 
     fn new_ctx(&self) -> Self::CTX {
@@ -60,32 +142,33 @@ impl ProxyHttp for MyProxy {
             None => return Error::e_explain(InternalError, "No upstream selected"),
         };
 
-        let upstream = self
-            .config
-            .upstreams
-            .iter()
-            .find(|u| &u.name == upstream_name);
+        // O(1) lookup using HashMap
+        let upstream = match self.upstreams.get(upstream_name) {
+            Some(u) => u,
+            None => return Error::e_explain(InternalError, "Upstream not found in config"),
+        };
 
-        if let Some(u) = upstream {
-            if u.endpoints.is_empty() {
-                return Error::e_explain(InternalError, "Upstream has no endpoints");
-            }
-            let mut rng = rand::rng();
-            let idx = rng.random_range(0..u.endpoints.len());
-            let endpoint = &u.endpoints[idx];
-
-            let addr = format!("{}:{}", endpoint.ip, endpoint.port);
-            tracing::info!("Forwarding to upstream: {} -> {}", upstream_name, addr);
-
-            let peer = Box::new(HttpPeer::new(
-                &addr,
-                false, // TLS disabled for now
-                "localhost".to_string(),
-            ));
-            return Ok(peer);
+        if upstream.endpoints.is_empty() {
+            return Error::e_explain(InternalError, "Upstream has no endpoints");
         }
 
-        Error::e_explain(InternalError, "Upstream not found in config")
+        let idx = self.select_endpoint_index(upstream);
+        let endpoint = &upstream.endpoints[idx];
+
+        let addr = format!("{}:{}", endpoint.ip, endpoint.port);
+        tracing::debug!(
+            upstream = %upstream_name,
+            endpoint = %addr,
+            lb = ?upstream.load_balancer,
+            "forwarding request"
+        );
+
+        let peer = Box::new(HttpPeer::new(
+            &addr,
+            false, // TLS disabled for now
+            "localhost".to_string(),
+        ));
+        Ok(peer)
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
@@ -93,19 +176,19 @@ impl ProxyHttp for MyProxy {
         let host_header = req_header.headers.get("Host").and_then(|h| h.to_str().ok());
         let uri_path = req_header.uri.path();
 
-        tracing::info!(
-            "Incoming request: method={}, path={}, host={:?}",
-            req_header.method,
-            uri_path,
-            host_header
+        tracing::debug!(
+            method = %req_header.method,
+            path = %uri_path,
+            host = ?host_header,
+            "incoming request"
         );
 
         if let Some((vhost, route)) = find_route(&self.config, host_header, uri_path) {
-            tracing::debug!("Matched route: host={}, path={}", vhost.host, route.path);
+            tracing::trace!(host = %vhost.host, path = %route.path, "matched route");
 
             let total_weight: u32 = route.destinations.iter().map(|d| d.weight).sum();
             if total_weight == 0 {
-                return Ok(false); // Or handle as error/no-op?
+                return Ok(false);
             }
 
             let mut rng = rand::rng();
@@ -136,36 +219,17 @@ impl ProxyHttp for MyProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        upstream_request.insert_header("X-Proxy-By", "Pavis")?;
-
-        if let Some(headers) = &ctx.matched_headers {
-            if let Some(add_map) = &headers.add {
-                for (k, v) in add_map {
-                    if let Ok(val) = HeaderValue::from_str(v) {
-                        if let Ok(key) = HeaderName::from_str(k) {
-                            upstream_request.insert_header(key, val)?;
-                        }
-                    }
-                }
-            }
-            if let Some(remove_list) = &headers.remove {
-                for k in remove_list {
-                    upstream_request.remove_header(k);
-                }
-            }
-        }
-
-        Ok(())
+        apply_headers(upstream_request, ctx.matched_headers.as_ref())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Route, VirtualHost, WeightedDestination};
+    use crate::config::{LoadBalancer, MatchType, Route, VirtualHost, WeightedDestination};
 
-    fn create_test_config() -> PavisConfig {
-        PavisConfig {
+    fn create_test_config() -> Config {
+        Config {
             server: crate::config::ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -185,7 +249,7 @@ mod tests {
                     host: "example.com".to_string(),
                     paths: vec![
                         Route {
-                            match_type: "exact".to_string(),
+                            match_type: MatchType::Exact,
                             path: "/exact".to_string(),
                             timeout_ms: None,
                             retry: None,
@@ -196,7 +260,7 @@ mod tests {
                             }],
                         },
                         Route {
-                            match_type: "prefix".to_string(),
+                            match_type: MatchType::Prefix,
                             path: "/api".to_string(),
                             timeout_ms: None,
                             retry: None,
@@ -211,7 +275,7 @@ mod tests {
                 VirtualHost {
                     host: "*".to_string(),
                     paths: vec![Route {
-                        match_type: "prefix".to_string(),
+                        match_type: MatchType::Prefix,
                         path: "/public".to_string(),
                         timeout_ms: None,
                         retry: None,
@@ -267,5 +331,140 @@ mod tests {
         // Wait, "*" host has "/public". "/exact" is NOT on "*".
         let result = find_route(&config, Some("other.com"), "/exact");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_weighted_round_robin_respects_weights() {
+        let upstream = crate::config::Upstream {
+            name: "weighted-upstream".to_string(),
+            load_balancer: LoadBalancer::RoundRobin,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![
+                crate::config::Endpoint {
+                    ip: "A".to_string(),
+                    port: 80,
+                    weight: Some(3), // 0, 1, 2
+                },
+                crate::config::Endpoint {
+                    ip: "B".to_string(),
+                    port: 80,
+                    weight: Some(1), // 3
+                },
+            ],
+        };
+
+        let mut counters = HashMap::new();
+        counters.insert(
+            "weighted-upstream".to_string(),
+            std::sync::atomic::AtomicUsize::new(0),
+        );
+
+        let proxy = Proxy {
+            config: Arc::new(create_test_config()),
+            upstreams: HashMap::new(),
+            upstream_counters: counters,
+        };
+
+        // Total weight = 4. Pattern should be A, A, A, B
+        assert_eq!(proxy.select_endpoint_index(&upstream), 0, "0 -> A");
+        assert_eq!(proxy.select_endpoint_index(&upstream), 0, "1 -> A");
+        assert_eq!(proxy.select_endpoint_index(&upstream), 0, "2 -> A");
+        assert_eq!(proxy.select_endpoint_index(&upstream), 1, "3 -> B");
+        assert_eq!(proxy.select_endpoint_index(&upstream), 0, "4 -> A");
+    }
+
+    #[test]
+    fn test_round_robin_cycles_endpoints_evenly() {
+        let upstream = crate::config::Upstream {
+            name: "test-upstream".to_string(),
+            load_balancer: LoadBalancer::RoundRobin,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![
+                crate::config::Endpoint {
+                    ip: "127.0.0.1".to_string(),
+                    port: 8081,
+                    weight: None,
+                },
+                crate::config::Endpoint {
+                    ip: "127.0.0.1".to_string(),
+                    port: 8082,
+                    weight: None,
+                },
+                crate::config::Endpoint {
+                    ip: "127.0.0.1".to_string(),
+                    port: 8083,
+                    weight: None,
+                },
+            ],
+        };
+
+        let mut counters = HashMap::new();
+        counters.insert(
+            "test-upstream".to_string(),
+            std::sync::atomic::AtomicUsize::new(0),
+        );
+
+        let proxy = Proxy {
+            config: Arc::new(crate::config::Config {
+                server: crate::config::ServerConfig {
+                    listen_addr: "".to_string(),
+                    worker_threads: None,
+                    tls: None,
+                },
+                telemetry: crate::config::TelemetryConfig {
+                    level: None,
+                    pingora: None,
+                    service_name: None,
+                    prometheus_addr: None,
+                    access_log: None,
+                    tracing: None,
+                },
+                upstreams: vec![upstream.clone()],
+                routes: vec![],
+            }),
+            upstreams: HashMap::new(),
+            upstream_counters: counters,
+        };
+
+        assert_eq!(proxy.select_endpoint_index(&upstream), 0);
+        assert_eq!(proxy.select_endpoint_index(&upstream), 1);
+        assert_eq!(proxy.select_endpoint_index(&upstream), 2);
+        assert_eq!(proxy.select_endpoint_index(&upstream), 0);
+    }
+
+    #[test]
+    fn test_apply_headers() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        // Add a header to be removed
+        req.insert_header("X-Remove", "old-value").unwrap();
+
+        let mut add_map = HashMap::new();
+        add_map.insert("X-Add".to_string(), "new-value".to_string());
+
+        let remove_list = vec!["X-Remove".to_string()];
+
+        let ops = HeaderOperations {
+            add: Some(add_map),
+            remove: Some(remove_list),
+        };
+
+        apply_headers(&mut req, Some(&ops)).unwrap();
+
+        // Check X-Proxy-By (always added)
+        assert_eq!(
+            req.headers.get("X-Proxy-By").unwrap().to_str().unwrap(),
+            "Pavis"
+        );
+
+        // Check added header
+        assert_eq!(
+            req.headers.get("X-Add").unwrap().to_str().unwrap(),
+            "new-value"
+        );
+
+        // Check removed header
+        assert!(req.headers.get("X-Remove").is_none());
     }
 }

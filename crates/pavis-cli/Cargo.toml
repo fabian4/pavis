@@ -1,0 +1,9 @@
+[package]
+name = "pavis-cli"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Pavis CLI"
+
+[dependencies]
+pavis-core = "0.0.0"

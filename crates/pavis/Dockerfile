@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM lukemathwalker/cargo-chef:latest-rust-1.84 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.85 AS chef
 WORKDIR /app
 
 FROM chef AS planner

@@ -1,0 +1,38 @@
+server:
+  listen_addr: "0.0.0.0:8080"
+  worker_threads: 2
+  tls:
+    enabled: false
+
+telemetry:
+  level: "info"
+  pingora: "info"
+  service_name: "pavis-e2e-header-manipulation"
+  prometheus_addr: "0.0.0.0:9091"
+  access_log: "stdout"
+  tracing:
+    enabled: true
+    provider: "opentelemetry"
+    sampling_rate: 1.0
+
+upstreams:
+  - name: "backend-v1"
+    load_balancer: "round-robin"
+    endpoints:
+      - ip: "${BACKEND_V1_HOST}"
+        port: 8081
+
+routes:
+  - host: "*" 
+    paths:
+      - match_type: "prefix"
+        path: "/headers"
+        headers:
+          add:
+            X-Pavis-Added: "Verified"
+            X-Multi-Word: "Hello World"
+          remove:
+            - "X-Pavis-Remove-Me"
+        destinations:
+          - upstream: "backend-v1"
+            weight: 100

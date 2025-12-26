@@ -1,34 +1,29 @@
-# Pavis - A Lightweight Service Mesh Sidecar
+# Pavis
+**The High-Performance, Memory-Safe Service Mesh Data Plane**
 
+![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)
+![Language](https://img.shields.io/badge/language-Rust-orange.svg)
+![Engine](https://img.shields.io/badge/engine-Pingora-purple.svg)
+![Status](https://img.shields.io/badge/status-Pre--Alpha-red.svg)
 [![Crates.io](https://img.shields.io/crates/v/pavis.svg)](https://crates.io/crates/pavis)
-[![License](https://img.shields.io/crates/l/pavis.svg)](./LICENSE)
-## 🎯 Project Goal
-Build a lightweight, crash-safe, and memory-efficient service mesh sidecar to replace Envoy.
-**Core Philosophy:** Decoupled Architecture ("Smart Bridge, Dumb Proxy").
 
-## 🚀 Why this Split?
-Standard sidecars (Envoy) do **too much**. They have to parse massive Protobuf configs, handle xDS streams, and manage complex internal state.
-*   **Pavis xDS** takes the burden of complexity.
-*   **Pavis** stays simple, fast, and dumb.
+**Pavis** is a next-generation Service Mesh sidecar proxy built on **Rust** and **Cloudflare Pingora**. It replaces heavy C++ sidecars (like Envoy) with a lightweight, crash-safe alternative using a **"Split Data Plane"** architecture.
 
-## 📊 Comparison
+## Quick Start
 
-| Feature | Envoy | Pavis (Goal) |
-| :--- | :--- | :--- |
-| **Language** | C++ | Rust (Safe) |
-| **Memory** | 100MB+ | ~20MB |
-| **Config Load** | Heavy (Protobuf parsing overhead) | Instant (Zero-copy `Pavis Core` loading) |
-| **Architecture** | Monolithic Sidecar | Decoupled (Controller + Proxy) |
+```bash
+# Build all crates
+cargo build --workspace
 
-## 🛠 Tech Stack
-*   **Language:** Rust
-*   **Proxy Engine:** [Cloudflare Pingora](https://github.com/cloudflare/pingora)
-*   **Control Plane Communication:** `tonic` (gRPC)
-*   **Serialization:** `rkyv` (Zero-Copy)
+# Run tests
+cargo test --workspace
 
-## 🏃 Quick Start
+# Local development workflow
+cargo run -p pavis-cli -- compile -i config.yaml -o config.pvs
+cargo run -p pavis -- --config config.pvs
+```
 
-### Prerequisites
-*   Rust 1.75+
-*   `cmake` (for Pingora)
-*   Docker & Docker Compose (for E2E tests)
+## Documentation
+
+- **[Architecture.md](./Architecture.md)** - System design, protocol specification, and component details
+- **[ROADMAP.md](./ROADMAP.md)** - Development phases and progress tracking

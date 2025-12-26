@@ -7,7 +7,7 @@ server:
 telemetry:
   level: "info"
   pingora: "info"
-  service_name: "pavis-e2e-${TEST_MODE}"
+  service_name: "pavis-e2e-upstream-weight"
   prometheus_addr: "0.0.0.0:9091"
   access_log: "stdout"
   tracing:
@@ -16,16 +16,12 @@ telemetry:
     sampling_rate: 1.0
 
 upstreams:
-  - name: "backend-v1"
-    load_balancer: "round_robin"
+  - name: "backend-weighted"
+    load_balancer: "round-robin"
     endpoints:
       - ip: "${BACKEND_V1_HOST}"
         port: 8081
-        weight: 1
-
-  - name: "backend-v2"
-    load_balancer: "round_robin"
-    endpoints:
+        weight: 3
       - ip: "${BACKEND_V2_HOST}"
         port: 8082
         weight: 1
@@ -35,12 +31,6 @@ routes:
     paths:
       - match_type: "prefix"
         path: "/"
-        headers:
-          add:
-            x-sidecar-proxy: "pavis-e2e-${TEST_MODE}"
-            x-e2e-test: "true"
         destinations:
-          - upstream: "backend-v1"
-            weight: 50
-          - upstream: "backend-v2"
-            weight: 50
+          - upstream: "backend-weighted"
+            weight: 100

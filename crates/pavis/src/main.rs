@@ -7,8 +7,8 @@ use std::sync::Arc;
 mod config;
 mod proxy;
 
-use config::PavisConfig;
-use proxy::MyProxy;
+use config::Config;
+use proxy::Proxy;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     // Load configuration
     let config_content =
         std::fs::read_to_string(&args.config).context("Failed to read config file")?;
-    let config: PavisConfig =
+    let config: Config =
         serde_yaml::from_str(&config_content).context("Failed to parse config file")?;
 
     let config = Arc::new(config);
@@ -46,17 +46,29 @@ fn main() -> Result<()> {
         args.config
     );
 
-    let mut my_server = Server::new(None).context("Failed to create Pingora server")?;
-    my_server.bootstrap();
+    let mut server = Server::new(None).context("Failed to create Pingora server")?;
+    server.bootstrap();
 
-    let mut my_proxy = http_proxy_service(
-        &my_server.configuration,
-        MyProxy {
+    let mut upstream_counters = std::collections::HashMap::new();
+    let mut upstreams = std::collections::HashMap::new();
+    for upstream in &config.upstreams {
+        upstream_counters.insert(
+            upstream.name.clone(),
+            std::sync::atomic::AtomicUsize::new(0),
+        );
+        upstreams.insert(upstream.name.clone(), upstream.clone());
+    }
+
+    let mut proxy_service = http_proxy_service(
+        &server.configuration,
+        Proxy {
             config: config.clone(),
+            upstreams,
+            upstream_counters,
         },
     );
-    my_proxy.add_tcp(&config.server.listen_addr);
+    proxy_service.add_tcp(&config.server.listen_addr);
 
-    my_server.add_service(my_proxy);
-    my_server.run_forever();
+    server.add_service(proxy_service);
+    server.run_forever();
 }

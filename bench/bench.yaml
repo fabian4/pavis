@@ -1,0 +1,146 @@
+# Benchmark Matrix Specification
+# ==============================
+# Reference document for the benchmark matrix dimensions and configurations.
+# The actual benchmark is implemented in scripts/run.sh.
+
+# Proxies under test
+proxies:
+  pavis:
+    language: Rust
+    type: "Async proxy (this project)"
+    port: 8080
+  envoy:
+    language: C++
+    type: "Industry standard proxy"
+    port: 8081
+  nginx:
+    language: C
+    type: "Widely-used reverse proxy"
+    port: 8082
+  haproxy:
+    language: C
+    type: "Baseline control (mature)"
+    port: 8083
+
+# Dimensions (orthogonal parameters)
+dimensions:
+  workload:
+    description: "Operational pattern applied to the system under test"
+    values:
+      throughput:
+        connections: 100
+        description: "Measures requests per second under light load"
+      latency:
+        connections: 500
+        description: "Measures tail latency under sustained load"
+      concurrency:
+        connections: 5000
+        description: "Stresses the system with many concurrent connections"
+      churn:
+        connections: 100
+        connection_close: true
+        description: "Rapidly opens/closes connections to measure handshake cost"
+
+  resource:
+    description: "CPU and memory constraints applied via container limits"
+    values:
+      baseline:
+        cpu_cores: 2
+        memory_mib: 512
+      cpu-limited:
+        cpu_cores: 1
+        memory_mib: 512
+      memory-limited:
+        cpu_cores: 2
+        memory_mib: 256
+
+  duration:
+    description: "Measurement window; short for burst, extended for steady-state"
+    values:
+      short:
+        seconds: 30
+      extended:
+        seconds: 300
+
+  intensity:
+    description: "Multiplier applied to connection counts"
+    values:
+      1x: 1.0
+      2x: 2.0
+
+# Benchmark Matrix (11 configurations per proxy, 44 total)
+matrix:
+  # CI Matrix (4 runs per proxy) - baseline for regression detection
+  - id: throughput_baseline_short_1x
+    workload: throughput
+    resource: baseline
+    duration: short
+    intensity: 1x
+
+  - id: latency_baseline_short_1x
+    workload: latency
+    resource: baseline
+    duration: short
+    intensity: 1x
+
+  - id: concurrency_baseline_short_1x
+    workload: concurrency
+    resource: baseline
+    duration: short
+    intensity: 1x
+
+  - id: churn_baseline_short_1x
+    workload: churn
+    resource: baseline
+    duration: short
+    intensity: 1x
+
+  # Extended Matrix (7 runs per proxy) - detailed analysis
+  - id: throughput_cpu-limited_short_1x
+    workload: throughput
+    resource: cpu-limited
+    duration: short
+    intensity: 1x
+    purpose: "CPU saturation behavior"
+
+  - id: throughput_memory-limited_short_1x
+    workload: throughput
+    resource: memory-limited
+    duration: short
+    intensity: 1x
+    purpose: "Memory pressure behavior"
+
+  - id: churn_cpu-limited_short_1x
+    workload: churn
+    resource: cpu-limited
+    duration: short
+    intensity: 1x
+    purpose: "Handshake cost under CPU constraint"
+
+  - id: throughput_baseline_extended_1x
+    workload: throughput
+    resource: baseline
+    duration: extended
+    intensity: 1x
+    purpose: "Steady-state throughput stability"
+
+  - id: latency_baseline_extended_1x
+    workload: latency
+    resource: baseline
+    duration: extended
+    intensity: 1x
+    purpose: "Long-term latency stability"
+
+  - id: latency_baseline_short_2x
+    workload: latency
+    resource: baseline
+    duration: short
+    intensity: 2x
+    purpose: "Latency under increased load"
+
+  - id: concurrency_baseline_short_2x
+    workload: concurrency
+    resource: baseline
+    duration: short
+    intensity: 2x
+    purpose: "High connection count behavior"

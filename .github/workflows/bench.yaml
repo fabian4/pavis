@@ -1,0 +1,85 @@
+name: Bench
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  PAVIS_TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'bench' }}
+  ENVOY_TAG: v1.32.2
+  NGINX_TAG: 1.26.2-alpine
+  HAPROXY_TAG: 2.9.6-alpine
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install wrk and bc
+        run: sudo apt-get update && sudo apt-get install -y wrk bc
+
+      - name: Build Pavis Image
+        run: |
+          docker buildx build \
+            --file crates/pavis/Dockerfile \
+            --tag pavis:$PAVIS_TAG \
+            --cache-from=type=gha \
+            --cache-to=type=gha,mode=max \
+            --load \
+            .
+
+      - name: Benchmark Pavis
+        working-directory: bench
+        run: BENCHMARK_TARGET=pavis bash scripts/run.sh
+
+      - name: Benchmark Envoy
+        working-directory: bench
+        run: BENCHMARK_TARGET=envoy bash scripts/run.sh
+
+      - name: Benchmark Nginx
+        working-directory: bench
+        run: BENCHMARK_TARGET=nginx bash scripts/run.sh
+
+      - name: Benchmark HAProxy
+        working-directory: bench
+        run: BENCHMARK_TARGET=haproxy bash scripts/run.sh
+
+      - name: Debug on failure
+        if: failure()
+        working-directory: bench
+        run: |
+          echo "=== Docker Containers ==="
+          docker ps -a
+          echo "=== HAProxy Logs ==="
+          docker logs bench-haproxy 2>&1 || true
+          echo "=== Envoy Logs ==="
+          docker logs bench-envoy 2>&1 || true
+          echo "=== Nginx Logs ==="
+          docker logs bench-nginx 2>&1 || true
+          echo "=== Pavis Logs ==="
+          docker logs bench-pavis 2>&1 || true
+          echo "=== Backend Logs ==="
+          docker logs bench-backend 2>&1 || true
+
+      - name: Generate Summary
+        run: |
+          RESULTS_DIR=bench/output bash bench/scripts/csv.sh
+          RESULTS_DIR=bench/output bash bench/scripts/summary.sh
+          cat bench/output/summary.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output
+          path: bench/output/
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        working-directory: bench
+        run: docker compose down -v

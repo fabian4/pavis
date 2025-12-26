@@ -1,99 +1,559 @@
-# 🗺️ Pavilion Project Roadmap
+# Pavis Roadmap
 
-**Goal:** Build a high-performance, crash-safe service mesh data plane.
-**Architecture:** Decoupled Control Plane (Pavis xDS) → Binary Protocol (Pavis Core) → Polling Sidecar (Pavis).
+> See [Architecture.md](./Architecture.md) for technical details on components and protocols.
 
----
+## Overview
 
-## ✅ Phase 1: The Pavis Foundation (MVP)
-**Status:** In Progress / Completed
-**Goal:** A functional HTTP proxy handling traffic based on static local configuration.
-
-- [x] **Core Engine (Pavis)**
-  - [x] Initialize Cloudflare Pingora crate.
-  - [x] Implement `ProxyHttp` trait.
-  - [x] Basic CLI setup.
-- [x] **Traffic Logic**
-  - [x] Static Upstream Selection (IP:Port).
-  - [x] Basic Load Balancing (Round Robin).
-- [x] **Infrastructure**
-  - [x] Dockerfile & Optimized Build.
-  - [x] `docker-compose` environment.
+| Phase | Focus | Status |
+|-------|-------|--------|
+| 1 | Foundation (Pingora proxy) | 🚧 In Progress |
+| 2 | Protocol (`.pvs` format, `pavis-core`, `pavis-cli`) | 🚧 In Progress |
+| 3 | Long Polling (dynamic config updates) | ⏳ Planned |
+| 4 | xDS Bridge (Istio integration) | ⏳ Planned |
+| 5 | Traffic Management (retries, timeouts, load balancing) | ⏳ Planned |
+| 6 | Security (mTLS, RBAC) | ⏳ Planned |
+| 7 | Observability (metrics, tracing, logging) | ⏳ Planned |
+| 8 | Operations (health checks, graceful shutdown) | ⏳ Planned |
+| 9 | Advanced Features (rate limiting, fault injection, WASM) | ⏳ Planned |
+| 10 | Kubernetes Integration (operator, sidecar injection) | ⏳ Planned |
 
 ---
 
-## 🚧 Phase 2: The Pavis Core Protocol (Zero-Copy & Safety)
-**Status:** **Next Priority**
-**Goal:** Define the binary interface and build the static compiler.
+## Phase 1: Foundation 🚧
 
-- [ ] **Protocol Definition (`crates/pavis-core`)**
-  - [ ] Define `ProxyConfig` root struct.
-  - [ ] **[CRITICAL]** Define `PavisHeader` with **Magic Bytes** (`0x50 0x41 0x56 0x53` - "PAVS") and `Version` (u32).
-  - [ ] Implement `rkyv` derivation for zero-copy deserialization.
-  - [ ] Implement `check_bytes` validation (prevent segfaults on version mismatch).
+**Goal:** Functional HTTP proxy with static configuration.
 
-- [ ] **Pavis xDS Compiler (Static CLI)**
-  - [ ] Implement `pavis-xds compile -i config.yaml -o config.pavis`.
-  - [ ] Map YAML structs (Serde) → Pavis Core Structs (Rkyv).
-  - [ ] Validate logic (e.g., ensure Route references existing Cluster).
+**Implementation**
+- [x] Cloudflare Pingora integration (`ProxyHttp` trait)
+- [x] Static upstream selection
+- [x] CLI (`--config` flag)
+- [x] Dockerfile, docker-compose
+- [x] Basic routing (prefix, exact match)
+- [x] Weighted traffic splitting (destination selection)
+- [x] Request header manipulation (add/remove)
+- [x] Round-robin load balancing (currently random)
+- [ ] Response header manipulation
+- [ ] Regex route matching
 
-- [ ] **Pavis Integration (Local File)**
-  - [ ] Replace YAML loader with `mmap` + `rkyv` loader.
-  - [ ] Add startup check: Verify Magic Bytes & Version before loading.
+**Performance-Critical (for fair benchmarking)**
+- [ ] Connection pooling to upstreams (keep-alive)
+  - Pingora `HttpPeer` with connection reuse
+  - Without this: 50%+ slower than Envoy
+- [ ] HTTP/2 upstream support
+  - Required for h2load benchmarks
+  - Multiplexed requests
+- [ ] Disable access logging in release/benchmark mode
+  - `tracing::info!` on every request is a bottleneck
+  - Add `PAVIS_ACCESS_LOG=false` env var
+- [ ] Ensure compression disabled (match Envoy config)
 
----
-
-## 🔄 Phase 3: The "Long Poll" Pipeline
-**Status:** Planned
-**Goal:** Establish the dynamic communication channel (Pavis xDS Server → Pavis Client).
-
-- [ ] **Pavis xDS Server (`crates/pavis-xds`)**
-  - [ ] Setup HTTP Server (Hyper/Axum).
-  - [ ] Implement `GET /v1/config` endpoint.
-  - [ ] **Long Polling Logic:**
-    - [ ] Accept `X-Pavis-Version` header from client.
-    - [ ] If client is up-to-date, **hold connection** (sleep) for 60s.
-    - [ ] If update occurs (or timeout), send binary response.
-
-- [ ] **Pavis Client (`crates/pavis`)**
-  - [ ] Implement Background Config Thread.
-  - [ ] **Long Polling Loop:**
-    - [ ] Request config with current version.
-    - [ ] On 200 OK: Atomic Swap (`ArcSwap`) of config pointer.
-    - [ ] On 304/Timeout: Loop again immediately.
-  - [ ] **[CRITICAL]** Add Observability: `pavis_config_version` and `last_reload_timestamp` metrics.
+**E2E Tests** (`tests/`)
+- [x] Basic proxy startup and request forwarding
+- [x] Multi-backend routing verification
+- [ ] Test prefix vs exact route matching
+- [x] Test weighted traffic distribution (statistical)
+- [x] Test header add/remove verification
+- [ ] Test 404 for unmatched routes
+- [ ] Test wildcard host matching
 
 ---
 
-## 🌉 Phase 4: The Bridge (xDS Integration)
-**Status:** Planned
-**Goal:** Connect Pavis xDS to the outside world (Istio).
+## Phase 2: Protocol 🚧
 
-- [ ] **xDS Client (Pavis xDS)**
-  - [ ] Implement gRPC Client (Tonic) connecting to `istiod`.
-  - [ ] Subscribe to `LDS` (Listeners) and `EDS` (Endpoints).
-  - [ ] **Translation Engine:**
-    - [ ] Convert xDS Protobuf → Pavis Core Internal Structs.
-    - [ ] Trigger the "Update Notification" to wake up long-polling Pavis clients.
+**Goal:** Define `.pvs` binary format and build tooling.
 
-- [ ] **Optimization**
-  - [ ] Implement "Delta" logic: Only re-compile Pavis Core if xDS actually changes relevant fields.
+**`pavis-core`** (Library)
+- [x] `PavisHeader`: Magic bytes (`PAVS`) + version (u32)
+- [x] `ProxyConfig` root struct with rkyv derivation
+- [x] Basic types: `Upstream`, `Endpoint`, `VirtualHost`, `Route`
+- [x] `LoadBalancer` enum (RoundRobin, Random)
+- [x] `MatchType` enum (Prefix, Exact, Regex)
+- [x] `HeaderOperations` for request/response manipulation
+- [x] `WeightedDestination` for traffic splitting
+- [ ] Add `check_bytes` validation tests
+- [ ] Add schema migration strategy documentation
+- [ ] Backwards compatibility validation between versions
+
+**`pavis-cli`** (Binary)
+- [ ] `compile` command: YAML → `.pvs`
+  - [ ] Parse YAML config with serde
+  - [ ] Convert to `pavis-core` structs
+  - [ ] Serialize with rkyv and write with header
+  - [ ] Validate references (routes → upstreams)
+  - [ ] Output file size and compression stats
+- [ ] `inspect` command: Debug binary files
+  - [ ] Display header (magic, version)
+  - [ ] Pretty-print config tree
+  - [ ] Show binary size and structure stats
+  - [ ] Hex dump mode for debugging
+- [ ] `validate` command: Check YAML without compiling
+- [ ] `convert` command: Convert between versions
+
+**`pavis`** (Binary)
+- [ ] Replace YAML loader with `mmap` + rkyv
+- [ ] Startup validation (magic bytes + version check)
+- [ ] Graceful error messages for invalid configs
+- [ ] Version mismatch handling (reject vs warn)
+
+**E2E Tests**
+- [ ] Compile YAML → `.pvs` and verify binary structure
+- [ ] Load `.pvs` in proxy and forward traffic
+- [ ] Reject invalid magic bytes
+- [ ] Reject version mismatch
+- [ ] Inspect command output verification
+- [ ] Round-trip: YAML → `.pvs` → inspect → verify
 
 ---
 
-## 🛡️ Phase 5: Production Parity (The "Vital 20%")
-**Status:** Planned
-**Goal:** Add the resilience features required for a real Service Mesh.
+## Phase 3: Long Polling ⏳
 
-- [ ] **Resilience**
-  - [ ] Smart Retries (Retry on 503/Connect Failure).
-  - [ ] Circuit Breaking (Max Pending Requests).
-  - [ ] Timeouts.
+**Goal:** Dynamic configuration updates via HTTP long polling.
 
-- [ ] **Security**
-  - [ ] mTLS implementation (using `rustls`).
-  - [ ] Certificate rotation reloading.
+**`pavis-xds`** (Server)
+- [ ] HTTP server setup (Axum)
+  - [ ] `GET /v1/config` - fetch current config
+  - [ ] `GET /v1/config/version` - fetch version only
+  - [ ] `GET /health` - liveness probe
+  - [ ] `GET /ready` - readiness probe
+- [ ] Long polling implementation
+  - [ ] Accept `X-Pavis-Version` header
+  - [ ] Hold connection when client is up-to-date (configurable timeout, default 60s)
+  - [ ] Respond immediately on config change
+  - [ ] Handle multiple concurrent clients
+- [ ] Response headers
+  - [ ] `X-Pavis-Version` - current version number
+  - [ ] `X-Pavis-Checksum` - xxhash for integrity verification
+  - [ ] `X-Pavis-Generated-At` - timestamp of config generation
+- [ ] Config storage
+  - [ ] In-memory config cache
+  - [ ] File watcher for local `.pvs` changes
+  - [ ] Version increment on change
+  - [ ] Config history (last N versions)
 
-- [ ] **Telemetry**
-  - [ ] Distributed Tracing (OpenTelemetry Headers).
-  - [ ] Prometheus Exporter (Request Rates / Latency buckets).
+**`pavis`** (Client)
+- [ ] Background config polling thread
+  - [ ] Configurable poll interval and timeout
+  - [ ] Exponential backoff on failures
+  - [ ] Jitter to prevent thundering herd
+  - [ ] Multi-source failover (primary/secondary xDS servers)
+- [ ] Config hot reload
+  - [ ] Atomic config swap (`ArcSwap`)
+  - [ ] Validate new config before swap
+  - [ ] Rollback on validation failure
+  - [ ] Config diff logging
+- [ ] Crash-loop protection
+  - [ ] Persist config to disk (`/etc/pavis/config.pvs`)
+  - [ ] Load from disk if control plane unavailable
+  - [ ] Track last successful config timestamp
+  - [ ] Bootstrap config for first start
+- [ ] Metrics
+  - [ ] `pavis_config_version` (gauge)
+  - [ ] `pavis_config_last_reload_timestamp` (gauge)
+  - [ ] `pavis_config_reload_total` (counter, success/failure labels)
+  - [ ] `pavis_config_size_bytes` (gauge)
+
+**E2E Tests**
+- [ ] Config update triggers route change
+- [ ] Long poll holds connection until update
+- [ ] Checksum mismatch triggers retry
+- [ ] Proxy continues serving during config reload
+- [ ] Crash recovery loads config from disk
+- [ ] Multiple proxies receive same update
+- [ ] Exponential backoff on xDS server failure
+
+---
+
+## Phase 4: xDS Bridge ⏳
+
+**Goal:** Integrate with Istio control plane.
+
+**`pavis-xds`** (xDS Client)
+- [ ] gRPC client setup (Tonic)
+  - [ ] Connect to `istiod` discovery service
+  - [ ] mTLS authentication to control plane
+  - [ ] Reconnection with exponential backoff
+  - [ ] Connection health monitoring
+- [ ] xDS resource subscriptions
+  - [ ] LDS (Listener Discovery Service)
+  - [ ] RDS (Route Discovery Service)
+  - [ ] CDS (Cluster Discovery Service)
+  - [ ] EDS (Endpoint Discovery Service)
+  - [ ] SDS (Secret Discovery Service) - for certificates
+  - [ ] ECDS (Extension Config Discovery Service) - for WASM
+- [ ] Translation engine
+  - [ ] xDS Listener → `pavis-core` VirtualHost
+  - [ ] xDS Route → `pavis-core` Route
+  - [ ] xDS Cluster → `pavis-core` Upstream
+  - [ ] xDS ClusterLoadAssignment → `pavis-core` Endpoint
+  - [ ] Handle unsupported xDS features gracefully
+- [ ] Optimization
+  - [ ] Delta xDS (incremental updates)
+  - [ ] Only recompile on relevant changes
+  - [ ] Batch updates within time window
+  - [ ] Async compilation (don't block xDS stream)
+- [ ] Strategic filtering
+  - [ ] Per-pod config based on node metadata
+  - [ ] SidecarScope support
+  - [ ] Namespace isolation
+  - [ ] Workload selector matching
+
+**E2E Tests** (requires mock Istio or test xDS server)
+- [ ] Connect to xDS server and receive initial config
+- [ ] Route update from xDS reflects in proxy
+- [ ] Endpoint addition/removal works
+- [ ] Reconnect after xDS server restart
+- [ ] Filter config by namespace
+- [ ] Unsupported xDS features don't crash
+
+---
+
+## Phase 5: Traffic Management ⏳
+
+**Goal:** Advanced traffic control features.
+
+**Retries** (`pavis-core` + `pavis`)
+- [ ] `RetryPolicy` struct in `pavis-core`
+  - [ ] `attempts` - max retry count
+  - [ ] `per_try_timeout` - timeout per attempt
+  - [ ] `retry_on` - conditions (5xx, connect-failure, reset, etc.)
+  - [ ] `retry_back_off` - base interval and max interval
+  - [ ] `retriable_headers` - retry on specific response headers
+- [ ] Retry implementation in `pavis`
+  - [ ] Retry on configured status codes
+  - [ ] Retry on connection failures
+  - [ ] Respect retry budget (prevent retry storms)
+  - [ ] Hedged requests (speculative retries)
+
+**Timeouts** (`pavis-core` + `pavis`)
+- [ ] `TimeoutPolicy` struct in `pavis-core`
+  - [ ] `request_timeout` - total request timeout
+  - [ ] `idle_timeout` - connection idle timeout
+  - [ ] `connect_timeout` - upstream connect timeout
+  - [ ] `stream_idle_timeout` - for long-lived streams
+- [ ] Timeout enforcement in `pavis`
+  - [ ] Per-route timeout overrides
+  - [ ] Timeout headers (`x-envoy-upstream-rq-timeout-ms`)
+
+**Circuit Breaking** (`pavis-core` + `pavis`)
+- [ ] `CircuitBreaker` struct in `pavis-core`
+  - [ ] `max_connections` - per upstream
+  - [ ] `max_pending_requests` - queue limit
+  - [ ] `max_requests` - concurrent requests limit
+  - [ ] `max_retries` - concurrent retries limit
+- [ ] Circuit breaker state machine in `pavis`
+  - [ ] Closed → Open on threshold breach
+  - [ ] Open → Half-Open after timeout
+  - [ ] Half-Open → Closed on success
+  - [ ] Circuit breaker metrics and events
+
+**Load Balancing** (`pavis-core` + `pavis`)
+- [ ] Additional algorithms in `LoadBalancer` enum
+  - [ ] `LeastConnections`
+  - [ ] `WeightedRoundRobin`
+  - [ ] `ConsistentHash` (header, cookie, IP)
+  - [ ] `Maglev`
+  - [ ] `P2C` (Power of Two Choices)
+- [ ] Locality-aware routing
+  - [ ] Zone preference
+  - [ ] Failover to other zones
+  - [ ] Priority levels
+- [ ] Slow start mode
+  - [ ] Gradually increase traffic to new endpoints
+
+**Traffic Splitting** (`pavis`)
+- [ ] Weighted routing (canary deployments)
+- [ ] Header-based routing
+- [ ] Cookie-based routing (sticky sessions)
+- [ ] Mirror/shadow traffic
+  - [ ] Fire-and-forget mirroring
+  - [ ] Configurable mirror percentage
+
+**E2E Tests**
+- [ ] Retry succeeds after transient 503
+- [ ] Retry exhaustion returns final error
+- [ ] Request timeout returns 504
+- [ ] Circuit breaker opens after failures
+- [ ] Circuit breaker closes after recovery
+- [ ] Round-robin distributes evenly
+- [ ] Consistent hash routes same key to same backend
+- [ ] Canary weight splits traffic correctly
+- [ ] Mirror sends copy without affecting response
+
+---
+
+## Phase 6: Security ⏳
+
+**Goal:** Secure service-to-service communication.
+
+**mTLS** (`pavis-core` + `pavis`)
+- [ ] TLS configuration in `pavis-core`
+  - [ ] `TlsConfig` struct (cert, key, CA paths)
+  - [ ] `TlsMode` enum (Disable, Permissive, Strict)
+  - [ ] Cipher suite configuration
+  - [ ] TLS version constraints (1.2, 1.3)
+- [ ] TLS implementation in `pavis` (using `rustls`)
+  - [ ] Server-side TLS termination
+  - [ ] Client-side TLS origination
+  - [ ] mTLS with client certificate validation
+  - [ ] SNI-based routing
+- [ ] Certificate management
+  - [ ] File-based certificates
+  - [ ] SDS integration (from xDS)
+  - [ ] Hot reload on certificate rotation
+  - [ ] Certificate expiry monitoring and alerts
+  - [ ] SPIFFE/SPIRE integration
+
+**Authorization** (`pavis-core` + `pavis`)
+- [ ] `AuthzPolicy` struct in `pavis-core`
+  - [ ] Source principals (service accounts)
+  - [ ] Allowed methods and paths
+  - [ ] Deny rules
+  - [ ] Namespace/workload selectors
+- [ ] RBAC enforcement in `pavis`
+  - [ ] Extract identity from client certificate
+  - [ ] Evaluate policies per request
+  - [ ] Deny-by-default mode
+  - [ ] Audit logging for denied requests
+
+**JWT Validation** (`pavis-core` + `pavis`)
+- [ ] `JwtPolicy` struct in `pavis-core`
+  - [ ] Issuer validation
+  - [ ] Audience validation
+  - [ ] JWKS URI for key fetching
+- [ ] JWT enforcement in `pavis`
+  - [ ] Extract and validate JWT from headers
+  - [ ] Cache JWKS with refresh
+  - [ ] Claims extraction for routing
+
+**E2E Tests**
+- [ ] TLS termination with valid cert
+- [ ] Reject invalid client certificate
+- [ ] mTLS handshake between services
+- [ ] Certificate hot reload without downtime
+- [ ] RBAC allows authorized request
+- [ ] RBAC denies unauthorized request
+- [ ] JWT validation accepts valid token
+- [ ] JWT validation rejects expired token
+
+---
+
+## Phase 7: Observability ⏳
+
+**Goal:** Full visibility into proxy behavior.
+
+**Metrics** (`pavis`)
+- [ ] Prometheus exporter endpoint (`/metrics`)
+- [ ] Request metrics
+  - [ ] `pavis_requests_total` (method, path, status, upstream)
+  - [ ] `pavis_request_duration_seconds` (histogram)
+  - [ ] `pavis_request_size_bytes` (histogram)
+  - [ ] `pavis_response_size_bytes` (histogram)
+- [ ] Connection metrics
+  - [ ] `pavis_connections_active` (gauge)
+  - [ ] `pavis_connections_total` (counter)
+- [ ] Upstream metrics
+  - [ ] `pavis_upstream_requests_total` (upstream, status)
+  - [ ] `pavis_upstream_request_duration_seconds`
+  - [ ] `pavis_upstream_connections_active`
+  - [ ] `pavis_upstream_circuit_breaker_state`
+  - [ ] `pavis_upstream_healthy_endpoints` (gauge)
+- [ ] System metrics
+  - [ ] `pavis_memory_bytes` (gauge)
+  - [ ] `pavis_cpu_seconds_total` (counter)
+  - [ ] `pavis_file_descriptors` (gauge)
+
+**Distributed Tracing** (`pavis`)
+- [ ] OpenTelemetry integration
+  - [ ] Trace context propagation (W3C, B3, Jaeger)
+  - [ ] Span creation for requests
+  - [ ] Configurable sampling rate
+  - [ ] Parent-based sampling
+- [ ] Trace export
+  - [ ] OTLP exporter (gRPC/HTTP)
+  - [ ] Jaeger exporter
+  - [ ] Zipkin exporter
+- [ ] Span attributes
+  - [ ] HTTP method, path, status
+  - [ ] Upstream name and address
+  - [ ] Error details
+
+**Access Logging** (`pavis`)
+- [ ] Configurable log format (JSON, text, custom template)
+- [ ] Log fields
+  - [ ] Timestamp, method, path, status, duration
+  - [ ] Client IP, upstream address
+  - [ ] Request/response headers (configurable)
+  - [ ] Trace ID, span ID
+  - [ ] Bytes sent/received
+- [ ] Log destinations
+  - [ ] Stdout/stderr
+  - [ ] File with rotation
+  - [ ] Async buffered writes
+  - [ ] Syslog
+
+**E2E Tests**
+- [ ] `/metrics` endpoint returns Prometheus format
+- [ ] Request counter increments on traffic
+- [ ] Histogram buckets populated correctly
+- [ ] Trace ID propagated to upstream
+- [ ] Trace appears in Jaeger/Zipkin
+- [ ] Access log contains expected fields
+- [ ] Log rotation works under load
+
+---
+
+## Phase 8: Operations ⏳
+
+**Goal:** Production-ready operational features.
+
+**Health Checks** (`pavis-core` + `pavis`)
+- [ ] `HealthCheck` struct in `pavis-core`
+  - [ ] `path` - HTTP path to check
+  - [ ] `interval` - check frequency
+  - [ ] `timeout` - per-check timeout
+  - [ ] `healthy_threshold` - successes to mark healthy
+  - [ ] `unhealthy_threshold` - failures to mark unhealthy
+  - [ ] `expected_statuses` - valid response codes
+- [ ] Active health checking in `pavis`
+  - [ ] Background health check tasks per upstream
+  - [ ] Remove unhealthy endpoints from rotation
+  - [ ] Re-add on recovery
+  - [ ] Health check connection reuse
+- [ ] Passive health checking (outlier detection)
+  - [ ] Track consecutive failures
+  - [ ] Eject endpoints temporarily
+  - [ ] Success rate ejection
+  - [ ] Configurable ejection time
+
+**Graceful Shutdown** (`pavis`)
+- [ ] SIGTERM handling
+- [ ] Drain existing connections (configurable timeout)
+- [ ] Stop accepting new connections
+- [ ] Health endpoint returns unhealthy during drain
+- [ ] Wait for in-flight requests to complete
+
+**Admin Interface** (`pavis`)
+- [ ] Admin API (separate port)
+  - [ ] `GET /config` - current config dump
+  - [ ] `GET /clusters` - upstream status
+  - [ ] `GET /stats` - internal statistics
+  - [ ] `POST /drain` - trigger drain mode
+  - [ ] `POST /logging` - change log level at runtime
+- [ ] Debug endpoints
+  - [ ] `GET /memory` - memory usage
+  - [ ] `GET /connections` - active connections
+  - [ ] `GET /certs` - certificate info and expiry
+
+**`pavis-cli`** (Debugging)
+- [ ] `proxy-status` command - query running proxy
+- [ ] `config-diff` command - compare two `.pvs` files
+- [ ] `traffic-tap` command - capture live traffic (development only)
+- [ ] `cert-info` command - display certificate details
+
+**E2E Tests**
+- [ ] Unhealthy endpoint removed from rotation
+- [ ] Endpoint recovers and rejoins pool
+- [ ] Outlier detection ejects failing endpoint
+- [ ] SIGTERM triggers graceful drain
+- [ ] In-flight requests complete during drain
+- [ ] Admin `/clusters` shows endpoint status
+- [ ] Admin `/drain` stops new connections
+
+---
+
+## Phase 9: Advanced Features ⏳
+
+**Goal:** Extended functionality for complex use cases.
+
+**Rate Limiting** (`pavis-core` + `pavis`)
+- [ ] `RateLimitPolicy` struct in `pavis-core`
+  - [ ] Requests per second/minute/hour
+  - [ ] Burst size
+  - [ ] Key extraction (IP, header, path)
+- [ ] Local rate limiting in `pavis`
+  - [ ] Token bucket algorithm
+  - [ ] Sliding window counter
+  - [ ] Per-route and global limits
+- [ ] Distributed rate limiting
+  - [ ] Redis backend
+  - [ ] Rate limit headers (`X-RateLimit-*`)
+
+**Fault Injection** (`pavis-core` + `pavis`)
+- [ ] `FaultInjection` struct in `pavis-core`
+  - [ ] Delay injection (fixed, percentage)
+  - [ ] Abort injection (HTTP status, percentage)
+- [ ] Fault injection in `pavis`
+  - [ ] Header-triggered faults (for testing)
+  - [ ] Configurable fault targets (route, upstream)
+
+**Request/Response Transformation**
+- [ ] URL rewriting (path prefix, regex)
+- [ ] Host header rewriting
+- [ ] Response header manipulation
+- [ ] Body transformation (future - requires buffering)
+
+**Protocol Support**
+- [ ] HTTP/2 upstream connections
+- [ ] gRPC proxying
+  - [ ] gRPC-specific health checks
+  - [ ] gRPC status code handling
+- [ ] WebSocket proxying
+  - [ ] Connection upgrade handling
+  - [ ] WebSocket-specific timeouts
+
+**WASM Extensibility** (Future)
+- [ ] WASM plugin loading
+- [ ] Plugin API (request/response filters)
+- [ ] Plugin marketplace/registry
+
+**E2E Tests**
+- [ ] Rate limit returns 429 when exceeded
+- [ ] Rate limit headers present in response
+- [ ] Fault injection adds delay
+- [ ] Fault injection returns configured status
+- [ ] URL rewrite changes path to upstream
+- [ ] gRPC request proxied successfully
+- [ ] WebSocket upgrade works
+
+---
+
+## Phase 10: Kubernetes Integration ⏳
+
+**Goal:** Native Kubernetes deployment and management.
+
+**Sidecar Injection**
+- [ ] Mutating webhook for automatic injection
+- [ ] Init container for iptables setup
+- [ ] Configurable injection rules (namespace, labels)
+- [ ] Resource limit configuration
+
+**Pavis Operator** (`pavis-operator`)
+- [ ] Custom Resource Definitions
+  - [ ] `PavisConfig` - proxy configuration
+  - [ ] `PavisGateway` - ingress gateway
+  - [ ] `PavisPolicy` - traffic policies
+- [ ] Controller implementation
+  - [ ] Watch Kubernetes services
+  - [ ] Generate pavis-core configs
+  - [ ] Manage pavis-xds deployment
+- [ ] Integration with Gateway API
+  - [ ] `HTTPRoute` support
+  - [ ] `GRPCRoute` support
+
+**Helm Chart**
+- [ ] Pavis control plane deployment
+- [ ] Configurable values
+- [ ] Prometheus ServiceMonitor
+- [ ] Grafana dashboards
+
+**CNI Plugin** (Optional)
+- [ ] Traffic interception without iptables
+- [ ] eBPF-based redirection (future)
+
+**E2E Tests** (requires Kubernetes cluster)
+- [ ] Sidecar auto-injected into pod
+- [ ] Traffic intercepted by sidecar
+- [ ] Service discovery updates endpoints
+- [ ] HTTPRoute creates correct config
+- [ ] Helm install deploys control plane
+- [ ] Upgrade preserves traffic

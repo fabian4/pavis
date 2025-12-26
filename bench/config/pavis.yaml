@@ -1,0 +1,22 @@
+server:
+  listen_addr: "0.0.0.0:8080"
+
+telemetry:
+  level: "warn"
+  pingora: "error"
+
+upstreams:
+  - name: "backend"
+    load_balancer: "round-robin"
+    endpoints:
+      - ip: "backend"
+        port: 80
+
+routes:
+  - host: "*"
+    paths:
+      - match_type: "prefix"
+        path: "/"
+        destinations:
+          - upstream: "backend"
+            weight: 100

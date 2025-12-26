@@ -16,3 +16,6 @@ target
 # RustRover
 .idea/
 /.buildx-cache/
+
+# Benchmark results
+bench/output/
