@@ -48,12 +48,6 @@ impl TestEnv {
 
         if mode == "binary" {
             let binary_path = project_root.join("target/release/pavis");
-            if !binary_path.exists() {
-                return Err(anyhow::anyhow!(
-                    "Pavis binary not found at {:?}. Run 'cargo build --release' first.",
-                    binary_path
-                ));
-            }
 
             println!("🚀 Starting Pavis Binary ({:?})...", config_dest);
             let child = Command::new(&binary_path)

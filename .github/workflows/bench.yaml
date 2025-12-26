@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       pavis_tag:
-        description: "Git tag to benchmark (e.g. bench-20251226)"
-        required: true
+        description: "Git tag (empty for latest bench tag)"
+        required: false
         type: string
 
 env:
@@ -18,10 +18,36 @@ jobs:
   bench:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code by tag
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ inputs.pavis_tag }}
+          fetch-depth: 0
+
+      - name: Resolve pavis tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          INPUT_TAG="${{ inputs.pavis_tag }}"
+          if [[ -n "$INPUT_TAG" ]]; then
+            TAG="$INPUT_TAG"
+            echo "Using user-provided tag: $TAG"
+          else
+            echo "No tag provided, resolving latest bench-* tag..."
+            TAG=$(git tag --list 'bench-*' --sort=-creatordate | head -n 1)
+            if [[ -z "$TAG" ]]; then
+              echo "❌ No bench-* tag found"
+              exit 1
+            fi
+            echo "Resolved latest bench tag: $TAG"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "PAVIS_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Checkout resolved tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
           fetch-depth: 0
 
       - name: Resolve commit hash

@@ -48,6 +48,8 @@ mod yaml_model {
         pub match_type: String,
         pub path: String,
         pub headers: Option<HeaderOperations>,
+        pub request_headers: Option<HeaderOperations>,
+        pub response_headers: Option<HeaderOperations>,
         pub destinations: Vec<WeightedDestination>,
     }
 
@@ -158,7 +160,15 @@ fn convert_to_pavis(src: yaml_model::Config) -> Result<pavis_core::ProxyConfig> 
                 _ => pavis_core::MatchType::Prefix,
             };
 
-            let headers = if let Some(h) = p.headers {
+            let request_headers = if let Some(h) = p.request_headers.or(p.headers) {
+                let add: Vec<(String, String)> = h.add.unwrap_or_default().into_iter().collect();
+                let remove = h.remove.unwrap_or_default();
+                Some(pavis_core::HeaderOperations { add, remove })
+            } else {
+                None
+            };
+
+            let response_headers = if let Some(h) = p.response_headers {
                 let add: Vec<(String, String)> = h.add.unwrap_or_default().into_iter().collect();
                 let remove = h.remove.unwrap_or_default();
                 Some(pavis_core::HeaderOperations { add, remove })
@@ -178,7 +188,8 @@ fn convert_to_pavis(src: yaml_model::Config) -> Result<pavis_core::ProxyConfig> 
             paths.push(pavis_core::Route {
                 match_type,
                 path: p.path,
-                headers,
+                request_headers,
+                response_headers,
                 destinations,
             });
         }

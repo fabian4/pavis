@@ -24,51 +24,61 @@ cleanup() {
 trap cleanup EXIT
 
 # 1. Setup Environment Variables
-if [ "$TEST_MODE" == "docker" ]; then
-    export BACKEND_V1_HOST="backend-v1"
-    export BACKEND_V2_HOST="backend-v2"
-    # Ensure the pavis image is built/available if using docker mode
-    # Assuming CI or makefile did this.
-    
-elif [ "$TEST_MODE" == "binary" ]; then
-    export BACKEND_V1_HOST="127.0.0.1"
-    export BACKEND_V2_HOST="127.0.0.1"
-else
-    echo "❌ Unknown mode: $TEST_MODE. Use 'binary' or 'docker'."
-    exit 1
-fi
+setup_env() {
+    if [ "$TEST_MODE" == "docker" ]; then
+        export BACKEND_V1_HOST="backend-v1"
+        export BACKEND_V2_HOST="backend-v2"
+    elif [ "$TEST_MODE" == "binary" ]; then
+        export BACKEND_V1_HOST="127.0.0.1"
+        export BACKEND_V2_HOST="127.0.0.1"
+    else
+        echo "❌ Unknown mode: $TEST_MODE. Use 'binary' or 'docker'."
+        exit 1
+    fi
+}
 
-# 2. Start Infrastructure (Backends)
-echo "🐳 Starting Upstreams (Backends only)..."
-docker compose -f "$COMPOSE_FILE" up -d backend-v1 backend-v2
+# 2. Build Binary (if needed)
+ensure_binary() {
+    if [ "$TEST_MODE" == "binary" ]; then
+        if [ -f "$WORKSPACE_ROOT/target/release/pavis" ]; then
+            echo "✅ Pavis binary found at target/release/pavis, skipping build."
+        else
+            echo "🚀 Building Pavis Binary..."
+            cd "$WORKSPACE_ROOT"
+            cargo build -p pavis --release
+        fi
+    fi
+}
 
-# Wait for backends
-echo "⏳ Waiting for backends to be ready..."
-MAX_RETRIES=10
-count=0
-until curl -s -o /dev/null http://localhost:8081 || [ $count -eq $MAX_RETRIES ]; do
-  echo -n "."
-  sleep 1
-  count=$((count+1))
-done
-echo ""
+# 3. Start Infrastructure
+start_infrastructure() {
+    echo "🐳 Starting Upstreams (Backends only)..."
+    docker compose -f "$COMPOSE_FILE" up -d backend-v1 backend-v2
 
-if [ $count -eq $MAX_RETRIES ]; then
-    echo "❌ Timeout waiting for backend-v1"
-    exit 1
-fi
+    echo "⏳ Waiting for backends to be ready..."
+    MAX_RETRIES=10
+    count=0
+    until curl -s -o /dev/null http://localhost:8081 || [ $count -eq $MAX_RETRIES ]; do
+      echo -n "."
+      sleep 1
+      count=$((count+1))
+    done
+    echo ""
 
-if [ "$TEST_MODE" == "binary" ]; then
-    echo "🚀 Building Pavis Binary..."
-    cd "$WORKSPACE_ROOT"
-    cargo build -p pavis --release
-fi
+    if [ $count -eq $MAX_RETRIES ]; then
+        echo "❌ Timeout waiting for backend-v1"
+        exit 1
+    fi
+}
 
-# 3. Run Tests
+# Execution
+setup_env
+ensure_binary
+start_infrastructure
+
+# 4. Run Tests
 echo "🧪 Running Tests via Rust Harness..."
 cd "$WORKSPACE_ROOT"
-
-# We MUST run sequentially because we share port 8080 / the single docker container.
 cargo test -p pavis-e2e -- --test-threads=1 --nocapture
 
 echo "🎉 All tests passed!"

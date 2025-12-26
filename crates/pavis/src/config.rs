@@ -110,7 +110,8 @@ pub struct Route {
     pub path: String,
     pub timeout_ms: Option<u64>,
     pub retry: Option<RetryPolicy>,
-    pub headers: Option<HeaderOperations>,
+    pub request_headers: Option<HeaderOperations>,
+    pub response_headers: Option<HeaderOperations>,
     pub destinations: Vec<WeightedDestination>,
 }
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub const PAVIS_MAGIC: &[u8; 4] = b"PAVS";
 
 /// Current Protocol Version. Increment this when breaking changes occur.
-pub const PAVIS_VERSION: u32 = 1;
+pub const PAVIS_VERSION: u32 = 2;
 
 /// The Header of a Pavis configuration file.
 /// Always present at the beginning of the binary blob.
@@ -71,7 +71,8 @@ pub struct VirtualHost {
 pub struct Route {
     pub match_type: MatchType,
     pub path: String,
-    pub headers: Option<HeaderOperations>,
+    pub request_headers: Option<HeaderOperations>,
+    pub response_headers: Option<HeaderOperations>,
     pub destinations: Vec<WeightedDestination>,
 }
 

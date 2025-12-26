@@ -32,7 +32,7 @@
 - [x] Weighted traffic splitting (destination selection)
 - [x] Request header manipulation (add/remove)
 - [x] Round-robin load balancing (currently random)
-- [ ] Response header manipulation
+- [x] Response header manipulation
 - [ ] Regex route matching
 
 **Performance-Critical (for fair benchmarking)**

@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
+use pingora::http::ResponseHeader;
 use rand::Rng;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -20,7 +21,8 @@ pub struct Proxy {
 
 pub struct RouterContext {
     pub upstream_name: Option<String>,
-    pub matched_headers: Option<HeaderOperations>,
+    pub request_headers: Option<HeaderOperations>,
+    pub response_headers: Option<HeaderOperations>,
 }
 
 pub fn find_route<'a>(
@@ -46,7 +48,10 @@ pub fn find_route<'a>(
     None
 }
 
-pub fn apply_headers(req: &mut RequestHeader, headers: Option<&HeaderOperations>) -> Result<()> {
+pub fn apply_request_headers(
+    req: &mut RequestHeader,
+    headers: Option<&HeaderOperations>,
+) -> Result<()> {
     req.insert_header("X-Proxy-By", "Pavis")?;
 
     if let Some(headers) = headers {
@@ -60,6 +65,29 @@ pub fn apply_headers(req: &mut RequestHeader, headers: Option<&HeaderOperations>
         if let Some(remove_list) = &headers.remove {
             for k in remove_list {
                 req.remove_header(k);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn apply_response_headers(
+    resp: &mut ResponseHeader,
+    headers: Option<&HeaderOperations>,
+) -> Result<()> {
+    resp.insert_header("X-Proxy-By", "Pavis")?;
+
+    if let Some(headers) = headers {
+        if let Some(add_map) = &headers.add {
+            for (k, v) in add_map {
+                if let (Ok(key), Ok(val)) = (HeaderName::from_str(k), HeaderValue::from_str(v)) {
+                    resp.insert_header(key, val)?;
+                }
+            }
+        }
+        if let Some(remove_list) = &headers.remove {
+            for k in remove_list {
+                resp.remove_header(k);
             }
         }
     }
@@ -128,7 +156,8 @@ impl ProxyHttp for Proxy {
     fn new_ctx(&self) -> Self::CTX {
         RouterContext {
             upstream_name: None,
-            matched_headers: None,
+            request_headers: None,
+            response_headers: None,
         }
     }
 
@@ -202,9 +231,8 @@ impl ProxyHttp for Proxy {
                 pick -= dest.weight;
             }
 
-            if let Some(headers) = &route.headers {
-                ctx.matched_headers = Some(headers.clone());
-            }
+            ctx.request_headers = route.request_headers.clone();
+            ctx.response_headers = route.response_headers.clone();
 
             return Ok(false);
         }
@@ -219,7 +247,16 @@ impl ProxyHttp for Proxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        apply_headers(upstream_request, ctx.matched_headers.as_ref())
+        apply_request_headers(upstream_request, ctx.request_headers.as_ref())
+    }
+
+    fn upstream_response_filter(
+        &self,
+        _session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        apply_response_headers(upstream_response, ctx.response_headers.as_ref())
     }
 }
 
@@ -253,7 +290,8 @@ mod tests {
                             path: "/exact".to_string(),
                             timeout_ms: None,
                             retry: None,
-                            headers: None,
+                            request_headers: None,
+                            response_headers: None,
                             destinations: vec![WeightedDestination {
                                 upstream: "backend-1".to_string(),
                                 weight: 1,
@@ -264,7 +302,8 @@ mod tests {
                             path: "/api".to_string(),
                             timeout_ms: None,
                             retry: None,
-                            headers: None,
+                            request_headers: None,
+                            response_headers: None,
                             destinations: vec![WeightedDestination {
                                 upstream: "backend-1".to_string(),
                                 weight: 1,
@@ -279,7 +318,8 @@ mod tests {
                         path: "/public".to_string(),
                         timeout_ms: None,
                         retry: None,
-                        headers: None,
+                        request_headers: None,
+                        response_headers: None,
                         destinations: vec![WeightedDestination {
                             upstream: "backend-2".to_string(),
                             weight: 1,
@@ -450,7 +490,7 @@ mod tests {
             remove: Some(remove_list),
         };
 
-        apply_headers(&mut req, Some(&ops)).unwrap();
+        apply_request_headers(&mut req, Some(&ops)).unwrap();
 
         // Check X-Proxy-By (always added)
         assert_eq!(
@@ -466,5 +506,39 @@ mod tests {
 
         // Check removed header
         assert!(req.headers.get("X-Remove").is_none());
+    }
+
+    #[test]
+    fn test_apply_response_headers() {
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        // Add a header to be removed
+        resp.insert_header("X-Remove-Resp", "bad-value").unwrap();
+
+        let mut add_map = HashMap::new();
+        add_map.insert("X-Add-Resp".to_string(), "good-value".to_string());
+
+        let remove_list = vec!["X-Remove-Resp".to_string()];
+
+        let ops = HeaderOperations {
+            add: Some(add_map),
+            remove: Some(remove_list),
+        };
+
+        apply_response_headers(&mut resp, Some(&ops)).unwrap();
+
+        // Check X-Proxy-By (always added)
+        assert_eq!(
+            resp.headers.get("X-Proxy-By").unwrap().to_str().unwrap(),
+            "Pavis"
+        );
+
+        // Check added header
+        assert_eq!(
+            resp.headers.get("X-Add-Resp").unwrap().to_str().unwrap(),
+            "good-value"
+        );
+
+        // Check removed header
+        assert!(resp.headers.get("X-Remove-Resp").is_none());
     }
 }
