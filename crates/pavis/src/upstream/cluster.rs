@@ -11,13 +11,16 @@ pub struct Cluster {
     pub config: Upstream,
     // Co-located state
     pub rr_counter: AlignedCounter,
+    pub total_weight: u32,
 }
 
 impl Cluster {
     pub fn new(config: Upstream) -> Self {
+        let total_weight = config.endpoints.iter().map(|e| e.weight.unwrap_or(1)).sum();
         Self {
             config,
             rr_counter: AlignedCounter(AtomicUsize::new(0)),
+            total_weight,
         }
     }
 
@@ -29,6 +32,7 @@ impl Cluster {
             self.config.load_balancer,
             &self.config.endpoints,
             &self.rr_counter.0,
+            self.total_weight,
         );
         self.config.endpoints.get(idx)
     }

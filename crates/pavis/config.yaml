@@ -22,8 +22,8 @@ upstreams:
     load_balancer: "round-robin" # Options: random, round-robin (default)
     http_version: "h1"  # Options: h1 (default), h2, h2h1
     connection_pool:
-      idle_timeout_secs: 60      # Keep connections alive for 60s (default)
-      connection_timeout_secs: 5  # Connection timeout (default: 5s)
+      idle_timeout: "60s"      # Keep connections alive for 60s (default)
+      connection_timeout: "5s"  # Connection timeout (default: 5s)
     # tls:
     #   enabled: true
     #   verify_hostname: true
@@ -56,11 +56,11 @@ routes:
     paths:
       - match_type: "prefix" # Options: prefix (default), exact, regex
         path: "/api/v1"
-        # timeout_ms: 2000 # Not supported yet
+        # timeout: "2s" # Not supported yet
         # retry: # Not supported yet
         #   attempts: 3
         #   retry_on: [500, 502, 503, "gateway_error", "connect_failure"]
-        #   per_try_timeout_ms: 500
+        #   per_try_timeout: "500ms"
         request_headers:
           add:
             x-sidecar-proxy: "pavis"

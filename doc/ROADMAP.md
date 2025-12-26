@@ -37,19 +37,6 @@
 - [x] Response header manipulation
 - [x] Regex route matching
 
-**Performance-Critical (for fair benchmarking)**
-- [x] Connection pooling to upstreams (keep-alive)
-  - Uses Pingora's built-in connection pool (default: 128 connections)
-  - Config: `connection_pool.idle_timeout_secs` (default: 60)
-- [x] HTTP/2 upstream support
-  - Config: `http_version: h2` (or `h1`, `h2h1`)
-  - Multiplexed requests via Pingora ALPN
-- [x] Disable access logging in release/benchmark mode
-  - Config: `access_log: "stdout"` (default), `"false"`, or file path
-  - Uses Pingora's `logging` callback for proper request lifecycle
-- [x] Ensure compression disabled (match Envoy config)
-  - Pingora compression is opt-in; not enabled by default
-
 **E2E Tests** (`tests/`)
 - [x] Basic proxy startup and request forwarding
 - [x] Multi-backend routing verification
@@ -561,3 +548,37 @@
 - [ ] HTTPRoute creates correct config
 - [ ] Helm install deploys control plane
 - [ ] Upgrade preserves traffic
+
+---
+
+## Optimization & Stability (Immediate Priority) 🚧
+
+**Goal:** Stabilize performance under high concurrency and reduce error rates.
+
+**1. Upstream Concurrency Limits (P0)**
+- **Goal:** Prevent upstream saturation under high concurrency.
+- **Tasks:**
+  - [ ] Add a per-upstream limit for in-flight requests / active connections
+  - [ ] Enforce backpressure when the limit is reached (queue or fail fast)
+  - [ ] Expose the limit as a configurable parameter
+
+**2. Improve Upstream Connection Reuse (P0)**
+- **Goal:** Reduce connection churn and upstream accept pressure.
+- **Tasks:**
+  - [ ] Enable and tune upstream keepalive by default
+  - [ ] Maintain a reusable connection pool per upstream
+  - [ ] Avoid creating new TCP connections when idle connections are available
+
+**3. Enable Limited Retry for Idempotent Requests (P1)**
+- **Goal:** Reduce transient upstream failures surfacing as 502 errors.
+- **Tasks:**
+  - [ ] Enable retry for idempotent methods (e.g. GET)
+  - [ ] Retry only on upstream reset / early close errors
+  - [ ] Limit retries to a single attempt to avoid traffic amplification
+
+**4. Throttle or Downgrade Error Logging (P1)**
+- **Goal:** Prevent error log storms from becoming a performance bottleneck.
+- **Tasks:**
+  - [ ] Add rate limiting for repetitive upstream error logs
+  - [ ] Downgrade expected upstream errors to debug level in benchmark mode
+  - [ ] Optionally aggregate identical errors over a time window

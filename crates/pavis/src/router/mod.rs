@@ -54,7 +54,7 @@ mod tests {
             paths: vec![Route {
                 match_type: MatchType::Regex,
                 path: "[unclosed".to_string(),
-                timeout_ms: None,
+                timeout: None,
                 retry: None,
                 request_headers: None,
                 response_headers: None,

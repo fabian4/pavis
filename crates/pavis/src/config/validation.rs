@@ -112,7 +112,10 @@ fn validate_headers(headers: &HeaderOperations, context: &str) -> Result<()> {
     if let Some(remove) = &headers.remove {
         for k in remove {
             if k.is_empty() {
-                return Err(anyhow!("{}: Header name to remove cannot be empty", context));
+                return Err(anyhow!(
+                    "{}: Header name to remove cannot be empty",
+                    context
+                ));
             }
             HeaderName::from_str(k)
                 .with_context(|| format!("{}: Invalid header name to remove '{}'", context, k))?;

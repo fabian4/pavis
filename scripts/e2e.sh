@@ -19,15 +19,15 @@ cleanup() {
   docker compose -f "$COMPOSE_FILE" down > /dev/null 2>&1 || true
   # Cleanup generated configs logic handled by Rust TestEnv drop, 
   # but we can do a sweep here just in case of panic aborts.
-  # Use docker to remove potentially root-owned files
-  if [ -d "$CONFIG_DIR" ]; then
-      docker run --rm -v "$CONFIG_DIR":/work alpine rm -rf /work/certs /work/generated_*.yaml || true
-  fi
+  rm -f "$CONFIG_DIR"/generated_*.yaml
 }
 trap cleanup EXIT
 
 # 0. Pre-cleanup to ensure clean slate
 cleanup
+
+# Ensure certs directory exists and is user-owned (prevents Docker from creating it as root)
+mkdir -p "$CONFIG_DIR/certs"
 
 # 1. Setup Environment Variables
 setup_env() {
@@ -85,6 +85,7 @@ start_infrastructure
 # 4. Run Tests
 echo "🧪 Running Tests via Rust Harness..."
 cd "$WORKSPACE_ROOT"
-cargo test -p pavis-e2e -- --test-threads=1 --nocapture
+# Use -j 1 to run test binaries sequentially (avoids race conditions on shared docker container)
+cargo test -j 1 -p pavis-e2e -- --test-threads=1 --nocapture
 
 echo "🎉 All tests passed!"

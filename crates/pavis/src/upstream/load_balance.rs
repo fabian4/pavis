@@ -2,13 +2,13 @@ use crate::config::{Endpoint, LoadBalancer};
 use rand::Rng;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub fn select_index(lb: LoadBalancer, endpoints: &[Endpoint], counter: &AtomicUsize) -> usize {
-    if endpoints.is_empty() {
-        return 0;
-    }
-
-    let total_weight: u32 = endpoints.iter().map(|e| e.weight.unwrap_or(1)).sum();
-    if total_weight == 0 {
+pub fn select_index(
+    lb: LoadBalancer,
+    endpoints: &[Endpoint],
+    counter: &AtomicUsize,
+    total_weight: u32,
+) -> usize {
+    if endpoints.is_empty() || total_weight == 0 {
         return 0;
     }
 

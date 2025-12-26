@@ -39,7 +39,13 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn validate(self) -> Result<ValidatedConfig> {
+    pub fn validate(mut self) -> Result<ValidatedConfig> {
+        // Pre-compute endpoint addresses
+        for upstream in &mut self.upstreams {
+            for endpoint in &mut upstream.endpoints {
+                endpoint.address = format!("{}:{}", endpoint.ip, endpoint.port);
+            }
+        }
         validation::validate(&self)?;
         Ok(ValidatedConfig(self))
     }
@@ -188,27 +194,27 @@ fn default_true() -> bool {
 /// Connection pool configuration for upstream connections
 #[derive(Debug, Deserialize, Clone)]
 pub struct ConnectionPoolConfig {
-    /// Idle timeout in seconds for pooled connections. Default: 60
-    #[serde(default = "default_idle_timeout_secs")]
-    pub idle_timeout_secs: u64,
-    /// Connection timeout in seconds. Default: 5
-    #[serde(default = "default_connection_timeout_secs")]
-    pub connection_timeout_secs: u64,
+    /// Idle timeout for pooled connections. Default: 60s
+    #[serde(default = "default_idle_timeout", with = "humantime_serde")]
+    pub idle_timeout: std::time::Duration,
+    /// Connection timeout. Default: 5s
+    #[serde(default = "default_connection_timeout", with = "humantime_serde")]
+    pub connection_timeout: std::time::Duration,
 }
 
-fn default_idle_timeout_secs() -> u64 {
-    60
+fn default_idle_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(60)
 }
 
-fn default_connection_timeout_secs() -> u64 {
-    5
+fn default_connection_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(5)
 }
 
 impl Default for ConnectionPoolConfig {
     fn default() -> Self {
         Self {
-            idle_timeout_secs: default_idle_timeout_secs(),
-            connection_timeout_secs: default_connection_timeout_secs(),
+            idle_timeout: default_idle_timeout(),
+            connection_timeout: default_connection_timeout(),
         }
     }
 }
@@ -224,9 +230,10 @@ pub struct CircuitBreaker {
 #[derive(Debug, Deserialize, Clone)]
 pub struct HealthCheck {
     pub path: String,
-    // TODO: Parse duration string (e.g., "5s") into Duration
-    pub interval: String,
-    pub timeout: Option<String>,
+    #[serde(with = "humantime_serde")]
+    pub interval: std::time::Duration,
+    #[serde(default, with = "humantime_serde")]
+    pub timeout: Option<std::time::Duration>,
     pub unhealthy_threshold: Option<usize>,
     pub healthy_threshold: Option<usize>,
 }
@@ -236,6 +243,8 @@ pub struct Endpoint {
     pub ip: String,
     pub port: u16,
     pub weight: Option<u32>,
+    #[serde(skip)]
+    pub address: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -250,7 +259,8 @@ pub struct Route {
     pub match_type: MatchType,
     pub path: String,
     // TODO: Implement request timeout
-    pub timeout_ms: Option<u64>,
+    #[serde(default, with = "humantime_serde")]
+    pub timeout: Option<std::time::Duration>,
     // TODO: Implement retry policy
     pub retry: Option<RetryPolicy>,
     pub request_headers: Option<HeaderOperations>,
@@ -270,7 +280,8 @@ pub struct RetryPolicy {
     // The example showed [500, 502, 503, "gateway_error"...].
     // Let's use serde_yaml::Value to be safe.
     pub retry_on: Vec<serde_yaml::Value>,
-    pub per_try_timeout_ms: u64,
+    #[serde(with = "humantime_serde")]
+    pub per_try_timeout: std::time::Duration,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -454,10 +465,13 @@ upstreams:
 routes: []
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
-        assert_eq!(config.upstreams[0].connection_pool.idle_timeout_secs, 60);
         assert_eq!(
-            config.upstreams[0].connection_pool.connection_timeout_secs,
-            5
+            config.upstreams[0].connection_pool.idle_timeout,
+            std::time::Duration::from_secs(60)
+        );
+        assert_eq!(
+            config.upstreams[0].connection_pool.connection_timeout,
+            std::time::Duration::from_secs(5)
         );
 
         // Test custom values
@@ -469,18 +483,21 @@ telemetry:
 upstreams:
   - name: "backend"
     connection_pool:
-      idle_timeout_secs: 120
-      connection_timeout_secs: 10
+      idle_timeout: 120s
+      connection_timeout: 10s
     endpoints:
       - ip: "127.0.0.1"
         port: 8080
 routes: []
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
-        assert_eq!(config.upstreams[0].connection_pool.idle_timeout_secs, 120);
         assert_eq!(
-            config.upstreams[0].connection_pool.connection_timeout_secs,
-            10
+            config.upstreams[0].connection_pool.idle_timeout,
+            std::time::Duration::from_secs(120)
+        );
+        assert_eq!(
+            config.upstreams[0].connection_pool.connection_timeout,
+            std::time::Duration::from_secs(10)
         );
     }
 
@@ -545,7 +562,7 @@ routes: []
                 paths: vec![Route {
                     match_type: MatchType::Prefix,
                     path: "/".to_string(),
-                    timeout_ms: None,
+                    timeout: None,
                     retry: None,
                     request_headers: None,
                     response_headers: None,
@@ -574,6 +591,7 @@ routes: []
                 ip: "127.0.0.1".to_string(),
                 port: 80,
                 weight: Some(1),
+                address: "127.0.0.1:80".to_string(),
             }],
         });
         assert!(config.clone().validate().is_ok());
@@ -605,7 +623,7 @@ routes: []
                 paths: vec![Route {
                     match_type: MatchType::Prefix,
                     path: "/".to_string(),
-                    timeout_ms: None,
+                    timeout: None,
                     retry: None,
                     request_headers: Some(HeaderOperations {
                         add: Some(HashMap::from([
@@ -626,18 +644,20 @@ routes: []
 
         // Fix header name, break header value
         config.routes[0].paths[0].request_headers = Some(HeaderOperations {
-            add: Some(HashMap::from([
-                ("Valid-Header".to_string(), "valid value\r\nInjected".to_string()),
-            ])),
+            add: Some(HashMap::from([(
+                "Valid-Header".to_string(),
+                "valid value\r\nInjected".to_string(),
+            )])),
             remove: None,
         });
         assert!(config.clone().validate().is_err());
 
         // Valid headers
         config.routes[0].paths[0].request_headers = Some(HeaderOperations {
-            add: Some(HashMap::from([
-                ("Valid-Header".to_string(), "valid value".to_string()),
-            ])),
+            add: Some(HashMap::from([(
+                "Valid-Header".to_string(),
+                "valid value".to_string(),
+            )])),
             remove: None,
         });
         assert!(config.validate().is_ok());

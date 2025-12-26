@@ -1,5 +1,4 @@
 use crate::config::{MatchType, Route, VirtualHost};
-use regex::Regex;
 
 pub fn match_request<'a>(
     routes: &'a [VirtualHost],
@@ -16,11 +15,7 @@ pub fn match_request<'a>(
                         .compiled_regex
                         .as_ref()
                         .map(|re| re.is_match(uri_path))
-                        .unwrap_or_else(|| {
-                            Regex::new(&route.path)
-                                .map(|re| re.is_match(uri_path))
-                                .unwrap_or(false)
-                        }),
+                        .unwrap_or(false),
                 };
 
                 if is_match {

@@ -136,7 +136,7 @@ impl ProxyHttp for Proxy {
 
         let upstream = &cluster.config;
 
-        let addr = format!("{}:{}", endpoint.ip, endpoint.port);
+        let addr = &endpoint.address;
         tracing::debug!(
             upstream = %upstream_name,
             endpoint = %addr,
@@ -151,7 +151,7 @@ impl ProxyHttp for Proxy {
             .and_then(|c| c.sni.clone())
             .unwrap_or_else(|| "localhost".to_string());
 
-        let mut peer = HttpPeer::new(&addr, use_tls, sni);
+        let mut peer = HttpPeer::new(addr, use_tls, sni);
 
         if let Some(c) = tls_config {
             if let Some(verify) = c.verify_hostname {
@@ -170,12 +170,8 @@ impl ProxyHttp for Proxy {
         }
 
         // Configure connection pooling
-        peer.options.idle_timeout = Some(std::time::Duration::from_secs(
-            upstream.connection_pool.idle_timeout_secs,
-        ));
-        peer.options.connection_timeout = Some(std::time::Duration::from_secs(
-            upstream.connection_pool.connection_timeout_secs,
-        ));
+        peer.options.idle_timeout = Some(upstream.connection_pool.idle_timeout);
+        peer.options.connection_timeout = Some(upstream.connection_pool.connection_timeout);
 
         Ok(Box::new(peer))
     }
@@ -277,7 +273,7 @@ mod tests {
                         Route {
                             match_type: MatchType::Exact,
                             path: "/exact".to_string(),
-                            timeout_ms: None,
+                            timeout: None,
                             retry: None,
                             request_headers: None,
                             response_headers: None,
@@ -290,7 +286,7 @@ mod tests {
                         Route {
                             match_type: MatchType::Prefix,
                             path: "/api".to_string(),
-                            timeout_ms: None,
+                            timeout: None,
                             retry: None,
                             request_headers: None,
                             response_headers: None,
@@ -307,7 +303,7 @@ mod tests {
                     paths: vec![Route {
                         match_type: MatchType::Prefix,
                         path: "/public".to_string(),
-                        timeout_ms: None,
+                        timeout: None,
                         retry: None,
                         request_headers: None,
                         response_headers: None,
@@ -395,7 +391,7 @@ mod tests {
                 paths: vec![Route {
                     match_type: MatchType::Regex,
                     path: r"^/api/v[0-9]+/users/\d+$".to_string(),
-                    timeout_ms: None,
+                    timeout: None,
                     retry: None,
                     request_headers: None,
                     response_headers: None,
@@ -445,11 +441,13 @@ mod tests {
                     ip: "A".to_string(),
                     port: 80,
                     weight: Some(3), // 0, 1, 2
+                    address: "A:80".to_string(),
                 },
                 crate::config::Endpoint {
                     ip: "B".to_string(),
                     port: 80,
                     weight: Some(1), // 3
+                    address: "B:80".to_string(),
                 },
             ],
         };
@@ -479,16 +477,19 @@ mod tests {
                     ip: "127.0.0.1".to_string(),
                     port: 8081,
                     weight: None,
+                    address: "127.0.0.1:8081".to_string(),
                 },
                 crate::config::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8082,
                     weight: None,
+                    address: "127.0.0.1:8082".to_string(),
                 },
                 crate::config::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8083,
                     weight: None,
+                    address: "127.0.0.1:8083".to_string(),
                 },
             ],
         };
@@ -526,11 +527,13 @@ mod tests {
                     ip: "A".to_string(),
                     port: 80,
                     weight: None,
+                    address: "A:80".to_string(),
                 },
                 crate::config::Endpoint {
                     ip: "B".to_string(),
                     port: 80,
                     weight: None,
+                    address: "B:80".to_string(),
                 },
             ],
         };
