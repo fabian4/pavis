@@ -50,10 +50,10 @@ pub fn apply_request_headers(
                         req.insert_header(key, val)?;
                     }
                     (Err(e), _) => {
-                        tracing::warn!("Invalid request header name '{}': {}", k, e);
+                        tracing::warn!("Invalid request header name '{:?}': {}", k, e);
                     }
                     (_, Err(e)) => {
-                        tracing::warn!("Invalid request header value for '{}': {}", k, e);
+                        tracing::warn!("Invalid request header value for '{:?}': {}", k, e);
                     }
                 }
             }
@@ -81,10 +81,10 @@ pub fn apply_response_headers(
                         resp.insert_header(key, val)?;
                     }
                     (Err(e), _) => {
-                        tracing::warn!("Invalid response header name '{}': {}", k, e);
+                        tracing::warn!("Invalid response header name '{:?}': {}", k, e);
                     }
                     (_, Err(e)) => {
-                        tracing::warn!("Invalid response header value for '{}': {}", k, e);
+                        tracing::warn!("Invalid response header value for '{:?}': {}", k, e);
                     }
                 }
             }

@@ -1,7 +1,9 @@
-use super::Config;
+use super::{Config, HeaderOperations};
 use anyhow::{Context, Result, anyhow};
+use http::header::{HeaderName, HeaderValue};
 use std::collections::HashSet;
 use std::net::SocketAddr;
+use std::str::FromStr;
 
 pub fn validate(config: &Config) -> Result<()> {
     validate_server(config)?;
@@ -62,6 +64,13 @@ fn validate_routes(config: &Config) -> Result<()> {
 
     for vhost in &config.routes {
         for route in &vhost.paths {
+            if let Some(headers) = &route.request_headers {
+                validate_headers(headers, &format!("Route '{}' request headers", route.path))?;
+            }
+            if let Some(headers) = &route.response_headers {
+                validate_headers(headers, &format!("Route '{}' response headers", route.path))?;
+            }
+
             for dest in &route.destinations {
                 if !upstream_names.contains(&dest.upstream) {
                     return Err(anyhow!(
@@ -80,6 +89,33 @@ fn validate_routes(config: &Config) -> Result<()> {
                     ));
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_headers(headers: &HeaderOperations, context: &str) -> Result<()> {
+    if let Some(add) = &headers.add {
+        for (k, v) in add {
+            if k.is_empty() {
+                return Err(anyhow!("{}: Header name cannot be empty", context));
+            }
+
+            HeaderName::from_str(k)
+                .with_context(|| format!("{}: Invalid header name '{}'", context, k))?;
+
+            // We allow spaces in values (RFC 7230), but we check for CRLF via from_str
+            HeaderValue::from_str(v)
+                .with_context(|| format!("{}: Invalid header value for '{}'", context, k))?;
+        }
+    }
+    if let Some(remove) = &headers.remove {
+        for k in remove {
+            if k.is_empty() {
+                return Err(anyhow!("{}: Header name to remove cannot be empty", context));
+            }
+            HeaderName::from_str(k)
+                .with_context(|| format!("{}: Invalid header name to remove '{}'", context, k))?;
         }
     }
     Ok(())

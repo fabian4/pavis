@@ -582,4 +582,64 @@ routes: []
         config.server.listen_addr = "invalid".to_string();
         assert!(config.validate().is_err());
     }
+
+    #[test]
+    fn test_config_header_validation() {
+        let mut config = Config {
+            server: ServerConfig {
+                listen_addr: "0.0.0.0:8080".to_string(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: AccessLogConfig::False,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![VirtualHost {
+                host: "*".to_string(),
+                paths: vec![Route {
+                    match_type: MatchType::Prefix,
+                    path: "/".to_string(),
+                    timeout_ms: None,
+                    retry: None,
+                    request_headers: Some(HeaderOperations {
+                        add: Some(HashMap::from([
+                            ("Valid-Header".to_string(), "valid value".to_string()),
+                            ("Invalid-Header\r\n".to_string(), "value".to_string()),
+                        ])),
+                        remove: None,
+                    }),
+                    response_headers: None,
+                    destinations: vec![],
+                    compiled_regex: None,
+                }],
+            }],
+        };
+
+        // Should fail due to invalid header name
+        assert!(config.clone().validate().is_err());
+
+        // Fix header name, break header value
+        config.routes[0].paths[0].request_headers = Some(HeaderOperations {
+            add: Some(HashMap::from([
+                ("Valid-Header".to_string(), "valid value\r\nInjected".to_string()),
+            ])),
+            remove: None,
+        });
+        assert!(config.clone().validate().is_err());
+
+        // Valid headers
+        config.routes[0].paths[0].request_headers = Some(HeaderOperations {
+            add: Some(HashMap::from([
+                ("Valid-Header".to_string(), "valid value".to_string()),
+            ])),
+            remove: None,
+        });
+        assert!(config.validate().is_ok());
+    }
 }
