@@ -35,7 +35,7 @@ routes:
     paths:
       - match_type: "prefix"
         path: "/"
-        headers:
+        request_headers:
           add:
             x-sidecar-proxy: "pavis-e2e-basic"
             x-e2e-test: "true"

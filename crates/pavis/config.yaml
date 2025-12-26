@@ -53,7 +53,7 @@ routes:
         #   attempts: 3
         #   retry_on: [500, 502, 503, "gateway_error", "connect_failure"]
         #   per_try_timeout_ms: 500
-        headers:
+        request_headers:
           add:
             x-sidecar-proxy: "pavis"
           remove:

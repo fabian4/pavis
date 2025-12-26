@@ -27,7 +27,7 @@ routes:
     paths:
       - match_type: "prefix"
         path: "/headers"
-        headers:
+        request_headers:
           add:
             X-Pavis-Added: "Verified"
             X-Multi-Word: "Hello World"
