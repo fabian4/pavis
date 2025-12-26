@@ -7,6 +7,7 @@ server:
 telemetry:
   level: "debug"
   pingora: "warn"
+  # access_log: "stdout"  # Options: stdout (default), false, or file path
   # service_name: "payment-service"
   # tracing:
   #   enabled: true

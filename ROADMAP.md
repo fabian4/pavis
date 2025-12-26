@@ -44,10 +44,11 @@
 - [x] HTTP/2 upstream support
   - Config: `http_version: h2` (or `h1`, `h2h1`)
   - Multiplexed requests via Pingora ALPN
-- [ ] Disable access logging in release/benchmark mode
-  - `tracing::info!` on every request is a bottleneck
-  - Add `PAVIS_ACCESS_LOG=false` env var
-- [ ] Ensure compression disabled (match Envoy config)
+- [x] Disable access logging in release/benchmark mode
+  - Config: `access_log: "stdout"` (default), `"false"`, or file path
+  - Uses Pingora's `logging` callback for proper request lifecycle
+- [x] Ensure compression disabled (match Envoy config)
+  - Pingora compression is opt-in; not enabled by default
 
 **E2E Tests** (`tests/`)
 - [x] Basic proxy startup and request forwarding

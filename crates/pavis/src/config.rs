@@ -63,13 +63,44 @@ pub struct TlsConfig {
     pub key_path: Option<String>,
 }
 
+/// Access log destination configuration
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AccessLogConfig {
+    /// Disabled
+    False,
+    /// Log to stdout (default)
+    #[default]
+    Stdout,
+    /// Log to a file
+    File(String),
+}
+
+impl<'de> Deserialize<'de> for AccessLogConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "false" => Ok(AccessLogConfig::False),
+            "stdout" => Ok(AccessLogConfig::Stdout),
+            path if !path.is_empty() => Ok(AccessLogConfig::File(path.to_string())),
+            _ => Err(serde::de::Error::custom(
+                "access_log must be 'false', 'stdout', or a file path",
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct TelemetryConfig {
     pub level: Option<String>,
     pub pingora: Option<String>,
     pub service_name: Option<String>,
     pub prometheus_addr: Option<String>,
-    pub access_log: Option<String>,
+    /// Access log: "off" (default), "stdout", or file path
+    #[serde(default)]
+    pub access_log: AccessLogConfig,
     pub tracing: Option<TracingConfig>,
 }
 
@@ -243,5 +274,59 @@ routes: []
         assert_eq!(config.upstreams[1].http_version, HttpVersion::H1); // explicit h1
         assert_eq!(config.upstreams[2].http_version, HttpVersion::H2); // h2
         assert_eq!(config.upstreams[3].http_version, HttpVersion::H2H1); // h2h1
+    }
+
+    #[test]
+    fn test_access_log_deserialization() {
+        // Test default (stdout when not specified)
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  level: "info"
+upstreams: []
+routes: []
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        assert_eq!(config.telemetry.access_log, AccessLogConfig::Stdout);
+
+        // Test stdout explicitly
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  access_log: "stdout"
+upstreams: []
+routes: []
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        assert_eq!(config.telemetry.access_log, AccessLogConfig::Stdout);
+
+        // Test false to disable
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  access_log: "false"
+upstreams: []
+routes: []
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        assert_eq!(config.telemetry.access_log, AccessLogConfig::False);
+
+        // Test file path
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  access_log: "/var/log/pavis/access.log"
+upstreams: []
+routes: []
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        assert_eq!(
+            config.telemetry.access_log,
+            AccessLogConfig::File("/var/log/pavis/access.log".to_string())
+        );
     }
 }

@@ -7,7 +7,7 @@ use std::sync::Arc;
 mod config;
 mod proxy;
 
-use config::Config;
+use config::{AccessLogConfig, Config};
 use proxy::Proxy;
 
 #[derive(Parser, Debug)]
@@ -40,10 +40,17 @@ fn main() -> Result<()> {
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    let access_log_desc = match &config.telemetry.access_log {
+        AccessLogConfig::False => "off".to_string(),
+        AccessLogConfig::Stdout => "stdout".to_string(),
+        AccessLogConfig::File(path) => format!("file:{}", path),
+    };
+
     tracing::info!(
-        "Pavis starts on {} using {}",
-        config.server.listen_addr,
-        args.config
+        listen = %config.server.listen_addr,
+        config = %args.config,
+        access_log = %access_log_desc,
+        "Pavis starting"
     );
 
     let mut server = Server::new(None).context("Failed to create Pingora server")?;

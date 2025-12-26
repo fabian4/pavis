@@ -1,5 +1,6 @@
 use crate::config::{
-    Config, HeaderOperations, HttpVersion, LoadBalancer, MatchType, Route, Upstream, VirtualHost,
+    AccessLogConfig, Config, HeaderOperations, HttpVersion, LoadBalancer, MatchType, Route,
+    Upstream, VirtualHost,
 };
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
@@ -9,6 +10,8 @@ use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
 use regex::Regex;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -270,6 +273,53 @@ impl ProxyHttp for Proxy {
     ) -> Result<()> {
         apply_response_headers(upstream_response, ctx.response_headers.as_ref())
     }
+
+    async fn logging(&self, session: &mut Session, _e: Option<&Error>, ctx: &mut Self::CTX) {
+        match &self.config.telemetry.access_log {
+            AccessLogConfig::False => {}
+            AccessLogConfig::Stdout | AccessLogConfig::File(_) => {
+                let req = session.req_header();
+                let method = &req.method;
+                let path = req.uri.path();
+                let host = req
+                    .headers
+                    .get("host")
+                    .and_then(|h| h.to_str().ok())
+                    .unwrap_or("-");
+
+                let status = session
+                    .response_written()
+                    .map(|r| r.status.as_u16())
+                    .unwrap_or(0);
+
+                let upstream = ctx.upstream_name.as_deref().unwrap_or("-");
+
+                let log_line = format!(
+                    "{} {} {} {} {} {}\n",
+                    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ"),
+                    method,
+                    host,
+                    path,
+                    status,
+                    upstream
+                );
+
+                match &self.config.telemetry.access_log {
+                    AccessLogConfig::Stdout => {
+                        print!("{}", log_line);
+                    }
+                    AccessLogConfig::File(path) => {
+                        if let Ok(mut file) =
+                            OpenOptions::new().create(true).append(true).open(path)
+                        {
+                            let _ = file.write_all(log_line.as_bytes());
+                        }
+                    }
+                    AccessLogConfig::False => {}
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -289,7 +339,7 @@ mod tests {
                 pingora: None,
                 service_name: None,
                 prometheus_addr: None,
-                access_log: None,
+                access_log: crate::config::AccessLogConfig::False,
                 tracing: None,
             },
             upstreams: vec![],
@@ -398,7 +448,7 @@ mod tests {
                 pingora: None,
                 service_name: None,
                 prometheus_addr: None,
-                access_log: None,
+                access_log: crate::config::AccessLogConfig::False,
                 tracing: None,
             },
             upstreams: vec![],
@@ -525,7 +575,7 @@ mod tests {
                     pingora: None,
                     service_name: None,
                     prometheus_addr: None,
-                    access_log: None,
+                    access_log: crate::config::AccessLogConfig::False,
                     tracing: None,
                 },
                 upstreams: vec![upstream.clone()],
