@@ -15,7 +15,8 @@ telemetry:
 
 upstreams:
   - name: "backend-v1"
-    # load_balancer: "least_request"
+    # load_balancer: "round-robin"
+    # http_version: "h1"  # Options: h1, h2, h2h1 (default: h1)
     # circuit_breaker:
     #   max_connections: 1024
     #   max_pending_requests: 500
@@ -30,15 +31,10 @@ upstreams:
       - ip: "127.0.0.1"
         port: 8081
         # weight: 1
-#      - ip: "10.0.1.6"
-#        port: 80
-        # weight: 1
 
-  - name: "backend-v1"
-    # load_balancer: "round_robin"
-    # health_check:
-    #   path: "/healthz"
-    #   interval: "5s"
+  - name: "backend-v2"
+    # load_balancer: "round-robin"
+    # http_version: "h2"  # Use HTTP/2 for this upstream
     endpoints:
       - ip: "127.0.0.1"
         port: 8082
@@ -61,8 +57,6 @@ routes:
         destinations:
           - upstream: "backend-v1"
             weight: 100
-#          - upstream: "inventory-service-v2"
-#            weight: 10
 
       - match_type: "prefix"
         path: "/api/v2"

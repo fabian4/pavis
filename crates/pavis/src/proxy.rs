@@ -1,5 +1,5 @@
 use crate::config::{
-    Config, HeaderOperations, LoadBalancer, MatchType, Route, Upstream, VirtualHost,
+    Config, HeaderOperations, HttpVersion, LoadBalancer, MatchType, Route, Upstream, VirtualHost,
 };
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
@@ -192,15 +192,24 @@ impl ProxyHttp for Proxy {
             upstream = %upstream_name,
             endpoint = %addr,
             lb = ?upstream.load_balancer,
+            http_version = ?upstream.http_version,
             "forwarding request"
         );
 
-        let peer = Box::new(HttpPeer::new(
+        let mut peer = HttpPeer::new(
             &addr,
             false, // TLS disabled for now
             "localhost".to_string(),
-        ));
-        Ok(peer)
+        );
+
+        // Configure HTTP version
+        match upstream.http_version {
+            HttpVersion::H1 => peer.options.set_http_version(1, 1),
+            HttpVersion::H2 => peer.options.set_http_version(2, 2),
+            HttpVersion::H2H1 => peer.options.set_http_version(2, 1),
+        }
+
+        Ok(Box::new(peer))
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
@@ -434,6 +443,7 @@ mod tests {
         let upstream = crate::config::Upstream {
             name: "weighted-upstream".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
+            http_version: crate::config::HttpVersion::H1,
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![
@@ -475,6 +485,7 @@ mod tests {
         let upstream = crate::config::Upstream {
             name: "test-upstream".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
+            http_version: crate::config::HttpVersion::H1,
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![

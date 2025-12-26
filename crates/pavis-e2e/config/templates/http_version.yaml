@@ -1,0 +1,46 @@
+server:
+  listen_addr: "0.0.0.0:8080"
+  worker_threads: 2
+  tls:
+    enabled: false
+
+telemetry:
+  level: "info"
+  pingora: "info"
+  service_name: "pavis-e2e-http-version"
+  prometheus_addr: "0.0.0.0:9091"
+  access_log: "stdout"
+  tracing:
+    enabled: true
+    provider: "opentelemetry"
+    sampling_rate: 1.0
+
+upstreams:
+  - name: "backend-h1"
+    load_balancer: "round-robin"
+    http_version: "h1"
+    endpoints:
+      - ip: "${BACKEND_V1_HOST}"
+        port: 8081
+
+  - name: "backend-h2"
+    load_balancer: "round-robin"
+    http_version: "h2h1"
+    endpoints:
+      - ip: "${BACKEND_V2_HOST}"
+        port: 8082
+
+routes:
+  - host: "*"
+    paths:
+      - match_type: "prefix"
+        path: "/h1"
+        destinations:
+          - upstream: "backend-h1"
+            weight: 100
+
+      - match_type: "prefix"
+        path: "/h2"
+        destinations:
+          - upstream: "backend-h2"
+            weight: 100

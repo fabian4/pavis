@@ -33,6 +33,22 @@ pub enum LoadBalancer {
     RoundRobin,
 }
 
+/// HTTP version preference for upstream connections
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HttpVersion {
+    /// HTTP/1.1 only (default)
+    #[default]
+    #[serde(alias = "1", alias = "1.1", alias = "http1")]
+    H1,
+    /// HTTP/2 only
+    #[serde(alias = "2", alias = "http2")]
+    H2,
+    /// Prefer HTTP/2, fallback to HTTP/1.1
+    #[serde(alias = "auto")]
+    H2H1,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct ServerConfig {
     pub listen_addr: String,
@@ -69,6 +85,9 @@ pub struct Upstream {
     pub name: String,
     #[serde(default)]
     pub load_balancer: LoadBalancer,
+    /// HTTP version for upstream connections (h1, h2, h2h1). Default: h1
+    #[serde(default)]
+    pub http_version: HttpVersion,
     pub circuit_breaker: Option<CircuitBreaker>,
     pub health_check: Option<HealthCheck>,
     pub endpoints: Vec<Endpoint>,
@@ -165,6 +184,8 @@ mod tests {
         assert_eq!(config.upstreams[0].name, "backend-v1");
         assert_eq!(config.upstreams[0].endpoints.len(), 1);
         assert_eq!(config.upstreams[0].endpoints[0].port, 8081);
+        // Default http_version should be H1
+        assert_eq!(config.upstreams[0].http_version, HttpVersion::H1);
 
         assert_eq!(config.routes.len(), 1);
         assert_eq!(config.routes[0].host, "backend");
@@ -183,5 +204,44 @@ mod tests {
             config.routes[0].paths[1].destinations[0].upstream,
             "backend-v2"
         );
+    }
+
+    #[test]
+    fn test_http_version_deserialization() {
+        // Test all http_version variants
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  level: "info"
+upstreams:
+  - name: "default"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+  - name: "http1-explicit"
+    http_version: "h1"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8082
+  - name: "http2-only"
+    http_version: "h2"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8083
+  - name: "http2-prefer"
+    http_version: "h2h1"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8084
+routes: []
+"#;
+
+        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+
+        assert_eq!(config.upstreams[0].http_version, HttpVersion::H1); // default
+        assert_eq!(config.upstreams[1].http_version, HttpVersion::H1); // explicit h1
+        assert_eq!(config.upstreams[2].http_version, HttpVersion::H2); // h2
+        assert_eq!(config.upstreams[3].http_version, HttpVersion::H2H1); // h2h1
     }
 }

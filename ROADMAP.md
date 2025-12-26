@@ -41,9 +41,9 @@
 - [ ] Connection pooling to upstreams (keep-alive)
   - Pingora `HttpPeer` with connection reuse
   - Without this: 50%+ slower than Envoy
-- [ ] HTTP/2 upstream support
-  - Required for h2load benchmarks
-  - Multiplexed requests
+- [x] HTTP/2 upstream support
+  - Config: `http_version: h2` (or `h1`, `h2h1`)
+  - Multiplexed requests via Pingora ALPN
 - [ ] Disable access logging in release/benchmark mode
   - `tracing::info!` on every request is a bottleneck
   - Add `PAVIS_ACCESS_LOG=false` env var
