@@ -31,7 +31,19 @@ fn test_checksum_validation_success() {
 
     let config = RuntimeConfig {
         header: PavisHeader::default(),
-        listen_addr: "127.0.0.1:0".to_string(),
+        server: pavis_core::ServerConfig {
+            listen_addr: "127.0.0.1:0".to_string(),
+            worker_threads: None,
+            tls: None,
+        },
+        telemetry: pavis_core::TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            prometheus_addr: None,
+            access_log: pavis_core::AccessLogConfig::False,
+            tracing: None,
+        },
         upstreams: vec![],
         routes: vec![],
     };
@@ -47,7 +59,7 @@ fn test_checksum_validation_success() {
         version: PAVIS_VERSION,
         algorithm: 1,
         checksum,
-        _reserved: [0; 16],
+        _reserved: [0; 20],
     };
 
     let mut final_bytes = Vec::new();
@@ -66,27 +78,27 @@ fn test_checksum_validation_success() {
     let mut child = Command::new(binary)
         .arg("--config")
         .arg(&config_path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
         .spawn()
         .expect("Failed to spawn process");
 
     std::thread::sleep(std::time::Duration::from_secs(1));
-    
+
     // If it's still running, it passed validation
     match child.try_wait() {
         Ok(None) => {
             let _ = child.kill();
         }
         Ok(Some(status)) => {
-             // It might have exited if listen port 0 caused immediate exit or something else, 
-             // but for now we assume it runs forever.
-             // Actually, listen_addr 0 might fail binding if not handled? 
-             // But let's assume it works or fails later.
-             // If it failed with checksum error, it would be exit code 1.
-             if !status.success() {
-                 panic!("Process exited unexpectedly");
-             }
+            // It might have exited if listen port 0 caused immediate exit or something else,
+            // but for now we assume it runs forever.
+            // Actually, listen_addr 0 might fail binding if not handled?
+            // But let's assume it works or fails later.
+            // If it failed with checksum error, it would be exit code 1.
+            if !status.success() {
+                panic!("Process exited unexpectedly");
+            }
         }
         Err(_) => {}
     }
@@ -99,7 +111,19 @@ fn test_checksum_validation_failure() {
 
     let config = RuntimeConfig {
         header: PavisHeader::default(),
-        listen_addr: "127.0.0.1:0".to_string(),
+        server: pavis_core::ServerConfig {
+            listen_addr: "127.0.0.1:0".to_string(),
+            worker_threads: None,
+            tls: None,
+        },
+        telemetry: pavis_core::TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            prometheus_addr: None,
+            access_log: pavis_core::AccessLogConfig::False,
+            tracing: None,
+        },
         upstreams: vec![],
         routes: vec![],
     };
@@ -121,7 +145,7 @@ fn test_checksum_validation_failure() {
         version: PAVIS_VERSION,
         algorithm: 1,
         checksum, // Checksum matches ORIGINAL bytes, not corrupted ones
-        _reserved: [0; 16],
+        _reserved: [0; 20],
     };
 
     let mut final_bytes = Vec::new();

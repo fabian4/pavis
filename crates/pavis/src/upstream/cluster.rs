@@ -1,5 +1,5 @@
 use super::load_balance;
-use crate::config::{Endpoint, Upstream};
+use pavis_core::{Endpoint, Upstream};
 use std::sync::atomic::AtomicUsize;
 
 #[repr(align(64))]
@@ -16,7 +16,7 @@ pub struct Cluster {
 
 impl Cluster {
     pub fn new(config: Upstream) -> Self {
-        let total_weight = config.endpoints.iter().map(|e| e.weight.unwrap_or(1)).sum();
+        let total_weight = config.endpoints.iter().map(|e| e.weight).sum();
         Self {
             config,
             rr_counter: AlignedCounter(AtomicUsize::new(0)),

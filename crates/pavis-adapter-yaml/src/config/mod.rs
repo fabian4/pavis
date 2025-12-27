@@ -369,9 +369,18 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
                     })
                     .collect();
 
+                let timeout_ms = p.timeout.map(|d| d.as_millis() as u64);
+                let retry_policy = p.retry.map(|r| pavis_core::RetryPolicy {
+                    attempts: r.attempts as u32,
+                    per_try_timeout_ms: r.per_try_timeout.as_millis() as u64,
+                    retry_on: r.retry_on.iter().map(|v| v.to_string()).collect(),
+                });
+
                 paths.push(pavis_core::Route {
                     match_type,
                     path: p.path,
+                    timeout_ms,
+                    retry_policy,
                     request_headers,
                     response_headers,
                     destinations,
@@ -386,7 +395,31 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
 
         Ok(pavis_core::RuntimeConfig {
             header: pavis_core::PavisHeader::default(),
-            listen_addr: src.server.listen_addr,
+            server: pavis_core::ServerConfig {
+                listen_addr: src.server.listen_addr,
+                worker_threads: src.server.worker_threads.map(|w| w as u64),
+                tls: src.server.tls.map(|t| pavis_core::TlsConfig {
+                    enabled: t.enabled,
+                    cert_path: t.cert_path,
+                    key_path: t.key_path,
+                }),
+            },
+            telemetry: pavis_core::TelemetryConfig {
+                level: src.telemetry.level,
+                pingora: src.telemetry.pingora,
+                service_name: src.telemetry.service_name,
+                prometheus_addr: src.telemetry.prometheus_addr,
+                access_log: match src.telemetry.access_log {
+                    AccessLogConfig::False => pavis_core::AccessLogConfig::False,
+                    AccessLogConfig::Stdout => pavis_core::AccessLogConfig::Stdout,
+                    AccessLogConfig::File(path) => pavis_core::AccessLogConfig::File(path),
+                },
+                tracing: src.telemetry.tracing.map(|t| pavis_core::TracingConfig {
+                    enabled: t.enabled,
+                    provider: t.provider,
+                    sampling_rate: t.sampling_rate,
+                }),
+            },
             upstreams,
             routes,
         })
@@ -472,11 +505,23 @@ impl From<pavis_core::RuntimeConfig> for YamlConfig {
                     })
                     .collect();
 
+                let timeout = p.timeout_ms.map(std::time::Duration::from_millis);
+                let retry = p.retry_policy.map(|r| RetryPolicy {
+                    attempts: r.attempts as usize,
+                    per_try_timeout: std::time::Duration::from_millis(r.per_try_timeout_ms),
+                    // This is lossy if we just to_string'd it, but for now it's fine
+                    retry_on: r
+                        .retry_on
+                        .into_iter()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                });
+
                 paths.push(Route {
                     match_type,
                     path: p.path,
-                    timeout: None,
-                    retry: None,
+                    timeout,
+                    retry,
                     request_headers,
                     response_headers,
                     destinations,
@@ -492,17 +537,29 @@ impl From<pavis_core::RuntimeConfig> for YamlConfig {
 
         YamlConfig {
             server: ServerConfig {
-                listen_addr: binary.listen_addr,
-                worker_threads: None,
-                tls: None,
+                listen_addr: binary.server.listen_addr,
+                worker_threads: binary.server.worker_threads.map(|w| w as usize),
+                tls: binary.server.tls.map(|t| TlsConfig {
+                    enabled: t.enabled,
+                    cert_path: t.cert_path,
+                    key_path: t.key_path,
+                }),
             },
             telemetry: TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: AccessLogConfig::False,
-                tracing: None,
+                level: binary.telemetry.level,
+                pingora: binary.telemetry.pingora,
+                service_name: binary.telemetry.service_name,
+                prometheus_addr: binary.telemetry.prometheus_addr,
+                access_log: match binary.telemetry.access_log {
+                    pavis_core::AccessLogConfig::False => AccessLogConfig::False,
+                    pavis_core::AccessLogConfig::Stdout => AccessLogConfig::Stdout,
+                    pavis_core::AccessLogConfig::File(path) => AccessLogConfig::File(path),
+                },
+                tracing: binary.telemetry.tracing.map(|t| TracingConfig {
+                    enabled: t.enabled,
+                    provider: t.provider,
+                    sampling_rate: t.sampling_rate,
+                }),
             },
             upstreams,
             routes,

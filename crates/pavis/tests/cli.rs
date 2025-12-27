@@ -83,7 +83,19 @@ fn test_process_lifecycle_sigint() {
     // Create a valid config programmatically
     let config = RuntimeConfig {
         header: PavisHeader::default(),
-        listen_addr: "127.0.0.1:0".to_string(), // Random port
+        server: pavis_core::ServerConfig {
+            listen_addr: "127.0.0.1:0".to_string(),
+            worker_threads: None,
+            tls: None,
+        },
+        telemetry: pavis_core::TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            prometheus_addr: None,
+            access_log: pavis_core::AccessLogConfig::False,
+            tracing: None,
+        },
         upstreams: vec![],
         routes: vec![],
     };
@@ -101,7 +113,7 @@ fn test_process_lifecycle_sigint() {
         version: PAVIS_VERSION,
         algorithm: 1,
         checksum,
-        _reserved: [0; 16],
+        _reserved: [0; 20],
     };
 
     let mut final_bytes = Vec::new();
@@ -119,8 +131,8 @@ fn test_process_lifecycle_sigint() {
     let mut child = Command::new(binary)
         .arg("--config")
         .arg(&config_path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
         .spawn()
         .expect("Failed to spawn process");
 

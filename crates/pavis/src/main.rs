@@ -5,12 +5,12 @@ use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
 use std::sync::Arc;
 
-use pavis::config::AccessLogConfig;
 use pavis::load;
 use pavis::proxy::Proxy;
 use pavis::router::Router;
 use pavis::telemetry::Telemetry;
 use pavis::upstream::Manager;
+use pavis_core::AccessLogConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -27,7 +27,7 @@ fn main() -> Result<()> {
     let config = load::load_file(&args.config)?;
 
     // Initialize Router (compiles regexes)
-    let router = Arc::new(Router::new(&config.routes)?);
+    let router = Arc::new(Router::new(config.routes.clone())?);
 
     let config = Arc::new(config);
 
@@ -61,7 +61,7 @@ fn main() -> Result<()> {
         ..Default::default()
     };
     if let Some(threads) = config.server.worker_threads {
-        server_conf.threads = threads;
+        server_conf.threads = threads as usize;
     }
     let mut server = Server::new_with_opt_and_conf(None, server_conf);
     server.bootstrap();

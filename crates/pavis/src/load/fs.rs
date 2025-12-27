@@ -13,17 +13,18 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
     // For a config file loaded at startup, this is generally acceptable risk.
     let mmap = unsafe { Mmap::map(&file).context("Failed to mmap .pvs file")? };
 
-    // Header size is 60 bytes
-    const HEADER_SIZE: usize = 60;
+    // Header size is 64 bytes (aligned to 16 bytes)
+    const HEADER_SIZE: usize = 64;
 
     if mmap.len() < HEADER_SIZE {
-        return Err(anyhow!("Config file too small (must be at least 60 bytes)"));
+        return Err(anyhow!("Config file too small (must be at least 64 bytes)"));
     }
 
     let magic = &mmap[0..4];
     let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());
     let algorithm = u32::from_le_bytes(mmap[8..12].try_into().unwrap());
     let expected_checksum = &mmap[12..44];
+    // _reserved is at 44..64
 
     if magic != pavis_core::PAVIS_MAGIC {
         return Err(anyhow!("Invalid magic bytes in .pvs file. Expected 'PAVS'"));
@@ -50,6 +51,13 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
     } else if algorithm != 0 {
         return Err(anyhow!("Unsupported hash algorithm: {}", algorithm));
     }
+
+    // Ensure payload is aligned
+    // rkyv requires alignment. mmap usually returns page-aligned memory (4096 bytes).
+    // HEADER_SIZE is 64, which is divisible by 16.
+    // So payload should be aligned to 16 bytes relative to mmap start.
+    // Since mmap start is page aligned, payload is 16-byte aligned.
+    // However, check_archived_root might be strict.
 
     let archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;

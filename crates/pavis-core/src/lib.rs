@@ -34,7 +34,7 @@ pub struct PavisHeader {
     pub version: u32,
     pub algorithm: u32,
     pub checksum: [u8; 32],
-    pub _reserved: [u8; 16],
+    pub _reserved: [u8; 20],
 }
 
 impl Default for PavisHeader {
@@ -44,7 +44,7 @@ impl Default for PavisHeader {
             version: PAVIS_VERSION,
             algorithm: 0,
             checksum: [0; 32],
-            _reserved: [0; 16],
+            _reserved: [0; 20],
         }
     }
 }
@@ -54,9 +54,53 @@ impl Default for PavisHeader {
 #[archive(check_bytes)]
 pub struct RuntimeConfig {
     pub header: PavisHeader,
-    pub listen_addr: String,
+    pub server: ServerConfig,
+    pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[archive(check_bytes)]
+pub struct ServerConfig {
+    pub listen_addr: String,
+    pub worker_threads: Option<u64>, // usize in config.rs, u64 here for safety
+    pub tls: Option<TlsConfig>,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[archive(check_bytes)]
+pub struct TlsConfig {
+    pub enabled: bool,
+    pub cert_path: Option<String>,
+    pub key_path: Option<String>,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[archive(check_bytes)]
+pub struct TelemetryConfig {
+    pub level: Option<String>,
+    pub pingora: Option<String>,
+    pub service_name: Option<String>,
+    pub prometheus_addr: Option<String>,
+    pub access_log: AccessLogConfig,
+    pub tracing: Option<TracingConfig>,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq)]
+#[archive(check_bytes)]
+pub enum AccessLogConfig {
+    False,
+    Stdout,
+    File(String),
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[archive(check_bytes)]
+pub struct TracingConfig {
+    pub enabled: bool,
+    pub provider: String,
+    pub sampling_rate: f64,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
@@ -70,7 +114,7 @@ pub struct Upstream {
     pub endpoints: Vec<Endpoint>,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[archive(check_bytes)]
 pub enum LoadBalancer {
     RoundRobin,
@@ -78,7 +122,7 @@ pub enum LoadBalancer {
     // Add others as needed (e.g., LeastConnection)
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[archive(check_bytes)]
 pub enum HttpVersion {
     H1,
@@ -122,12 +166,24 @@ pub struct VirtualHost {
 pub struct Route {
     pub match_type: MatchType,
     pub path: String,
+    pub timeout_ms: Option<u64>,
+    pub retry_policy: Option<RetryPolicy>,
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
     pub destinations: Vec<WeightedDestination>,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[archive(check_bytes)]
+pub struct RetryPolicy {
+    pub attempts: u32,
+    pub per_try_timeout_ms: u64,
+    // Simple list of status codes or conditions?
+    // For now let's stick to what was in pavis/config.rs: Vec<String>
+    pub retry_on: Vec<String>,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[archive(check_bytes)]
 pub enum MatchType {
     Prefix,
@@ -159,7 +215,19 @@ mod tests {
     fn create_valid_config() -> RuntimeConfig {
         RuntimeConfig {
             header: PavisHeader::default(),
-            listen_addr: "0.0.0.0:8080".to_string(),
+            server: ServerConfig {
+                listen_addr: "0.0.0.0:8080".to_string(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: AccessLogConfig::False,
+                tracing: None,
+            },
             upstreams: vec![Upstream {
                 name: "test".to_string(),
                 load_balancer: LoadBalancer::RoundRobin,
@@ -186,6 +254,8 @@ mod tests {
                         upstream: "test".to_string(),
                         weight: 1,
                     }],
+                    timeout_ms: None,
+                    retry_policy: None,
                 }],
             }],
         }

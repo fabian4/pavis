@@ -10,18 +10,19 @@
 //! 3. **No Mutable Global State**: State should be encapsulated in components (`Router`, `Manager`).
 //! 4. **Validated Configuration**: The proxy assumes configuration is valid and immutable.
 
-use crate::config::{HeaderOperations, HttpVersion};
 use crate::router::Router;
 use crate::telemetry::Telemetry;
 use crate::upstream::Manager;
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
+use pavis_core::{HeaderOperations, HttpVersion};
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub struct Proxy {
     pub router: Arc<Router>,
@@ -43,25 +44,21 @@ pub fn apply_request_headers(
     req.insert_header("X-Proxy-By", "Pavis")?;
 
     if let Some(headers) = headers {
-        if let Some(add_map) = &headers.add {
-            for (k, v) in add_map {
-                match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
-                    (Ok(key), Ok(val)) => {
-                        req.insert_header(key, val)?;
-                    }
-                    (Err(e), _) => {
-                        tracing::warn!("Invalid request header name '{:?}': {}", k, e);
-                    }
-                    (_, Err(e)) => {
-                        tracing::warn!("Invalid request header value for '{:?}': {}", k, e);
-                    }
+        for (k, v) in &headers.add {
+            match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
+                (Ok(key), Ok(val)) => {
+                    req.insert_header(key, val)?;
+                }
+                (Err(e), _) => {
+                    tracing::warn!("Invalid request header name '{:?}': {}", k, e);
+                }
+                (_, Err(e)) => {
+                    tracing::warn!("Invalid request header value for '{:?}': {}", k, e);
                 }
             }
         }
-        if let Some(remove_list) = &headers.remove {
-            for k in remove_list {
-                req.remove_header(k);
-            }
+        for k in &headers.remove {
+            req.remove_header(k);
         }
     }
     Ok(())
@@ -74,25 +71,21 @@ pub fn apply_response_headers(
     resp.insert_header("X-Proxy-By", "Pavis")?;
 
     if let Some(headers) = headers {
-        if let Some(add_map) = &headers.add {
-            for (k, v) in add_map {
-                match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
-                    (Ok(key), Ok(val)) => {
-                        resp.insert_header(key, val)?;
-                    }
-                    (Err(e), _) => {
-                        tracing::warn!("Invalid response header name '{:?}': {}", k, e);
-                    }
-                    (_, Err(e)) => {
-                        tracing::warn!("Invalid response header value for '{:?}': {}", k, e);
-                    }
+        for (k, v) in &headers.add {
+            match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
+                (Ok(key), Ok(val)) => {
+                    resp.insert_header(key, val)?;
+                }
+                (Err(e), _) => {
+                    tracing::warn!("Invalid response header name '{:?}': {}", k, e);
+                }
+                (_, Err(e)) => {
+                    tracing::warn!("Invalid response header value for '{:?}': {}", k, e);
                 }
             }
         }
-        if let Some(remove_list) = &headers.remove {
-            for k in remove_list {
-                resp.remove_header(k);
-            }
+        for k in &headers.remove {
+            resp.remove_header(k);
         }
     }
     Ok(())
@@ -136,7 +129,7 @@ impl ProxyHttp for Proxy {
 
         let upstream = &cluster.config;
 
-        let addr = endpoint.address();
+        let addr = pavis_core::format_address(&endpoint.ip, endpoint.port);
 
         tracing::debug!(
             upstream = %upstream_name,
@@ -155,12 +148,8 @@ impl ProxyHttp for Proxy {
         let mut peer = HttpPeer::new(addr, use_tls, sni);
 
         if let Some(c) = tls_config {
-            if let Some(verify) = c.verify_hostname {
-                peer.options.verify_hostname = verify;
-            }
-            if let Some(verify) = c.verify_cert {
-                peer.options.verify_cert = verify;
-            }
+            peer.options.verify_hostname = c.verify_hostname;
+            peer.options.verify_cert = c.verify_cert;
         }
 
         // Configure HTTP version
@@ -171,8 +160,12 @@ impl ProxyHttp for Proxy {
         }
 
         // Configure connection pooling
-        peer.options.idle_timeout = Some(upstream.connection_pool.idle_timeout);
-        peer.options.connection_timeout = Some(upstream.connection_pool.connection_timeout);
+        peer.options.idle_timeout = Some(Duration::from_secs(
+            upstream.connection_pool.idle_timeout_secs,
+        ));
+        peer.options.connection_timeout = Some(Duration::from_secs(
+            upstream.connection_pool.connection_timeout_secs,
+        ));
 
         Ok(Box::new(peer))
     }
@@ -247,23 +240,26 @@ impl ProxyHttp for Proxy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, LoadBalancer, MatchType, Route, VirtualHost, WeightedDestination};
     use crate::upstream::Cluster;
-    use std::collections::HashMap;
+    use pavis_core::{
+        AccessLogConfig, LoadBalancer, MatchType, Route, RuntimeConfig as Config, ServerConfig,
+        TelemetryConfig, VirtualHost, WeightedDestination,
+    };
 
     fn create_test_config() -> Config {
         Config {
-            server: crate::config::ServerConfig {
+            header: pavis_core::PavisHeader::default(),
+            server: ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
                 tls: None,
             },
-            telemetry: crate::config::TelemetryConfig {
+            telemetry: TelemetryConfig {
                 level: None,
                 pingora: None,
                 service_name: None,
                 prometheus_addr: None,
-                access_log: crate::config::AccessLogConfig::False,
+                access_log: AccessLogConfig::False,
                 tracing: None,
             },
             upstreams: vec![],
@@ -274,28 +270,26 @@ mod tests {
                         Route {
                             match_type: MatchType::Exact,
                             path: "/exact".to_string(),
-                            timeout: None,
-                            retry: None,
+                            timeout_ms: None,
+                            retry_policy: None,
                             request_headers: None,
                             response_headers: None,
                             destinations: vec![WeightedDestination {
                                 upstream: "backend-1".to_string(),
                                 weight: 1,
                             }],
-                            compiled_regex: None,
                         },
                         Route {
                             match_type: MatchType::Prefix,
                             path: "/api".to_string(),
-                            timeout: None,
-                            retry: None,
+                            timeout_ms: None,
+                            retry_policy: None,
                             request_headers: None,
                             response_headers: None,
                             destinations: vec![WeightedDestination {
                                 upstream: "backend-1".to_string(),
                                 weight: 1,
                             }],
-                            compiled_regex: None,
                         },
                     ],
                 },
@@ -304,15 +298,14 @@ mod tests {
                     paths: vec![Route {
                         match_type: MatchType::Prefix,
                         path: "/public".to_string(),
-                        timeout: None,
-                        retry: None,
+                        timeout_ms: None,
+                        retry_policy: None,
                         request_headers: None,
                         response_headers: None,
                         destinations: vec![WeightedDestination {
                             upstream: "backend-2".to_string(),
                             weight: 1,
                         }],
-                        compiled_regex: None,
                     }],
                 },
             ],
@@ -322,7 +315,7 @@ mod tests {
     #[test]
     fn test_find_route_exact_match() {
         let config = create_test_config();
-        let router = Router::new(&config.routes).unwrap();
+        let router = Router::new(config.routes.clone()).unwrap();
         let (vhost, route) = router
             .match_request(Some("example.com"), "/exact")
             .expect("Should match");
@@ -333,7 +326,7 @@ mod tests {
     #[test]
     fn test_find_route_prefix_match() {
         let config = create_test_config();
-        let router = Router::new(&config.routes).unwrap();
+        let router = Router::new(config.routes.clone()).unwrap();
         let (vhost, route) = router
             .match_request(Some("example.com"), "/api/v1/users")
             .expect("Should match");
@@ -344,7 +337,7 @@ mod tests {
     #[test]
     fn test_find_route_wildcard_host() {
         let config = create_test_config();
-        let router = Router::new(&config.routes).unwrap();
+        let router = Router::new(config.routes.clone()).unwrap();
         let (vhost, route) = router
             .match_request(Some("any.com"), "/public/stuff")
             .expect("Should match");
@@ -355,7 +348,7 @@ mod tests {
     #[test]
     fn test_find_route_no_match() {
         let config = create_test_config();
-        let router = Router::new(&config.routes).unwrap();
+        let router = Router::new(config.routes.clone()).unwrap();
         let result = router.match_request(Some("example.com"), "/notfound");
         assert!(result.is_none());
     }
@@ -363,7 +356,7 @@ mod tests {
     #[test]
     fn test_find_route_wrong_host() {
         let config = create_test_config();
-        let router = Router::new(&config.routes).unwrap();
+        let router = Router::new(config.routes.clone()).unwrap();
         // "other.com" matches "*" host but path "/exact" is only on "example.com"
         // Wait, "*" host has "/public". "/exact" is NOT on "*".
         let result = router.match_request(Some("other.com"), "/exact");
@@ -373,17 +366,18 @@ mod tests {
     #[test]
     fn test_find_route_regex_match() {
         let config = Config {
-            server: crate::config::ServerConfig {
+            header: pavis_core::PavisHeader::default(),
+            server: ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
                 tls: None,
             },
-            telemetry: crate::config::TelemetryConfig {
+            telemetry: TelemetryConfig {
                 level: None,
                 pingora: None,
                 service_name: None,
                 prometheus_addr: None,
-                access_log: crate::config::AccessLogConfig::False,
+                access_log: AccessLogConfig::False,
                 tracing: None,
             },
             upstreams: vec![],
@@ -392,27 +386,25 @@ mod tests {
                 paths: vec![Route {
                     match_type: MatchType::Regex,
                     path: r"^/api/v[0-9]+/users/\d+$".to_string(),
-                    timeout: None,
-                    retry: None,
+                    timeout_ms: None,
+                    retry_policy: None,
                     request_headers: None,
                     response_headers: None,
                     destinations: vec![WeightedDestination {
                         upstream: "backend".to_string(),
                         weight: 1,
                     }],
-                    compiled_regex: None,
                 }],
             }],
         };
 
-        let router = Router::new(&config.routes).unwrap();
+        let router = Router::new(config.routes.clone()).unwrap();
 
         // Should match
         let result = router.match_request(None, "/api/v1/users/123");
         assert!(result.is_some());
         let (_, route) = result.unwrap();
         assert_eq!(route.match_type, MatchType::Regex);
-        assert!(route.compiled_regex.is_some());
 
         // Should match v2
         let result = router.match_request(None, "/api/v2/users/456");
@@ -429,24 +421,25 @@ mod tests {
 
     #[test]
     fn test_weighted_round_robin_respects_weights() {
-        let upstream = crate::config::Upstream {
+        let upstream = pavis_core::Upstream {
             name: "test".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
-            http_version: crate::config::HttpVersion::H1,
-            connection_pool: crate::config::ConnectionPoolConfig::default(),
+            http_version: pavis_core::HttpVersion::H1,
+            connection_pool: pavis_core::ConnectionPoolConfig {
+                idle_timeout_secs: 60,
+                connection_timeout_secs: 5,
+            },
             tls: None,
-            circuit_breaker: None,
-            health_check: None,
             endpoints: vec![
-                crate::config::Endpoint {
+                pavis_core::Endpoint {
                     ip: "A".to_string(),
                     port: 8080,
-                    weight: Some(3),
+                    weight: 3,
                 },
-                crate::config::Endpoint {
+                pavis_core::Endpoint {
                     ip: "B".to_string(),
                     port: 8081,
-                    weight: Some(1),
+                    weight: 1,
                 },
             ],
         };
@@ -463,29 +456,30 @@ mod tests {
 
     #[test]
     fn test_round_robin_cycles_endpoints_evenly() {
-        let upstream = crate::config::Upstream {
+        let upstream = pavis_core::Upstream {
             name: "test-upstream".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
-            http_version: crate::config::HttpVersion::H1,
-            connection_pool: crate::config::ConnectionPoolConfig::default(),
+            http_version: pavis_core::HttpVersion::H1,
+            connection_pool: pavis_core::ConnectionPoolConfig {
+                idle_timeout_secs: 60,
+                connection_timeout_secs: 5,
+            },
             tls: None,
-            circuit_breaker: None,
-            health_check: None,
             endpoints: vec![
-                crate::config::Endpoint {
+                pavis_core::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8081,
-                    weight: None,
+                    weight: 1,
                 },
-                crate::config::Endpoint {
+                pavis_core::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8082,
-                    weight: None,
+                    weight: 1,
                 },
-                crate::config::Endpoint {
+                pavis_core::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8083,
-                    weight: None,
+                    weight: 1,
                 },
             ],
         };
@@ -510,24 +504,25 @@ mod tests {
 
     #[test]
     fn test_concurrent_round_robin() {
-        let upstream = crate::config::Upstream {
+        let upstream = pavis_core::Upstream {
             name: "concurrent-upstream".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
-            http_version: crate::config::HttpVersion::H1,
-            connection_pool: crate::config::ConnectionPoolConfig::default(),
+            http_version: pavis_core::HttpVersion::H1,
+            connection_pool: pavis_core::ConnectionPoolConfig {
+                idle_timeout_secs: 60,
+                connection_timeout_secs: 5,
+            },
             tls: None,
-            circuit_breaker: None,
-            health_check: None,
             endpoints: vec![
-                crate::config::Endpoint {
+                pavis_core::Endpoint {
                     ip: "A".to_string(),
                     port: 80,
-                    weight: None,
+                    weight: 1,
                 },
-                crate::config::Endpoint {
+                pavis_core::Endpoint {
                     ip: "B".to_string(),
                     port: 80,
-                    weight: None,
+                    weight: 1,
                 },
             ],
         };
@@ -560,14 +555,14 @@ mod tests {
         // Add a header to be removed
         req.insert_header("X-Remove", "old-value").unwrap();
 
-        let mut add_map = HashMap::new();
-        add_map.insert("X-Add".to_string(), "new-value".to_string());
+        let mut add_list = Vec::new();
+        add_list.push(("X-Add".to_string(), "new-value".to_string()));
 
         let remove_list = vec!["X-Remove".to_string()];
 
         let ops = HeaderOperations {
-            add: Some(add_map),
-            remove: Some(remove_list),
+            add: add_list,
+            remove: remove_list,
         };
 
         apply_request_headers(&mut req, Some(&ops)).unwrap();
@@ -594,14 +589,14 @@ mod tests {
         // Add a header to be removed
         resp.insert_header("X-Remove-Resp", "bad-value").unwrap();
 
-        let mut add_map = HashMap::new();
-        add_map.insert("X-Add-Resp".to_string(), "good-value".to_string());
+        let mut add_list = Vec::new();
+        add_list.push(("X-Add-Resp".to_string(), "good-value".to_string()));
 
         let remove_list = vec!["X-Remove-Resp".to_string()];
 
         let ops = HeaderOperations {
-            add: Some(add_map),
-            remove: Some(remove_list),
+            add: add_list,
+            remove: remove_list,
         };
 
         apply_response_headers(&mut resp, Some(&ops)).unwrap();

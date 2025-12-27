@@ -140,7 +140,7 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
         version: binary::PAVIS_VERSION,
         algorithm: 1, // SHA-256
         checksum,
-        _reserved: [0; 16],
+        _reserved: [0; 20],
     };
 
     // We need to serialize the header manually or use rkyv?
@@ -149,14 +149,15 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     // Since it's repr(C) and simple types, we can cast to bytes safely if we are careful about endianness.
     // However, rkyv might add padding.
     // Let's just write fields manually to be endian-safe and consistent.
-    
-    let mut final_bytes = Vec::with_capacity(rkyv_bytes.len() + std::mem::size_of::<binary::PavisHeader>());
+
+    let mut final_bytes =
+        Vec::with_capacity(rkyv_bytes.len() + std::mem::size_of::<binary::PavisHeader>());
     final_bytes.extend_from_slice(&header.magic);
     final_bytes.extend_from_slice(&header.version.to_le_bytes());
     final_bytes.extend_from_slice(&header.algorithm.to_le_bytes());
     final_bytes.extend_from_slice(&header.checksum);
     final_bytes.extend_from_slice(&header._reserved);
-    
+
     final_bytes.extend_from_slice(&rkyv_bytes);
 
     fs::write(&output_path, final_bytes).context("Failed to write output file")?;
@@ -209,7 +210,7 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
     println!("--- Config Tree ---");
-    println!("Listen Address: {}", archived.listen_addr);
+    println!("Listen Address: {}", archived.server.listen_addr);
     println!("Upstreams ({}):", archived.upstreams.len());
     for u in archived.upstreams.iter() {
         let lb_str = match u.load_balancer {

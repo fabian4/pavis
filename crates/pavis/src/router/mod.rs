@@ -6,27 +6,40 @@
 //! 2. **Pre-compiled Regex**: All regular expressions must be compiled at initialization time, never during request handling.
 //! 3. **Read-Only**: The router state is immutable after initialization.
 
-use crate::config::{MatchType, Route, VirtualHost};
 use anyhow::{Context, Result};
+use pavis_core::{MatchType, Route, VirtualHost};
 use regex::Regex;
 
 pub mod matcher;
 
+pub struct CompiledVirtualHost {
+    pub config: VirtualHost,
+    pub regexes: Vec<Option<Regex>>,
+}
+
 pub struct Router {
-    routes: Vec<VirtualHost>,
+    routes: Vec<CompiledVirtualHost>,
 }
 
 impl Router {
-    pub fn new(routes: &[VirtualHost]) -> Result<Self> {
-        let mut compiled_routes = routes.to_vec();
-        for vhost in &mut compiled_routes {
-            for route in &mut vhost.paths {
-                if route.match_type == MatchType::Regex {
-                    route.compiled_regex = Some(Regex::new(&route.path).with_context(|| {
+    pub fn new(routes: Vec<VirtualHost>) -> Result<Self> {
+        let mut compiled_routes = Vec::new();
+        for vhost in routes {
+            let mut regexes = Vec::new();
+            for route in &vhost.paths {
+                let regex = if route.match_type == MatchType::Regex {
+                    Some(Regex::new(&route.path).with_context(|| {
                         format!("Failed to compile regex for path: {}", route.path)
-                    })?);
-                }
+                    })?)
+                } else {
+                    None
+                };
+                regexes.push(regex);
             }
+            compiled_routes.push(CompiledVirtualHost {
+                config: vhost,
+                regexes,
+            });
         }
         Ok(Self {
             routes: compiled_routes,
@@ -45,7 +58,7 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{MatchType, Route, VirtualHost};
+    use pavis_core::{MatchType, Route, VirtualHost};
 
     #[test]
     fn test_invalid_regex_compilation() {
@@ -54,15 +67,14 @@ mod tests {
             paths: vec![Route {
                 match_type: MatchType::Regex,
                 path: "[unclosed".to_string(),
-                timeout: None,
-                retry: None,
+                timeout_ms: None,
+                retry_policy: None,
                 request_headers: None,
                 response_headers: None,
                 destinations: vec![],
-                compiled_regex: None,
             }],
         }];
 
-        assert!(Router::new(&routes).is_err());
+        assert!(Router::new(routes).is_err());
     }
 }

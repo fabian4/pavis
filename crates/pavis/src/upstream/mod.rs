@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::config::Upstream;
+use pavis_core::Upstream;
 
 pub mod cluster;
 pub mod load_balance;

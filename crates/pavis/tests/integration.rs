@@ -1,13 +1,14 @@
-use pavis::config::{
-    AccessLogConfig, Config, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
-    Route, ServerConfig, TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost,
-    WeightedDestination,
-};
 use pavis::router::Router;
 use pavis::upstream::Manager;
+use pavis_core::{
+    AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType, Route,
+    RuntimeConfig as Config, ServerConfig, TelemetryConfig, Upstream, UpstreamTlsConfig,
+    VirtualHost, WeightedDestination,
+};
 
 fn base_config() -> Config {
     Config {
+        header: pavis_core::PavisHeader::default(),
         server: ServerConfig {
             listen_addr: "0.0.0.0:8080".to_string(),
             worker_threads: None,
@@ -33,14 +34,15 @@ fn test_configuration_driven_routing() {
         name: "backend-a".to_string(),
         load_balancer: LoadBalancer::Random,
         http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig::default(),
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
         tls: None,
-        circuit_breaker: None,
-        health_check: None,
         endpoints: vec![Endpoint {
             ip: "127.0.0.1".to_string(),
             port: 8081,
-            weight: None,
+            weight: 1,
         }],
     });
     config.routes.push(VirtualHost {
@@ -48,19 +50,18 @@ fn test_configuration_driven_routing() {
         paths: vec![Route {
             match_type: MatchType::Prefix,
             path: "/api".to_string(),
-            timeout: None,
-            retry: None,
+            timeout_ms: None,
+            retry_policy: None,
             request_headers: None,
             response_headers: None,
             destinations: vec![WeightedDestination {
                 upstream: "backend-a".to_string(),
                 weight: 1,
             }],
-            compiled_regex: None,
         }],
     });
 
-    let router = Router::new(&config.routes).expect("Failed to create router");
+    let router = Router::new(config.routes).expect("Failed to create router");
 
     // Match /api
     let (_vhost, route) = router
@@ -79,20 +80,21 @@ fn test_load_balancer_state_correctness() {
         name: "backend-rr".to_string(),
         load_balancer: LoadBalancer::RoundRobin,
         http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig::default(),
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
         tls: None,
-        circuit_breaker: None,
-        health_check: None,
         endpoints: vec![
             Endpoint {
                 ip: "10.0.0.1".to_string(),
                 port: 80,
-                weight: None,
+                weight: 1,
             },
             Endpoint {
                 ip: "10.0.0.2".to_string(),
                 port: 80,
-                weight: None,
+                weight: 1,
             },
         ],
     });
@@ -117,19 +119,20 @@ fn test_upstream_tls_config_parsing() {
         name: "backend-secure".to_string(),
         load_balancer: LoadBalancer::Random,
         http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig::default(),
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
         tls: Some(UpstreamTlsConfig {
             enabled: true,
-            verify_hostname: Some(false),
-            verify_cert: Some(false),
+            verify_hostname: false,
+            verify_cert: false,
             sni: Some("secure.internal".to_string()),
         }),
-        circuit_breaker: None,
-        health_check: None,
         endpoints: vec![Endpoint {
             ip: "10.0.0.1".to_string(),
             port: 443,
-            weight: None,
+            weight: 1,
         }],
     });
 
@@ -138,7 +141,7 @@ fn test_upstream_tls_config_parsing() {
     assert!(upstream.tls.is_some());
     let tls = upstream.tls.as_ref().unwrap();
     assert!(tls.enabled);
-    assert_eq!(tls.verify_hostname, Some(false));
-    assert_eq!(tls.verify_cert, Some(false));
+    assert_eq!(tls.verify_hostname, false);
+    assert_eq!(tls.verify_cert, false);
     assert_eq!(tls.sni, Some("secure.internal".to_string()));
 }

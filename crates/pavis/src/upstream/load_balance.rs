@@ -1,4 +1,4 @@
-use crate::config::{Endpoint, LoadBalancer};
+use pavis_core::{Endpoint, LoadBalancer};
 use rand::Rng;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -18,7 +18,7 @@ pub fn select_index(
             let mut current = (val as u32) % total_weight;
 
             for (i, endpoint) in endpoints.iter().enumerate() {
-                let w = endpoint.weight.unwrap_or(1);
+                let w = endpoint.weight;
                 if current < w {
                     return i;
                 }
@@ -31,7 +31,7 @@ pub fn select_index(
             let mut pick = rng.random_range(0..total_weight);
 
             for (i, endpoint) in endpoints.iter().enumerate() {
-                let w = endpoint.weight.unwrap_or(1);
+                let w = endpoint.weight;
                 if pick < w {
                     return i;
                 }
