@@ -4,8 +4,8 @@ use rkyv::ser::{Serializer, serializers::AllocSerializer};
 use std::fs;
 use std::path::PathBuf;
 
-use pavis_core::config as yaml; // User Input (YAML)
-use pavis_core as binary; // Binary Protocol (Rkyv)
+use pavis_core as binary;
+use pavis_core::config as yaml; // User Input (YAML) // Binary Protocol (Rkyv)
 
 #[derive(Parser)]
 #[command(name = "pavis-xds")]
@@ -51,7 +51,10 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     // We ignore the returned ValidatedConfig wrapper and just use the validated data for conversion,
     // or we could use the validated struct if conversion logic expected it.
     // For now, we just validate to ensure correctness.
-    yaml_config.clone().validate().context("Invalid configuration")?;
+    yaml_config
+        .clone()
+        .validate()
+        .context("Invalid configuration")?;
 
     // 2. Convert to Pavis Structs
     let pavis_config = convert_to_pavis(yaml_config)?;

@@ -1,6 +1,6 @@
-use pavis_core::config::Config;
 use pavis::router::Router;
 use pavis::upstream::Manager;
+use pavis_core::config::Config;
 
 #[test]
 fn test_configuration_driven_routing() {

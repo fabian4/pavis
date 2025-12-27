@@ -35,7 +35,10 @@ fn validate_upstreams(config: &Config) -> Result<()> {
     let mut names = HashSet::new();
     for upstream in &config.upstreams {
         if !names.insert(&upstream.name) {
-            return Err(anyhow!("Duplicate upstream name found: '{}'", upstream.name));
+            return Err(anyhow!(
+                "Duplicate upstream name found: '{}'",
+                upstream.name
+            ));
         }
         for endpoint in &upstream.endpoints {
             if endpoint.weight == Some(0) {

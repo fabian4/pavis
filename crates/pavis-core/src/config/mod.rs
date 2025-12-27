@@ -1,11 +1,11 @@
 //! Configuration types for Pavis proxy.
 //!
 //! # Architectural Invariants
-//! 
+//!
 //! 1. **Validation First**: Configuration must be validated before being used by the runtime.
 //! 2. **Type Safety**: Use types (e.g., `ValidatedConfig`) to represent valid states and prevent invalid usage.
 //! 3. **Immutability**: Runtime configuration is generally immutable; dynamic updates should replace the entire config or use specific dynamic components.
-//! 
+//!
 //! Some fields are defined but not yet used - they are planned for future phases.
 //! See doc/ROADMAP.md for implementation timeline.
 
@@ -534,7 +534,7 @@ telemetry:
 upstreams: []
 routes: []
 "#;
-        let config: Config = 
+        let config: Config =
             serde_yaml::from_str(yaml).expect("Failed to deserialize empty sections");
         assert!(config.upstreams.is_empty());
         assert!(config.routes.is_empty());
@@ -664,18 +664,20 @@ routes: []
 
         // Fix header name, break header value
         config.routes[0].paths[0].request_headers = Some(HeaderOperations {
-            add: Some(HashMap::from([
-                ("Valid-Header".to_string(), "valid value\r\nInjected".to_string()),
-            ])),
+            add: Some(HashMap::from([(
+                "Valid-Header".to_string(),
+                "valid value\r\nInjected".to_string(),
+            )])),
             remove: None,
         });
         assert!(config.clone().validate().is_err());
 
         // Valid headers
         config.routes[0].paths[0].request_headers = Some(HeaderOperations {
-            add: Some(HashMap::from([
-                ("Valid-Header".to_string(), "valid value".to_string()),
-            ])),
+            add: Some(HashMap::from([(
+                "Valid-Header".to_string(),
+                "valid value".to_string(),
+            )])),
             remove: None,
         });
         assert!(config.validate().is_ok());

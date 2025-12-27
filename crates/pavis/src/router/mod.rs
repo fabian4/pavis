@@ -6,8 +6,8 @@
 //! 2. **Pre-compiled Regex**: All regular expressions must be compiled at initialization time, never during request handling.
 //! 3. **Read-Only**: The router state is immutable after initialization.
 
-use pavis_core::config::{MatchType, Route, VirtualHost};
 use anyhow::{Context, Result};
+use pavis_core::config::{MatchType, Route, VirtualHost};
 use regex::Regex;
 
 pub mod matcher;

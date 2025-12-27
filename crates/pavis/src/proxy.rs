@@ -10,12 +10,12 @@
 //! 3. **No Mutable Global State**: State should be encapsulated in components (`Router`, `Manager`).
 //! 4. **Validated Configuration**: The proxy assumes configuration is valid and immutable.
 
-use pavis_core::config::{HeaderOperations, HttpVersion};
 use crate::router::Router;
 use crate::telemetry::Telemetry;
 use crate::upstream::Manager;
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
+use pavis_core::config::{HeaderOperations, HttpVersion};
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
@@ -246,8 +246,10 @@ impl ProxyHttp for Proxy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pavis_core::config::{Config, LoadBalancer, MatchType, Route, VirtualHost, WeightedDestination};
     use crate::upstream::Cluster;
+    use pavis_core::config::{
+        Config, LoadBalancer, MatchType, Route, VirtualHost, WeightedDestination,
+    };
     use std::collections::HashMap;
 
     fn create_test_config() -> Config {

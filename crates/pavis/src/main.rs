@@ -60,8 +60,10 @@ fn main() -> Result<()> {
         "Pavis starting"
     );
 
-    let mut server_conf = ServerConf::default();
-    server_conf.daemon = false;
+    let mut server_conf = ServerConf {
+        daemon: false,
+        ..Default::default()
+    };
     if let Some(threads) = config.server.worker_threads {
         server_conf.threads = threads;
     }
