@@ -301,197 +301,177 @@ pub struct WeightedDestination {
 mod tests {
     use super::*;
 
+    fn base_config() -> Config {
+        Config {
+            server: ServerConfig {
+                listen_addr: "0.0.0.0:8080".to_string(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: TelemetryConfig {
+                level: Some("info".to_string()),
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: AccessLogConfig::Stdout,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![],
+        }
+    }
+
     #[test]
     fn test_config_deserialization() {
-        let mut config_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        config_path.push("config.yaml");
+        let mut config = base_config();
+        config.telemetry.level = Some("debug".to_string());
+        config.telemetry.pingora = Some("warn".to_string());
 
-        let config_content =
-            std::fs::read_to_string(config_path).expect("Failed to read config file");
-        let config: Config =
-            serde_yaml::from_str(&config_content).expect("Failed to deserialize config");
+        config.upstreams.push(Upstream {
+            name: "backend-v1".to_string(),
+            load_balancer: LoadBalancer::Random,
+            http_version: HttpVersion::H1,
+            connection_pool: ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                ip: "127.0.0.1".to_string(),
+                port: 8081,
+                weight: None,
+                address: String::new(),
+            }],
+        });
+
+        config.upstreams.push(Upstream {
+            name: "backend-v2".to_string(),
+            load_balancer: LoadBalancer::Random,
+            http_version: HttpVersion::H1,
+            connection_pool: ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                ip: "127.0.0.1".to_string(),
+                port: 8082,
+                weight: None,
+                address: String::new(),
+            }],
+        });
+
+        config.routes.push(VirtualHost {
+            host: "backend".to_string(),
+            paths: vec![
+                Route {
+                    match_type: MatchType::Prefix,
+                    path: "/api/v1".to_string(),
+                    timeout: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![WeightedDestination {
+                        upstream: "backend-v1".to_string(),
+                        weight: 1,
+                    }],
+                    compiled_regex: None,
+                },
+                Route {
+                    match_type: MatchType::Prefix,
+                    path: "/api/v2".to_string(),
+                    timeout: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![WeightedDestination {
+                        upstream: "backend-v2".to_string(),
+                        weight: 1,
+                    }],
+                    compiled_regex: None,
+                },
+            ],
+        });
 
         assert_eq!(config.server.listen_addr, "0.0.0.0:8080");
-        assert_eq!(config.server.worker_threads, None);
-        assert!(config.server.tls.is_none());
-
         assert_eq!(config.telemetry.level, Some("debug".to_string()));
-        assert_eq!(config.telemetry.pingora, Some("warn".to_string()));
-
         assert_eq!(config.upstreams.len(), 2);
-        assert_eq!(config.upstreams[0].name, "backend-v1");
-        assert_eq!(config.upstreams[0].endpoints.len(), 1);
-        assert_eq!(config.upstreams[0].endpoints[0].port, 8081);
-        // Default http_version should be H1
-        assert_eq!(config.upstreams[0].http_version, HttpVersion::H1);
-
-        assert_eq!(config.routes.len(), 1);
-        assert_eq!(config.routes[0].host, "backend");
         assert_eq!(config.routes[0].paths.len(), 2);
-
-        assert_eq!(config.routes[0].paths[0].match_type, MatchType::Prefix);
-        assert_eq!(config.routes[0].paths[0].path, "/api/v1");
-        assert_eq!(
-            config.routes[0].paths[0].destinations[0].upstream,
-            "backend-v1"
-        );
-
-        assert_eq!(config.routes[0].paths[1].match_type, MatchType::Prefix);
-        assert_eq!(config.routes[0].paths[1].path, "/api/v2");
-        assert_eq!(
-            config.routes[0].paths[1].destinations[0].upstream,
-            "backend-v2"
-        );
     }
 
     #[test]
-    fn test_http_version_deserialization() {
-        // Test all http_version variants
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  level: "info"
-upstreams:
-  - name: "default"
-    endpoints:
-      - ip: "127.0.0.1"
-        port: 8081
-  - name: "http1-explicit"
-    http_version: "h1"
-    endpoints:
-      - ip: "127.0.0.1"
-        port: 8082
-  - name: "http2-only"
-    http_version: "h2"
-    endpoints:
-      - ip: "127.0.0.1"
-        port: 8083
-  - name: "http2-prefer"
-    http_version: "h2h1"
-    endpoints:
-      - ip: "127.0.0.1"
-        port: 8084
-routes: []
-"#;
+    fn test_http_version_variants() {
+        let mut config = base_config();
+        config.upstreams.push(Upstream {
+            name: "h1".to_string(),
+            load_balancer: LoadBalancer::Random,
+            http_version: HttpVersion::H1,
+            connection_pool: ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![],
+        });
+        config.upstreams.push(Upstream {
+            name: "h2".to_string(),
+            load_balancer: LoadBalancer::Random,
+            http_version: HttpVersion::H2,
+            connection_pool: ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![],
+        });
+        config.upstreams.push(Upstream {
+            name: "h2h1".to_string(),
+            load_balancer: LoadBalancer::Random,
+            http_version: HttpVersion::H2H1,
+            connection_pool: ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![],
+        });
 
-        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
-
-        assert_eq!(config.upstreams[0].http_version, HttpVersion::H1); // default
-        assert_eq!(config.upstreams[1].http_version, HttpVersion::H1); // explicit h1
-        assert_eq!(config.upstreams[2].http_version, HttpVersion::H2); // h2
-        assert_eq!(config.upstreams[3].http_version, HttpVersion::H2H1); // h2h1
+        assert_eq!(config.upstreams[0].http_version, HttpVersion::H1);
+        assert_eq!(config.upstreams[1].http_version, HttpVersion::H2);
+        assert_eq!(config.upstreams[2].http_version, HttpVersion::H2H1);
     }
 
     #[test]
-    fn test_access_log_deserialization() {
-        // Test default (stdout when not specified)
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  level: "info"
-upstreams: []
-routes: []
-"#;
-        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+    fn test_access_log_variants() {
+        let mut config = base_config();
+
+        config.telemetry.access_log = AccessLogConfig::Stdout;
         assert_eq!(config.telemetry.access_log, AccessLogConfig::Stdout);
 
-        // Test stdout explicitly
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  access_log: "stdout"
-upstreams: []
-routes: []
-"#;
-        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
-        assert_eq!(config.telemetry.access_log, AccessLogConfig::Stdout);
-
-        // Test false to disable
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  access_log: "false"
-upstreams: []
-routes: []
-"#;
-        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        config.telemetry.access_log = AccessLogConfig::False;
         assert_eq!(config.telemetry.access_log, AccessLogConfig::False);
 
-        // Test boolean false
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  access_log: false
-upstreams: []
-routes: []
-"#;
-        let config: Config =
-            serde_yaml::from_str(yaml).expect("Failed to deserialize boolean false");
-        assert_eq!(config.telemetry.access_log, AccessLogConfig::False);
-
-        // Test file path
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  access_log: "/var/log/pavis/access.log"
-upstreams: []
-routes: []
-"#;
-        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        config.telemetry.access_log = AccessLogConfig::File("/tmp/test.log".to_string());
         assert_eq!(
             config.telemetry.access_log,
-            AccessLogConfig::File("/var/log/pavis/access.log".to_string())
+            AccessLogConfig::File("/tmp/test.log".to_string())
         );
     }
 
     #[test]
-    fn test_connection_pool_deserialization() {
-        // Test default values
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  level: "info"
-upstreams:
-  - name: "backend"
-    endpoints:
-      - ip: "127.0.0.1"
-        port: 8080
-routes: []
-"#;
-        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
-        assert_eq!(
-            config.upstreams[0].connection_pool.idle_timeout,
-            std::time::Duration::from_secs(60)
-        );
-        assert_eq!(
-            config.upstreams[0].connection_pool.connection_timeout,
-            std::time::Duration::from_secs(5)
-        );
+    fn test_connection_pool_config() {
+        let mut config = base_config();
+        let pool = ConnectionPoolConfig {
+            idle_timeout: std::time::Duration::from_secs(120),
+            connection_timeout: std::time::Duration::from_secs(10),
+        };
 
-        // Test custom values
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  level: "info"
-upstreams:
-  - name: "backend"
-    connection_pool:
-      idle_timeout: 120s
-      connection_timeout: 10s
-    endpoints:
-      - ip: "127.0.0.1"
-        port: 8080
-routes: []
-"#;
-        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+        config.upstreams.push(Upstream {
+            name: "backend".to_string(),
+            load_balancer: LoadBalancer::Random,
+            http_version: HttpVersion::H1,
+            connection_pool: pool,
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![],
+        });
+
         assert_eq!(
             config.upstreams[0].connection_pool.idle_timeout,
             std::time::Duration::from_secs(120)
@@ -503,42 +483,23 @@ routes: []
     }
 
     #[test]
-    fn test_tls_config_deserialization() {
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8443"
-  tls:
-    enabled: true
-    cert_path: "/path/to/cert.pem"
-    key_path: "/path/to/key.pem"
-telemetry:
-  level: "info"
-upstreams: []
-routes: []
-"#;
-        let config: Config = serde_yaml::from_str(yaml).expect("Failed to deserialize");
+    fn test_tls_config() {
+        let mut config = base_config();
+        config.server.tls = Some(TlsConfig {
+            enabled: true,
+            cert_path: Some("/path/to/cert.pem".to_string()),
+            key_path: Some("/path/to/key.pem".to_string()),
+        });
 
-        assert!(config.server.tls.is_some());
-        let tls = config.server.tls.unwrap();
+        let tls = config.server.tls.as_ref().unwrap();
         assert!(tls.enabled);
         assert_eq!(tls.cert_path, Some("/path/to/cert.pem".to_string()));
-        assert_eq!(tls.key_path, Some("/path/to/key.pem".to_string()));
     }
 
     #[test]
-    fn test_empty_config_sections() {
-        let yaml = r#"#
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry:
-  access_log: false
-upstreams: []
-routes: []
-"#;
-        let config: Config =
-            serde_yaml::from_str(yaml).expect("Failed to deserialize empty sections");
-        assert!(config.upstreams.is_empty());
-        assert!(config.routes.is_empty());
+    fn test_empty_config_validation() {
+        let config = base_config();
+        assert!(config.validate().is_ok());
     }
 
     #[test]

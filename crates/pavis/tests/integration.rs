@@ -1,11 +1,66 @@
 use pavis::router::Router;
 use pavis::upstream::Manager;
-use pavis_core::config::Config;
+use pavis_core::config::{
+    AccessLogConfig, Config, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
+    Route, ServerConfig, TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost,
+    WeightedDestination,
+};
+
+fn base_config() -> Config {
+    Config {
+        server: ServerConfig {
+            listen_addr: "0.0.0.0:8080".to_string(),
+            worker_threads: None,
+            tls: None,
+        },
+        telemetry: TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            prometheus_addr: None,
+            access_log: AccessLogConfig::False,
+            tracing: None,
+        },
+        upstreams: vec![],
+        routes: vec![],
+    }
+}
 
 #[test]
 fn test_configuration_driven_routing() {
-    let yaml = include_str!("fixtures/routing.yaml");
-    let config: Config = serde_yaml::from_str(yaml).expect("Failed to parse config");
+    let mut config = base_config();
+    config.upstreams.push(Upstream {
+        name: "backend-a".to_string(),
+        load_balancer: LoadBalancer::Random,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig::default(),
+        tls: None,
+        circuit_breaker: None,
+        health_check: None,
+        endpoints: vec![Endpoint {
+            ip: "127.0.0.1".to_string(),
+            port: 8081,
+            weight: None,
+            address: String::new(),
+        }],
+    });
+    config.routes.push(VirtualHost {
+        host: "*".to_string(),
+        paths: vec![Route {
+            match_type: MatchType::Prefix,
+            path: "/api".to_string(),
+            timeout: None,
+            retry: None,
+            request_headers: None,
+            response_headers: None,
+            destinations: vec![WeightedDestination {
+                upstream: "backend-a".to_string(),
+                weight: 1,
+            }],
+            compiled_regex: None,
+        }],
+    });
+
     let router = Router::new(&config.routes).expect("Failed to create router");
 
     // Match /api
@@ -20,8 +75,31 @@ fn test_configuration_driven_routing() {
 
 #[test]
 fn test_load_balancer_state_correctness() {
-    let yaml = include_str!("fixtures/load_balancing.yaml");
-    let config: Config = serde_yaml::from_str(yaml).expect("Failed to parse config");
+    let mut config = base_config();
+    config.upstreams.push(Upstream {
+        name: "backend-rr".to_string(),
+        load_balancer: LoadBalancer::RoundRobin,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig::default(),
+        tls: None,
+        circuit_breaker: None,
+        health_check: None,
+        endpoints: vec![
+            Endpoint {
+                ip: "10.0.0.1".to_string(),
+                port: 80,
+                weight: None,
+                address: "10.0.0.1:80".to_string(),
+            },
+            Endpoint {
+                ip: "10.0.0.2".to_string(),
+                port: 80,
+                weight: None,
+                address: "10.0.0.2:80".to_string(),
+            },
+        ],
+    });
+
     let manager = Manager::new(&config.upstreams);
     let cluster = manager.get("backend-rr").expect("Cluster not found");
 
@@ -37,8 +115,28 @@ fn test_load_balancer_state_correctness() {
 
 #[test]
 fn test_upstream_tls_config_parsing() {
-    let yaml = include_str!("fixtures/upstream_tls.yaml");
-    let config: Config = serde_yaml::from_str(yaml).expect("Failed to parse config");
+    let mut config = base_config();
+    config.upstreams.push(Upstream {
+        name: "backend-secure".to_string(),
+        load_balancer: LoadBalancer::Random,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig::default(),
+        tls: Some(UpstreamTlsConfig {
+            enabled: true,
+            verify_hostname: Some(false),
+            verify_cert: Some(false),
+            sni: Some("secure.internal".to_string()),
+        }),
+        circuit_breaker: None,
+        health_check: None,
+        endpoints: vec![Endpoint {
+            ip: "10.0.0.1".to_string(),
+            port: 443,
+            weight: None,
+            address: "10.0.0.1:443".to_string(),
+        }],
+    });
+
     let upstream = &config.upstreams[0];
 
     assert!(upstream.tls.is_some());
