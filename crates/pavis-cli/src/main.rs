@@ -80,7 +80,7 @@ fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
     let binary_config: binary::ProxyConfig = archived.deserialize(&mut rkyv::Infallible)?;
-    let yaml_config = binary_config.to_config();
+    let yaml_config = convert_binary_to_config(binary_config);
     let yaml_str = serde_yaml::to_string(&yaml_config).context("Failed to serialize to YAML")?;
 
     match output_path {
@@ -96,6 +96,104 @@ fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<
         }
     }
     Ok(())
+}
+
+fn convert_binary_to_config(binary: binary::ProxyConfig) -> yaml::Config {
+    use pavis_core::{LoadBalancer, MatchType};
+
+    let mut upstreams = Vec::new();
+    for u in binary.upstreams {
+        let lb = match u.load_balancer {
+            LoadBalancer::Random => yaml::LoadBalancer::Random,
+            LoadBalancer::RoundRobin => yaml::LoadBalancer::RoundRobin,
+        };
+
+        let mut endpoints = Vec::new();
+        for e in u.endpoints {
+            endpoints.push(yaml::Endpoint {
+                ip: e.ip,
+                port: e.port,
+                weight: Some(e.weight),
+                address: String::new(), // Will be ignored or recomputed
+            });
+        }
+
+        upstreams.push(yaml::Upstream {
+            name: u.name,
+            load_balancer: lb,
+            http_version: yaml::HttpVersion::H1,
+            connection_pool: yaml::ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints,
+        });
+    }
+
+    let mut routes = Vec::new();
+    for v in binary.routes {
+        let mut paths = Vec::new();
+        for p in v.paths {
+            let match_type = match p.match_type {
+                MatchType::Exact => yaml::MatchType::Exact,
+                MatchType::Regex => yaml::MatchType::Regex,
+                MatchType::Prefix => yaml::MatchType::Prefix,
+            };
+
+            let request_headers = p.request_headers.map(|h| yaml::HeaderOperations {
+                add: Some(h.add.into_iter().collect()),
+                remove: Some(h.remove),
+            });
+
+            let response_headers = p.response_headers.map(|h| yaml::HeaderOperations {
+                add: Some(h.add.into_iter().collect()),
+                remove: Some(h.remove),
+            });
+
+            let destinations = p
+                .destinations
+                .into_iter()
+                .map(|d| yaml::WeightedDestination {
+                    upstream: d.upstream,
+                    weight: d.weight,
+                })
+                .collect();
+
+            paths.push(yaml::Route {
+                match_type,
+                path: p.path,
+                timeout: None,
+                retry: None,
+                request_headers,
+                response_headers,
+                destinations,
+                compiled_regex: None,
+            });
+        }
+
+        routes.push(yaml::VirtualHost {
+            host: v.host,
+            paths,
+        });
+    }
+
+    yaml::Config {
+        server: yaml::ServerConfig {
+            listen_addr: binary.listen_addr,
+            worker_threads: None,
+            tls: None,
+        },
+        telemetry: yaml::TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            prometheus_addr: None,
+            access_log: yaml::AccessLogConfig::False,
+            tracing: None,
+        },
+        upstreams,
+        routes,
+    }
 }
 
 fn validate_yaml(input_path: PathBuf) -> Result<()> {
@@ -302,4 +400,40 @@ fn convert_to_pavis(src: yaml::Config) -> Result<binary::ProxyConfig> {
         upstreams,
         routes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pavis_core::config as yaml;
+    use pavis_core::{Endpoint, LoadBalancer, PavisHeader, ProxyConfig, Upstream};
+
+    #[test]
+    fn test_convert_binary_to_config() {
+        let binary = ProxyConfig {
+            header: PavisHeader::default(),
+            listen_addr: "0.0.0.0:8080".to_string(),
+            upstreams: vec![Upstream {
+                name: "test".to_string(),
+                load_balancer: LoadBalancer::RoundRobin,
+                endpoints: vec![Endpoint {
+                    ip: "127.0.0.1".to_string(),
+                    port: 80,
+                    weight: 1,
+                }],
+            }],
+            routes: vec![],
+        };
+
+        let config = convert_binary_to_config(binary);
+
+        assert_eq!(config.server.listen_addr, "0.0.0.0:8080");
+        assert_eq!(config.upstreams.len(), 1);
+        assert_eq!(config.upstreams[0].name, "test");
+        assert_eq!(config.upstreams[0].endpoints[0].ip, "127.0.0.1");
+        assert_eq!(
+            config.upstreams[0].load_balancer,
+            yaml::LoadBalancer::RoundRobin
+        );
+    }
 }

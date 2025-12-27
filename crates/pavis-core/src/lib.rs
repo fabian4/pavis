@@ -28,113 +28,6 @@ impl Default for PavisHeader {
 }
 
 /// The Root Configuration Object.
-impl ProxyConfig {
-    /// Convert binary protocol config back to YAML-compatible Config DTO.
-    /// Useful for loading .pvs files into the runtime that still expects Config DTO.
-    pub fn to_config(&self) -> config::Config {
-        let mut upstreams = Vec::new();
-        for u in &self.upstreams {
-            let lb = match u.load_balancer {
-                LoadBalancer::Random => config::LoadBalancer::Random,
-                LoadBalancer::RoundRobin => config::LoadBalancer::RoundRobin,
-            };
-
-            let mut endpoints = Vec::new();
-            for e in &u.endpoints {
-                endpoints.push(config::Endpoint {
-                    ip: e.ip.clone(),
-                    port: e.port,
-                    weight: Some(e.weight),
-                    address: String::new(), // Will be pre-computed in validate()
-                });
-            }
-
-            upstreams.push(config::Upstream {
-                name: u.name.clone(),
-                load_balancer: lb,
-                http_version: config::HttpVersion::H1, // Defaulting as binary doesn't store this yet
-                connection_pool: config::ConnectionPoolConfig::default(),
-                tls: None,
-                circuit_breaker: None,
-                health_check: None,
-                endpoints,
-            });
-        }
-
-        let mut routes = Vec::new();
-        for v in &self.routes {
-            let mut paths = Vec::new();
-            for p in &v.paths {
-                let match_type = match p.match_type {
-                    MatchType::Exact => config::MatchType::Exact,
-                    MatchType::Regex => config::MatchType::Regex,
-                    MatchType::Prefix => config::MatchType::Prefix,
-                };
-
-                let request_headers =
-                    p.request_headers
-                        .as_ref()
-                        .map(|h| config::HeaderOperations {
-                            add: Some(h.add.iter().cloned().collect()),
-                            remove: Some(h.remove.clone()),
-                        });
-
-                let response_headers =
-                    p.response_headers
-                        .as_ref()
-                        .map(|h| config::HeaderOperations {
-                            add: Some(h.add.iter().cloned().collect()),
-                            remove: Some(h.remove.clone()),
-                        });
-
-                let destinations = p
-                    .destinations
-                    .iter()
-                    .map(|d| config::WeightedDestination {
-                        upstream: d.upstream.clone(),
-                        weight: d.weight,
-                    })
-                    .collect();
-
-                paths.push(config::Route {
-                    match_type,
-                    path: p.path.clone(),
-                    timeout: None,
-                    retry: None,
-                    request_headers,
-                    response_headers,
-                    destinations,
-                    compiled_regex: None,
-                });
-            }
-
-            routes.push(config::VirtualHost {
-                host: v.host.clone(),
-                paths,
-            });
-        }
-
-        config::Config {
-            server: config::ServerConfig {
-                listen_addr: self.listen_addr.clone(),
-                worker_threads: None,
-                tls: None,
-            },
-            telemetry: config::TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: config::AccessLogConfig::False,
-                tracing: None,
-            },
-            upstreams,
-            routes,
-        }
-    }
-}
-
-/// The Root Configuration Object.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Serialize, Deserialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ProxyConfig {
@@ -206,6 +99,29 @@ pub struct HeaderOperations {
 pub struct WeightedDestination {
     pub upstream: String,
     pub weight: u32,
+}
+
+/// Deserializes a .pvs binary buffer into a ProxyConfig.
+/// Handles validation and deserialization.
+///
+/// # Handling `#[with(...)]`
+/// 1. `deserialize()` returns `With<T, Adapter>` if `#[with(...)]` is used.
+/// 2. Explicitly call `.into_inner()` to get `T`.
+/// 3. This helper wraps that logic so the runtime doesn't deal with `With` directly.
+pub fn deserialize_pvs(bytes: &[u8]) -> anyhow::Result<ProxyConfig> {
+    use rkyv::Deserialize;
+
+    // Validate the archive
+    let archived = rkyv::check_archived_root::<ProxyConfig>(bytes)
+        .map_err(|e| anyhow::anyhow!("Binary integrity check failed: {:?}", e))?;
+
+    // Deserialize
+    // Note: If ProxyConfig uses #[with(...)], we would need:
+    // let wrapper = archived.deserialize(&mut rkyv::Infallible)?;
+    // let config = wrapper.into_inner();
+    let config: ProxyConfig = archived.deserialize(&mut rkyv::Infallible)?;
+
+    Ok(config)
 }
 
 #[cfg(test)]

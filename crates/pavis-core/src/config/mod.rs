@@ -9,9 +9,6 @@
 //! Some fields are defined but not yet used - they are planned for future phases.
 //! See doc/ROADMAP.md for implementation timeline.
 
-// TODO: Remove this once all config fields are implemented
-#![allow(dead_code)]
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -43,7 +40,11 @@ impl Config {
         // Pre-compute endpoint addresses
         for upstream in &mut self.upstreams {
             for endpoint in &mut upstream.endpoints {
-                endpoint.address = format!("{}:{}", endpoint.ip, endpoint.port);
+                if endpoint.ip.contains(':') && !endpoint.ip.starts_with('[') {
+                    endpoint.address = format!("[{}]:{}", endpoint.ip, endpoint.port);
+                } else {
+                    endpoint.address = format!("{}:{}", endpoint.ip, endpoint.port);
+                }
             }
         }
         validation::validate(&self)?;
@@ -278,8 +279,8 @@ pub struct RetryPolicy {
     // to match the "500, 502, 'gateway_error'" mix.
     // For simplicity here, assuming user input is consistent or we use a more flexible type.
     // The example showed [500, 502, 503, "gateway_error"...].
-    // Let's use serde_yaml::Value to be safe.
-    pub retry_on: Vec<serde_yaml::Value>,
+    // Let's use serde_json::Value to be safe.
+    pub retry_on: Vec<serde_json::Value>,
     #[serde(with = "humantime_serde")]
     pub per_try_timeout: std::time::Duration,
 }

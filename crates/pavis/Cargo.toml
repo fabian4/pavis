@@ -23,3 +23,7 @@ rkyv = { version = "0.7", features = ["validation"] }
 tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
 humantime-serde = "1.1.1"
 pavis-core = { path = "../pavis-core" }
+
+[dev-dependencies]
+pavis-core = { path = "../pavis-core" }
+rkyv = { version = "0.7", features = ["validation"] }

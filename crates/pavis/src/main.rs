@@ -1,19 +1,16 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use clap::Parser;
-use memmap2::Mmap;
 use pingora::prelude::*;
 use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
-use rkyv::Deserialize as _;
-use rkyv::check_archived_root;
-use std::fs::File;
 use std::sync::Arc;
 
+use pavis::config;
 use pavis::proxy::Proxy;
 use pavis::router::Router;
 use pavis::telemetry::Telemetry;
 use pavis::upstream::Manager;
-use pavis_core::config::{AccessLogConfig, Config};
+use pavis_core::config::AccessLogConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -22,52 +19,12 @@ struct Args {
     config: String,
 }
 
-fn load_config(path: &str) -> Result<Config> {
-    if path.ends_with(".pvs") {
-        let file = File::open(path).context("Failed to open .pvs config file")?;
-        let mmap = unsafe { Mmap::map(&file).context("Failed to mmap .pvs file")? };
-
-        if mmap.len() < 8 {
-            return Err(anyhow!("Config file too small"));
-        }
-
-        let magic = &mmap[0..4];
-        let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());
-
-        if magic != pavis_core::PAVIS_MAGIC {
-            return Err(anyhow!("Invalid magic bytes in .pvs file. Expected 'PAVS'"));
-        }
-
-        if version != pavis_core::PAVIS_VERSION {
-            return Err(anyhow!(
-                "Version mismatch! File: {}, Proxy: {}. Please recompile config.",
-                version,
-                pavis_core::PAVIS_VERSION
-            ));
-        }
-
-        let payload = &mmap[8..];
-        let archived = check_archived_root::<pavis_core::ProxyConfig>(payload)
-            .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
-
-        let binary_config: pavis_core::ProxyConfig = archived.deserialize(&mut rkyv::Infallible)?;
-        Ok(binary_config.to_config())
-    } else {
-        // Fallback to YAML
-        let config_content = std::fs::read_to_string(path).context("Failed to read config file")?;
-        let config: Config =
-            serde_yaml::from_str(&config_content).context("Failed to parse YAML config")?;
-        Ok(config)
-    }
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
 
     // Load configuration
     // TODO: Support config file watching for hot reload
-    let config = load_config(&args.config)?;
-    let config = config.validate().context("Config validation failed")?;
+    let config = config::load_file(&args.config)?;
 
     // Initialize Router (compiles regexes)
     let router = Arc::new(Router::new(&config.routes)?);

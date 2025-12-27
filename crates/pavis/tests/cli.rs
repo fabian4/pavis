@@ -1,3 +1,5 @@
+use pavis_core::{PAVIS_MAGIC, PAVIS_VERSION, PavisHeader, ProxyConfig};
+use rkyv::ser::{Serializer, serializers::AllocSerializer};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -61,13 +63,13 @@ fn test_cli_invalid_config_path() {
     let binary = get_binary_path();
     let output = Command::new(binary)
         .arg("--config")
-        .arg("non_existent.yaml")
+        .arg("non_existent.pvs")
         .output()
         .expect("Failed to execute binary");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Failed to read config file"));
+    assert!(stderr.contains("Failed to open .pvs config file"));
 }
 
 #[cfg(unix)]
@@ -78,11 +80,27 @@ fn test_process_lifecycle_sigint() {
 
     let binary = get_binary_path();
 
-    // Create a valid config file for this test
+    // Create a valid config programmatically
+    let config = ProxyConfig {
+        header: PavisHeader::default(),
+        listen_addr: "127.0.0.1:0".to_string(), // Random port
+        upstreams: vec![],
+        routes: vec![],
+    };
+
+    // Serialize to .pvs format
+    let mut serializer = AllocSerializer::<1024>::default();
+    serializer.serialize_value(&config).unwrap();
+    let bytes = serializer.into_serializer().into_inner();
+
+    let mut final_bytes = Vec::new();
+    final_bytes.extend_from_slice(PAVIS_MAGIC);
+    final_bytes.extend_from_slice(&PAVIS_VERSION.to_le_bytes());
+    final_bytes.extend_from_slice(&bytes);
+
     let temp_dir = std::env::temp_dir();
-    let config_path = temp_dir.join("pavis_lifecycle_test.yaml");
-    let config_content = include_str!("fixtures/lifecycle.yaml");
-    std::fs::write(&config_path, config_content).expect("Failed to write config");
+    let config_path = temp_dir.join("pavis_lifecycle_test.pvs");
+    std::fs::write(&config_path, final_bytes).expect("Failed to write config");
 
     let mut child = Command::new(binary)
         .arg("--config")
