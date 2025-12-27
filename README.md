@@ -1,6 +1,6 @@
 # Pavis
 
-**High-Performance, Memory-Safe Service Mesh Data Plane**
+**An Experimental Service Mesh Data Plane in Rust**
 
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](./LICENSE)
 [![Language](https://img.shields.io/badge/language-Rust-orange.svg)](https://www.rust-lang.org/)
@@ -8,39 +8,30 @@
 [![Status](https://img.shields.io/badge/status-Pre--Alpha-red.svg)](#status)
 [![Crates.io](https://img.shields.io/crates/v/pavis.svg)](https://crates.io/crates/pavis)
 
-**Pavis** is an experimental, next-generation **Service Mesh sidecar proxy** built on **Rust** and **Cloudflare Pingora**. It explores a **Split Data Plane** architecture to replace traditional monolithic C++ sidecars (e.g., Envoy) with a **lighter, memory-safe, and crash-resilient** alternative.
+**Pavis** is an experimental **service mesh sidecar proxy** implemented in **Rust**, built on top of **Cloudflare Pingora**.
 
-## Why Pavis?
+The project explores a **split data plane** design aimed at improving **memory safety**, **operational robustness**, and **resource efficiency** compared to traditional monolithic sidecar architectures.
 
-| Feature | Description |
-|---------|-------------|
-| 🛡️ **Memory Safety** | Rust eliminates entire classes of memory corruption issues |
-| 🪶 **Minimal Footprint** | Optimized for sidecar and resource-constrained environments |
-| 🔀 **Split Data Plane** | Separates control-heavy logic from the hot data path |
-| ⚡ **Pingora Runtime** | Battle-tested async networking primitives from Cloudflare |
+Pavis is primarily a **research and prototyping effort**, intended to validate architectural ideas rather than provide a production-ready replacement for existing proxies.
+
+## Motivation
+
+Modern service mesh sidecars are powerful but often come with significant complexity and resource overhead.  
+Pavis investigates whether a Rust-based, memory-safe implementation with a more modular data plane can offer:
+
+| Focus | Notes |
+|------|------|
+| 🛡️ Memory safety | Leveraging Rust to avoid common classes of memory bugs |
+| 🪶 Reduced footprint | Designed with sidecar constraints in mind |
+| 🔀 Split data plane | Separating control-heavy logic from the hot path |
+| ⚙️ Pingora runtime | Reusing proven async networking infrastructure |
+
+These goals are exploratory and subject to change as the project evolves.
 
 ## Status
 
-> ⚠️ **Pre-Alpha** – APIs, behavior, and performance characteristics are still evolving.
-
-## Quick Start
-
-```bash
-# Build all crates
-cargo build --workspace
-
-# Run tests
-cargo test --workspace
-
-# Local development workflow
-cargo run -p pavis-cli -- compile -i config.yaml -o config.pvs
-cargo run -p pavis -- --config config.pvs
-```
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Architecture](./Architecture.md) | System design, protocol specification, component details |
-| [Roadmap](doc/ROADMAP.md) | Development phases and progress tracking |
-| [Benchmarks](./bench/BENCHMARKS.md) | Performance comparison with Envoy, Nginx, HAProxy |
+> ⚠️ **Pre-Alpha**
+>
+> - APIs and on-disk formats are unstable
+> - Performance characteristics are still under evaluation
+> - Not intended for production use

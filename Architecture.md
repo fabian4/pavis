@@ -23,28 +23,30 @@ The project is structured as a workspace with strict module boundaries to enforc
 ```
 pavis/
 ├── crates/
-│   ├── pavis/          # Proxy – Pingora-based traffic engine
-│   ├── pavis-core/     # Protocol – Shared rkyv structs & validation
-│   ├── pavis-cli/      # CLI – YAML → .pvs compiler & inspector
-│   └── pavis-xds/      # Bridge – xDS translator & HTTP config server
+│   ├── pavis/          # Proxy – Runtime Engine (Reads .pvs only)
+│   ├── pavis-core/     # Protocol – Canonical types & memory layout
+│   ├── pavis-adapter/  # Adapter – Input DTOs, parsing, validation, conversion
+│   ├── pavis-cli/      # CLI – I/O shell for local config compilation
+│   └── pavis-xds/      # Bridge – I/O shell for xDS streams
 └── Cargo.toml          # Workspace configuration
 ```
 
 ### 2.2. Dependency Graph
 
-*   **`pavis-core` (Root)**: The foundation. Depends on **nothing** in the workspace.
-*   **`pavis` (Runtime)**: Depends on `pavis-core`. **Must not** depend on `pavis-cli` or `pavis-xds`.
-*   **`pavis-cli` / `pavis-xds` (Producers)**: Depend on `pavis-core`.
+*   **`pavis-core` (Root)**: The foundation. Depends on `rkyv`. No I/O, no Serde.
+*   **`pavis-adapter`**: Depends on `pavis-core` and input libs (`serde`, `yaml`, `prost`).
+*   **`pavis-cli` / `pavis-xds`**: Depend on `pavis-adapter`.
+*   **`pavis` (Runtime)**: Depends on `pavis-core`. **Must not** depend on `pavis-adapter` or input libs.
 
 ### 2.3. Responsibilities
 
-| Responsibility | Owner | Description |
+| Responsibility | Component | Description |
 | :--- | :--- | :--- |
-| **Protocol Definition** | `pavis-core` | Defines `.pvs` format, magic bytes, versioning, and `rkyv` structs. |
-| **Semantic Validation** | `pavis-core` | Defines rules for valid data (e.g., "weights > 0"). Shared logic. |
-| **Input Validation** | Producers | `cli` & `xds` validate source constraints (YAML, xDS) before conversion. |
-| **Loading & Integrity** | `pavis` | Handles `mmap` and `rkyv::check_bytes`. No semantic re-validation. |
-| **Runtime Safety** | `pavis` | Handles crash-loop protection and safe execution. |
+| **Protocol Definition** | `pavis-core` | Defines `.pvs` binary format and optimized `RuntimeConfig`. |
+| **Input DTOs** | `pavis-adapter` | Defines `YamlConfig`, `XdsConfig` optimized for UX/Defaults. |
+| **Adaptation & Validation** | `pavis-adapter` | "Dirty" data cleaning. Transforms Input DTO -> RuntimeConfig. |
+| **I/O & Orchestration** | Producers | `cli` & `xds` handle file reading, network streams, and invoke adapter. |
+| **Runtime Execution** | `pavis` | Consumes trusted `.pvs` files. No parsing, validation, or allocation logic. |
 
 ### 2.4. Layering Principles
 
@@ -66,7 +68,7 @@ pavis/
     *   Does not manipulate binary or protocol internals.
     *   Builds runtime state and performs defensive checks only.
 
-> **Key Idea:** Protocol definitions remain pure, loading is isolated, and the runtime always works with a clean, validated configuration.
+> **Rule:** The Runtime never sees invalid or partial state. It relies on the Adapter to produce a valid `RuntimeConfig`.
 
 ## 3. The PVS Protocol
 
@@ -78,13 +80,13 @@ The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configu
 |--------|------|------|-------|-------------|
 | `0x00` | 4 | `[u8; 4]` | `PAVS` | Magic bytes – identifies file type |
 | `0x04` | 4 | `u32` | `1` | Version – schema version for compatibility |
-| `0x08` | ... | `bytes` | ... | Payload – the `ArchivedWireConfig` root |
+| `0x08` | ... | `bytes` | ... | Payload – the `ArchivedRuntimeConfig` root |
 
 ### 3.2. Versioning Strategy
 
 Pavis uses a simple monotonically increasing integer for the protocol version (`PAVIS_VERSION` in `pavis-core`).
 
-*   **Breaking Changes**: Any change to the `WireConfig` struct layout (fields, enums) requires incrementing `PAVIS_VERSION`. `rkyv` is sensitive to layout.
+*   **Breaking Changes**: Any change to the `RuntimeConfig` struct layout (fields, enums) requires incrementing `PAVIS_VERSION`. `rkyv` is sensitive to layout.
 *   **Non-Breaking Changes**: Documentation or internal helper methods.
 
 ### 3.3. Migration & Compatibility
@@ -132,7 +134,7 @@ pavis-proxy                              pavis-xds
 
 ### 3.6. rkyv Usage Guidelines
 
-**Purpose**: Safely load `.pvs` binary configs into domain objects (`WireConfig`) while keeping runtime and core free from serialization details.
+**Purpose**: Safely load `.pvs` binary configs into domain objects (`RuntimeConfig`) while keeping runtime and core free from serialization details.
 
 #### Layer Responsibilities
 
@@ -144,12 +146,12 @@ pavis-proxy                              pavis-xds
 2.  **Boundary (`pavis/src/load`)**
     *   Read `.pvs` files.
     *   Validate integrity (magic bytes, version, `check_archived_root`).
-    *   Deserialize rkyv to owned `WireConfig`.
+    *   Deserialize rkyv to owned `RuntimeConfig`.
     *   Return clean domain objects.
     *   **Do not** implement runtime logic.
 
 3.  **Runtime (`pavis`)**
-    *   Consume `WireConfig` for business logic.
+    *   Consume `RuntimeConfig` for business logic.
     *   Do not depend on rkyv, `.pvs` format, or adapters.
 
 #### Adapters (`#[with(...)]`)
