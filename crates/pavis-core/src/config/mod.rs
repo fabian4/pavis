@@ -13,7 +13,7 @@
 #![allow(dead_code)]
 
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Deref;
 
@@ -30,7 +30,7 @@ impl Deref for ValidatedConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     pub server: ServerConfig,
     pub telemetry: TelemetryConfig,
@@ -51,7 +51,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum MatchType {
     #[default]
@@ -60,7 +60,7 @@ pub enum MatchType {
     Regex,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum LoadBalancer {
     #[default]
@@ -69,7 +69,7 @@ pub enum LoadBalancer {
 }
 
 /// HTTP version preference for upstream connections
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum HttpVersion {
     /// HTTP/1.1 only (default)
@@ -84,14 +84,14 @@ pub enum HttpVersion {
     H2H1,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ServerConfig {
     pub listen_addr: String,
     pub worker_threads: Option<usize>,
     pub tls: Option<TlsConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TlsConfig {
     pub enabled: bool,
     pub cert_path: Option<String>,
@@ -99,7 +99,7 @@ pub struct TlsConfig {
 }
 
 /// Access log destination configuration
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
 pub enum AccessLogConfig {
     /// Disabled
     False,
@@ -137,7 +137,7 @@ impl<'de> Deserialize<'de> for AccessLogConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TelemetryConfig {
     pub level: Option<String>,
     pub pingora: Option<String>,
@@ -151,14 +151,14 @@ pub struct TelemetryConfig {
     pub tracing: Option<TracingConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TracingConfig {
     pub enabled: bool,
     pub provider: String,
     pub sampling_rate: f64,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Upstream {
     pub name: String,
     #[serde(default)]
@@ -178,7 +178,7 @@ pub struct Upstream {
     pub endpoints: Vec<Endpoint>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct UpstreamTlsConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -192,7 +192,7 @@ fn default_true() -> bool {
 }
 
 /// Connection pool configuration for upstream connections
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ConnectionPoolConfig {
     /// Idle timeout for pooled connections. Default: 60s
     #[serde(default = "default_idle_timeout", with = "humantime_serde")]
@@ -219,7 +219,7 @@ impl Default for ConnectionPoolConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct CircuitBreaker {
     pub max_connections: usize,
     pub max_pending_requests: usize,
@@ -227,7 +227,7 @@ pub struct CircuitBreaker {
 }
 
 // TODO: Implement health check scheduling and endpoint status tracking
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HealthCheck {
     pub path: String,
     #[serde(with = "humantime_serde")]
@@ -238,7 +238,7 @@ pub struct HealthCheck {
     pub healthy_threshold: Option<usize>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Endpoint {
     pub ip: String,
     pub port: u16,
@@ -247,13 +247,13 @@ pub struct Endpoint {
     pub address: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct VirtualHost {
     pub host: String,
     pub paths: Vec<Route>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Route {
     #[serde(default)]
     pub match_type: MatchType,
@@ -270,7 +270,7 @@ pub struct Route {
     pub compiled_regex: Option<regex::Regex>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RetryPolicy {
     pub attempts: usize,
     // Using serde_yaml::Value or similar for mixed types might be needed if retry_on contains strings and ints,
@@ -284,13 +284,13 @@ pub struct RetryPolicy {
     pub per_try_timeout: std::time::Duration,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HeaderOperations {
     pub add: Option<HashMap<String, String>>,
     pub remove: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WeightedDestination {
     pub upstream: String,
     pub weight: u32,

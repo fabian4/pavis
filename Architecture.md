@@ -81,7 +81,7 @@ Request -> Proxy -> Router (Match) -> Upstream Manager (Select Endpoint) -> Clus
 
 ## 4. Protocol (`.pvs`)
 
-The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configuration format.
+The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configuration format. See [PROTOCOL.md](doc/PROTOCOL.md) for detailed specification.
 
 ### File Format
 
@@ -138,4 +138,25 @@ To prevent "Config Bloat" (a major issue in Envoy), the Bridge (`pavis-xds`) per
 
 - **Network Efficiency** – Only sends routes relevant to the specific Pod (based on Namespace or SidecarScope)
 - **Security** – A compromised sidecar only knows the IP addresses of services it is explicitly allowed to talk to
+
+## 8. Validation Strategy
+
+Pavis employs a **Three-Layer Validation Model** to ensure configuration stability and correctness.
+
+### 1. Core Semantic Validation (`pavis-core`)
+**Canonical Truth.** Defines the absolute semantics of the configuration.
+- Ensures structural correctness and cross-resource invariants (e.g., reference integrity).
+- Source-agnostic and mandatory for all config producers.
+
+### 2. Source-Specific Validation (`pavis-cli`, `pavis-xds`)
+**Input Adaptation.** Enforces constraints tied to the input source.
+- Validates YAML schemas, CLI flags, or specific Istio/Envoy constraints.
+- Transforms user intent into valid `pavis-core` structures.
+
+### 3. Defensive Runtime Validation (`pavis`)
+**Operational Safety.** Performs minimal checks to prevent crashes.
+- Checks magic bytes, version compatibility, and memory safety (`rkyv::check_bytes`).
+- Does not define or reinterpret semantics.
+
+> **Principle:** Semantics live in `pavis-core`; producers adapt, the proxy executes safely.
 

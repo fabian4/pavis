@@ -6,4 +6,10 @@ license = "Apache-2.0"
 description = "Pavis CLI"
 
 [dependencies]
-pavis-core = "0.0.0"
+pavis-core = { path = "../pavis-core" }
+clap = { version = "4.5", features = ["derive"] }
+serde_yaml = "0.9"
+anyhow = { workspace = true }
+rkyv = { version = "0.7", features = ["validation"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

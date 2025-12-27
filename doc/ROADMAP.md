@@ -6,8 +6,8 @@
 
 | Phase | Focus | Status |
 |:-----:|-------|:------:|
-| 1 | Foundation (Pingora proxy) | 🚧 |
-| 2 | Protocol (`.pvs` format, `pavis-core`, `pavis-cli`) | 🚧 |
+| 1 | Foundation (Pingora proxy) | ✅ |
+| 2 | Protocol (`.pvs` format, `pavis-core`, `pavis-cli`) | ✅ |
 | 3 | Long Polling (dynamic config updates) | ⏳ |
 | 4 | xDS Bridge (Istio integration) | ⏳ |
 | 5 | Traffic Management (retries, timeouts, load balancing) | ⏳ |
@@ -61,38 +61,38 @@
 - [x] `MatchType` enum (Prefix, Exact, Regex)
 - [x] `HeaderOperations` for request/response manipulation
 - [x] `WeightedDestination` for traffic splitting
-- [ ] Add `check_bytes` validation tests
-- [ ] Add schema migration strategy documentation
-- [ ] Backwards compatibility validation between versions
+- [x] Add `check_bytes` validation tests
+- [x] Add schema migration strategy documentation
+- [x] Backwards compatibility validation between versions
 
 **`pavis-cli`** (Binary)
-- [ ] `compile` command: YAML → `.pvs`
-  - [ ] Parse YAML config with serde
-  - [ ] Convert to `pavis-core` structs
-  - [ ] Serialize with rkyv and write with header
-  - [ ] Validate references (routes → upstreams)
-  - [ ] Output file size and compression stats
-- [ ] `inspect` command: Debug binary files
-  - [ ] Display header (magic, version)
-  - [ ] Pretty-print config tree
-  - [ ] Show binary size and structure stats
-  - [ ] Hex dump mode for debugging
-- [ ] `validate` command: Check YAML without compiling
-- [ ] `convert` command: Convert between versions
+- [x] `compile` command: YAML → `.pvs`
+  - [x] Parse YAML config with serde
+  - [x] Convert to `pavis-core` structs
+  - [x] Serialize with rkyv and write with header
+  - [x] Validate references (routes → upstreams)
+  - [x] Output file size and compression stats
+- [x] `inspect` command: Debug binary files
+  - [x] Display header (magic, version)
+  - [x] Pretty-print config tree
+  - [x] Show binary size and structure stats
+  - [x] Hex dump mode for debugging
+- [x] `validate` command: Check YAML without compiling
+- [x] `convert` command: Convert between versions
 
 **`pavis`** (Binary)
-- [ ] Replace YAML loader with `mmap` + rkyv
-- [ ] Startup validation (magic bytes + version check)
-- [ ] Graceful error messages for invalid configs
-- [ ] Version mismatch handling (reject vs warn)
+- [x] Replace YAML loader with `mmap` + rkyv
+- [x] Startup validation (magic bytes + version check)
+- [x] Graceful error messages for invalid configs
+- [x] Version mismatch handling (reject vs warn)
 
 **E2E Tests**
-- [ ] Compile YAML → `.pvs` and verify binary structure
-- [ ] Load `.pvs` in proxy and forward traffic
-- [ ] Reject invalid magic bytes
-- [ ] Reject version mismatch
-- [ ] Inspect command output verification
-- [ ] Round-trip: YAML → `.pvs` → inspect → verify
+- [x] Compile YAML → `.pvs` and verify binary structure
+- [x] Load `.pvs` in proxy and forward traffic
+- [x] Reject invalid magic bytes
+- [x] Reject version mismatch
+- [x] Inspect command output verification
+- [x] Round-trip: YAML → `.pvs` → inspect → verify
 
 ---
 

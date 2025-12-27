@@ -1,0 +1,80 @@
+server:
+  listen_addr: "0.0.0.0:8080"
+  # worker_threads: 4
+  # tls:
+  #   enabled: true
+  #   cert_path: "/path/to/cert.pem"
+  #   key_path: "/path/to/key.pem"
+
+telemetry:
+  level: "debug"
+  pingora: "warn"
+  access_log: "stdout"  # Options: stdout (default), false, or file path
+  # service_name: "pavis-proxy" # Not supported yet
+  # prometheus_addr: "0.0.0.0:9090" # Not supported yet
+  # tracing: # Not supported yet
+  #   enabled: true
+  #   provider: "opentelemetry"
+  #   sampling_rate: 1.0
+
+upstreams:
+  - name: "backend-v1"
+    load_balancer: "round-robin" # Options: random, round-robin (default)
+    http_version: "h1"  # Options: h1 (default), h2, h2h1
+    connection_pool:
+      idle_timeout: "60s"      # Keep connections alive for 60s (default)
+      connection_timeout: "5s"  # Connection timeout (default: 5s)
+    # tls:
+    #   enabled: true
+    #   verify_hostname: true
+    #   sni: "backend.example.com"
+    # circuit_breaker: # Not supported yet
+    #   max_connections: 1024
+    #   max_pending_requests: 500
+    #   max_retries: 3
+    # health_check: # Not supported yet
+    #   path: "/healthz"
+    #   interval: "5s"
+    #   timeout: "1s"
+    #   unhealthy_threshold: 3
+    #   healthy_threshold: 1
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+        weight: 1
+
+  - name: "backend-v2"
+    load_balancer: "random"
+    http_version: "h2"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8082
+        weight: 1
+
+routes:
+  - host: "backend"
+    paths:
+      - match_type: "prefix" # Options: prefix (default), exact, regex
+        path: "/api/v1"
+        # timeout: "2s" # Not supported yet
+        # retry: # Not supported yet
+        #   attempts: 3
+        #   retry_on: [500, 502, 503, "gateway_error", "connect_failure"]
+        #   per_try_timeout: "500ms"
+        request_headers:
+          add:
+            x-sidecar-proxy: "pavis"
+          remove:
+            - "x-internal-token"
+        response_headers:
+          add:
+            x-served-by: "pavis"
+        destinations:
+          - upstream: "backend-v1"
+            weight: 100
+
+      - match_type: "prefix"
+        path: "/api/v2"
+        destinations:
+          - upstream: "backend-v2"
+            weight: 100
