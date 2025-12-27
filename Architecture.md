@@ -23,28 +23,28 @@ The project is structured as a workspace with strict module boundaries to enforc
 ```
 pavis/
 ├── crates/
-│   ├── pavis/          # Proxy – Runtime Engine (Reads .pvs only)
-│   ├── pavis-core/     # Protocol – Canonical types & memory layout
-│   ├── pavis-adapter/  # Adapter – Input DTOs, parsing, validation, conversion
-│   ├── pavis-cli/      # CLI – I/O shell for local config compilation
-│   └── pavis-xds/      # Bridge – I/O shell for xDS streams
-└── Cargo.toml          # Workspace configuration
+│   ├── pavis/              # Proxy – Runtime Engine (Reads .pvs only)
+│   ├── pavis-core/         # Protocol – Canonical types & memory layout
+│   ├── pavis-adapter-yaml/ # Adapter – YAML Input DTOs, parsing, validation
+│   ├── pavis-cli/          # CLI – I/O shell for local config compilation
+│   └── pavis-xds/          # Bridge – I/O shell for xDS streams
+└── Cargo.toml              # Workspace configuration
 ```
 
 ### 2.2. Dependency Graph
 
 *   **`pavis-core` (Root)**: The foundation. Depends on `rkyv`. No I/O, no Serde.
-*   **`pavis-adapter`**: Depends on `pavis-core` and input libs (`serde`, `yaml`, `prost`).
-*   **`pavis-cli` / `pavis-xds`**: Depend on `pavis-adapter`.
-*   **`pavis` (Runtime)**: Depends on `pavis-core`. **Must not** depend on `pavis-adapter` or input libs.
+*   **`pavis-adapter-yaml`**: Depends on `pavis-core` and input libs (`serde`, `yaml`).
+*   **`pavis-cli` / `pavis-xds`**: Depend on `pavis-adapter-yaml` (or other adapters).
+*   **`pavis` (Runtime)**: Depends on `pavis-core`. **Must not** depend on adapters or input libs.
 
 ### 2.3. Responsibilities
 
 | Responsibility | Component | Description |
 | :--- | :--- | :--- |
 | **Protocol Definition** | `pavis-core` | Defines `.pvs` binary format and optimized `RuntimeConfig`. |
-| **Input DTOs** | `pavis-adapter` | Defines `YamlConfig`, `XdsConfig` optimized for UX/Defaults. |
-| **Adaptation & Validation** | `pavis-adapter` | "Dirty" data cleaning. Transforms Input DTO -> RuntimeConfig. |
+| **Input DTOs** | `pavis-adapter-*` | Defines `YamlConfig`, `XdsConfig` optimized for UX/Defaults. |
+| **Adaptation & Validation** | `pavis-adapter-*` | "Dirty" data cleaning. Transforms Input DTO -> RuntimeConfig. |
 | **I/O & Orchestration** | Producers | `cli` & `xds` handle file reading, network streams, and invoke adapter. |
 | **Runtime Execution** | `pavis` | Consumes trusted `.pvs` files. No parsing, validation, or allocation logic. |
 
@@ -172,9 +172,9 @@ The `pavis` crate has been refactored into a **Domain-Driven Architecture** with
 ### 4.1. Modules
 
 1.  **Config (`config`)**:
-    *   **Role**: Pure Data Transfer Objects (DTOs) and semantic validation.
-    *   **Invariant**: Configuration must be validated (`ValidatedConfig`) before being used by the runtime.
-    *   **Key Types**: `RawConfig`, `ValidatedConfig`, `VirtualHost`.
+    *   **Role**: Internal Runtime Configuration.
+    *   **Invariant**: Decoupled from `pavis-core` types where appropriate. Loaded from `RuntimeConfig`.
+    *   **Key Types**: `Config`, `VirtualHost`, `Upstream`.
 
 2.  **Router (`router`)**:
     *   **Role**: Immutable request matching logic.

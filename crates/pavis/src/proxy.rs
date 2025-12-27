@@ -10,12 +10,12 @@
 //! 3. **No Mutable Global State**: State should be encapsulated in components (`Router`, `Manager`).
 //! 4. **Validated Configuration**: The proxy assumes configuration is valid and immutable.
 
+use crate::config::{HeaderOperations, HttpVersion};
 use crate::router::Router;
 use crate::telemetry::Telemetry;
 use crate::upstream::Manager;
 use async_trait::async_trait;
 use http::header::{HeaderName, HeaderValue};
-use pavis_core::config::{HeaderOperations, HttpVersion};
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
@@ -247,25 +247,23 @@ impl ProxyHttp for Proxy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Config, LoadBalancer, MatchType, Route, VirtualHost, WeightedDestination};
     use crate::upstream::Cluster;
-    use pavis_core::config::{
-        LoadBalancer, MatchType, RawConfig, Route, VirtualHost, WeightedDestination,
-    };
     use std::collections::HashMap;
 
-    fn create_test_config() -> RawConfig {
-        RawConfig {
-            server: pavis_core::config::ServerConfig {
+    fn create_test_config() -> Config {
+        Config {
+            server: crate::config::ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
                 tls: None,
             },
-            telemetry: pavis_core::config::TelemetryConfig {
+            telemetry: crate::config::TelemetryConfig {
                 level: None,
                 pingora: None,
                 service_name: None,
                 prometheus_addr: None,
-                access_log: pavis_core::config::AccessLogConfig::False,
+                access_log: crate::config::AccessLogConfig::False,
                 tracing: None,
             },
             upstreams: vec![],
@@ -374,18 +372,18 @@ mod tests {
 
     #[test]
     fn test_find_route_regex_match() {
-        let config = RawConfig {
-            server: pavis_core::config::ServerConfig {
+        let config = Config {
+            server: crate::config::ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
                 tls: None,
             },
-            telemetry: pavis_core::config::TelemetryConfig {
+            telemetry: crate::config::TelemetryConfig {
                 level: None,
                 pingora: None,
                 service_name: None,
                 prometheus_addr: None,
-                access_log: pavis_core::config::AccessLogConfig::False,
+                access_log: crate::config::AccessLogConfig::False,
                 tracing: None,
             },
             upstreams: vec![],
@@ -431,21 +429,21 @@ mod tests {
 
     #[test]
     fn test_weighted_round_robin_respects_weights() {
-        let upstream = pavis_core::config::Upstream {
+        let upstream = crate::config::Upstream {
             name: "test".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
-            http_version: pavis_core::config::HttpVersion::H1,
-            connection_pool: pavis_core::config::ConnectionPoolConfig::default(),
+            http_version: crate::config::HttpVersion::H1,
+            connection_pool: crate::config::ConnectionPoolConfig::default(),
             tls: None,
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![
-                pavis_core::config::Endpoint {
+                crate::config::Endpoint {
                     ip: "A".to_string(),
                     port: 8080,
                     weight: Some(3),
                 },
-                pavis_core::config::Endpoint {
+                crate::config::Endpoint {
                     ip: "B".to_string(),
                     port: 8081,
                     weight: Some(1),
@@ -465,26 +463,26 @@ mod tests {
 
     #[test]
     fn test_round_robin_cycles_endpoints_evenly() {
-        let upstream = pavis_core::config::Upstream {
+        let upstream = crate::config::Upstream {
             name: "test-upstream".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
-            http_version: pavis_core::config::HttpVersion::H1,
-            connection_pool: pavis_core::config::ConnectionPoolConfig::default(),
+            http_version: crate::config::HttpVersion::H1,
+            connection_pool: crate::config::ConnectionPoolConfig::default(),
             tls: None,
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![
-                pavis_core::config::Endpoint {
+                crate::config::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8081,
                     weight: None,
                 },
-                pavis_core::config::Endpoint {
+                crate::config::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8082,
                     weight: None,
                 },
-                pavis_core::config::Endpoint {
+                crate::config::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8083,
                     weight: None,
@@ -512,21 +510,21 @@ mod tests {
 
     #[test]
     fn test_concurrent_round_robin() {
-        let upstream = pavis_core::config::Upstream {
+        let upstream = crate::config::Upstream {
             name: "concurrent-upstream".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
-            http_version: pavis_core::config::HttpVersion::H1,
-            connection_pool: pavis_core::config::ConnectionPoolConfig::default(),
+            http_version: crate::config::HttpVersion::H1,
+            connection_pool: crate::config::ConnectionPoolConfig::default(),
             tls: None,
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![
-                pavis_core::config::Endpoint {
+                crate::config::Endpoint {
                     ip: "A".to_string(),
                     port: 80,
                     weight: None,
                 },
-                pavis_core::config::Endpoint {
+                crate::config::Endpoint {
                     ip: "B".to_string(),
                     port: 80,
                     weight: None,

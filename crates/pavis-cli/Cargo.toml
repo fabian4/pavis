@@ -7,6 +7,7 @@ description = "Pavis CLI"
 
 [dependencies]
 pavis-core = { path = "../pavis-core" }
+pavis-adapter-yaml = { path = "../pavis-adapter-yaml" }
 clap = { version = "4.5", features = ["derive"] }
 serde_yaml = "0.9"
 anyhow = { workspace = true }

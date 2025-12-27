@@ -1,12 +1,12 @@
 use anyhow::{Context, Result, anyhow};
 use memmap2::Mmap;
-use pavis_core::WireConfig;
+use pavis_core::RuntimeConfig;
 use rkyv::with::{AsOwned, With};
 use rkyv::{Archive, Infallible};
 use std::fs::File;
 
 /// Reads a .pvs file, validates headers, and deserializes the content.
-pub fn read_pvs_file(path: &str) -> Result<WireConfig> {
+pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
     let file =
         File::open(path).with_context(|| format!("Failed to open .pvs config file: {}", path))?;
     // SAFETY: mmap is unsafe because the file could be modified by another process.
@@ -34,11 +34,11 @@ pub fn read_pvs_file(path: &str) -> Result<WireConfig> {
 
     let payload = &mmap[8..];
 
-    let archived = rkyv::check_archived_root::<WireConfig>(payload)
+    let archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
-    let wrapper: With<WireConfig, AsOwned> =
-        <<WireConfig as Archive>::Archived as rkyv::Deserialize<_, _>>::deserialize(
+    let wrapper: With<RuntimeConfig, AsOwned> =
+        <<RuntimeConfig as Archive>::Archived as rkyv::Deserialize<_, _>>::deserialize(
             archived,
             &mut Infallible,
         )?;

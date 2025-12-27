@@ -1,5 +1,5 @@
+use crate::config::AccessLogConfig;
 use async_trait::async_trait;
-use pavis_core::config::AccessLogConfig;
 use pingora::proxy::Session;
 use pingora::services::Service;
 use std::sync::Arc;

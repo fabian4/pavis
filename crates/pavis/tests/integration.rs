@@ -1,13 +1,13 @@
-use pavis::router::Router;
-use pavis::upstream::Manager;
-use pavis_core::config::{
-    AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
-    RawConfig, Route, ServerConfig, TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost,
+use pavis::config::{
+    AccessLogConfig, Config, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
+    Route, ServerConfig, TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost,
     WeightedDestination,
 };
+use pavis::router::Router;
+use pavis::upstream::Manager;
 
-fn base_config() -> RawConfig {
-    RawConfig {
+fn base_config() -> Config {
+    Config {
         server: ServerConfig {
             listen_addr: "0.0.0.0:8080".to_string(),
             worker_threads: None,

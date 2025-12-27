@@ -1,4 +1,4 @@
-use pavis_core::config::{Endpoint, LoadBalancer};
+use crate::config::{Endpoint, LoadBalancer};
 use rand::Rng;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

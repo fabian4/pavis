@@ -1,11 +1,11 @@
-use pavis_core::config as c;
-use pavis_core::{HttpVersion, LoadBalancer, MatchType, WireConfig};
+use crate::config as c;
+use pavis_core::{HttpVersion, LoadBalancer, MatchType, RuntimeConfig};
 
 /// Converts the binary protocol struct into the runtime configuration DTO.
 ///
 /// This acts as an adapter/anti-corruption layer, ensuring that the runtime
 /// works with its preferred data structure regardless of the binary format.
-pub fn to_runtime_config(binary: WireConfig) -> c::RawConfig {
+pub fn to_runtime_config(binary: RuntimeConfig) -> c::Config {
     let mut upstreams = Vec::new();
     for u in binary.upstreams {
         let lb = match u.load_balancer {
@@ -33,10 +33,12 @@ pub fn to_runtime_config(binary: WireConfig) -> c::RawConfig {
         // However, enum variants need qualification or import.
         // Wait, WireConfig::HttpVersion is not valid syntax if HttpVersion is a sibling enum in lib.rs.
         // It is `pavis_core::HttpVersion`. I need to import it properly or use qualified path.
-        
+
         let connection_pool = c::ConnectionPoolConfig {
             idle_timeout: std::time::Duration::from_secs(u.connection_pool.idle_timeout_secs),
-            connection_timeout: std::time::Duration::from_secs(u.connection_pool.connection_timeout_secs),
+            connection_timeout: std::time::Duration::from_secs(
+                u.connection_pool.connection_timeout_secs,
+            ),
         };
 
         let tls = u.tls.map(|t| c::UpstreamTlsConfig {
@@ -105,7 +107,7 @@ pub fn to_runtime_config(binary: WireConfig) -> c::RawConfig {
         });
     }
 
-    c::RawConfig {
+    c::Config {
         server: c::ServerConfig {
             listen_addr: binary.listen_addr,
             worker_threads: None,
@@ -127,12 +129,12 @@ pub fn to_runtime_config(binary: WireConfig) -> c::RawConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pavis_core::config as c;
-    use pavis_core::{Endpoint, LoadBalancer, PavisHeader, Upstream, WireConfig};
+    use crate::config as c;
+    use pavis_core::{Endpoint, LoadBalancer, PavisHeader, RuntimeConfig, Upstream};
 
     #[test]
     fn test_to_runtime_config() {
-        let binary = WireConfig {
+        let binary = RuntimeConfig {
             header: PavisHeader::default(),
             listen_addr: "0.0.0.0:8080".to_string(),
             upstreams: vec![Upstream {

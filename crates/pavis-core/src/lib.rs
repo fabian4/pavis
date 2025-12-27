@@ -1,7 +1,5 @@
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
-pub mod config;
-
 /// Formats an IP address and port into a socket address string.
 /// Handles IPv6 addresses by wrapping them in brackets if they don't already have them.
 pub fn format_address(ip: &str, port: u16) -> String {
@@ -39,7 +37,7 @@ impl Default for PavisHeader {
 /// The Root Configuration Object.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
-pub struct WireConfig {
+pub struct RuntimeConfig {
     pub header: PavisHeader,
     pub listen_addr: String,
     pub upstreams: Vec<Upstream>,
@@ -143,8 +141,8 @@ mod tests {
     use rkyv::check_archived_root;
     use rkyv::ser::{Serializer, serializers::AllocSerializer};
 
-    fn create_valid_config() -> WireConfig {
-        WireConfig {
+    fn create_valid_config() -> RuntimeConfig {
+        RuntimeConfig {
             header: PavisHeader::default(),
             listen_addr: "0.0.0.0:8080".to_string(),
             upstreams: vec![Upstream {
@@ -186,7 +184,7 @@ mod tests {
         let bytes = serializer.into_serializer().into_inner();
 
         // Should pass validation
-        let result = check_archived_root::<WireConfig>(&bytes);
+        let result = check_archived_root::<RuntimeConfig>(&bytes);
         assert!(
             result.is_ok(),
             "Validation failed for valid data: {:?}",
@@ -209,7 +207,7 @@ mod tests {
         }
 
         // Should fail validation
-        let result = check_archived_root::<WireConfig>(&bytes);
+        let result = check_archived_root::<RuntimeConfig>(&bytes);
         assert!(
             result.is_err(),
             "Validation should have failed for corrupted data"
@@ -227,7 +225,7 @@ mod tests {
         let truncated_bytes = &bytes[..bytes.len() / 2];
 
         // Should fail validation
-        let result = check_archived_root::<WireConfig>(truncated_bytes);
+        let result = check_archived_root::<RuntimeConfig>(truncated_bytes);
         assert!(
             result.is_err(),
             "Validation should have failed for truncated data"
@@ -244,7 +242,7 @@ mod tests {
         let bytes = serializer.into_serializer().into_inner();
 
         // rkyv validation checks structural integrity, not our logical version
-        let archived = check_archived_root::<WireConfig>(&bytes).unwrap();
+        let archived = check_archived_root::<RuntimeConfig>(&bytes).unwrap();
 
         // We should manually check the version
         assert_eq!(archived.header.version, 999);

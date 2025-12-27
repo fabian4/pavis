@@ -6,8 +6,8 @@ use rkyv::ser::{Serializer, serializers::AllocSerializer};
 use std::fs;
 use std::path::PathBuf;
 
+use pavis_adapter_yaml::config as yaml;
 use pavis_core as binary;
-use pavis_core::config as yaml;
 
 #[derive(Parser)]
 #[command(name = "pavis-cli")]
@@ -76,11 +76,11 @@ fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<
     }
 
     let payload = &bytes[8..];
-    let archived = check_archived_root::<binary::WireConfig>(payload)
+    let archived = check_archived_root::<binary::RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
-    let binary_config = archived.deserialize(&mut rkyv::Infallible)?;
-    let yaml_config = convert_binary_to_config(binary_config);
+    let binary_config: binary::RuntimeConfig = archived.deserialize(&mut rkyv::Infallible)?;
+    let yaml_config: yaml::YamlConfig = binary_config.into();
     let yaml_str = serde_yaml::to_string(&yaml_config).context("Failed to serialize to YAML")?;
 
     match output_path {
@@ -98,124 +98,9 @@ fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<
     Ok(())
 }
 
-fn convert_binary_to_config(binary: binary::WireConfig) -> yaml::RawConfig {
-    use pavis_core::{LoadBalancer, MatchType};
-
-    let mut upstreams = Vec::new();
-    for u in binary.upstreams {
-        let lb = match u.load_balancer {
-            LoadBalancer::Random => yaml::LoadBalancer::Random,
-            LoadBalancer::RoundRobin => yaml::LoadBalancer::RoundRobin,
-        };
-
-        let mut endpoints = Vec::new();
-        for e in u.endpoints {
-            endpoints.push(yaml::Endpoint {
-                ip: e.ip,
-                port: e.port,
-                weight: Some(e.weight),
-            });
-        }
-
-        let http_version = match u.http_version {
-            binary::HttpVersion::H1 => yaml::HttpVersion::H1,
-            binary::HttpVersion::H2 => yaml::HttpVersion::H2,
-            binary::HttpVersion::H2H1 => yaml::HttpVersion::H2H1,
-        };
-
-        let connection_pool = yaml::ConnectionPoolConfig {
-            idle_timeout: std::time::Duration::from_secs(u.connection_pool.idle_timeout_secs),
-            connection_timeout: std::time::Duration::from_secs(u.connection_pool.connection_timeout_secs),
-        };
-
-        let tls = u.tls.map(|t| yaml::UpstreamTlsConfig {
-            enabled: t.enabled,
-            verify_hostname: Some(t.verify_hostname),
-            verify_cert: Some(t.verify_cert),
-            sni: t.sni,
-        });
-
-        upstreams.push(yaml::Upstream {
-            name: u.name,
-            load_balancer: lb,
-            http_version,
-            connection_pool,
-            tls,
-            circuit_breaker: None,
-            health_check: None,
-            endpoints,
-        });
-    }
-
-    let mut routes = Vec::new();
-    for v in binary.routes {
-        let mut paths = Vec::new();
-        for p in v.paths {
-            let match_type = match p.match_type {
-                MatchType::Exact => yaml::MatchType::Exact,
-                MatchType::Regex => yaml::MatchType::Regex,
-                MatchType::Prefix => yaml::MatchType::Prefix,
-            };
-
-            let request_headers = p.request_headers.map(|h| yaml::HeaderOperations {
-                add: Some(h.add.into_iter().collect()),
-                remove: Some(h.remove),
-            });
-
-            let response_headers = p.response_headers.map(|h| yaml::HeaderOperations {
-                add: Some(h.add.into_iter().collect()),
-                remove: Some(h.remove),
-            });
-
-            let destinations = p
-                .destinations
-                .into_iter()
-                .map(|d| yaml::WeightedDestination {
-                    upstream: d.upstream,
-                    weight: d.weight,
-                })
-                .collect();
-
-            paths.push(yaml::Route {
-                match_type,
-                path: p.path,
-                timeout: None,
-                retry: None,
-                request_headers,
-                response_headers,
-                destinations,
-                compiled_regex: None,
-            });
-        }
-
-        routes.push(yaml::VirtualHost {
-            host: v.host,
-            paths,
-        });
-    }
-
-    yaml::RawConfig {
-        server: yaml::ServerConfig {
-            listen_addr: binary.listen_addr,
-            worker_threads: None,
-            tls: None,
-        },
-        telemetry: yaml::TelemetryConfig {
-            level: None,
-            pingora: None,
-            service_name: None,
-            prometheus_addr: None,
-            access_log: yaml::AccessLogConfig::False,
-            tracing: None,
-        },
-        upstreams,
-        routes,
-    }
-}
-
 fn validate_yaml(input_path: PathBuf) -> Result<()> {
     let content = fs::read_to_string(&input_path).context("Failed to read input file")?;
-    let yaml_config: yaml::RawConfig =
+    let yaml_config: yaml::YamlConfig =
         serde_yaml::from_str(&content).context("Failed to parse YAML")?;
     yaml_config
         .validate()
@@ -229,7 +114,7 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let content = fs::read_to_string(&input_path).context("Failed to read input file")?;
 
     // 1. Deserialize and Validate YAML
-    let yaml_config: yaml::RawConfig =
+    let yaml_config: yaml::YamlConfig =
         serde_yaml::from_str(&content).context("Failed to parse YAML")?;
     yaml_config
         .clone()
@@ -237,7 +122,7 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
         .context("Invalid configuration")?;
 
     // 2. Convert to binary protocol structs
-    let pavis_config = convert_to_pavis(yaml_config)?;
+    let pavis_config: binary::RuntimeConfig = yaml_config.try_into()?;
 
     // 3. Serialize to Bytes
     let mut serializer = AllocSerializer::<1024>::default();
@@ -287,7 +172,7 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
 
     // Validate structural integrity with check_bytes (skip our 8-byte header)
     let payload = &bytes[8..];
-    let archived = check_archived_root::<binary::WireConfig>(payload)
+    let archived = check_archived_root::<binary::RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
     println!("--- Config Tree ---");
@@ -307,9 +192,9 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
         println!("    LB: {}", lb_str);
         println!("    HTTP: {}", hv_str);
         if let rkyv::option::ArchivedOption::Some(tls) = &u.tls {
-             println!("    TLS: Enabled (SNI: {:?})", tls.sni);
+            println!("    TLS: Enabled (SNI: {:?})", tls.sni);
         } else {
-             println!("    TLS: Disabled");
+            println!("    TLS: Disabled");
         }
         println!("    Endpoints ({}):", u.endpoints.len());
         for e in u.endpoints.iter() {
@@ -346,149 +231,4 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn convert_to_pavis(src: yaml::RawConfig) -> Result<binary::WireConfig> {
-    let mut upstreams = Vec::new();
-    for u in src.upstreams {
-        let lb = match u.load_balancer {
-            yaml::LoadBalancer::Random => binary::LoadBalancer::Random,
-            yaml::LoadBalancer::RoundRobin => binary::LoadBalancer::RoundRobin,
-        };
-
-        let mut endpoints = Vec::new();
-        for e in u.endpoints {
-            endpoints.push(binary::Endpoint {
-                ip: e.ip,
-                port: e.port,
-                weight: e.weight.unwrap_or(1),
-            });
-        }
-
-        let http_version = match u.http_version {
-            yaml::HttpVersion::H1 => binary::HttpVersion::H1,
-            yaml::HttpVersion::H2 => binary::HttpVersion::H2,
-            yaml::HttpVersion::H2H1 => binary::HttpVersion::H2H1,
-        };
-
-        let connection_pool = binary::ConnectionPoolConfig {
-            idle_timeout_secs: u.connection_pool.idle_timeout.as_secs(),
-            connection_timeout_secs: u.connection_pool.connection_timeout.as_secs(),
-        };
-
-        let tls = u.tls.map(|t| binary::UpstreamTlsConfig {
-            enabled: t.enabled,
-            verify_hostname: t.verify_hostname.unwrap_or(true),
-            verify_cert: t.verify_cert.unwrap_or(true),
-            sni: t.sni,
-        });
-
-        upstreams.push(binary::Upstream {
-            name: u.name,
-            load_balancer: lb,
-            http_version,
-            connection_pool,
-            tls,
-            endpoints,
-        });
-    }
-
-    let mut routes = Vec::new();
-    for v in src.routes {
-        let mut paths = Vec::new();
-        for p in v.paths {
-            let match_type = match p.match_type {
-                yaml::MatchType::Exact => binary::MatchType::Exact,
-                yaml::MatchType::Regex => binary::MatchType::Regex,
-                yaml::MatchType::Prefix => binary::MatchType::Prefix,
-            };
-
-            let request_headers = if let Some(h) = p.request_headers {
-                let add: Vec<(String, String)> = h.add.unwrap_or_default().into_iter().collect();
-                let remove = h.remove.unwrap_or_default();
-                Some(binary::HeaderOperations { add, remove })
-            } else {
-                None
-            };
-
-            let response_headers = if let Some(h) = p.response_headers {
-                let add: Vec<(String, String)> = h.add.unwrap_or_default().into_iter().collect();
-                let remove = h.remove.unwrap_or_default();
-                Some(binary::HeaderOperations { add, remove })
-            } else {
-                None
-            };
-
-            let destinations = p
-                .destinations
-                .into_iter()
-                .map(|d| binary::WeightedDestination {
-                    upstream: d.upstream,
-                    weight: d.weight,
-                })
-                .collect();
-
-            paths.push(binary::Route {
-                match_type,
-                path: p.path,
-                request_headers,
-                response_headers,
-                destinations,
-            });
-        }
-
-        routes.push(binary::VirtualHost {
-            host: v.host,
-            paths,
-        });
-    }
-
-    Ok(binary::WireConfig {
-        header: binary::PavisHeader::default(),
-        listen_addr: src.server.listen_addr,
-        upstreams,
-        routes,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pavis_core::config as yaml;
-    use pavis_core::{Endpoint, LoadBalancer, PavisHeader, Upstream, WireConfig};
-
-    #[test]
-    fn test_convert_binary_to_config() {
-        let binary = WireConfig {
-            header: PavisHeader::default(),
-            listen_addr: "0.0.0.0:8080".to_string(),
-            upstreams: vec![Upstream {
-                name: "test".to_string(),
-                load_balancer: LoadBalancer::RoundRobin,
-                http_version: binary::HttpVersion::H1,
-                connection_pool: binary::ConnectionPoolConfig {
-                    idle_timeout_secs: 60,
-                    connection_timeout_secs: 5,
-                },
-                tls: None,
-                endpoints: vec![Endpoint {
-                    ip: "127.0.0.1".to_string(),
-                    port: 80,
-                    weight: 1,
-                }],
-            }],
-            routes: vec![],
-        };
-
-        let config = convert_binary_to_config(binary);
-
-        assert_eq!(config.server.listen_addr, "0.0.0.0:8080");
-        assert_eq!(config.upstreams.len(), 1);
-        assert_eq!(config.upstreams[0].name, "test");
-        assert_eq!(config.upstreams[0].endpoints[0].ip, "127.0.0.1");
-        assert_eq!(
-            config.upstreams[0].load_balancer,
-            yaml::LoadBalancer::RoundRobin
-        );
-    }
 }

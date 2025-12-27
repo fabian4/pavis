@@ -6,7 +6,7 @@
 //! 2. **No Panic**: Telemetry failures (e.g., full buffers) should result in dropped data, not crashes.
 //! 3. **Minimal Overhead**: The cost of disabled telemetry should be near zero.
 
-use pavis_core::config::TelemetryConfig;
+use crate::config::TelemetryConfig;
 use std::sync::Arc;
 
 pub mod access_log;

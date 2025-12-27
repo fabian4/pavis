@@ -1,18 +1,18 @@
-use super::{HeaderOperations, MatchType, RawConfig};
+use super::{HeaderOperations, MatchType, YamlConfig};
 use anyhow::{Context, Result, anyhow};
 use http::header::{HeaderName, HeaderValue};
 use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
-pub fn validate(config: &RawConfig) -> Result<()> {
+pub fn validate(config: &YamlConfig) -> Result<()> {
     validate_server(config)?;
     validate_upstreams(config)?;
     validate_routes(config)?;
     Ok(())
 }
 
-fn validate_server(config: &RawConfig) -> Result<()> {
+fn validate_server(config: &YamlConfig) -> Result<()> {
     config
         .server
         .listen_addr
@@ -26,7 +26,7 @@ fn validate_server(config: &RawConfig) -> Result<()> {
     Ok(())
 }
 
-fn validate_upstreams(config: &RawConfig) -> Result<()> {
+fn validate_upstreams(config: &YamlConfig) -> Result<()> {
     let hostname_regex = regex::Regex::new(
         r"^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*)$",
     )
@@ -72,7 +72,7 @@ fn validate_upstreams(config: &RawConfig) -> Result<()> {
     Ok(())
 }
 
-fn validate_routes(config: &RawConfig) -> Result<()> {
+fn validate_routes(config: &YamlConfig) -> Result<()> {
     let upstream_names: HashSet<&String> = config.upstreams.iter().map(|u| &u.name).collect();
 
     for vhost in &config.routes {

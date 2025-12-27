@@ -1808,11 +1808,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pavis-adapter-yaml"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "http 1.4.0",
+ "humantime-serde",
+ "pavis-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml 0.9.34+deprecated",
+]
+
+[[package]]
 name = "pavis-cli"
 version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap 4.5.53",
+ "pavis-adapter-yaml",
  "pavis-core",
  "rkyv",
  "serde_yaml 0.9.34+deprecated",
@@ -1825,12 +1840,7 @@ name = "pavis-core"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "http 1.4.0",
- "humantime-serde",
- "regex",
  "rkyv",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1852,6 +1862,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap 4.5.53",
+ "pavis-adapter-yaml",
  "pavis-core",
  "prost",
  "rkyv",
