@@ -136,7 +136,8 @@ impl ProxyHttp for Proxy {
 
         let upstream = &cluster.config;
 
-        let addr = &endpoint.address;
+        let addr = endpoint.address();
+
         tracing::debug!(
             upstream = %upstream_name,
             endpoint = %addr,
@@ -248,12 +249,12 @@ mod tests {
     use super::*;
     use crate::upstream::Cluster;
     use pavis_core::config::{
-        Config, LoadBalancer, MatchType, Route, VirtualHost, WeightedDestination,
+        LoadBalancer, MatchType, RawConfig, Route, VirtualHost, WeightedDestination,
     };
     use std::collections::HashMap;
 
-    fn create_test_config() -> Config {
-        Config {
+    fn create_test_config() -> RawConfig {
+        RawConfig {
             server: pavis_core::config::ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -373,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_find_route_regex_match() {
-        let config = Config {
+        let config = RawConfig {
             server: pavis_core::config::ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -443,13 +444,11 @@ mod tests {
                     ip: "A".to_string(),
                     port: 8080,
                     weight: Some(3),
-                    address: "A:8080".to_string(),
                 },
                 pavis_core::config::Endpoint {
                     ip: "B".to_string(),
                     port: 8081,
                     weight: Some(1),
-                    address: "B:8081".to_string(),
                 },
             ],
         };
@@ -479,19 +478,16 @@ mod tests {
                     ip: "127.0.0.1".to_string(),
                     port: 8081,
                     weight: None,
-                    address: "127.0.0.1:8081".to_string(),
                 },
                 pavis_core::config::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8082,
                     weight: None,
-                    address: "127.0.0.1:8082".to_string(),
                 },
                 pavis_core::config::Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 8083,
                     weight: None,
-                    address: "127.0.0.1:8083".to_string(),
                 },
             ],
         };
@@ -529,13 +525,11 @@ mod tests {
                     ip: "A".to_string(),
                     port: 80,
                     weight: None,
-                    address: "A:80".to_string(),
                 },
                 pavis_core::config::Endpoint {
                     ip: "B".to_string(),
                     port: 80,
                     weight: None,
-                    address: "B:80".to_string(),
                 },
             ],
         };

@@ -1,54 +1,11 @@
-use anyhow::{Context, Result, anyhow};
-use memmap2::Mmap;
-use pavis_core::config::{Config, ValidatedConfig};
-use std::fs::File;
+use pavis_core::config as c;
+use pavis_core::{HttpVersion, LoadBalancer, MatchType, WireConfig};
 
-/// Loads and validates configuration from a file.
-/// Only supports .pvs (binary) format.
-pub fn load_file(path: &str) -> Result<ValidatedConfig> {
-    if !path.ends_with(".pvs") {
-        return Err(anyhow!(
-            "Only .pvs configuration files are supported. Path: {}",
-            path
-        ));
-    }
-    let config = load_pvs(path)?;
-
-    config.validate().context("Config validation failed")
-}
-
-fn load_pvs(path: &str) -> Result<Config> {
-    let file = File::open(path).context("Failed to open .pvs config file")?;
-    let mmap = unsafe { Mmap::map(&file).context("Failed to mmap .pvs file")? };
-
-    if mmap.len() < 8 {
-        return Err(anyhow!("Config file too small"));
-    }
-
-    let magic = &mmap[0..4];
-    let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());
-
-    if magic != pavis_core::PAVIS_MAGIC {
-        return Err(anyhow!("Invalid magic bytes in .pvs file. Expected 'PAVS'"));
-    }
-
-    if version != pavis_core::PAVIS_VERSION {
-        return Err(anyhow!(
-            "Version mismatch! File: {}, Proxy: {}. Please recompile config.",
-            version,
-            pavis_core::PAVIS_VERSION
-        ));
-    }
-
-    let payload = &mmap[8..];
-    let binary_config = pavis_core::deserialize_pvs(payload)?;
-    Ok(convert_binary_to_config(binary_config))
-}
-
-fn convert_binary_to_config(binary: pavis_core::ProxyConfig) -> Config {
-    use pavis_core::config as c;
-    use pavis_core::{LoadBalancer, MatchType};
-
+/// Converts the binary protocol struct into the runtime configuration DTO.
+///
+/// This acts as an adapter/anti-corruption layer, ensuring that the runtime
+/// works with its preferred data structure regardless of the binary format.
+pub fn to_runtime_config(binary: WireConfig) -> c::RawConfig {
     let mut upstreams = Vec::new();
     for u in binary.upstreams {
         let lb = match u.load_balancer {
@@ -62,16 +19,39 @@ fn convert_binary_to_config(binary: pavis_core::ProxyConfig) -> Config {
                 ip: e.ip,
                 port: e.port,
                 weight: Some(e.weight),
-                address: String::new(), // Will be pre-computed in validate()
             });
         }
+
+        let http_version = match u.http_version {
+            HttpVersion::H1 => c::HttpVersion::H1,
+            HttpVersion::H2 => c::HttpVersion::H2,
+            HttpVersion::H2H1 => c::HttpVersion::H2H1,
+        };
+
+        // Note: binary types are NOT automatically imported unless use'd,
+        // but since they are fields of WireConfig structs, we access them via `u`.
+        // However, enum variants need qualification or import.
+        // Wait, WireConfig::HttpVersion is not valid syntax if HttpVersion is a sibling enum in lib.rs.
+        // It is `pavis_core::HttpVersion`. I need to import it properly or use qualified path.
+        
+        let connection_pool = c::ConnectionPoolConfig {
+            idle_timeout: std::time::Duration::from_secs(u.connection_pool.idle_timeout_secs),
+            connection_timeout: std::time::Duration::from_secs(u.connection_pool.connection_timeout_secs),
+        };
+
+        let tls = u.tls.map(|t| c::UpstreamTlsConfig {
+            enabled: t.enabled,
+            verify_hostname: Some(t.verify_hostname),
+            verify_cert: Some(t.verify_cert),
+            sni: t.sni,
+        });
 
         upstreams.push(c::Upstream {
             name: u.name,
             load_balancer: lb,
-            http_version: c::HttpVersion::H1, // Defaulting as binary doesn't store this yet
-            connection_pool: c::ConnectionPoolConfig::default(),
-            tls: None,
+            http_version,
+            connection_pool,
+            tls,
             circuit_breaker: None,
             health_check: None,
             endpoints,
@@ -125,7 +105,7 @@ fn convert_binary_to_config(binary: pavis_core::ProxyConfig) -> Config {
         });
     }
 
-    Config {
+    c::RawConfig {
         server: c::ServerConfig {
             listen_addr: binary.listen_addr,
             worker_threads: None,
@@ -148,16 +128,22 @@ fn convert_binary_to_config(binary: pavis_core::ProxyConfig) -> Config {
 mod tests {
     use super::*;
     use pavis_core::config as c;
-    use pavis_core::{Endpoint, LoadBalancer, PavisHeader, ProxyConfig, Upstream};
+    use pavis_core::{Endpoint, LoadBalancer, PavisHeader, Upstream, WireConfig};
 
     #[test]
-    fn test_convert_binary_to_config() {
-        let binary = ProxyConfig {
+    fn test_to_runtime_config() {
+        let binary = WireConfig {
             header: PavisHeader::default(),
             listen_addr: "0.0.0.0:8080".to_string(),
             upstreams: vec![Upstream {
                 name: "test".to_string(),
                 load_balancer: LoadBalancer::RoundRobin,
+                http_version: HttpVersion::H1,
+                connection_pool: pavis_core::ConnectionPoolConfig {
+                    idle_timeout_secs: 60,
+                    connection_timeout_secs: 5,
+                },
+                tls: None,
                 endpoints: vec![Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 80,
@@ -167,7 +153,7 @@ mod tests {
             routes: vec![],
         };
 
-        let config = convert_binary_to_config(binary);
+        let config = to_runtime_config(binary);
 
         assert_eq!(config.server.listen_addr, "0.0.0.0:8080");
         assert_eq!(config.upstreams.len(), 1);

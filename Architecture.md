@@ -50,7 +50,7 @@ pavis/
 
 1.  **Protocol Definition Layer (`pavis-core`)**
     *   Defines only the protocol and semantics.
-    *   Includes `ProxyConfig`, `ArchivedProxyConfig`, and canonical validation.
+    *   Includes `WireConfig`, `ArchivedWireConfig`, and canonical validation.
     *   No dependency on YAML, CLI, or runtime.
     *   Does not perform format conversion or legacy compatibility.
 
@@ -70,7 +70,7 @@ pavis/
 
 ## 3. The PVS Protocol
 
-The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configuration format. See [PROTOCOL.md](doc/PROTOCOL.md) for detailed specification.
+The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configuration format.
 
 ### 3.1. File Format
 
@@ -78,14 +78,37 @@ The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configu
 |--------|------|------|-------|-------------|
 | `0x00` | 4 | `[u8; 4]` | `PAVS` | Magic bytes – identifies file type |
 | `0x04` | 4 | `u32` | `1` | Version – schema version for compatibility |
-| `0x08` | ... | `bytes` | ... | Payload – the `ArchivedProxyConfig` root |
+| `0x08` | ... | `bytes` | ... | Payload – the `ArchivedWireConfig` root |
 
-### 3.2. Performance Benefits
+### 3.2. Versioning Strategy
 
-1. **Zero Parsing** – Pavis uses `mmap` to map the file directly into virtual memory. No parsing step.
-2. **Lazy Loading** – If config contains 10,000 routes (50MB) but the app only calls 2 services, the OS only loads the specific 4KB pages needed. The rest stays on disk.
+Pavis uses a simple monotonically increasing integer for the protocol version (`PAVIS_VERSION` in `pavis-core`).
 
-### 3.3. Distribution (Long Polling)
+*   **Breaking Changes**: Any change to the `WireConfig` struct layout (fields, enums) requires incrementing `PAVIS_VERSION`. `rkyv` is sensitive to layout.
+*   **Non-Breaking Changes**: Documentation or internal helper methods.
+
+### 3.3. Migration & Compatibility
+
+Pavis prioritizes speed and simplicity over complex in-place migrations.
+
+*   **Bridge-Side (`pavis-xds`)**: Translates user intent (YAML/xDS) to the current protocol version. Must be redeployed when protocol changes.
+*   **Proxy-Side (`pavis`)**: Performs strict version checking.
+    *   **Magic Bytes**: Must be `PAVS`.
+    *   **Version**: Must match exactly. Mismatches cause startup failure (pod restart) or rejection (hot reload).
+*   **Upgrade Path**:
+    1.  Upgrade Control Plane (`pavis-xds`).
+    2.  Rolling update of Proxies (`pavis`).
+    3.  No N-1 compatibility support currently.
+*   **Future Improvements**:
+    *   Schema Reflection or FlatBuffers if N-1 compatibility becomes required.
+    *   `pavis-cli convert` tool for offline migration.
+
+### 3.4. Performance Benefits
+
+1. **Minimized Parsing** – Pavis uses `mmap` to map the file into memory. *Note: Current implementation performs eager deserialization into owned DTOs for runtime safety. Future versions will move to true zero-copy access.*
+2. **Lazy Loading (Planned)** – In future versions, if config contains 10,000 routes (50MB) but the app only calls 2 services, the OS will only load the specific 4KB pages needed. Currently, the entire config is loaded into the heap at startup.
+
+### 3.5. Distribution (Long Polling)
 
 Pavis avoids the complexity of gRPC bidirectional streams in the sidecar. It uses HTTP Long Polling.
 
@@ -107,6 +130,39 @@ pavis-proxy                              pavis-xds
      ▼  verify checksum, write config.pvs   ▼
 ```
 
+### 3.6. rkyv Usage Guidelines
+
+**Purpose**: Safely load `.pvs` binary configs into domain objects (`WireConfig`) while keeping runtime and core free from serialization details.
+
+#### Layer Responsibilities
+
+1.  **Core (`pavis-core`)**
+    *   Define protocol structs and magic/version constants.
+    *   Can use `#[with(...)]` for archive compatibility.
+    *   **Do not** deserialize or handle `.pvs` files.
+
+2.  **Boundary (`pavis/src/load`)**
+    *   Read `.pvs` files.
+    *   Validate integrity (magic bytes, version, `check_archived_root`).
+    *   Deserialize rkyv to owned `WireConfig`.
+    *   Return clean domain objects.
+    *   **Do not** implement runtime logic.
+
+3.  **Runtime (`pavis`)**
+    *   Consume `WireConfig` for business logic.
+    *   Do not depend on rkyv, `.pvs` format, or adapters.
+
+#### Adapters (`#[with(...)]`)
+*   Only for fields that cannot archive directly (String, Vec<T>, Regex, etc.).
+*   Never wrap the entire root or expose adapters in API.
+
+#### Key Principles
+1.  **Core**: define structure only.
+2.  **Boundary**: digest binary format, provide clean domain object.
+3.  **Runtime**: pure business logic, no serialization knowledge.
+
+> **Note:** rkyv is a storage protocol, adapters are implementation details, Boundary layer isolates complexity.
+
 ## 4. Proxy Runtime Architecture
 
 The `pavis` crate has been refactored into a **Domain-Driven Architecture** with strict module boundaries and invariants.
@@ -116,7 +172,7 @@ The `pavis` crate has been refactored into a **Domain-Driven Architecture** with
 1.  **Config (`config`)**:
     *   **Role**: Pure Data Transfer Objects (DTOs) and semantic validation.
     *   **Invariant**: Configuration must be validated (`ValidatedConfig`) before being used by the runtime.
-    *   **Key Types**: `Config`, `ValidatedConfig`, `VirtualHost`.
+    *   **Key Types**: `RawConfig`, `ValidatedConfig`, `VirtualHost`.
 
 2.  **Router (`router`)**:
     *   **Role**: Immutable request matching logic.

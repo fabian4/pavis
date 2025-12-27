@@ -1,23 +1,18 @@
-use super::{Config, HeaderOperations};
+use super::{HeaderOperations, MatchType, RawConfig};
 use anyhow::{Context, Result, anyhow};
 use http::header::{HeaderName, HeaderValue};
 use std::collections::HashSet;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
-pub fn validate(config: &Config) -> Result<()> {
+pub fn validate(config: &RawConfig) -> Result<()> {
     validate_server(config)?;
     validate_upstreams(config)?;
     validate_routes(config)?;
     Ok(())
 }
 
-fn validate_server(config: &Config) -> Result<()> {
-    // Validate listen_addr is a valid socket address
-    // This catches invalid formats like "8080" (missing IP) or "localhost:8080" (if parse only accepts IP literals,
-    // though std::net::ToSocketAddrs might be better if we want to support hostnames,
-    // but SocketAddr::from_str is stricter and safer for a proxy listen address usually).
-    // Config struct says listen_addr is String.
+fn validate_server(config: &RawConfig) -> Result<()> {
     config
         .server
         .listen_addr
@@ -31,7 +26,12 @@ fn validate_server(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn validate_upstreams(config: &Config) -> Result<()> {
+fn validate_upstreams(config: &RawConfig) -> Result<()> {
+    let hostname_regex = regex::Regex::new(
+        r"^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*)$",
+    )
+    .unwrap();
+
     let mut names = HashSet::new();
     for upstream in &config.upstreams {
         if !names.insert(&upstream.name) {
@@ -55,22 +55,34 @@ fn validate_upstreams(config: &Config) -> Result<()> {
                     upstream.name
                 ));
             }
-            // Basic IP/Host check?
-            // Since we construct address as format!("{}:{}", ip, port) later, we can check basic validity.
-            if endpoint.ip.contains(':') && !endpoint.ip.starts_with('[') {
-                // Might be IPv6 literal without brackets? Or just check if empty.
-                // Let's stick to empty check for now to allow hostnames.
+
+            // Validate IP or Hostname
+            if IpAddr::from_str(&endpoint.ip).is_err() {
+                // Not a valid IP, so it must be a valid hostname (RFC 1123).
+                if !hostname_regex.is_match(&endpoint.ip) {
+                    return Err(anyhow!(
+                        "Upstream '{}' has invalid endpoint IP/hostname: '{}'. Must be a valid IP address or RFC 1123 hostname.",
+                        upstream.name,
+                        endpoint.ip
+                    ));
+                }
             }
         }
     }
     Ok(())
 }
 
-fn validate_routes(config: &Config) -> Result<()> {
+fn validate_routes(config: &RawConfig) -> Result<()> {
     let upstream_names: HashSet<&String> = config.upstreams.iter().map(|u| &u.name).collect();
 
     for vhost in &config.routes {
         for route in &vhost.paths {
+            // Regex validation
+            if route.match_type == MatchType::Regex {
+                regex::Regex::new(&route.path)
+                    .with_context(|| format!("Invalid regex in route '{}'", route.path))?;
+            }
+
             if let Some(headers) = &route.request_headers {
                 validate_headers(headers, &format!("Route '{}' request headers", route.path))?;
             }

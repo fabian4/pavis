@@ -17,10 +17,10 @@ use std::ops::Deref;
 mod validation;
 
 #[derive(Debug, Clone)]
-pub struct ValidatedConfig(Config);
+pub struct ValidatedConfig(RawConfig);
 
 impl Deref for ValidatedConfig {
-    type Target = Config;
+    type Target = RawConfig;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -28,25 +28,15 @@ impl Deref for ValidatedConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Config {
+pub struct RawConfig {
     pub server: ServerConfig,
     pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
 }
 
-impl Config {
-    pub fn validate(mut self) -> Result<ValidatedConfig> {
-        // Pre-compute endpoint addresses
-        for upstream in &mut self.upstreams {
-            for endpoint in &mut upstream.endpoints {
-                if endpoint.ip.contains(':') && !endpoint.ip.starts_with('[') {
-                    endpoint.address = format!("[{}]:{}", endpoint.ip, endpoint.port);
-                } else {
-                    endpoint.address = format!("{}:{}", endpoint.ip, endpoint.port);
-                }
-            }
-        }
+impl RawConfig {
+    pub fn validate(self) -> Result<ValidatedConfig> {
         validation::validate(&self)?;
         Ok(ValidatedConfig(self))
     }
@@ -244,8 +234,12 @@ pub struct Endpoint {
     pub ip: String,
     pub port: u16,
     pub weight: Option<u32>,
-    #[serde(skip)]
-    pub address: String,
+}
+
+impl Endpoint {
+    pub fn address(&self) -> String {
+        crate::format_address(&self.ip, self.port)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -301,8 +295,8 @@ pub struct WeightedDestination {
 mod tests {
     use super::*;
 
-    fn base_config() -> Config {
-        Config {
+    fn base_config() -> RawConfig {
+        RawConfig {
             server: ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -339,7 +333,6 @@ mod tests {
                 ip: "127.0.0.1".to_string(),
                 port: 8081,
                 weight: None,
-                address: String::new(),
             }],
         });
 
@@ -355,7 +348,6 @@ mod tests {
                 ip: "127.0.0.1".to_string(),
                 port: 8082,
                 weight: None,
-                address: String::new(),
             }],
         });
 
@@ -504,7 +496,7 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = Config {
+        let mut config = RawConfig {
             server: ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -553,7 +545,6 @@ mod tests {
                 ip: "127.0.0.1".to_string(),
                 port: 80,
                 weight: Some(1),
-                address: "127.0.0.1:80".to_string(),
             }],
         });
         assert!(config.clone().validate().is_ok());
@@ -561,6 +552,25 @@ mod tests {
         // Test invalid listen addr
         config.server.listen_addr = "invalid".to_string();
         assert!(config.clone().validate().is_err());
+
+        // Test invalid upstream hostname
+        let mut config_invalid_host = config.clone();
+        config_invalid_host.server.listen_addr = "0.0.0.0:8080".to_string();
+        config_invalid_host.upstreams.push(Upstream {
+            name: "bad-host".to_string(),
+            load_balancer: LoadBalancer::RoundRobin,
+            http_version: HttpVersion::H1,
+            connection_pool: ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                ip: "invalid@host".to_string(), // Invalid char '@'
+                port: 80,
+                weight: Some(1),
+            }],
+        });
+        assert!(config_invalid_host.validate().is_err());
 
         // Test duplicate upstream names
         let mut config_duplicate = config.clone();
@@ -577,7 +587,6 @@ mod tests {
                 ip: "127.0.0.1".to_string(),
                 port: 81,
                 weight: Some(1),
-                address: "127.0.0.1:81".to_string(),
             }],
         });
         assert!(config_duplicate.validate().is_err());
@@ -585,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_config_header_validation() {
-        let mut config = Config {
+        let mut config = RawConfig {
             server: ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -642,6 +651,31 @@ mod tests {
             )])),
             remove: None,
         });
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_regex_validation() {
+        let mut config = base_config();
+        config.routes.push(VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                match_type: MatchType::Regex,
+                path: "/api/v1/(".to_string(), // Invalid regex (unclosed parenthesis)
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                destinations: vec![],
+                compiled_regex: None,
+            }],
+        });
+
+        // Should fail due to invalid regex
+        assert!(config.clone().validate().is_err());
+
+        // Fix regex
+        config.routes[0].paths[0].path = "/api/v1/(.*)".to_string();
         assert!(config.validate().is_ok());
     }
 }

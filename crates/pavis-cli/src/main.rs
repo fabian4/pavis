@@ -76,10 +76,10 @@ fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<
     }
 
     let payload = &bytes[8..];
-    let archived = check_archived_root::<binary::ProxyConfig>(payload)
+    let archived = check_archived_root::<binary::WireConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
-    let binary_config: binary::ProxyConfig = archived.deserialize(&mut rkyv::Infallible)?;
+    let binary_config = archived.deserialize(&mut rkyv::Infallible)?;
     let yaml_config = convert_binary_to_config(binary_config);
     let yaml_str = serde_yaml::to_string(&yaml_config).context("Failed to serialize to YAML")?;
 
@@ -98,7 +98,7 @@ fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<
     Ok(())
 }
 
-fn convert_binary_to_config(binary: binary::ProxyConfig) -> yaml::Config {
+fn convert_binary_to_config(binary: binary::WireConfig) -> yaml::RawConfig {
     use pavis_core::{LoadBalancer, MatchType};
 
     let mut upstreams = Vec::new();
@@ -114,16 +114,33 @@ fn convert_binary_to_config(binary: binary::ProxyConfig) -> yaml::Config {
                 ip: e.ip,
                 port: e.port,
                 weight: Some(e.weight),
-                address: String::new(), // Will be ignored or recomputed
             });
         }
+
+        let http_version = match u.http_version {
+            binary::HttpVersion::H1 => yaml::HttpVersion::H1,
+            binary::HttpVersion::H2 => yaml::HttpVersion::H2,
+            binary::HttpVersion::H2H1 => yaml::HttpVersion::H2H1,
+        };
+
+        let connection_pool = yaml::ConnectionPoolConfig {
+            idle_timeout: std::time::Duration::from_secs(u.connection_pool.idle_timeout_secs),
+            connection_timeout: std::time::Duration::from_secs(u.connection_pool.connection_timeout_secs),
+        };
+
+        let tls = u.tls.map(|t| yaml::UpstreamTlsConfig {
+            enabled: t.enabled,
+            verify_hostname: Some(t.verify_hostname),
+            verify_cert: Some(t.verify_cert),
+            sni: t.sni,
+        });
 
         upstreams.push(yaml::Upstream {
             name: u.name,
             load_balancer: lb,
-            http_version: yaml::HttpVersion::H1,
-            connection_pool: yaml::ConnectionPoolConfig::default(),
-            tls: None,
+            http_version,
+            connection_pool,
+            tls,
             circuit_breaker: None,
             health_check: None,
             endpoints,
@@ -177,7 +194,7 @@ fn convert_binary_to_config(binary: binary::ProxyConfig) -> yaml::Config {
         });
     }
 
-    yaml::Config {
+    yaml::RawConfig {
         server: yaml::ServerConfig {
             listen_addr: binary.listen_addr,
             worker_threads: None,
@@ -198,7 +215,7 @@ fn convert_binary_to_config(binary: binary::ProxyConfig) -> yaml::Config {
 
 fn validate_yaml(input_path: PathBuf) -> Result<()> {
     let content = fs::read_to_string(&input_path).context("Failed to read input file")?;
-    let yaml_config: yaml::Config =
+    let yaml_config: yaml::RawConfig =
         serde_yaml::from_str(&content).context("Failed to parse YAML")?;
     yaml_config
         .validate()
@@ -212,7 +229,7 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let content = fs::read_to_string(&input_path).context("Failed to read input file")?;
 
     // 1. Deserialize and Validate YAML
-    let yaml_config: yaml::Config =
+    let yaml_config: yaml::RawConfig =
         serde_yaml::from_str(&content).context("Failed to parse YAML")?;
     yaml_config
         .clone()
@@ -270,7 +287,7 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
 
     // Validate structural integrity with check_bytes (skip our 8-byte header)
     let payload = &bytes[8..];
-    let archived = check_archived_root::<binary::ProxyConfig>(payload)
+    let archived = check_archived_root::<binary::WireConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
     println!("--- Config Tree ---");
@@ -281,8 +298,19 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
             binary::ArchivedLoadBalancer::RoundRobin => "RoundRobin",
             binary::ArchivedLoadBalancer::Random => "Random",
         };
+        let hv_str = match u.http_version {
+            binary::ArchivedHttpVersion::H1 => "H1",
+            binary::ArchivedHttpVersion::H2 => "H2",
+            binary::ArchivedHttpVersion::H2H1 => "H2H1",
+        };
         println!("  - Name: {}", u.name);
         println!("    LB: {}", lb_str);
+        println!("    HTTP: {}", hv_str);
+        if let rkyv::option::ArchivedOption::Some(tls) = &u.tls {
+             println!("    TLS: Enabled (SNI: {:?})", tls.sni);
+        } else {
+             println!("    TLS: Disabled");
+        }
         println!("    Endpoints ({}):", u.endpoints.len());
         for e in u.endpoints.iter() {
             println!("      - {}:{} (weight: {})", e.ip, e.port, e.weight);
@@ -320,7 +348,7 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
     Ok(())
 }
 
-fn convert_to_pavis(src: yaml::Config) -> Result<binary::ProxyConfig> {
+fn convert_to_pavis(src: yaml::RawConfig) -> Result<binary::WireConfig> {
     let mut upstreams = Vec::new();
     for u in src.upstreams {
         let lb = match u.load_balancer {
@@ -337,9 +365,30 @@ fn convert_to_pavis(src: yaml::Config) -> Result<binary::ProxyConfig> {
             });
         }
 
+        let http_version = match u.http_version {
+            yaml::HttpVersion::H1 => binary::HttpVersion::H1,
+            yaml::HttpVersion::H2 => binary::HttpVersion::H2,
+            yaml::HttpVersion::H2H1 => binary::HttpVersion::H2H1,
+        };
+
+        let connection_pool = binary::ConnectionPoolConfig {
+            idle_timeout_secs: u.connection_pool.idle_timeout.as_secs(),
+            connection_timeout_secs: u.connection_pool.connection_timeout.as_secs(),
+        };
+
+        let tls = u.tls.map(|t| binary::UpstreamTlsConfig {
+            enabled: t.enabled,
+            verify_hostname: t.verify_hostname.unwrap_or(true),
+            verify_cert: t.verify_cert.unwrap_or(true),
+            sni: t.sni,
+        });
+
         upstreams.push(binary::Upstream {
             name: u.name,
             load_balancer: lb,
+            http_version,
+            connection_pool,
+            tls,
             endpoints,
         });
     }
@@ -394,7 +443,7 @@ fn convert_to_pavis(src: yaml::Config) -> Result<binary::ProxyConfig> {
         });
     }
 
-    Ok(binary::ProxyConfig {
+    Ok(binary::WireConfig {
         header: binary::PavisHeader::default(),
         listen_addr: src.server.listen_addr,
         upstreams,
@@ -406,16 +455,22 @@ fn convert_to_pavis(src: yaml::Config) -> Result<binary::ProxyConfig> {
 mod tests {
     use super::*;
     use pavis_core::config as yaml;
-    use pavis_core::{Endpoint, LoadBalancer, PavisHeader, ProxyConfig, Upstream};
+    use pavis_core::{Endpoint, LoadBalancer, PavisHeader, Upstream, WireConfig};
 
     #[test]
     fn test_convert_binary_to_config() {
-        let binary = ProxyConfig {
+        let binary = WireConfig {
             header: PavisHeader::default(),
             listen_addr: "0.0.0.0:8080".to_string(),
             upstreams: vec![Upstream {
                 name: "test".to_string(),
                 load_balancer: LoadBalancer::RoundRobin,
+                http_version: binary::HttpVersion::H1,
+                connection_pool: binary::ConnectionPoolConfig {
+                    idle_timeout_secs: 60,
+                    connection_timeout_secs: 5,
+                },
+                tls: None,
                 endpoints: vec![Endpoint {
                     ip: "127.0.0.1".to_string(),
                     port: 80,

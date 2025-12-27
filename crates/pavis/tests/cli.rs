@@ -1,4 +1,4 @@
-use pavis_core::{PAVIS_MAGIC, PAVIS_VERSION, PavisHeader, ProxyConfig};
+use pavis_core::{PAVIS_MAGIC, PAVIS_VERSION, PavisHeader, WireConfig};
 use rkyv::ser::{Serializer, serializers::AllocSerializer};
 use std::path::PathBuf;
 use std::process::Command;
@@ -81,7 +81,7 @@ fn test_process_lifecycle_sigint() {
     let binary = get_binary_path();
 
     // Create a valid config programmatically
-    let config = ProxyConfig {
+    let config = WireConfig {
         header: PavisHeader::default(),
         listen_addr: "127.0.0.1:0".to_string(), // Random port
         upstreams: vec![],

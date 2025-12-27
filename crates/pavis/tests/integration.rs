@@ -1,13 +1,13 @@
 use pavis::router::Router;
 use pavis::upstream::Manager;
 use pavis_core::config::{
-    AccessLogConfig, Config, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
-    Route, ServerConfig, TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost,
+    AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
+    RawConfig, Route, ServerConfig, TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost,
     WeightedDestination,
 };
 
-fn base_config() -> Config {
-    Config {
+fn base_config() -> RawConfig {
+    RawConfig {
         server: ServerConfig {
             listen_addr: "0.0.0.0:8080".to_string(),
             worker_threads: None,
@@ -41,7 +41,6 @@ fn test_configuration_driven_routing() {
             ip: "127.0.0.1".to_string(),
             port: 8081,
             weight: None,
-            address: String::new(),
         }],
     });
     config.routes.push(VirtualHost {
@@ -89,13 +88,11 @@ fn test_load_balancer_state_correctness() {
                 ip: "10.0.0.1".to_string(),
                 port: 80,
                 weight: None,
-                address: "10.0.0.1:80".to_string(),
             },
             Endpoint {
                 ip: "10.0.0.2".to_string(),
                 port: 80,
                 weight: None,
-                address: "10.0.0.2:80".to_string(),
             },
         ],
     });
@@ -133,7 +130,6 @@ fn test_upstream_tls_config_parsing() {
             ip: "10.0.0.1".to_string(),
             port: 443,
             weight: None,
-            address: "10.0.0.1:443".to_string(),
         }],
     });
 

@@ -43,7 +43,7 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let content = fs::read_to_string(&input_path).context("Failed to read input file")?;
 
     // 1. Deserialize YAML
-    let yaml_config: yaml::Config =
+    let yaml_config: yaml::RawConfig =
         serde_yaml::from_str(&content).context("Failed to parse YAML")?;
 
     // Validate the config (shared logic)
@@ -77,7 +77,7 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn convert_to_pavis(src: yaml::Config) -> Result<binary::ProxyConfig> {
+fn convert_to_pavis(src: yaml::RawConfig) -> Result<binary::WireConfig> {
     let mut upstreams = Vec::new();
     for u in src.upstreams {
         let lb = match u.load_balancer {
@@ -94,9 +94,30 @@ fn convert_to_pavis(src: yaml::Config) -> Result<binary::ProxyConfig> {
             });
         }
 
+        let http_version = match u.http_version {
+            yaml::HttpVersion::H1 => binary::HttpVersion::H1,
+            yaml::HttpVersion::H2 => binary::HttpVersion::H2,
+            yaml::HttpVersion::H2H1 => binary::HttpVersion::H2H1,
+        };
+
+        let connection_pool = binary::ConnectionPoolConfig {
+            idle_timeout_secs: u.connection_pool.idle_timeout.as_secs(),
+            connection_timeout_secs: u.connection_pool.connection_timeout.as_secs(),
+        };
+
+        let tls = u.tls.map(|t| binary::UpstreamTlsConfig {
+            enabled: t.enabled,
+            verify_hostname: t.verify_hostname.unwrap_or(true),
+            verify_cert: t.verify_cert.unwrap_or(true),
+            sni: t.sni,
+        });
+
         upstreams.push(binary::Upstream {
             name: u.name,
             load_balancer: lb,
+            http_version,
+            connection_pool,
+            tls,
             endpoints,
         });
     }
@@ -151,7 +172,7 @@ fn convert_to_pavis(src: yaml::Config) -> Result<binary::ProxyConfig> {
         });
     }
 
-    Ok(binary::ProxyConfig {
+    Ok(binary::WireConfig {
         header: binary::PavisHeader::default(),
         listen_addr: src.server.listen_addr,
         upstreams,

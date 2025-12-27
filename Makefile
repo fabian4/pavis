@@ -36,6 +36,9 @@ lint:
 # CI pipeline (format check, test, lint)
 ci: fmt-check lint test
 
+# Local CI pipeline (format, lint, test)
+ci-local: fmt lint test
+
 # Build release binary
 binary-build:
 	cargo build --release --workspace
@@ -127,7 +130,8 @@ help:
 	@echo "  test               - Run tests for all crates"
 	@echo "  fmt                - Format code using cargo fmt"
 	@echo "  lint               - Lint code using cargo clippy"
-	@echo "  ci                 - Run all CI checks (fmt, test, lint)"
+	@echo "  ci                 - Run all CI checks (fmt check, test, lint)"
+	@echo "  ci-local           - Run local CI pipeline (fmt, lint, test)"
 	@echo "  binary-build       - Build release binary"
 	@echo "  docker-build-local - Build Docker image (Local cache)"
 	@echo "  docker-build-ci    - Build Docker image (GHA cache)"

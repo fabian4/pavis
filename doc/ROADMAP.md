@@ -55,7 +55,7 @@
 
 **`pavis-core`** (Library)
 - [x] `PavisHeader`: Magic bytes (`PAVS`) + version (u32)
-- [x] `ProxyConfig` root struct with rkyv derivation
+- [x] `WireConfig` root struct with rkyv derivation
 - [x] Basic types: `Upstream`, `Endpoint`, `VirtualHost`, `Route`
 - [x] `LoadBalancer` enum (RoundRobin, Random)
 - [x] `MatchType` enum (Prefix, Exact, Regex)
@@ -582,3 +582,10 @@
   - [ ] Add rate limiting for repetitive upstream error logs
   - [ ] Downgrade expected upstream errors to debug level in benchmark mode
   - [ ] Optionally aggregate identical errors over a time window
+
+**5. Zero-Copy Configuration Access (P2)**
+- **Goal:** Fully realize the performance benefits of `rkyv` and `mmap`.
+- **Tasks:**
+  - [ ] Refactor `pavis` runtime to operate on `ArchivedWireConfig` instead of owned DTOs
+  - [ ] Remove eager deserialization from `crates/pavis/src/load/fs.rs`
+  - [ ] Implement lazy regex compilation for archived routes

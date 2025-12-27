@@ -5,7 +5,7 @@ use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
 use std::sync::Arc;
 
-use pavis::config;
+use pavis::load;
 use pavis::proxy::Proxy;
 use pavis::router::Router;
 use pavis::telemetry::Telemetry;
@@ -24,7 +24,7 @@ fn main() -> Result<()> {
 
     // Load configuration
     // TODO: Support config file watching for hot reload
-    let config = config::load_file(&args.config)?;
+    let config = load::load_file(&args.config)?;
 
     // Initialize Router (compiles regexes)
     let router = Arc::new(Router::new(&config.routes)?);
