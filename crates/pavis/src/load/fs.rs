@@ -13,12 +13,17 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
     // For a config file loaded at startup, this is generally acceptable risk.
     let mmap = unsafe { Mmap::map(&file).context("Failed to mmap .pvs file")? };
 
-    if mmap.len() < 8 {
-        return Err(anyhow!("Config file too small (must be at least 8 bytes)"));
+    // Header size is 60 bytes
+    const HEADER_SIZE: usize = 60;
+
+    if mmap.len() < HEADER_SIZE {
+        return Err(anyhow!("Config file too small (must be at least 60 bytes)"));
     }
 
     let magic = &mmap[0..4];
     let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());
+    let algorithm = u32::from_le_bytes(mmap[8..12].try_into().unwrap());
+    let expected_checksum = &mmap[12..44];
 
     if magic != pavis_core::PAVIS_MAGIC {
         return Err(anyhow!("Invalid magic bytes in .pvs file. Expected 'PAVS'"));
@@ -32,7 +37,19 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
         ));
     }
 
-    let payload = &mmap[8..];
+    let payload = &mmap[HEADER_SIZE..];
+
+    // Verify Checksum
+    if algorithm == 1 {
+        let computed_checksum = pavis_core::compute_checksum(payload);
+        if computed_checksum != expected_checksum {
+            return Err(anyhow!(
+                "Checksum mismatch! The configuration file may be corrupted or tampered with."
+            ));
+        }
+    } else if algorithm != 0 {
+        return Err(anyhow!("Unsupported hash algorithm: {}", algorithm));
+    }
 
     let archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;

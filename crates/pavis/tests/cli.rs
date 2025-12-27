@@ -93,9 +93,23 @@ fn test_process_lifecycle_sigint() {
     serializer.serialize_value(&config).unwrap();
     let bytes = serializer.into_serializer().into_inner();
 
+    // Compute Checksum
+    let checksum = pavis_core::compute_checksum(&bytes);
+
+    let header = PavisHeader {
+        magic: *PAVIS_MAGIC,
+        version: PAVIS_VERSION,
+        algorithm: 1,
+        checksum,
+        _reserved: [0; 16],
+    };
+
     let mut final_bytes = Vec::new();
-    final_bytes.extend_from_slice(PAVIS_MAGIC);
-    final_bytes.extend_from_slice(&PAVIS_VERSION.to_le_bytes());
+    final_bytes.extend_from_slice(&header.magic);
+    final_bytes.extend_from_slice(&header.version.to_le_bytes());
+    final_bytes.extend_from_slice(&header.algorithm.to_le_bytes());
+    final_bytes.extend_from_slice(&header.checksum);
+    final_bytes.extend_from_slice(&header._reserved);
     final_bytes.extend_from_slice(&bytes);
 
     let temp_dir = std::env::temp_dir();

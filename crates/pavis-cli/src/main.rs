@@ -131,10 +131,32 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
         .context("Failed to serialize to Pavis")?;
     let rkyv_bytes = serializer.into_serializer().into_inner();
 
-    // 4. Write to Disk with explicit header
-    let mut final_bytes = Vec::with_capacity(rkyv_bytes.len() + 8);
-    final_bytes.extend_from_slice(binary::PAVIS_MAGIC);
-    final_bytes.extend_from_slice(&binary::PAVIS_VERSION.to_le_bytes());
+    // 4. Compute Checksum
+    let checksum = binary::compute_checksum(&rkyv_bytes);
+
+    // 5. Write to Disk with explicit header
+    let header = binary::PavisHeader {
+        magic: *binary::PAVIS_MAGIC,
+        version: binary::PAVIS_VERSION,
+        algorithm: 1, // SHA-256
+        checksum,
+        _reserved: [0; 16],
+    };
+
+    // We need to serialize the header manually or use rkyv?
+    // PavisHeader is repr(C) so we can just write bytes.
+    // But let's be safe and use a defined way.
+    // Since it's repr(C) and simple types, we can cast to bytes safely if we are careful about endianness.
+    // However, rkyv might add padding.
+    // Let's just write fields manually to be endian-safe and consistent.
+    
+    let mut final_bytes = Vec::with_capacity(rkyv_bytes.len() + std::mem::size_of::<binary::PavisHeader>());
+    final_bytes.extend_from_slice(&header.magic);
+    final_bytes.extend_from_slice(&header.version.to_le_bytes());
+    final_bytes.extend_from_slice(&header.algorithm.to_le_bytes());
+    final_bytes.extend_from_slice(&header.checksum);
+    final_bytes.extend_from_slice(&header._reserved);
+    
     final_bytes.extend_from_slice(&rkyv_bytes);
 
     fs::write(&output_path, final_bytes).context("Failed to write output file")?;
@@ -155,12 +177,23 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
     }
 
     // Check Header manually first for better error messages
+    // Header size is 4 (magic) + 4 (version) + 4 (algo) + 32 (checksum) + 16 (reserved) = 60 bytes
+    const HEADER_SIZE: usize = 60;
+
+    if bytes.len() < HEADER_SIZE {
+        return Err(anyhow!("File too small to be a valid Pavis config"));
+    }
+
     let magic = &bytes[0..4];
     let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    let algorithm = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+    let checksum = &bytes[12..44];
 
     println!("--- Pavis Header ---");
     println!("Magic: {:?}", std::str::from_utf8(magic).unwrap_or("????"));
     println!("Version: {}", version);
+    println!("Algorithm: {}", algorithm);
+    println!("Checksum: {}", hex::encode(checksum));
     println!();
 
     if magic != binary::PAVIS_MAGIC {
@@ -170,8 +203,8 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
         ));
     }
 
-    // Validate structural integrity with check_bytes (skip our 8-byte header)
-    let payload = &bytes[8..];
+    // Validate structural integrity with check_bytes (skip our header)
+    let payload = &bytes[HEADER_SIZE..];
     let archived = check_archived_root::<binary::RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 

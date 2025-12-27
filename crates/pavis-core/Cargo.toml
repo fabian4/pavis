@@ -8,5 +8,6 @@ description = "Core primitives and engine for the Pavis data plane"
 [dependencies]
 rkyv = { version = "0.7", features = ["validation"] }
 anyhow = { workspace = true }
+sha2 = "0.10.9"
 
 [dev-dependencies]

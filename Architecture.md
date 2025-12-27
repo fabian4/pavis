@@ -79,8 +79,11 @@ The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configu
 | Offset | Size | Type | Value | Description |
 |--------|------|------|-------|-------------|
 | `0x00` | 4 | `[u8; 4]` | `PAVS` | Magic bytes – identifies file type |
-| `0x04` | 4 | `u32` | `1` | Version – schema version for compatibility |
-| `0x08` | ... | `bytes` | ... | Payload – the `ArchivedRuntimeConfig` root |
+| `0x04` | 4 | `u32` | `4` | Version – schema version for compatibility |
+| `0x08` | 4 | `u32` | `1` | Algorithm – Hash Algorithm ID (1 = SHA-256) |
+| `0x0C` | 32 | `[u8; 32]` | ... | Checksum – SHA-256 hash of the payload |
+| `0x2C` | 16 | `[u8; 16]` | `0` | Reserved – Future proofing |
+| `0x3C` | ... | `bytes` | ... | Payload – the `ArchivedRuntimeConfig` root |
 
 ### 3.2. Versioning Strategy
 
@@ -223,6 +226,7 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 
 3.  **Defensive Runtime Validation (`pavis`)**:
     *   **Operational Safety.** Performs minimal checks to prevent crashes.
+    *   **Integrity Check**: Verifies SHA-256 checksum of the payload against the header before parsing.
     *   Checks magic bytes, version compatibility, and memory safety (`rkyv::check_bytes`).
     *   Does not define or reinterpret semantics.
 
