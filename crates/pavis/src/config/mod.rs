@@ -598,7 +598,27 @@ routes: []
 
         // Test invalid listen addr
         config.server.listen_addr = "invalid".to_string();
-        assert!(config.validate().is_err());
+        assert!(config.clone().validate().is_err());
+
+        // Test duplicate upstream names
+        let mut config_duplicate = config.clone();
+        config_duplicate.server.listen_addr = "0.0.0.0:8080".to_string();
+        config_duplicate.upstreams.push(Upstream {
+            name: "non-existent".to_string(), // Already exists in config
+            load_balancer: LoadBalancer::RoundRobin,
+            http_version: HttpVersion::H1,
+            connection_pool: ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                ip: "127.0.0.1".to_string(),
+                port: 81,
+                weight: Some(1),
+                address: "127.0.0.1:81".to_string(),
+            }],
+        });
+        assert!(config_duplicate.validate().is_err());
     }
 
     #[test]

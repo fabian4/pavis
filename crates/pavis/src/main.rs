@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use pingora::prelude::*;
 use pingora::proxy::http_proxy_service;
+use pingora::server::configuration::ServerConf;
 use std::sync::Arc;
 
 use pavis::config::{AccessLogConfig, Config};
@@ -32,7 +33,6 @@ fn main() -> Result<()> {
     // Initialize Router (compiles regexes)
     let router = Arc::new(Router::new(&config.routes)?);
 
-    // TODO: Validate config (e.g., upstreams referenced in routes exist)
     let config = Arc::new(config);
 
     let log_level = config.telemetry.level.as_deref().unwrap_or("info");
@@ -60,13 +60,12 @@ fn main() -> Result<()> {
         "Pavis starting"
     );
 
-    let mut server = Server::new(None).context("Failed to create Pingora server")?;
-    #[allow(clippy::collapsible_if)]
+    let mut server_conf = ServerConf::default();
+    server_conf.daemon = false;
     if let Some(threads) = config.server.worker_threads {
-        if let Some(conf) = Arc::get_mut(&mut server.configuration) {
-            conf.threads = threads;
-        }
+        server_conf.threads = threads;
     }
+    let mut server = Server::new_with_opt_and_conf(None, server_conf);
     server.bootstrap();
 
     let upstream_manager = Manager::new(&config.upstreams);

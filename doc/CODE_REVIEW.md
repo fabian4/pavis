@@ -9,10 +9,6 @@
 
 ## 🟡 Medium Priority
 
-### 6. Use Pingora ServerConf
-- **Location:** `crates/pavis/src/main.rs`
-- **Why:** Manual patching is brittle.
-
 ### 7. Access Log Configuration Cleanup
 - **Location:** `crates/pavis/src/config/mod.rs`
 - **Why:** `AccessLogConfig::False` is unconventional.
