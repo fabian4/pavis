@@ -1,5 +1,5 @@
 use super::load_balance;
-use crate::config::{Endpoint, Upstream};
+use pavis_core::config::{Endpoint, Upstream};
 use std::sync::atomic::AtomicUsize;
 
 #[repr(align(64))]

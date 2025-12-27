@@ -1,4 +1,4 @@
-use crate::config::AccessLogConfig;
+use pavis_core::config::AccessLogConfig;
 use async_trait::async_trait;
 use pingora::proxy::Session;
 use pingora::services::Service;

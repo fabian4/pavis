@@ -1788,6 +1788,7 @@ dependencies = [
  "clap 4.5.53",
  "http 1.4.0",
  "humantime-serde",
+ "pavis-core 0.0.0",
  "pingora",
  "rand 0.9.2",
  "regex",
@@ -1809,8 +1810,13 @@ dependencies = [
 name = "pavis-core"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "http 1.4.0",
+ "humantime-serde",
+ "regex",
  "rkyv",
  "serde",
+ "serde_yaml 0.9.34+deprecated",
  "tracing",
 ]
 

@@ -1,4 +1,4 @@
-use crate::config::{MatchType, Route, VirtualHost};
+use pavis_core::config::{MatchType, Route, VirtualHost};
 
 pub fn match_request<'a>(
     routes: &'a [VirtualHost],

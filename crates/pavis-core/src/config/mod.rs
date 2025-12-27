@@ -1,11 +1,11 @@
 //! Configuration types for Pavis proxy.
 //!
 //! # Architectural Invariants
-//!
+//! 
 //! 1. **Validation First**: Configuration must be validated before being used by the runtime.
 //! 2. **Type Safety**: Use types (e.g., `ValidatedConfig`) to represent valid states and prevent invalid usage.
 //! 3. **Immutability**: Runtime configuration is generally immutable; dynamic updates should replace the entire config or use specific dynamic components.
-//!
+//! 
 //! Some fields are defined but not yet used - they are planned for future phases.
 //! See doc/ROADMAP.md for implementation timeline.
 
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn test_http_version_deserialization() {
         // Test all http_version variants
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8080"
 telemetry:
@@ -385,7 +385,7 @@ routes: []
     #[test]
     fn test_access_log_deserialization() {
         // Test default (stdout when not specified)
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8080"
 telemetry:
@@ -397,7 +397,7 @@ routes: []
         assert_eq!(config.telemetry.access_log, AccessLogConfig::Stdout);
 
         // Test stdout explicitly
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8080"
 telemetry:
@@ -409,7 +409,7 @@ routes: []
         assert_eq!(config.telemetry.access_log, AccessLogConfig::Stdout);
 
         // Test false to disable
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8080"
 telemetry:
@@ -421,7 +421,7 @@ routes: []
         assert_eq!(config.telemetry.access_log, AccessLogConfig::False);
 
         // Test boolean false
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8080"
 telemetry:
@@ -434,7 +434,7 @@ routes: []
         assert_eq!(config.telemetry.access_log, AccessLogConfig::False);
 
         // Test file path
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8080"
 telemetry:
@@ -452,7 +452,7 @@ routes: []
     #[test]
     fn test_connection_pool_deserialization() {
         // Test default values
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8080"
 telemetry:
@@ -475,7 +475,7 @@ routes: []
         );
 
         // Test custom values
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8080"
 telemetry:
@@ -503,7 +503,7 @@ routes: []
 
     #[test]
     fn test_tls_config_deserialization() {
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8443"
   tls:
@@ -526,7 +526,7 @@ routes: []
 
     #[test]
     fn test_empty_config_sections() {
-        let yaml = r#"
+        let yaml = r#"#
 server:
   listen_addr: "0.0.0.0:8080"
 telemetry:
@@ -534,7 +534,7 @@ telemetry:
 upstreams: []
 routes: []
 "#;
-        let config: Config =
+        let config: Config = 
             serde_yaml::from_str(yaml).expect("Failed to deserialize empty sections");
         assert!(config.upstreams.is_empty());
         assert!(config.routes.is_empty());
@@ -664,20 +664,18 @@ routes: []
 
         // Fix header name, break header value
         config.routes[0].paths[0].request_headers = Some(HeaderOperations {
-            add: Some(HashMap::from([(
-                "Valid-Header".to_string(),
-                "valid value\r\nInjected".to_string(),
-            )])),
+            add: Some(HashMap::from([
+                ("Valid-Header".to_string(), "valid value\r\nInjected".to_string()),
+            ])),
             remove: None,
         });
         assert!(config.clone().validate().is_err());
 
         // Valid headers
         config.routes[0].paths[0].request_headers = Some(HeaderOperations {
-            add: Some(HashMap::from([(
-                "Valid-Header".to_string(),
-                "valid value".to_string(),
-            )])),
+            add: Some(HashMap::from([
+                ("Valid-Header".to_string(), "valid value".to_string()),
+            ])),
             remove: None,
         });
         assert!(config.validate().is_ok());

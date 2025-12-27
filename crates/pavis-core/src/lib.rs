@@ -1,6 +1,8 @@
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
+pub mod config;
+
 /// Magic Bytes "PAVS" (Pavilion) to identify valid Pavis Core files.
 pub const PAVIS_MAGIC: &[u8; 4] = b"PAVS";
 

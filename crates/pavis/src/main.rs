@@ -5,11 +5,11 @@ use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
 use std::sync::Arc;
 
-use pavis::config::{AccessLogConfig, Config};
 use pavis::proxy::Proxy;
 use pavis::router::Router;
 use pavis::telemetry::Telemetry;
 use pavis::upstream::Manager;
+use pavis_core::config::{AccessLogConfig, Config};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

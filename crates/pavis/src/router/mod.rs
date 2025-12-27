@@ -6,7 +6,7 @@
 //! 2. **Pre-compiled Regex**: All regular expressions must be compiled at initialization time, never during request handling.
 //! 3. **Read-Only**: The router state is immutable after initialization.
 
-use crate::config::{MatchType, Route, VirtualHost};
+use pavis_core::config::{MatchType, Route, VirtualHost};
 use anyhow::{Context, Result};
 use regex::Regex;
 
@@ -45,7 +45,7 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{MatchType, Route, VirtualHost};
+    use pavis_core::config::{MatchType, Route, VirtualHost};
 
     #[test]
     fn test_invalid_regex_compilation() {

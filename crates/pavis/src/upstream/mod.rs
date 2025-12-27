@@ -6,8 +6,9 @@
 //! 2. **Atomic Updates**: Dynamic updates to upstream state must be atomic or eventually consistent without blocking readers.
 //! 3. **Distributed State**: Load balancing state (e.g., RR counters) should be distributed or aligned to prevent false sharing.
 
-use crate::config::Upstream;
 use std::collections::HashMap;
+
+use pavis_core::config::Upstream;
 
 pub mod cluster;
 pub mod load_balance;

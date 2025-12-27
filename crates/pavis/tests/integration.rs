@@ -1,4 +1,4 @@
-use pavis::config::Config;
+use pavis_core::config::Config;
 use pavis::router::Router;
 use pavis::upstream::Manager;
 
