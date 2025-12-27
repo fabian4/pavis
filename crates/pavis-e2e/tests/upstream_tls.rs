@@ -135,16 +135,17 @@ async fn test_upstream_tls() {
     };
 
     let template = include_str!("../config/templates/upstream_tls.yaml");
-    let config = template
-        .replacen("{}", &pavis_port.to_string(), 1)
-        .replacen("{}", &actual_upstream_port.to_string(), 1);
 
-    // Patch upstream host for Docker
-    let config = if mode == "docker" {
-        config.replace("127.0.0.1", upstream_host)
+    let listen_addr = if mode == "docker" {
+        "0.0.0.0:8080".to_string()
     } else {
-        config
+        format!("127.0.0.1:{}", pavis_port)
     };
+
+    let config = template
+        .replace("${LISTEN_ADDR}", &listen_addr)
+        .replace("${UPSTREAM_HOST}", upstream_host)
+        .replace("${UPSTREAM_PORT}", &actual_upstream_port.to_string());
 
     fs::write(&config_path, config).unwrap();
 

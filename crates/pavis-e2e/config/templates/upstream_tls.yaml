@@ -1,5 +1,5 @@
 server:
-  listen_addr: "127.0.0.1:{}"
+  listen_addr: "${LISTEN_ADDR}"
 telemetry:
   access_log: "stdout"
 upstreams:
@@ -9,8 +9,8 @@ upstreams:
       verify_hostname: false
       verify_cert: false
     endpoints:
-      - ip: "127.0.0.1"
-        port: {}
+      - ip: "${UPSTREAM_HOST}"
+        port: ${UPSTREAM_PORT}
 routes:
   - host: "*"
     paths:
