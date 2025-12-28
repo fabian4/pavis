@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use pavis_core::{self, MatchType};
+use pavis_core::{self, MatchType, validate_runtime};
 
 use super::types::*;
 
@@ -103,7 +103,7 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
             });
         }
 
-        Ok(pavis_core::RuntimeConfig {
+        let runtime = pavis_core::RuntimeConfig {
             server: pavis_core::ServerConfig {
                 listen_addr: src.server.listen_addr,
                 worker_threads: src.server.worker_threads.map(|w| w as u64),
@@ -127,7 +127,10 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
             },
             upstreams,
             routes,
-        })
+        };
+
+        validate_runtime(&runtime).map_err(anyhow::Error::from)?;
+        Ok(runtime)
     }
 }
 

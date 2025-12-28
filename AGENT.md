@@ -33,6 +33,7 @@
 4. Respect manual edits—if a file changed since you last read it, preserve the user's updates.
 5. No git commit/push; the user handles version control.
 6. Follow `doc/CODE_REVIEW.md` for priorities and update statuses when tasks complete.
+7. Backward compatibility is a lower concern (no public release yet) unless the user requests stability explicitly.
 
 ## Tooling & Validation
 

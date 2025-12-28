@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use memmap2::Mmap;
-use pavis_core::{HEADER_SIZE, RuntimeConfig};
+use pavis_core::{HEADER_SIZE, RuntimeConfig, validate_runtime};
 use rkyv::with::{AsOwned, With};
 use rkyv::{Archive, Infallible};
 use std::fs::File;
@@ -71,5 +71,7 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
             &mut Infallible,
         )?;
 
-    Ok(wrapper.into_inner())
+    let config = wrapper.into_inner();
+    validate_runtime(&config)?;
+    Ok(config)
 }
