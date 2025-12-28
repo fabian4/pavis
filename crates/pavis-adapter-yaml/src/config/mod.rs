@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 
 pub mod validation;
+pub use pavis_core::{AccessLogConfig, HttpVersion, LoadBalancer, MatchType};
 
 #[derive(Debug, Clone)]
 pub struct ValidatedConfig(YamlConfig);
@@ -36,39 +37,6 @@ impl YamlConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum MatchType {
-    #[default]
-    Prefix,
-    Exact,
-    Regex,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum LoadBalancer {
-    #[default]
-    Random,
-    RoundRobin,
-}
-
-/// HTTP version preference for upstream connections
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum HttpVersion {
-    /// HTTP/1.1 only (default)
-    #[default]
-    #[serde(alias = "1", alias = "1.1", alias = "http1")]
-    H1,
-    /// HTTP/2 only
-    #[serde(alias = "2", alias = "http2")]
-    H2,
-    /// Prefer HTTP/2, fallback to HTTP/1.1
-    #[serde(alias = "auto")]
-    H2H1,
-}
-
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ServerConfig {
     pub listen_addr: String,
@@ -81,45 +49,6 @@ pub struct TlsConfig {
     pub enabled: bool,
     pub cert_path: Option<String>,
     pub key_path: Option<String>,
-}
-
-/// Access log destination configuration
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
-pub enum AccessLogConfig {
-    /// Disabled
-    False,
-    /// Log to stdout (default)
-    #[default]
-    Stdout,
-    /// Log to a file
-    File(String),
-}
-
-impl<'de> Deserialize<'de> for AccessLogConfig {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Helper {
-            Bool(bool),
-            String(String),
-        }
-
-        match Helper::deserialize(deserializer)? {
-            Helper::Bool(false) => Ok(AccessLogConfig::False),
-            Helper::Bool(true) => Err(serde::de::Error::custom("access_log cannot be true")),
-            Helper::String(s) => match s.as_str() {
-                "false" => Ok(AccessLogConfig::False),
-                "stdout" => Ok(AccessLogConfig::Stdout),
-                path if !path.is_empty() => Ok(AccessLogConfig::File(path.to_string())),
-                _ => Err(serde::de::Error::custom(
-                    "access_log must be 'false', 'stdout', or a file path",
-                )),
-            },
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -290,11 +219,6 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
     fn try_from(src: YamlConfig) -> Result<Self, Self::Error> {
         let mut upstreams = Vec::new();
         for u in src.upstreams {
-            let lb = match u.load_balancer {
-                LoadBalancer::Random => pavis_core::LoadBalancer::Random,
-                LoadBalancer::RoundRobin => pavis_core::LoadBalancer::RoundRobin,
-            };
-
             let mut endpoints = Vec::new();
             for e in u.endpoints {
                 endpoints.push(pavis_core::Endpoint {
@@ -303,12 +227,6 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
                     weight: e.weight.unwrap_or(1),
                 });
             }
-
-            let http_version = match u.http_version {
-                HttpVersion::H1 => pavis_core::HttpVersion::H1,
-                HttpVersion::H2 => pavis_core::HttpVersion::H2,
-                HttpVersion::H2H1 => pavis_core::HttpVersion::H2H1,
-            };
 
             let connection_pool = pavis_core::ConnectionPoolConfig {
                 idle_timeout_secs: u.connection_pool.idle_timeout.as_secs(),
@@ -324,8 +242,8 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
 
             upstreams.push(pavis_core::Upstream {
                 name: u.name,
-                load_balancer: lb,
-                http_version,
+                load_balancer: u.load_balancer,
+                http_version: u.http_version,
                 connection_pool,
                 tls,
                 endpoints,
@@ -336,12 +254,6 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
         for v in src.routes {
             let mut paths = Vec::new();
             for p in v.paths {
-                let match_type = match p.match_type {
-                    MatchType::Exact => pavis_core::MatchType::Exact,
-                    MatchType::Regex => pavis_core::MatchType::Regex,
-                    MatchType::Prefix => pavis_core::MatchType::Prefix,
-                };
-
                 let request_headers = if let Some(h) = p.request_headers {
                     let add: Vec<(String, String)> =
                         h.add.unwrap_or_default().into_iter().collect();
@@ -377,7 +289,7 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
                 });
 
                 paths.push(pavis_core::Route {
-                    match_type,
+                    match_type: p.match_type,
                     path: p.path,
                     timeout_ms,
                     retry_policy,
@@ -408,11 +320,7 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
                 pingora: src.telemetry.pingora,
                 service_name: src.telemetry.service_name,
                 prometheus_addr: src.telemetry.prometheus_addr,
-                access_log: match src.telemetry.access_log {
-                    AccessLogConfig::False => pavis_core::AccessLogConfig::False,
-                    AccessLogConfig::Stdout => pavis_core::AccessLogConfig::Stdout,
-                    AccessLogConfig::File(path) => pavis_core::AccessLogConfig::File(path),
-                },
+                access_log: src.telemetry.access_log,
                 tracing: src.telemetry.tracing.map(|t| pavis_core::TracingConfig {
                     enabled: t.enabled,
                     provider: t.provider,
@@ -429,11 +337,6 @@ impl From<pavis_core::RuntimeConfig> for YamlConfig {
     fn from(binary: pavis_core::RuntimeConfig) -> Self {
         let mut upstreams = Vec::new();
         for u in binary.upstreams {
-            let lb = match u.load_balancer {
-                pavis_core::LoadBalancer::Random => LoadBalancer::Random,
-                pavis_core::LoadBalancer::RoundRobin => LoadBalancer::RoundRobin,
-            };
-
             let mut endpoints = Vec::new();
             for e in u.endpoints {
                 endpoints.push(Endpoint {
@@ -442,12 +345,6 @@ impl From<pavis_core::RuntimeConfig> for YamlConfig {
                     weight: Some(e.weight),
                 });
             }
-
-            let http_version = match u.http_version {
-                pavis_core::HttpVersion::H1 => HttpVersion::H1,
-                pavis_core::HttpVersion::H2 => HttpVersion::H2,
-                pavis_core::HttpVersion::H2H1 => HttpVersion::H2H1,
-            };
 
             let connection_pool = ConnectionPoolConfig {
                 idle_timeout: std::time::Duration::from_secs(u.connection_pool.idle_timeout_secs),
@@ -465,8 +362,8 @@ impl From<pavis_core::RuntimeConfig> for YamlConfig {
 
             upstreams.push(Upstream {
                 name: u.name,
-                load_balancer: lb,
-                http_version,
+                load_balancer: u.load_balancer,
+                http_version: u.http_version,
                 connection_pool,
                 tls,
                 circuit_breaker: None,
@@ -479,12 +376,6 @@ impl From<pavis_core::RuntimeConfig> for YamlConfig {
         for v in binary.routes {
             let mut paths = Vec::new();
             for p in v.paths {
-                let match_type = match p.match_type {
-                    pavis_core::MatchType::Exact => MatchType::Exact,
-                    pavis_core::MatchType::Regex => MatchType::Regex,
-                    pavis_core::MatchType::Prefix => MatchType::Prefix,
-                };
-
                 let request_headers = p.request_headers.map(|h| HeaderOperations {
                     add: Some(h.add.into_iter().collect()),
                     remove: Some(h.remove),
@@ -517,7 +408,7 @@ impl From<pavis_core::RuntimeConfig> for YamlConfig {
                 });
 
                 paths.push(Route {
-                    match_type,
+                    match_type: p.match_type,
                     path: p.path,
                     timeout,
                     retry,
@@ -549,11 +440,7 @@ impl From<pavis_core::RuntimeConfig> for YamlConfig {
                 pingora: binary.telemetry.pingora,
                 service_name: binary.telemetry.service_name,
                 prometheus_addr: binary.telemetry.prometheus_addr,
-                access_log: match binary.telemetry.access_log {
-                    pavis_core::AccessLogConfig::False => AccessLogConfig::False,
-                    pavis_core::AccessLogConfig::Stdout => AccessLogConfig::Stdout,
-                    pavis_core::AccessLogConfig::File(path) => AccessLogConfig::File(path),
-                },
+                access_log: binary.telemetry.access_log,
                 tracing: binary.telemetry.tracing.map(|t| TracingConfig {
                     enabled: t.enabled,
                     provider: t.provider,

@@ -89,12 +89,42 @@ pub struct TelemetryConfig {
     pub tracing: Option<TracingConfig>,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[archive(check_bytes)]
 pub enum AccessLogConfig {
     False,
+    #[default]
     Stdout,
     File(String),
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for AccessLogConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Helper {
+            Bool(bool),
+            String(String),
+        }
+
+        match <Helper as serde::Deserialize>::deserialize(deserializer)? {
+            Helper::Bool(false) => Ok(AccessLogConfig::False),
+            Helper::Bool(true) => Err(serde::de::Error::custom("access_log cannot be true")),
+            Helper::String(s) => match s.as_str() {
+                "false" => Ok(AccessLogConfig::False),
+                "stdout" => Ok(AccessLogConfig::Stdout),
+                path if !path.is_empty() => Ok(AccessLogConfig::File(path.to_string())),
+                _ => Err(serde::de::Error::custom(
+                    "access_log must be 'false', 'stdout', or a file path",
+                )),
+            },
+        }
+    }
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
@@ -116,19 +146,28 @@ pub struct Upstream {
     pub endpoints: Vec<Endpoint>,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
 pub enum LoadBalancer {
     RoundRobin,
+    #[default]
     Random,
     // Add others as needed (e.g., LeastConnection)
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[archive(check_bytes)]
 pub enum HttpVersion {
+    #[default]
+    #[cfg_attr(feature = "serde", serde(alias = "1", alias = "1.1", alias = "http1"))]
     H1,
+    #[cfg_attr(feature = "serde", serde(alias = "2", alias = "http2"))]
     H2,
+    #[cfg_attr(feature = "serde", serde(alias = "auto"))]
     H2H1,
 }
 
@@ -185,9 +224,12 @@ pub struct RetryPolicy {
     pub retry_on: Vec<String>,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
 pub enum MatchType {
+    #[default]
     Prefix,
     Exact,
     Regex,

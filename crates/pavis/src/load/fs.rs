@@ -41,15 +41,18 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
     let payload = &mmap[HEADER_SIZE..];
 
     // Verify Checksum
-    if algorithm == 1 {
-        let computed_checksum = pavis_core::compute_checksum(payload);
-        if computed_checksum != expected_checksum {
-            return Err(anyhow!(
-                "Checksum mismatch! The configuration file may be corrupted or tampered with."
-            ));
-        }
-    } else if algorithm != 0 {
-        return Err(anyhow!("Unsupported hash algorithm: {}", algorithm));
+    if algorithm != 1 {
+        return Err(anyhow!(
+            "Unsupported or missing hash algorithm: {}. Checksum verification is required.",
+            algorithm
+        ));
+    }
+
+    let computed_checksum = pavis_core::compute_checksum(payload);
+    if computed_checksum != expected_checksum {
+        return Err(anyhow!(
+            "Checksum mismatch! The configuration file may be corrupted or tampered with."
+        ));
     }
 
     // Ensure payload is aligned

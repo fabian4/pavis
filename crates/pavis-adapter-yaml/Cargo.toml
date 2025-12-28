@@ -7,7 +7,7 @@ description = "YAML Input adapter for Pavis"
 
 [dependencies]
 # Pavis
-pavis-core = { path = "../pavis-core" }
+pavis-core = { path = "../pavis-core", features = ["serde"] }
 
 # Serialization / Input Formats
 serde = { workspace = true, features = ["derive"] }

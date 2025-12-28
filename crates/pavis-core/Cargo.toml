@@ -5,9 +5,13 @@ edition = "2024"
 license = "Apache-2.0"
 description = "Core primitives and engine for the Pavis data plane"
 
+[features]
+default = []
+serde = ["dep:serde"]
+
 [dependencies]
 rkyv = { version = "0.7", features = ["validation"] }
-anyhow = { workspace = true }
 sha2 = "0.10.9"
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
