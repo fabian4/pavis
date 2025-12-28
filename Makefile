@@ -1,6 +1,6 @@
 BUILDER ?= builder
 
-.PHONY: all build test fmt lint clean run-pavis run-pavis-xds help e2e e2e-down benchmark benchmark-pavis benchmark-envoy benchmark-down
+.PHONY: all build test fmt lint clean run-pavis run-pavis-xds help e2e e2e-down benchmark benchmark-pavis benchmark-envoy benchmark-down coverage coverage-html
 
 # Default target
 all: build
@@ -149,3 +149,12 @@ help:
 	@echo "  run-pavis          - Run the Pavis application"
 	@echo "  run-pavis-xds      - Run the Pavis xDS application"
 	@echo "  clean              - Clean build artifacts"
+	@echo "  coverage           - Run code coverage (text summary)"
+	@echo "  coverage-html      - Generate HTML coverage report"
+# Coverage (requires cargo-llvm-cov)
+coverage:
+	cargo llvm-cov --workspace --exclude pavis-e2e
+
+# HTML coverage report (requires cargo-llvm-cov)
+coverage-html:
+	cargo llvm-cov --workspace --exclude pavis-e2e --html

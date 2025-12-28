@@ -55,7 +55,7 @@ pavis/
 
 1.  **Protocol Definition Layer (`pavis-core`)**
     *   Defines only the protocol and semantics.
-    *   Includes `WireConfig`, `ArchivedWireConfig`, and canonical validation.
+    *   Includes `RuntimeConfig`, `ArchivedRuntimeConfig`, and canonical validation.
     *   No dependency on YAML, CLI, or runtime.
     *   Does not perform format conversion or legacy compatibility.
 

@@ -49,13 +49,13 @@
 
 ---
 
-## Phase 2: Protocol 🚧
+## Phase 2: Protocol ✅
 
 **Goal:** Define `.pvs` binary format and build tooling.
 
 **`pavis-core`** (Library)
 - [x] `PvsHeader`: Magic bytes (`PAVS`) + version (u32)
-- [x] `WireConfig` root struct with rkyv derivation
+- [x] `RuntimeConfig` root struct with rkyv derivation
 - [x] Basic types: `Upstream`, `Endpoint`, `VirtualHost`, `Route`
 - [x] `LoadBalancer` enum (RoundRobin, Random)
 - [x] `MatchType` enum (Prefix, Exact, Regex)
@@ -81,7 +81,8 @@
 - [x] `convert` command: Convert between versions
 
 **`pavis`** (Binary)
-- [x] Replace YAML loader with `mmap` + rkyv
+- [x] Replace YAML loader with rkyv-based binary format
+- [ ] Implement `mmap` + zero-copy access (see Optimization section)
 - [x] Startup validation (magic bytes + version check)
 - [x] Graceful error messages for invalid configs
 - [x] Version mismatch handling (reject vs warn)
@@ -586,6 +587,6 @@
 **5. Zero-Copy Configuration Access (P2)**
 - **Goal:** Fully realize the performance benefits of `rkyv` and `mmap`.
 - **Tasks:**
-  - [ ] Refactor `pavis` runtime to operate on `ArchivedWireConfig` instead of owned DTOs
+  - [ ] Refactor `pavis` runtime to operate on `ArchivedRuntimeConfig` instead of owned DTOs
   - [ ] Remove eager deserialization from `crates/pavis/src/load/fs.rs`
   - [ ] Implement lazy regex compilation for archived routes
