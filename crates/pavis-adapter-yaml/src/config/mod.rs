@@ -31,8 +31,8 @@ pub struct YamlConfig {
 }
 
 impl YamlConfig {
-    pub fn validate(self) -> Result<ValidatedConfig> {
-        validation::validate(&self)?;
+    pub fn validate(mut self) -> Result<ValidatedConfig> {
+        validation::validate(&mut self)?;
         Ok(ValidatedConfig(self))
     }
 }
@@ -254,6 +254,12 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
         for v in src.routes {
             let mut paths = Vec::new();
             for p in v.paths {
+                let compiled_regex = if p.match_type == MatchType::Regex {
+                    p.compiled_regex.clone()
+                } else {
+                    None
+                };
+
                 let request_headers = if let Some(h) = p.request_headers {
                     let add: Vec<(String, String)> =
                         h.add.unwrap_or_default().into_iter().collect();
@@ -296,6 +302,7 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
                     request_headers,
                     response_headers,
                     destinations,
+                    compiled_regex,
                 });
             }
 

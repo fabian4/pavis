@@ -277,6 +277,7 @@ mod tests {
                                 upstream: "backend-1".to_string(),
                                 weight: 1,
                             }],
+                            compiled_regex: None,
                         },
                         Route {
                             match_type: MatchType::Prefix,
@@ -289,6 +290,7 @@ mod tests {
                                 upstream: "backend-1".to_string(),
                                 weight: 1,
                             }],
+                            compiled_regex: None,
                         },
                     ],
                 },
@@ -305,6 +307,7 @@ mod tests {
                             upstream: "backend-2".to_string(),
                             weight: 1,
                         }],
+                        compiled_regex: None,
                     }],
                 },
             ],
@@ -392,6 +395,7 @@ mod tests {
                         upstream: "backend".to_string(),
                         weight: 1,
                     }],
+                    compiled_regex: None,
                 }],
             }],
         };

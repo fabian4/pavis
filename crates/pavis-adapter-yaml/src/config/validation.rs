@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
-pub fn validate(config: &YamlConfig) -> Result<()> {
+pub fn validate(config: &mut YamlConfig) -> Result<()> {
     validate_server(config)?;
     validate_upstreams(config)?;
     validate_routes(config)?;
@@ -72,15 +72,16 @@ fn validate_upstreams(config: &YamlConfig) -> Result<()> {
     Ok(())
 }
 
-fn validate_routes(config: &YamlConfig) -> Result<()> {
+fn validate_routes(config: &mut YamlConfig) -> Result<()> {
     let upstream_names: HashSet<&String> = config.upstreams.iter().map(|u| &u.name).collect();
 
-    for vhost in &config.routes {
-        for route in &vhost.paths {
+    for vhost in &mut config.routes {
+        for route in &mut vhost.paths {
             // Regex validation
             if route.match_type == MatchType::Regex {
-                regex::Regex::new(&route.path)
+                let compiled = regex::Regex::new(&route.path)
                     .with_context(|| format!("Invalid regex in route '{}'", route.path))?;
+                route.compiled_regex = Some(compiled);
             }
 
             if let Some(headers) = &route.request_headers {

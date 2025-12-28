@@ -27,12 +27,14 @@ impl Router {
         for vhost in routes {
             let mut regexes = Vec::new();
             for route in &vhost.paths {
-                let regex = if route.match_type == MatchType::Regex {
-                    Some(Regex::new(&route.path).with_context(|| {
-                        format!("Failed to compile regex for path: {}", route.path)
-                    })?)
-                } else {
-                    None
+                let regex = match (&route.match_type, &route.compiled_regex) {
+                    (MatchType::Regex, Some(precompiled)) => Some(precompiled.clone()),
+                    (MatchType::Regex, None) => {
+                        Some(Regex::new(&route.path).with_context(|| {
+                            format!("Failed to compile regex for path: {}", route.path)
+                        })?)
+                    }
+                    _ => None,
                 };
                 regexes.push(regex);
             }
@@ -72,6 +74,7 @@ mod tests {
                 request_headers: None,
                 response_headers: None,
                 destinations: vec![],
+                compiled_regex: None,
             }],
         }];
 

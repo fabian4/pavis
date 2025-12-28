@@ -57,6 +57,7 @@ fn test_configuration_driven_routing() {
                 upstream: "backend-a".to_string(),
                 weight: 1,
             }],
+            compiled_regex: None,
         }],
     });
 
