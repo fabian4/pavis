@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use pavis_core::{self, MatchType, validate_runtime};
+use pavis_core::{self, validate_runtime_config};
 
 use super::types::*;
 
@@ -45,12 +45,6 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
         for v in src.routes {
             let mut paths = Vec::new();
             for p in v.paths {
-                let compiled_regex = if p.match_type == MatchType::Regex {
-                    p.compiled_regex.clone()
-                } else {
-                    None
-                };
-
                 let request_headers = if let Some(h) = p.request_headers {
                     let add: Vec<(String, String)> =
                         h.add.unwrap_or_default().into_iter().collect();
@@ -93,7 +87,7 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
                     request_headers,
                     response_headers,
                     destinations,
-                    compiled_regex,
+                    compiled_regex: None,
                 });
             }
 
@@ -129,7 +123,7 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
             routes,
         };
 
-        validate_runtime(&runtime).map_err(anyhow::Error::from)?;
+        validate_runtime_config(&runtime).map_err(anyhow::Error::from)?;
         Ok(runtime)
     }
 }

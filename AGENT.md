@@ -12,9 +12,13 @@
 
 ## Workspace & Layering
 
-- Strict responsibilities: `pavis-core` (protocol and canonical types only; no I/O, serde, rkyv), `pavis-adapter-*` (input DTOs, parsing, validation), `pavis-cli` / `pavis-xds` (I/O orchestration), `pavis` (runtime business logic only).
-- Dependency direction is one-way: core <- runtime <- adapters/CLI/XDS. Runtime must not depend on adapters, serde, rkyv, or format crates; core must not depend on runtime or I/O.
-- Shared domain types live in `pavis-core`; avoid leaking adapter or I/O concerns into runtime.
+- Strict responsibilities:
+  - `pavis-core`: protocol + canonical semantics; canonical validation of `RuntimeConfig`; no I/O, parsing, or format concerns.
+  - `pavis-adapter-*`: input DTOs, source-specific defaults/validation, transforms to `pavis-core::RuntimeConfig`.
+  - `pavis-cli` / `pavis-xds`: I/O orchestration shells that invoke adapters.
+  - Boundary (`pvs` loader under `pavis/src/load`): the only place to read/inspect `.pvs`, do magic/version/checksum checks, and run rkyv byte validation; runtime must not touch archive internals.
+  - `pavis` runtime: consumes trusted `RuntimeConfig`; only defensive crash-safety checks; no parsing/serde/rkyv, no semantic validation or config decoding (normal runtime state allocation is fine).
+- Dependency direction is one-way: `pavis-core` is foundational; adapters/producers depend on core; runtime depends on core; runtime must not depend on adapters/serde/rkyv. Shared domain types live in core.
 
 ## Modules & Structure
 
@@ -34,11 +38,12 @@
 5. No git commit/push; the user handles version control.
 6. Follow `doc/CODE_REVIEW.md` for priorities and update statuses when tasks complete.
 7. Backward compatibility is a lower concern (no public release yet) unless the user requests stability explicitly.
+8. Do not create a new crate unless the user explicitly asks.
 
 ## Tooling & Validation
 
 - After any Rust code change: run `cargo fmt --all`, `cargo clippy --all`.
-- Validate builds/tests with `cargo build --workspace && cargo test --workspace` after edits.
+- Validate builds/tests with `cargo build --workspace && cargo test --workspace --exclude pavis-e2e` after edits.
 
 ## Code Style
 

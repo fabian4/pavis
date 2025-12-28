@@ -1,23 +1,23 @@
-use anyhow::{Context, Result, anyhow};
 use memmap2::Mmap;
-use pavis_core::{HEADER_SIZE, RuntimeConfig, validate_runtime};
+use pavis_core::{HEADER_SIZE, RuntimeConfig};
 use rkyv::with::{AsOwned, With};
 use rkyv::{Archive, Infallible};
 use std::fs::File;
 
+use super::{LoadError, LoadResult};
+
 /// Reads a .pvs file, validates headers, and deserializes the content.
-pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
-    let file =
-        File::open(path).with_context(|| format!("Failed to open .pvs config file: {}", path))?;
+pub fn read_pvs_file(path: &str) -> LoadResult<RuntimeConfig> {
+    let file = File::open(path).map_err(LoadError::Io)?;
     // SAFETY: mmap is unsafe because the file could be modified by another process.
     // For a config file loaded at startup, this is generally acceptable risk.
-    let mmap = unsafe { Mmap::map(&file).context("Failed to mmap .pvs file")? };
+    let mmap = unsafe { Mmap::map(&file).map_err(LoadError::Io)? };
 
     if mmap.len() < HEADER_SIZE {
-        return Err(anyhow!(format!(
-            "Config file too small (must be at least {} bytes)",
-            HEADER_SIZE
-        )));
+        return Err(LoadError::TooSmall {
+            min: HEADER_SIZE,
+            actual: mmap.len(),
+        });
     }
 
     let magic = &mmap[0..4];
@@ -27,32 +27,26 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
     // _reserved is at 44..64
 
     if magic != pavis_core::PAVIS_MAGIC {
-        return Err(anyhow!("Invalid magic bytes in .pvs file. Expected 'PAVS'"));
+        return Err(LoadError::InvalidMagic);
     }
 
     if version != pavis_core::PAVIS_VERSION {
-        return Err(anyhow!(
-            "Version mismatch! File: {}, Proxy: {}. Please recompile config.",
-            version,
-            pavis_core::PAVIS_VERSION
-        ));
+        return Err(LoadError::VersionMismatch {
+            file: version,
+            expected: pavis_core::PAVIS_VERSION,
+        });
     }
 
     let payload = &mmap[HEADER_SIZE..];
 
     // Verify Checksum
     if algorithm != 1 {
-        return Err(anyhow!(
-            "Unsupported or missing hash algorithm: {}. Checksum verification is required.",
-            algorithm
-        ));
+        return Err(LoadError::UnsupportedAlgorithm(algorithm));
     }
 
     let computed_checksum = pavis_core::compute_checksum(payload);
     if computed_checksum != expected_checksum {
-        return Err(anyhow!(
-            "Checksum mismatch! The configuration file may be corrupted or tampered with."
-        ));
+        return Err(LoadError::ChecksumMismatch);
     }
 
     // Ensure payload is aligned
@@ -63,7 +57,7 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
     // However, check_archived_root might be strict.
 
     let archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
-        .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
+        .map_err(|e| LoadError::CorruptArchive(format!("{:?}", e)))?;
 
     let wrapper: With<RuntimeConfig, AsOwned> =
         <<RuntimeConfig as Archive>::Archived as rkyv::Deserialize<_, _>>::deserialize(
@@ -71,7 +65,5 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
             &mut Infallible,
         )?;
 
-    let config = wrapper.into_inner();
-    validate_runtime(&config)?;
-    Ok(config)
+    Ok(wrapper.into_inner())
 }

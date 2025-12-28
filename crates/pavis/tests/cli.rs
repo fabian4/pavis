@@ -69,7 +69,11 @@ fn test_cli_invalid_config_path() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Failed to open .pvs config file"));
+    assert!(
+        stderr.contains("I/O error")
+            || stderr.contains("No such file or directory")
+            || stderr.contains("invalid")
+    );
 }
 
 #[cfg(unix)]

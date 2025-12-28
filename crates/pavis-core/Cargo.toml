@@ -15,5 +15,6 @@ sha2 = "0.10.9"
 serde = { workspace = true, optional = true }
 regex = "1"
 thiserror = "1"
+http = "1.4"
 
 [dev-dependencies]

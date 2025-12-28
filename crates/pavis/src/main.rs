@@ -5,7 +5,7 @@ use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
 use std::sync::Arc;
 
-use pavis::load;
+use pavis::load::{self, LoadError};
 use pavis::proxy::Proxy;
 use pavis::router::Router;
 use pavis::telemetry::Telemetry;
@@ -24,7 +24,14 @@ fn main() -> Result<()> {
 
     // Load configuration
     // TODO: Support config file watching for hot reload
-    let config = load::load_file(&args.config)?;
+    let config = load::load_file(&args.config).map_err(|e| match e {
+        LoadError::VersionMismatch { file, expected } => anyhow::anyhow!(
+            "Version mismatch! File: {}, Runtime expects: {}. Recompile config.",
+            file,
+            expected
+        ),
+        other => anyhow::anyhow!(other),
+    })?;
 
     // Initialize Router (compiles regexes)
     let router = Arc::new(Router::new(config.routes.clone())?);
@@ -82,14 +89,15 @@ fn main() -> Result<()> {
     // TODO: Support multiple listen addresses
     if let Some(tls_config) = &config.server.tls {
         if tls_config.enabled {
+            // Core validation guarantees cert/key presence when enabled.
             let cert_path = tls_config
                 .cert_path
                 .as_ref()
-                .context("TLS enabled but cert_path is missing")?;
+                .expect("core validation must ensure cert_path when TLS enabled");
             let key_path = tls_config
                 .key_path
                 .as_ref()
-                .context("TLS enabled but key_path is missing")?;
+                .expect("core validation must ensure key_path when TLS enabled");
             proxy_service
                 .add_tls(&config.server.listen_addr, cert_path, key_path)
                 .context("Failed to add TLS listener")?;

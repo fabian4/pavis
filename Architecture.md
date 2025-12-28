@@ -44,9 +44,9 @@ pavis/
 | :--- | :--- | :--- |
 | **Protocol Definition** | `pavis-core` | Defines `.pvs` binary format and optimized `RuntimeConfig`. |
 | **Input DTOs** | `pavis-adapter-*` | Defines `YamlConfig`, `XdsConfig` optimized for UX/Defaults. |
-| **Adaptation & Validation** | `pavis-adapter-*` | "Dirty" data cleaning. Transforms Input DTO -> RuntimeConfig. |
+| **Adaptation & Validation** | `pavis-adapter-*` | Source-specific defaults/compat cleanup. Transforms Input DTO -> `RuntimeConfig` and invokes core semantic validation. |
 | **I/O & Orchestration** | Producers | `cli` & `xds` handle file reading, network streams, and invoke adapter. |
-| **Runtime Execution** | `pavis` | Consumes trusted `.pvs` files. No parsing, validation, or allocation logic. |
+| **Runtime Execution** | `pavis` | Consumes validated `RuntimeConfig`; builds router/upstream/telemetry state. No parsing, decoding, or semantic validation of config. |
 
 ### 2.4. Layering Principles
 
@@ -58,17 +58,22 @@ pavis/
 
 2.  **Boundary Layer (`pvs` crate)**
     *   Handles loading and unpacking.
-    *   Responsible for reading `.pvs` files, unwrapping `rkyv::With<T, A>`, and zero-copy access.
-    *   Performs version and magic byte checks.
+    *   Owns binary/integrity validation: magic bytes, protocol version, checksum, and `rkyv::check_archived_root`.
+    *   Deserializes to `RuntimeConfig` and returns clean domain objects; no semantic validation or compensation.
     *   Exposes a safe API to the runtime without leaking archive internals.
 
 3.  **Runtime Layer (`pavis`)**
-    *   Consumes only validated configuration.
+    *   Consumes only semantically validated configuration.
     *   Does not know about `rkyv`, `mmap`, or archive details.
-    *   Does not manipulate binary or protocol internals.
-    *   Builds runtime state and performs defensive checks only.
+    *   Builds runtime state (router, upstream manager, telemetry) and may perform crash-safety guards; no parsing/semantic validation.
 
 > **Rule:** The Runtime never sees invalid or partial state. It relies on the Adapter to produce a valid `RuntimeConfig`.
+
+### 2.5. Module Layout
+
+*   **No `mod.rs`**. Use `<module>.rs` with submodules in `<module>/`.
+*   Keep `<module>.rs` focused on module structure and re-exports; put logic in sibling files.
+*   Split by responsibility (types vs logic vs I/O), but avoid over-splitting by size alone.
 
 ## 3. The PVS Protocol
 
@@ -99,7 +104,7 @@ Pavis prioritizes speed and simplicity over complex in-place migrations.
 *   **Bridge-Side (`pavis-xds`)**: Translates user intent (YAML/xDS) to the current protocol version. Must be redeployed when protocol changes.
 *   **Proxy-Side (`pavis`)**: Performs strict version checking.
     *   **Magic Bytes**: Must be `PAVS`.
-    *   **Version**: Must match exactly. Mismatches cause startup failure (pod restart) or rejection (hot reload).
+    *   **Version**: Must match exactly. Boundary surfaces mismatch as an error; the runtime owns the policy (startup fail vs hot-reload rejection).
 *   **Upgrade Path**:
     1.  Upgrade Control Plane (`pavis-xds`).
     2.  Rolling update of Proxies (`pavis`).
@@ -142,20 +147,21 @@ pavis-proxy                              pavis-xds
 #### Layer Responsibilities
 
 1.  **Core (`pavis-core`)**
-    *   Define protocol structs and magic/version constants.
+    *   Define protocol structs, magic/version constants, and canonical semantic validation of `RuntimeConfig`.
     *   Can use `#[with(...)]` for archive compatibility.
     *   **Do not** deserialize or handle `.pvs` files.
 
 2.  **Boundary (`pavis/src/load`)**
     *   Read `.pvs` files.
-    *   Validate integrity (magic bytes, version, `check_archived_root`).
-    *   Deserialize rkyv to owned `RuntimeConfig`.
+    *   Validate integrity only (magic bytes, version, checksum, `check_archived_root`).
+    *   Deserialize rkyv to owned `RuntimeConfig`; surface version mismatch or corruption as errors.
     *   Return clean domain objects.
-    *   **Do not** implement runtime logic.
+    *   **Do not** implement runtime logic or semantic validation.
 
 3.  **Runtime (`pavis`)**
     *   Consume `RuntimeConfig` for business logic.
     *   Do not depend on rkyv, `.pvs` format, or adapters.
+    *   Build runtime state; only minimal crash-safety guards, no parsing or semantic validation.
 
 #### Adapters (`#[with(...)]`)
 *   Only for fields that cannot archive directly (String, Vec<T>, Regex, etc.).
@@ -215,22 +221,28 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 ### 5.1. Validation Strategy
 
 1.  **Core Semantic Validation (`pavis-core`)**:
-    *   **Canonical Truth.** Defines the absolute semantics of the configuration.
-    *   Ensures structural correctness and cross-resource invariants (e.g., reference integrity).
+    *   **Canonical Truth.** Defines absolute semantics of `RuntimeConfig`.
+    *   Ensures structural correctness and cross-resource invariants (e.g., reference integrity, regex validity).
     *   Source-agnostic and mandatory for all config producers.
 
-2.  **Source-Specific Validation (`pavis-cli`, `pavis-xds`)**:
-    *   **Input Adaptation.** Enforces constraints tied to the input source.
-    *   Validates YAML schemas, CLI flags, or specific Istio/Envoy constraints.
-    *   Transforms user intent into valid `pavis-core` structures.
+2.  **Source-Specific Validation (`pavis-cli`, `pavis-xds`, adapters)**:
+    *   **Input Adaptation.** Enforces constraints tied to the input source (schema, defaults, compatibility).
+    *   Transforms user intent into `RuntimeConfig` and invokes `pavis-core::validate_runtime_config`.
+    *   May not redefine or partially duplicate core semantics.
 
-3.  **Defensive Runtime Validation (`pavis`)**:
-    *   **Operational Safety.** Performs minimal checks to prevent crashes.
-    *   **Integrity Check**: Verifies SHA-256 checksum of the payload against the header before parsing.
-    *   Checks magic bytes, version compatibility, and memory safety (`rkyv::check_bytes`).
-    *   Does not define or reinterpret semantics.
+3.  **Boundary Integrity Validation (`pvs`)**:
+    *   **Binary Safety.** Validates magic bytes, protocol version, checksum, and `rkyv::check_archived_root`.
+    *   Deserializes to owned `RuntimeConfig`; surfaces version mismatch/corruption as errors.
+    *   Does not perform semantic validation or compensation.
 
-> **Principle:** Semantics live in `pavis-core`; producers adapt, the proxy executes safely.
+4.  **Runtime Defensive Guards (`pavis`)**:
+    *   **Operational Safety.** Assumes semantically valid config; may add crash-safety guards.
+    *   Applies runtime policy for version mismatches (startup fail vs hot-reload rejection).
+    *   No parsing, decoding, or semantic validation.
+
+> **Principle:** Semantics live in `pavis-core`; adapters produce validated configs; boundary guarantees binary integrity; runtime executes with minimal defensive guards.
+
+**RuntimeConfig validation entrypoint:** Producers/adapters must call `pavis-core::validate_runtime_config` after adaptation and before serialization. The CLI should rely on the adapter’s conversion pipeline to invoke canonical validation; the runtime must not call it during startup or hot-reload.
 
 ### 5.2. Crash-Loop Protection
 
