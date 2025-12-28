@@ -394,7 +394,6 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
         }
 
         Ok(pavis_core::RuntimeConfig {
-            header: pavis_core::PavisHeader::default(),
             server: pavis_core::ServerConfig {
                 listen_addr: src.server.listen_addr,
                 worker_threads: src.server.worker_threads.map(|w| w as u64),

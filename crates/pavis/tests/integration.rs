@@ -8,7 +8,6 @@ use pavis_core::{
 
 fn base_config() -> Config {
     Config {
-        header: pavis_core::PavisHeader::default(),
         server: ServerConfig {
             listen_addr: "0.0.0.0:8080".to_string(),
             worker_threads: None,

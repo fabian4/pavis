@@ -82,7 +82,6 @@ fn test_process_lifecycle_sigint() {
 
     // Create a valid config programmatically
     let config = RuntimeConfig {
-        header: PavisHeader::default(),
         server: pavis_core::ServerConfig {
             listen_addr: "127.0.0.1:0".to_string(),
             worker_threads: None,

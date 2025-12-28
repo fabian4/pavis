@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use memmap2::Mmap;
-use pavis_core::RuntimeConfig;
+use pavis_core::{HEADER_SIZE, RuntimeConfig};
 use rkyv::with::{AsOwned, With};
 use rkyv::{Archive, Infallible};
 use std::fs::File;
@@ -13,11 +13,11 @@ pub fn read_pvs_file(path: &str) -> Result<RuntimeConfig> {
     // For a config file loaded at startup, this is generally acceptable risk.
     let mmap = unsafe { Mmap::map(&file).context("Failed to mmap .pvs file")? };
 
-    // Header size is 64 bytes (aligned to 16 bytes)
-    const HEADER_SIZE: usize = 64;
-
     if mmap.len() < HEADER_SIZE {
-        return Err(anyhow!("Config file too small (must be at least 64 bytes)"));
+        return Err(anyhow!(format!(
+            "Config file too small (must be at least {} bytes)",
+            HEADER_SIZE
+        )));
     }
 
     let magic = &mmap[0..4];

@@ -71,11 +71,38 @@ fn main() -> Result<()> {
 
 fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<()> {
     let bytes = fs::read(&input_path).context("Failed to read input file")?;
-    if bytes.len() < 8 {
-        return Err(anyhow!("File too small"));
+    if bytes.len() < binary::HEADER_SIZE {
+        return Err(anyhow!("File too small to contain a valid header"));
     }
 
-    let payload = &bytes[8..];
+    let magic = &bytes[0..4];
+    let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    let algorithm = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+    let checksum = &bytes[12..44];
+
+    if magic != binary::PAVIS_MAGIC {
+        return Err(anyhow!("Invalid magic bytes. Expected 'PAVS'"));
+    }
+
+    if version != binary::PAVIS_VERSION {
+        return Err(anyhow!(
+            "Version mismatch. File: {}, CLI supports: {}",
+            version,
+            binary::PAVIS_VERSION
+        ));
+    }
+
+    let payload = &bytes[binary::HEADER_SIZE..];
+
+    if algorithm == 1 {
+        let computed_checksum = binary::compute_checksum(payload);
+        if computed_checksum != checksum {
+            return Err(anyhow!("Checksum mismatch in input file"));
+        }
+    } else if algorithm != 0 {
+        return Err(anyhow!("Unsupported hash algorithm: {}", algorithm));
+    }
+
     let archived = check_archived_root::<binary::RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
@@ -150,8 +177,7 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     // However, rkyv might add padding.
     // Let's just write fields manually to be endian-safe and consistent.
 
-    let mut final_bytes =
-        Vec::with_capacity(rkyv_bytes.len() + std::mem::size_of::<binary::PavisHeader>());
+    let mut final_bytes = Vec::with_capacity(rkyv_bytes.len() + binary::HEADER_SIZE);
     final_bytes.extend_from_slice(&header.magic);
     final_bytes.extend_from_slice(&header.version.to_le_bytes());
     final_bytes.extend_from_slice(&header.algorithm.to_le_bytes());
@@ -173,15 +199,8 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
 fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
     let bytes = fs::read(&input_path).context("Failed to read input file")?;
 
-    if bytes.len() < 8 {
-        return Err(anyhow!("File too small to be a valid Pavis config"));
-    }
-
     // Check Header manually first for better error messages
-    // Header size is 4 (magic) + 4 (version) + 4 (algo) + 32 (checksum) + 16 (reserved) = 60 bytes
-    const HEADER_SIZE: usize = 60;
-
-    if bytes.len() < HEADER_SIZE {
+    if bytes.len() < binary::HEADER_SIZE {
         return Err(anyhow!("File too small to be a valid Pavis config"));
     }
 
@@ -205,7 +224,7 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
     }
 
     // Validate structural integrity with check_bytes (skip our header)
-    let payload = &bytes[HEADER_SIZE..];
+    let payload = &bytes[binary::HEADER_SIZE..];
     let archived = check_archived_root::<binary::RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
@@ -255,7 +274,7 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
     if hex {
         println!("\n--- Hex Dump (Payload) ---");
         // Simple hex dump of the payload part
-        for (i, chunk) in bytes[8..].chunks(16).enumerate() {
+        for (i, chunk) in bytes[binary::HEADER_SIZE..].chunks(16).enumerate() {
             print!("{:08x}: ", i * 16);
             for b in chunk {
                 print!("{:02x} ", b);

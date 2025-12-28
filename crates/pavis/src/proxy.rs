@@ -248,7 +248,6 @@ mod tests {
 
     fn create_test_config() -> Config {
         Config {
-            header: pavis_core::PavisHeader::default(),
             server: ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -366,7 +365,6 @@ mod tests {
     #[test]
     fn test_find_route_regex_match() {
         let config = Config {
-            header: pavis_core::PavisHeader::default(),
             server: ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,

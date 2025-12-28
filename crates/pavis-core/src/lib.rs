@@ -22,7 +22,10 @@ pub fn format_address(ip: &str, port: u16) -> String {
 pub const PAVIS_MAGIC: &[u8; 4] = b"PAVS";
 
 /// Current Protocol Version. Increment this when breaking changes occur.
-pub const PAVIS_VERSION: u32 = 4;
+pub const PAVIS_VERSION: u32 = 0;
+
+/// Serialized header size in bytes.
+pub const HEADER_SIZE: usize = 64;
 
 /// The Header of a Pavis configuration file.
 /// Always present at the beginning of the binary blob.
@@ -53,7 +56,6 @@ impl Default for PavisHeader {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct RuntimeConfig {
-    pub header: PavisHeader,
     pub server: ServerConfig,
     pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
@@ -214,7 +216,6 @@ mod tests {
 
     fn create_valid_config() -> RuntimeConfig {
         RuntimeConfig {
-            header: PavisHeader::default(),
             server: ServerConfig {
                 listen_addr: "0.0.0.0:8080".to_string(),
                 worker_threads: None,
@@ -315,23 +316,6 @@ mod tests {
             result.is_err(),
             "Validation should have failed for truncated data"
         );
-    }
-
-    #[test]
-    fn test_version_mismatch_check() {
-        let mut config = create_valid_config();
-        config.header.version = 999; // Future version
-
-        let mut serializer = AllocSerializer::<1024>::default();
-        serializer.serialize_value(&config).unwrap();
-        let bytes = serializer.into_serializer().into_inner();
-
-        // rkyv validation checks structural integrity, not our logical version
-        let archived = check_archived_root::<RuntimeConfig>(&bytes).unwrap();
-
-        // We should manually check the version
-        assert_eq!(archived.header.version, 999);
-        assert_ne!(archived.header.version, PAVIS_VERSION);
     }
 
     #[test]

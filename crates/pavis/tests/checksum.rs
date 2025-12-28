@@ -30,7 +30,6 @@ fn test_checksum_validation_success() {
     let binary = get_binary_path();
 
     let config = RuntimeConfig {
-        header: PavisHeader::default(),
         server: pavis_core::ServerConfig {
             listen_addr: "127.0.0.1:0".to_string(),
             worker_threads: None,
@@ -110,7 +109,6 @@ fn test_checksum_validation_failure() {
     let binary = get_binary_path();
 
     let config = RuntimeConfig {
-        header: PavisHeader::default(),
         server: pavis_core::ServerConfig {
             listen_addr: "127.0.0.1:0".to_string(),
             worker_threads: None,

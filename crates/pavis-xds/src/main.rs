@@ -64,10 +64,29 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     serializer
         .serialize_value(&pavis_config)
         .context("Failed to serialize to Pavis")?;
-    let bytes = serializer.into_serializer().into_inner();
+    let rkyv_bytes = serializer.into_serializer().into_inner();
 
-    // 4. Write to Disk
-    fs::write(&output_path, bytes).context("Failed to write output file")?;
+    // 4. Compute Checksum
+    let checksum = binary::compute_checksum(&rkyv_bytes);
+
+    // 5. Write to Disk with explicit header
+    let header = binary::PavisHeader {
+        magic: *binary::PAVIS_MAGIC,
+        version: binary::PAVIS_VERSION,
+        algorithm: 1, // SHA-256
+        checksum,
+        _reserved: [0; 20],
+    };
+
+    let mut final_bytes = Vec::with_capacity(rkyv_bytes.len() + binary::HEADER_SIZE);
+    final_bytes.extend_from_slice(&header.magic);
+    final_bytes.extend_from_slice(&header.version.to_le_bytes());
+    final_bytes.extend_from_slice(&header.algorithm.to_le_bytes());
+    final_bytes.extend_from_slice(&header.checksum);
+    final_bytes.extend_from_slice(&header._reserved);
+    final_bytes.extend_from_slice(&rkyv_bytes);
+
+    fs::write(&output_path, final_bytes).context("Failed to write output file")?;
     tracing::info!(
         "Successfully compiled config to {:?} (Size: {} bytes)",
         output_path,
