@@ -17,6 +17,7 @@ humantime-serde = "1.1.1"
 
 # Validation & Error Handling
 anyhow = { workspace = true }
+thiserror = "1"
 regex = "1"
 http = "1.4.0"
 # validator = { version = "0.16", features = ["derive"] } # Optional, can add later

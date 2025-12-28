@@ -37,16 +37,11 @@ pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
 
 /// Validate canonical invariants on a fully constructed `RuntimeConfig`.
 /// This is intended to be called after parsing/adaptation and before runtime use.
-pub fn validate_runtime_config(config: &RuntimeConfig) -> CoreValidationResult<()> {
+pub fn validate_runtime(config: &RuntimeConfig) -> CoreValidationResult<()> {
     validate_server(config.server.listen_addr, config.server.tls.as_ref())?;
     validate_upstreams(&config.upstreams)?;
     validate_routes(&config.routes, &config.upstreams)?;
     Ok(())
-}
-
-/// Backward-compatible alias.
-pub fn validate_runtime(config: &RuntimeConfig) -> CoreValidationResult<()> {
-    validate_runtime_config(config)
 }
 
 fn validate_server(
@@ -246,7 +241,7 @@ mod tests {
     #[test]
     fn valid_config_passes() {
         let cfg = base_config();
-        assert!(validate_runtime_config(&cfg).is_ok());
+        assert!(validate_runtime(&cfg).is_ok());
     }
 
     #[test]
@@ -257,7 +252,19 @@ mod tests {
             cert_path: None,
             key_path: Some("key.pem".to_string()),
         });
-        let err = validate_runtime_config(&cfg).unwrap_err();
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::MissingTlsFiles));
+    }
+
+    #[test]
+    fn missing_tls_key_fails() {
+        let mut cfg = base_config();
+        cfg.server.tls = Some(TlsConfig {
+            enabled: true,
+            cert_path: Some("cert.pem".to_string()),
+            key_path: None,
+        });
+        let err = validate_runtime(&cfg).unwrap_err();
         assert!(matches!(err, CoreValidationError::MissingTlsFiles));
     }
 
@@ -266,8 +273,16 @@ mod tests {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].match_type = MatchType::Regex;
         cfg.routes[0].paths[0].path = "[unclosed".to_string();
-        let err = validate_runtime_config(&cfg).unwrap_err();
+        let err = validate_runtime(&cfg).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidRegex { .. }));
+    }
+
+    #[test]
+    fn valid_regex_passes() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].match_type = MatchType::Regex;
+        cfg.routes[0].paths[0].path = "^/items/[0-9]+$".to_string();
+        assert!(validate_runtime(&cfg).is_ok());
     }
 
     #[test]
@@ -275,8 +290,41 @@ mod tests {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
             vec![("".to_string(), "v".to_string())];
-        let err = validate_runtime_config(&cfg).unwrap_err();
+        let err = validate_runtime(&cfg).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
+    }
+
+    #[test]
+    fn invalid_header_name_non_empty_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
+            vec![("bad header".to_string(), "v".to_string())];
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
+    }
+
+    #[test]
+    fn invalid_remove_header_name_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0]
+            .request_headers
+            .as_mut()
+            .unwrap()
+            .remove = vec!["".to_string()];
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
+    }
+
+    #[test]
+    fn invalid_remove_header_name_non_empty_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0]
+            .request_headers
+            .as_mut()
+            .unwrap()
+            .remove = vec!["bad header".to_string()];
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
 
     #[test]
@@ -284,10 +332,69 @@ mod tests {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
             vec![("x".to_string(), "\u{7f}".to_string())];
-        let err = validate_runtime_config(&cfg).unwrap_err();
+        let err = validate_runtime(&cfg).unwrap_err();
         assert!(matches!(
             err,
             CoreValidationError::InvalidHeaderValue { .. }
+        ));
+    }
+
+    #[test]
+    fn invalid_response_header_name_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].response_headers = Some(HeaderOperations {
+            add: vec![("bad header".to_string(), "v".to_string())],
+            remove: Vec::new(),
+        });
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
+    }
+
+    #[test]
+    fn empty_upstream_name_fails() {
+        let mut cfg = base_config();
+        cfg.upstreams[0].name = "".to_string();
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::EmptyUpstreamName));
+    }
+
+    #[test]
+    fn duplicate_upstream_name_fails() {
+        let mut cfg = base_config();
+        let mut duplicate = cfg.upstreams[0].clone();
+        duplicate.endpoints[0].port = 81;
+        cfg.upstreams.push(duplicate);
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::DuplicateUpstream(_)));
+    }
+
+    #[test]
+    fn endpoint_weight_zero_fails() {
+        let mut cfg = base_config();
+        cfg.upstreams[0].endpoints[0].weight = 0;
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::EndpointWeightZero(_)));
+    }
+
+    #[test]
+    fn unknown_destination_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].destinations[0].upstream = "missing".to_string();
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreValidationError::UnknownDestination(_, _, _)
+        ));
+    }
+
+    #[test]
+    fn destination_weight_zero_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].destinations[0].weight = 0;
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreValidationError::DestinationWeightZero(_, _, _)
         ));
     }
 }

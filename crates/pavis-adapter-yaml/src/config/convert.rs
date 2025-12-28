@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::net::{IpAddr, SocketAddr};
 
-use pavis_core::{self, LogLevel, validate_runtime_config};
+use pavis_core::{self, LogLevel, validate_runtime};
 
 use super::types::*;
 
@@ -146,7 +146,7 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
             routes,
         };
 
-        validate_runtime_config(&runtime).map_err(anyhow::Error::from)?;
+        validate_runtime(&runtime).map_err(anyhow::Error::from)?;
         Ok(runtime)
     }
 }
@@ -170,14 +170,6 @@ fn log_level_to_string(level: Option<LogLevel>) -> Option<String> {
         LogLevel::Debug => "debug".to_string(),
         LogLevel::Trace => "trace".to_string(),
     })
-}
-
-impl TryFrom<ValidatedConfig> for pavis_core::RuntimeConfig {
-    type Error = anyhow::Error;
-
-    fn try_from(src: ValidatedConfig) -> Result<Self, Self::Error> {
-        Self::try_from(src.into_inner())
-    }
 }
 
 impl From<pavis_core::RuntimeConfig> for YamlConfig {

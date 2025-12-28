@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use pavis_adapter_yaml::config as yaml;
-use pavis_core as binary;
+use pavis_core::{self as binary, Config, ConfigSource};
 use pavis_pvs as pvs;
 
 #[derive(Parser)]
@@ -88,26 +88,22 @@ fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<
 }
 
 fn validate_yaml(input_path: PathBuf) -> Result<()> {
-    let content = fs::read_to_string(&input_path).context("Failed to read input file")?;
-    let yaml_config = yaml::YamlConfig::parse_str(&content).context("Failed to parse YAML")?;
-    let validated = yaml_config
-        .validate()
-        .context("Configuration validation failed")?;
-    let _runtime: binary::RuntimeConfig = validated.try_into()?;
+    let yaml_config = yaml::YamlConfig::load(ConfigSource::File(&input_path))
+        .context("Failed to load YAML config")?;
+    Config::validate(&yaml_config).context("Configuration validation failed")?;
+    let _runtime: binary::RuntimeConfig = yaml_config.build()?;
     println!("✅ Configuration is valid: {:?}", input_path);
     Ok(())
 }
 
 fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     tracing::info!("Reading YAML config from {:?}", input_path);
-    let content = fs::read_to_string(&input_path).context("Failed to read input file")?;
+    let yaml_config = yaml::YamlConfig::load(ConfigSource::File(&input_path))
+        .context("Failed to load YAML config")?;
+    Config::validate(&yaml_config).context("Invalid configuration")?;
 
-    // 1. Deserialize and Validate YAML
-    let yaml_config = yaml::YamlConfig::parse_str(&content).context("Failed to parse YAML")?;
-    let validated = yaml_config.validate().context("Invalid configuration")?;
-
-    // 2. Convert to binary protocol structs
-    let pavis_config: binary::RuntimeConfig = validated.try_into()?;
+    // Convert to binary protocol structs
+    let pavis_config: binary::RuntimeConfig = yaml_config.build()?;
 
     // 3. Write to Disk with explicit header
     pvs::write(&output_path, &pavis_config)?;

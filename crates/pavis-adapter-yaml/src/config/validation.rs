@@ -1,87 +1,116 @@
-use super::YamlConfig;
-use anyhow::{Result, bail};
+//! Validation logic for YAML-specific constraints.
+//!
+//! Canonical semantic validation now lives in `pavis-core::validate_runtime`.
+//! This module should only contain validation logic that is specific to the
+//! YAML input format or user-friendly error reporting before conversion.
 
-/// Source-specific validation placeholder.
-/// Canonical semantic validation now lives in `pavis-core::validate_runtime_config`.
+use anyhow::{Context, Result};
+use std::collections::HashSet;
+
+use super::types::*;
+
+/// Perform YAML-specific validation on the configuration.
 pub fn validate(config: &mut YamlConfig) -> Result<()> {
+    // 1. Basic field checks
+    if config.upstreams.is_empty() {
+        // It's technically allowed to have no upstreams, but let's warn or check consistency.
+    }
+
+    // 2. Cross-reference checks (Routes -> Upstreams)
+    let upstream_names: HashSet<&str> = config.upstreams.iter().map(|u| u.name.as_str()).collect();
+
+    for vhost in &config.routes {
+        for route in &vhost.paths {
+            for dest in &route.destinations {
+                if !upstream_names.contains(dest.upstream.as_str()) {
+                    return Err(anyhow::anyhow!(
+                        "Route '{}' references unknown upstream '{}'",
+                        route.path,
+                        dest.upstream
+                    ));
+                }
+            }
+        }
+    }
+
+    // 3. Retry Policy Validation (String -> Duration parsing check is already handled by humantime-serde in types.rs for deserialization,
+    // but we can add extra checks if needed. Actually, per_try_timeout is already Duration in types.rs)
     for vhost in &config.routes {
         for route in &vhost.paths {
             if let Some(retry) = &route.retry {
-                for value in &retry.retry_on {
-                    if !value.is_string() {
-                        bail!(
-                            "retry.retry_on entries must be strings (host: {}, path: {})",
-                            vhost.host,
-                            route.path
-                        );
+                // Validate retry_on conditions are strings (serde_json::Value)
+                for cond in &retry.retry_on {
+                    if !cond.is_string() {
+                         return Err(anyhow::anyhow!(
+                            "Retry condition must be a string, found: {:?}",
+                            cond
+                        ));
                     }
                 }
             }
         }
     }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::YamlConfig;
-
-    #[test]
-    fn validate_rejects_non_string_retry_on_values() {
-        let yaml = r#"
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry: {}
-upstreams:
-  - name: "backend"
-    endpoints:
-      - ip: "127.0.0.1"
-        port: 8081
-routes:
-  - host: "example.com"
-    paths:
-      - path: "/"
-        destinations:
-          - upstream: "backend"
-            weight: 1
-        retry:
-          attempts: 2
-          per_try_timeout: "1s"
-          retry_on: [1]
-"#;
-        let mut config = YamlConfig::parse_str(yaml).expect("parse config");
-        let err = super::validate(&mut config).expect_err("validate should fail");
-        assert!(
-            err.to_string()
-                .contains("retry.retry_on entries must be strings"),
-            "unexpected error: {err}"
-        );
-    }
+    use super::*;
+    use serde_json::json;
+    use std::time::Duration;
 
     #[test]
     fn validate_allows_string_retry_on_values() {
-        let yaml = r#"
-server:
-  listen_addr: "0.0.0.0:8080"
-telemetry: {}
-upstreams:
-  - name: "backend"
-    endpoints:
-      - ip: "127.0.0.1"
-        port: 8081
-routes:
-  - host: "example.com"
-    paths:
-      - path: "/"
-        destinations:
-          - upstream: "backend"
-            weight: 1
-        retry:
-          attempts: 2
-          per_try_timeout: "1s"
-          retry_on: ["5xx", "connect-failure"]
-"#;
-        let mut config = YamlConfig::parse_str(yaml).expect("parse config");
-        super::validate(&mut config).expect("validate should succeed");
+        let mut config = YamlConfig {
+            server: Default::default(),
+            telemetry: Default::default(),
+            upstreams: vec![],
+            routes: vec![VirtualHost {
+                host: "*".to_string(),
+                paths: vec![Route {
+                    match_type: Default::default(),
+                    path: "/".to_string(),
+                    timeout: None,
+                    retry: Some(RetryPolicy {
+                        attempts: 1,
+                        per_try_timeout: Duration::from_secs(1),
+                        retry_on: vec![json!("5xx")],
+                    }),
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![],
+                    compiled_regex: None,
+                }],
+            }],
+        };
+        assert!(validate(&mut config).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_non_string_retry_on_values() {
+        let mut config = YamlConfig {
+            server: Default::default(),
+            telemetry: Default::default(),
+            upstreams: vec![],
+            routes: vec![VirtualHost {
+                host: "*".to_string(),
+                paths: vec![Route {
+                    match_type: Default::default(),
+                    path: "/".to_string(),
+                    timeout: None,
+                    retry: Some(RetryPolicy {
+                        attempts: 1,
+                        per_try_timeout: Duration::from_secs(1),
+                        retry_on: vec![json!(500)], // Number not allowed
+                    }),
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![],
+                    compiled_regex: None,
+                }],
+            }],
+        };
+        assert!(validate(&mut config).is_err());
     }
 }

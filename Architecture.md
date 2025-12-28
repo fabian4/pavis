@@ -34,10 +34,10 @@ pavis/
 
 ### 2.2. Dependency Graph
 
-*   **`pavis-core` (Root)**: The foundation. Depends on `rkyv`. No I/O, no Serde.
+*   **`pavis-core` (Root)**: The foundation. Depends on `rkyv`. No I/O, no Serde. Defines the shared `Config` trait and `ConfigSource`.
 *   **`pavis-pvs`**: Implements the `.pvs` protocol crate; depends on `pavis-core`.
-*   **`pavis-adapter-yaml`**: Depends on `pavis-core` and input libs (`serde`, `yaml`).
-*   **`pavis-cli` / `pavis-xds`**: Depend on `pavis-adapter-yaml` (or other adapters) and `pavis-pvs`.
+*   **`pavis-adapter-yaml`**: Depends on `pavis-core` and input libs (`serde`, `yaml`); implements `Config`.
+*   **`pavis-cli` / `pavis-xds`**: Depend on adapters and `pavis-pvs`; orchestrate `Config::load/validate/build`.
 *   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs`. **Must not** depend on adapters or input libs.
 
 ### 2.3. Responsibilities
@@ -46,9 +46,9 @@ pavis/
 | :--- | :--- | :--- |
 | **Protocol Definition** | `pavis-core` | Defines canonical domain structs and optimized `RuntimeConfig`. |
 | **PVS Protocol** | `pavis-pvs` | Defines `.pvs` header/constants and verifies binary integrity; loads/writes `.pvs`. |
-| **Input DTOs** | `pavis-adapter-*` | Defines `YamlConfig`, `XdsConfig` optimized for UX/Defaults. |
-| **Adaptation & Validation** | `pavis-adapter-*` | Source-specific defaults/compat cleanup. Transforms Input DTO -> `RuntimeConfig` and invokes core semantic validation. |
-| **I/O & Orchestration** | Producers | `cli` & `xds` read source configs/streams and invoke adapters to produce `.pvs`; inspection of `.pvs` may be performed by tooling but must not redefine semantics (integrity and version checks only). |
+| **Input DTOs** | `pavis-adapter-*` | Defines `YamlConfig`, `XdsConfig` optimized for UX/Defaults; each implements the `Config` trait. |
+| **Adaptation & Validation** | `pavis-adapter-*` | Source-specific defaults/compat cleanup via `Config::validate`; transforms Input DTO -> `RuntimeConfig` in `Config::build` and invokes core semantic validation. |
+| **I/O & Orchestration** | Producers | `cli` & `xds` read source configs/streams via `Config::load`, then call `validate/build` to produce `.pvs`; inspection of `.pvs` may be performed by tooling but must not redefine semantics (integrity and version checks only). |
 | **Runtime Execution** | `pavis` | Consumes validated `RuntimeConfig`; builds router/upstream/telemetry state. No parsing, decoding, or semantic validation of config. |
 
 ### 2.4. Layering Principles
@@ -304,7 +304,7 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 
 2.  **Source-Specific Validation (`pavis-cli`, `pavis-xds`, adapters)**:
     *   **Input Adaptation.** Enforces constraints tied to the input source (schema, defaults, compatibility).
-    *   Transforms user intent into `RuntimeConfig` and invokes `pavis-core::validate_runtime_config`.
+    *   Transforms user intent into `RuntimeConfig` and invokes `pavis-core::validate_runtime`.
     *   May not redefine or partially duplicate core semantics.
 
 3.  **PVS Integrity Validation (`pavis-pvs`)**:
@@ -319,7 +319,7 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 
 > **Principle:** Semantics live in `pavis-core`; adapters produce validated configs; `pavis-pvs` guarantees binary integrity; runtime executes with minimal defensive guards.
 
-**RuntimeConfig validation entrypoint:** Producers/adapters must call `pavis-core::validate_runtime_config` after adaptation and before serialization. The CLI should rely on the adapter’s conversion pipeline to invoke canonical validation; the runtime must not call it during startup or hot-reload.
+**RuntimeConfig validation entrypoint:** Producers/adapters must call `pavis-core::validate_runtime` after adaptation and before serialization. The CLI should rely on the adapter’s conversion pipeline to invoke canonical validation; the runtime must not call it during startup or hot-reload.
 
 ### 5.2. Crash-Loop Protection
 
