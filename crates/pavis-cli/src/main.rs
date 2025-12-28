@@ -1,12 +1,11 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use rkyv::Deserialize as _;
-use rkyv::ser::{Serializer, serializers::AllocSerializer};
 use std::fs;
 use std::path::PathBuf;
 
 use pavis_adapter_yaml::config as yaml;
 use pavis_core as binary;
+use pavis_pvs as pvs;
 
 #[derive(Parser)]
 #[command(name = "pavis-cli")]
@@ -69,46 +68,7 @@ fn main() -> Result<()> {
 }
 
 fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<()> {
-    let bytes = fs::read(&input_path).context("Failed to read input file")?;
-    if bytes.len() < binary::HEADER_SIZE {
-        return Err(anyhow!("File too small to contain a valid header"));
-    }
-
-    let magic = &bytes[0..4];
-    let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-    let algorithm = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-    let checksum = &bytes[12..44];
-
-    if magic != binary::PAVIS_MAGIC {
-        return Err(anyhow!("Invalid magic bytes. Expected 'PAVS'"));
-    }
-
-    if version != binary::PAVIS_VERSION {
-        return Err(anyhow!(
-            "Version mismatch. File: {}, CLI supports: {}",
-            version,
-            binary::PAVIS_VERSION
-        ));
-    }
-
-    if algorithm != 1 {
-        return Err(anyhow!(
-            "Unsupported hash algorithm: {} (only SHA-256 id=1 is supported)",
-            algorithm
-        ));
-    }
-
-    let payload = &bytes[binary::HEADER_SIZE..];
-    let computed_checksum = binary::compute_checksum(payload);
-    if computed_checksum != checksum {
-        return Err(anyhow!("Checksum mismatch in input file"));
-    }
-
-    let archived = rkyv::check_archived_root::<binary::RuntimeConfig>(payload)
-        .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
-
-    let binary_config: binary::RuntimeConfig = archived.deserialize(&mut rkyv::Infallible)?;
-
+    let binary_config = pvs::load(&input_path)?;
     let yaml_config: yaml::YamlConfig = binary_config.into();
     let yaml_str = serde_yaml::to_string(&yaml_config).context("Failed to serialize to YAML")?;
 
@@ -149,93 +109,30 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     // 2. Convert to binary protocol structs
     let pavis_config: binary::RuntimeConfig = validated.try_into()?;
 
-    // 3. Serialize to Bytes
-    let mut serializer = AllocSerializer::<1024>::default();
-    serializer
-        .serialize_value(&pavis_config)
-        .context("Failed to serialize to Pavis")?;
-    let rkyv_bytes = serializer.into_serializer().into_inner();
-
-    // 4. Compute Checksum
-    let checksum = binary::compute_checksum(&rkyv_bytes);
-
-    // 5. Write to Disk with explicit header
-    let header = binary::PavisHeader {
-        magic: *binary::PAVIS_MAGIC,
-        version: binary::PAVIS_VERSION,
-        algorithm: 1, // SHA-256
-        checksum,
-        _reserved: [0; 20],
-    };
-
-    // We need to serialize the header manually or use rkyv?
-    // PavisHeader is repr(C) so we can just write bytes.
-    // But let's be safe and use a defined way.
-    // Since it's repr(C) and simple types, we can cast to bytes safely if we are careful about endianness.
-    // However, rkyv might add padding.
-    // Let's just write fields manually to be endian-safe and consistent.
-
-    let mut final_bytes = Vec::with_capacity(rkyv_bytes.len() + binary::HEADER_SIZE);
-    final_bytes.extend_from_slice(&header.magic);
-    final_bytes.extend_from_slice(&header.version.to_le_bytes());
-    final_bytes.extend_from_slice(&header.algorithm.to_le_bytes());
-    final_bytes.extend_from_slice(&header.checksum);
-    final_bytes.extend_from_slice(&header._reserved);
-
-    final_bytes.extend_from_slice(&rkyv_bytes);
-
-    fs::write(&output_path, final_bytes).context("Failed to write output file")?;
+    // 3. Write to Disk with explicit header
+    pvs::write(&output_path, &pavis_config)?;
 
     let metadata = fs::metadata(&output_path)?;
     println!("✅ Successfully compiled config to {:?}", output_path);
     println!("   Size: {} bytes", metadata.len());
-    println!("   Protocol Version: {}", binary::PAVIS_VERSION);
+    println!("   Protocol Version: {}", pvs::PAVIS_VERSION);
 
     Ok(())
 }
 
 fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
-    let bytes = fs::read(&input_path).context("Failed to read input file")?;
-
-    if bytes.len() < binary::HEADER_SIZE {
-        return Err(anyhow!("File too small to be a valid Pavis config"));
-    }
-
-    let magic = &bytes[0..4];
-    let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-    let algorithm = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-    let checksum = &bytes[12..44];
-
+    let header = pvs::read_header(&input_path)?;
     println!("--- Pavis Header ---");
-    println!("Magic: {:?}", std::str::from_utf8(magic).unwrap_or("????"));
-    println!("Version: {}", version);
-    println!("Algorithm: {}", algorithm);
-    println!("Checksum: {}", hex::encode(checksum));
+    println!(
+        "Magic: {:?}",
+        std::str::from_utf8(&header.magic).unwrap_or("????")
+    );
+    println!("Version: {}", header.version);
+    println!("Algorithm: {}", header.algorithm);
+    println!("Checksum: {}", hex::encode(header.checksum));
     println!();
 
-    if magic != binary::PAVIS_MAGIC {
-        return Err(anyhow!(
-            "Invalid magic bytes. Expected 'PAVS', found {:?}",
-            std::str::from_utf8(magic)
-        ));
-    }
-
-    if algorithm != 1 {
-        return Err(anyhow!(
-            "Unsupported hash algorithm: {} (only SHA-256 id=1 is supported)",
-            algorithm
-        ));
-    }
-
-    let payload = &bytes[binary::HEADER_SIZE..];
-    let computed_checksum = binary::compute_checksum(payload);
-    if computed_checksum != checksum {
-        return Err(anyhow!("Checksum mismatch in input file"));
-    }
-
-    let archived = rkyv::check_archived_root::<binary::RuntimeConfig>(payload)
-        .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
-    let config: binary::RuntimeConfig = archived.deserialize(&mut rkyv::Infallible)?;
+    let config = pvs::load(&input_path)?;
 
     println!("--- Config Tree ---");
     println!("Listen Address: {}", config.server.listen_addr);
@@ -279,8 +176,9 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
     }
 
     if hex {
+        let bytes = fs::read(&input_path).context("Failed to read input file")?;
         println!("--- Payload Hex Dump ---");
-        let payload = &bytes[binary::HEADER_SIZE..];
+        let payload = &bytes[pvs::HEADER_SIZE..];
         println!("{}", hex::encode(payload));
     }
 

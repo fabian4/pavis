@@ -16,7 +16,7 @@
   - `pavis-core`: protocol + canonical semantics; canonical validation of `RuntimeConfig`; no I/O, parsing, or format concerns.
   - `pavis-adapter-*`: input DTOs, source-specific defaults/validation, transforms to `pavis-core::RuntimeConfig`.
   - `pavis-cli` / `pavis-xds`: I/O orchestration shells that invoke adapters.
-  - Boundary (`pvs` loader under `pavis/src/load`): the only place to read/inspect `.pvs`, do magic/version/checksum checks, and run rkyv byte validation; runtime must not touch archive internals.
+  - `pavis-pvs`: the only place to read/inspect `.pvs`, do magic/version/checksum checks, and run rkyv byte validation; runtime must not touch archive internals.
   - `pavis` runtime: consumes trusted `RuntimeConfig`; only defensive crash-safety checks; no parsing/serde/rkyv, no semantic validation or config decoding (normal runtime state allocation is fine).
 - Dependency direction is one-way: `pavis-core` is foundational; adapters/producers depend on core; runtime depends on core; runtime must not depend on adapters/serde/rkyv. Shared domain types live in core.
 
@@ -24,7 +24,7 @@
 
 - Rust 2018+ layout: no `mod.rs`; use `<module>.rs` with submodules in `<module>/`.
 - Keep `<module>.rs` focused on module structure and `pub use`; avoid business logic there.
-- Split files by responsibility (data types vs business logic vs boundary/I/O) and to prevent circular deps—not by size alone.
+- Split files by responsibility (data types vs business logic vs pvs/I/O) and to prevent circular deps—not by size alone.
 - Extract shared, foundational data structs/enums into `types.rs`/`model.rs` or similar when used by multiple siblings; keep cohesive, local types in place to avoid import noise.
 - Prefer minimal visibility (`pub(super)`, `pub(crate)`); do not widen for convenience.
 - Preserve public APIs and crate boundaries; avoid new cross-layer dependencies. Keep diffs small and readable.

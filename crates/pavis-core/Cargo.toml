@@ -11,7 +11,6 @@ serde = ["dep:serde"]
 
 [dependencies]
 rkyv = { version = "0.7", features = ["validation"] }
-sha2 = "0.10.9"
 serde = { workspace = true, optional = true }
 regex = "1"
 thiserror = "1"

@@ -1,5 +1,5 @@
-use pavis_core::{PAVIS_MAGIC, PAVIS_VERSION, PavisHeader, RuntimeConfig};
-use rkyv::ser::{Serializer, serializers::AllocSerializer};
+use pavis_core::RuntimeConfig;
+use pavis_pvs as pvs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -47,31 +47,9 @@ fn test_checksum_validation_success() {
         routes: vec![],
     };
 
-    let mut serializer = AllocSerializer::<1024>::default();
-    serializer.serialize_value(&config).unwrap();
-    let bytes = serializer.into_serializer().into_inner();
-
-    let checksum = pavis_core::compute_checksum(&bytes);
-
-    let header = PavisHeader {
-        magic: *PAVIS_MAGIC,
-        version: PAVIS_VERSION,
-        algorithm: 1,
-        checksum,
-        _reserved: [0; 20],
-    };
-
-    let mut final_bytes = Vec::new();
-    final_bytes.extend_from_slice(&header.magic);
-    final_bytes.extend_from_slice(&header.version.to_le_bytes());
-    final_bytes.extend_from_slice(&header.algorithm.to_le_bytes());
-    final_bytes.extend_from_slice(&header.checksum);
-    final_bytes.extend_from_slice(&header._reserved);
-    final_bytes.extend_from_slice(&bytes);
-
     let temp_dir = std::env::temp_dir();
     let config_path = temp_dir.join("pavis_checksum_ok.pvs");
-    std::fs::write(&config_path, final_bytes).expect("Failed to write config");
+    pvs::write(&config_path, &config).expect("Failed to write config");
 
     // It should start successfully (and then we kill it)
     let mut child = Command::new(binary)
@@ -126,37 +104,16 @@ fn test_checksum_validation_failure() {
         routes: vec![],
     };
 
-    let mut serializer = AllocSerializer::<1024>::default();
-    serializer.serialize_value(&config).unwrap();
-    let mut bytes = serializer.into_serializer().into_inner().to_vec();
-
-    // Compute valid checksum for original bytes
-    let checksum = pavis_core::compute_checksum(&bytes);
-
-    // Corrupt the payload
-    if !bytes.is_empty() {
-        bytes[0] ^= 0xFF;
-    }
-
-    let header = PavisHeader {
-        magic: *PAVIS_MAGIC,
-        version: PAVIS_VERSION,
-        algorithm: 1,
-        checksum, // Checksum matches ORIGINAL bytes, not corrupted ones
-        _reserved: [0; 20],
-    };
-
-    let mut final_bytes = Vec::new();
-    final_bytes.extend_from_slice(&header.magic);
-    final_bytes.extend_from_slice(&header.version.to_le_bytes());
-    final_bytes.extend_from_slice(&header.algorithm.to_le_bytes());
-    final_bytes.extend_from_slice(&header.checksum);
-    final_bytes.extend_from_slice(&header._reserved);
-    final_bytes.extend_from_slice(&bytes);
-
     let temp_dir = std::env::temp_dir();
     let config_path = temp_dir.join("pavis_checksum_fail.pvs");
-    std::fs::write(&config_path, final_bytes).expect("Failed to write config");
+    pvs::write(&config_path, &config).expect("Failed to write config");
+
+    let mut bytes = std::fs::read(&config_path).expect("Failed to read config");
+    if bytes.len() <= pvs::HEADER_SIZE {
+        panic!("Expected payload to be present for corruption");
+    }
+    bytes[pvs::HEADER_SIZE] ^= 0xFF;
+    std::fs::write(&config_path, bytes).expect("Failed to write corrupted config");
 
     let output = Command::new(binary)
         .arg("--config")

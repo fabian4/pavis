@@ -8,10 +8,10 @@ description = "Pavis CLI"
 [dependencies]
 pavis-core = { path = "../pavis-core" }
 pavis-adapter-yaml = { path = "../pavis-adapter-yaml" }
+pavis-pvs = { path = "../pavis-pvs" }
 clap = { version = "4.5", features = ["derive"] }
 serde_yaml = "0.9"
 anyhow = { workspace = true }
-rkyv = { version = "0.7", features = ["validation"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 hex = "0.4.3"

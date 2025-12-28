@@ -1,5 +1,5 @@
-use pavis_core::{PAVIS_MAGIC, PAVIS_VERSION, PavisHeader, RuntimeConfig};
-use rkyv::ser::{Serializer, serializers::AllocSerializer};
+use pavis_core::RuntimeConfig;
+use pavis_pvs as pvs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -103,33 +103,9 @@ fn test_process_lifecycle_sigint() {
         routes: vec![],
     };
 
-    // Serialize to .pvs format
-    let mut serializer = AllocSerializer::<1024>::default();
-    serializer.serialize_value(&config).unwrap();
-    let bytes = serializer.into_serializer().into_inner();
-
-    // Compute Checksum
-    let checksum = pavis_core::compute_checksum(&bytes);
-
-    let header = PavisHeader {
-        magic: *PAVIS_MAGIC,
-        version: PAVIS_VERSION,
-        algorithm: 1,
-        checksum,
-        _reserved: [0; 20],
-    };
-
-    let mut final_bytes = Vec::new();
-    final_bytes.extend_from_slice(&header.magic);
-    final_bytes.extend_from_slice(&header.version.to_le_bytes());
-    final_bytes.extend_from_slice(&header.algorithm.to_le_bytes());
-    final_bytes.extend_from_slice(&header.checksum);
-    final_bytes.extend_from_slice(&header._reserved);
-    final_bytes.extend_from_slice(&bytes);
-
     let temp_dir = std::env::temp_dir();
     let config_path = temp_dir.join("pavis_lifecycle_test.pvs");
-    std::fs::write(&config_path, final_bytes).expect("Failed to write config");
+    pvs::write(&config_path, &config).expect("Failed to write config");
 
     let mut child = Command::new(binary)
         .arg("--config")

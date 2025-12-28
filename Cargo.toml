@@ -3,6 +3,7 @@ members = [
     "crates/pavis",
     "crates/pavis-cli",
     "crates/pavis-xds",
+    "crates/pavis-pvs",
     "crates/pavis-core",
     "crates/pavis-adapter-yaml",
     "crates/pavis-e2e",

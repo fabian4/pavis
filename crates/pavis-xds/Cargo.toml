@@ -8,6 +8,7 @@ description = "Pavis xds"
 [dependencies]
 pavis-core = { path = "../pavis-core" }
 pavis-adapter-yaml = { path = "../pavis-adapter-yaml" }
+pavis-pvs = { path = "../pavis-pvs" }
 tonic = { version = "0.11", features = ["tls"] }
 prost = "0.12"
 tokio = { workspace = true }
@@ -17,7 +18,6 @@ tracing-subscriber = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
 serde = { workspace = true }
 serde_yaml = "0.9"
-rkyv = { version = "0.7.44", features = ["validation"] }
 
 [build-dependencies]
 tonic-build = "0.11"

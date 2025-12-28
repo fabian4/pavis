@@ -54,7 +54,7 @@
 **Goal:** Define `.pvs` binary format and build tooling.
 
 **`pavis-core`** (Library)
-- [x] `PavisHeader`: Magic bytes (`PAVS`) + version (u32)
+- [x] `PvsHeader`: Magic bytes (`PAVS`) + version (u32)
 - [x] `WireConfig` root struct with rkyv derivation
 - [x] Basic types: `Upstream`, `Endpoint`, `VirtualHost`, `Route`
 - [x] `LoadBalancer` enum (RoundRobin, Random)
