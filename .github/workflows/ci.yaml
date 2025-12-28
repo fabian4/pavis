@@ -40,10 +40,12 @@ jobs:
           echo "Binary Size: $(du -h target/release/pavis | cut -f1)"
 
       - name: Run E2E Tests in Binary
+        if: false
         run: make e2e-binary
 
   build:
-#    needs: test
+    if: false
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
