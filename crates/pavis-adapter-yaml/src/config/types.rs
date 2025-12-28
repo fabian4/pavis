@@ -18,6 +18,12 @@ impl Deref for ValidatedConfig {
     }
 }
 
+impl ValidatedConfig {
+    pub(super) fn into_inner(self) -> YamlConfig {
+        self.0
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct YamlConfig {
     pub server: ServerConfig,
@@ -27,6 +33,10 @@ pub struct YamlConfig {
 }
 
 impl YamlConfig {
+    pub fn parse_str(content: &str) -> Result<Self> {
+        serde_yaml::from_str(content).map_err(Into::into)
+    }
+
     pub fn validate(mut self) -> Result<ValidatedConfig> {
         validation::validate(&mut self)?;
         Ok(ValidatedConfig(self))

@@ -128,6 +128,14 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
     }
 }
 
+impl TryFrom<ValidatedConfig> for pavis_core::RuntimeConfig {
+    type Error = anyhow::Error;
+
+    fn try_from(src: ValidatedConfig) -> Result<Self, Self::Error> {
+        Self::try_from(src.into_inner())
+    }
+}
+
 impl From<pavis_core::RuntimeConfig> for YamlConfig {
     fn from(binary: pavis_core::RuntimeConfig) -> Self {
         let mut upstreams = Vec::new();

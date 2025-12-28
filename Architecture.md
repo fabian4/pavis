@@ -45,7 +45,7 @@ pavis/
 | **Protocol Definition** | `pavis-core` | Defines `.pvs` binary format and optimized `RuntimeConfig`. |
 | **Input DTOs** | `pavis-adapter-*` | Defines `YamlConfig`, `XdsConfig` optimized for UX/Defaults. |
 | **Adaptation & Validation** | `pavis-adapter-*` | Source-specific defaults/compat cleanup. Transforms Input DTO -> `RuntimeConfig` and invokes core semantic validation. |
-| **I/O & Orchestration** | Producers | `cli` & `xds` handle file reading, network streams, and invoke adapter. |
+| **I/O & Orchestration** | Producers | `cli` & `xds` read source configs/streams and invoke adapters to produce `.pvs`; inspection of `.pvs` may be performed by tooling but must not redefine semantics (integrity and version checks only). |
 | **Runtime Execution** | `pavis` | Consumes validated `RuntimeConfig`; builds router/upstream/telemetry state. No parsing, decoding, or semantic validation of config. |
 
 ### 2.4. Layering Principles

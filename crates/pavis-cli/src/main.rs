@@ -1,7 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use rkyv::Deserialize as _;
-use rkyv::check_archived_root;
 use rkyv::ser::{Serializer, serializers::AllocSerializer};
 use std::fs;
 use std::path::PathBuf;
@@ -92,21 +91,24 @@ fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<
         ));
     }
 
-    let payload = &bytes[binary::HEADER_SIZE..];
-
-    if algorithm == 1 {
-        let computed_checksum = binary::compute_checksum(payload);
-        if computed_checksum != checksum {
-            return Err(anyhow!("Checksum mismatch in input file"));
-        }
-    } else if algorithm != 0 {
-        return Err(anyhow!("Unsupported hash algorithm: {}", algorithm));
+    if algorithm != 1 {
+        return Err(anyhow!(
+            "Unsupported hash algorithm: {} (only SHA-256 id=1 is supported)",
+            algorithm
+        ));
     }
 
-    let archived = check_archived_root::<binary::RuntimeConfig>(payload)
+    let payload = &bytes[binary::HEADER_SIZE..];
+    let computed_checksum = binary::compute_checksum(payload);
+    if computed_checksum != checksum {
+        return Err(anyhow!("Checksum mismatch in input file"));
+    }
+
+    let archived = rkyv::check_archived_root::<binary::RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
 
     let binary_config: binary::RuntimeConfig = archived.deserialize(&mut rkyv::Infallible)?;
+
     let yaml_config: yaml::YamlConfig = binary_config.into();
     let yaml_str = serde_yaml::to_string(&yaml_config).context("Failed to serialize to YAML")?;
 
@@ -127,11 +129,11 @@ fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<
 
 fn validate_yaml(input_path: PathBuf) -> Result<()> {
     let content = fs::read_to_string(&input_path).context("Failed to read input file")?;
-    let yaml_config: yaml::YamlConfig =
-        serde_yaml::from_str(&content).context("Failed to parse YAML")?;
-    yaml_config
+    let yaml_config = yaml::YamlConfig::parse_str(&content).context("Failed to parse YAML")?;
+    let validated = yaml_config
         .validate()
         .context("Configuration validation failed")?;
+    let _runtime: binary::RuntimeConfig = validated.try_into()?;
     println!("✅ Configuration is valid: {:?}", input_path);
     Ok(())
 }
@@ -141,15 +143,11 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let content = fs::read_to_string(&input_path).context("Failed to read input file")?;
 
     // 1. Deserialize and Validate YAML
-    let yaml_config: yaml::YamlConfig =
-        serde_yaml::from_str(&content).context("Failed to parse YAML")?;
-    yaml_config
-        .clone()
-        .validate()
-        .context("Invalid configuration")?;
+    let yaml_config = yaml::YamlConfig::parse_str(&content).context("Failed to parse YAML")?;
+    let validated = yaml_config.validate().context("Invalid configuration")?;
 
     // 2. Convert to binary protocol structs
-    let pavis_config: binary::RuntimeConfig = yaml_config.try_into()?;
+    let pavis_config: binary::RuntimeConfig = validated.try_into()?;
 
     // 3. Serialize to Bytes
     let mut serializer = AllocSerializer::<1024>::default();
@@ -199,7 +197,6 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
 fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
     let bytes = fs::read(&input_path).context("Failed to read input file")?;
 
-    // Check Header manually first for better error messages
     if bytes.len() < binary::HEADER_SIZE {
         return Err(anyhow!("File too small to be a valid Pavis config"));
     }
@@ -223,64 +220,68 @@ fn inspect_config(input_path: PathBuf, hex: bool) -> Result<()> {
         ));
     }
 
-    // Validate structural integrity with check_bytes (skip our header)
+    if algorithm != 1 {
+        return Err(anyhow!(
+            "Unsupported hash algorithm: {} (only SHA-256 id=1 is supported)",
+            algorithm
+        ));
+    }
+
     let payload = &bytes[binary::HEADER_SIZE..];
-    let archived = check_archived_root::<binary::RuntimeConfig>(payload)
+    let computed_checksum = binary::compute_checksum(payload);
+    if computed_checksum != checksum {
+        return Err(anyhow!("Checksum mismatch in input file"));
+    }
+
+    let archived = rkyv::check_archived_root::<binary::RuntimeConfig>(payload)
         .map_err(|e| anyhow!("Binary integrity check failed: {:?}", e))?;
+    let config: binary::RuntimeConfig = archived.deserialize(&mut rkyv::Infallible)?;
 
     println!("--- Config Tree ---");
-    println!("Listen Address: {}", archived.server.listen_addr);
-    println!("Upstreams ({}):", archived.upstreams.len());
-    for u in archived.upstreams.iter() {
+    println!("Listen Address: {}", config.server.listen_addr);
+    println!("Upstreams ({}):", config.upstreams.len());
+    for u in &config.upstreams {
         let lb_str = match u.load_balancer {
-            binary::ArchivedLoadBalancer::RoundRobin => "RoundRobin",
-            binary::ArchivedLoadBalancer::Random => "Random",
+            binary::LoadBalancer::RoundRobin => "RoundRobin",
+            binary::LoadBalancer::Random => "Random",
         };
         let hv_str = match u.http_version {
-            binary::ArchivedHttpVersion::H1 => "H1",
-            binary::ArchivedHttpVersion::H2 => "H2",
-            binary::ArchivedHttpVersion::H2H1 => "H2H1",
+            binary::HttpVersion::H1 => "H1",
+            binary::HttpVersion::H2 => "H2",
+            binary::HttpVersion::H2H1 => "H2H1",
         };
-        println!("  - Name: {}", u.name);
-        println!("    LB: {}", lb_str);
-        println!("    HTTP: {}", hv_str);
-        if let rkyv::option::ArchivedOption::Some(tls) = &u.tls {
-            println!("    TLS: Enabled (SNI: {:?})", tls.sni);
-        } else {
-            println!("    TLS: Disabled");
-        }
-        println!("    Endpoints ({}):", u.endpoints.len());
-        for e in u.endpoints.iter() {
-            println!("      - {}:{} (weight: {})", e.ip, e.port, e.weight);
+        println!(
+            "- Upstream: {}, LB: {}, HTTP: {}, endpoints: {}",
+            u.name,
+            lb_str,
+            hv_str,
+            u.endpoints.len()
+        );
+        for ep in &u.endpoints {
+            println!("  - {}:{} weight={}", ep.ip, ep.port, ep.weight);
         }
     }
 
-    println!("Virtual Hosts ({}):", archived.routes.len());
-    for v in archived.routes.iter() {
-        println!("  - Host: {}", v.host);
-        for p in v.paths.iter() {
-            let mt_str = match p.match_type {
-                binary::ArchivedMatchType::Prefix => "Prefix",
-                binary::ArchivedMatchType::Exact => "Exact",
-                binary::ArchivedMatchType::Regex => "Regex",
+    println!("Routes ({}):", config.routes.len());
+    for vhost in &config.routes {
+        println!("Host: {}", vhost.host);
+        for route in &vhost.paths {
+            let m = match route.match_type {
+                binary::MatchType::Prefix => "prefix",
+                binary::MatchType::Exact => "exact",
+                binary::MatchType::Regex => "regex",
             };
-            println!("    Path: {} ({})", p.path, mt_str);
-            for d in p.destinations.iter() {
-                println!("      -> {} (weight: {})", d.upstream, d.weight);
+            println!("  - [{}] {}", m, route.path);
+            for dest in &route.destinations {
+                println!("      -> {} (weight {})", dest.upstream, dest.weight);
             }
         }
     }
 
     if hex {
-        println!("\n--- Hex Dump (Payload) ---");
-        // Simple hex dump of the payload part
-        for (i, chunk) in bytes[binary::HEADER_SIZE..].chunks(16).enumerate() {
-            print!("{:08x}: ", i * 16);
-            for b in chunk {
-                print!("{:02x} ", b);
-            }
-            println!();
-        }
+        println!("--- Payload Hex Dump ---");
+        let payload = &bytes[binary::HEADER_SIZE..];
+        println!("{}", hex::encode(payload));
     }
 
     Ok(())
