@@ -7,17 +7,21 @@
 ### 1. PVS Binary File Operations
 Generate, parse, and validate the optimized binary protocol.
 
-- **Generate**: Compile high-level configurations (like YAML) into `.pvs` binary files.
+- **gen**: Compile high-level configurations (like YAML) into `.pvs` binary files.
   ```bash
-  pavctl generate <input_file> -o <output_file>
+  pavctl gen <input_file> [output_file]
   ```
-- **Inspect/Parse**: View the logical configuration tree and protocol metadata.
+- **view**: View the logical configuration tree and protocol metadata.
   ```bash
-  pavctl inspect <pvs_file>
+  pavctl view [-x] <pvs_file>
   ```
-- **Validate**: Verify binary integrity (magic bytes, version, checksum).
+- **check**: Verify configuration integrity and semantics.
   ```bash
-  pavctl validate <pvs_file>
+  pavctl check <input_file>
+  ```
+- **convert**: Reconstruct source configuration from a binary file.
+  ```bash
+  pavctl convert <pvs_file> [output_file]
   ```
 
 ### 2. Runtime Interaction (Planned)

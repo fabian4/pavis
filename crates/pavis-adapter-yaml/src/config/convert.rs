@@ -378,7 +378,7 @@ routes:
                 pingora: None,
                 service_name: None,
                 prometheus_addr: None,
-                access_log: AccessLogConfig::False,
+                access_log: AccessLogConfig::Disabled,
                 tracing: None,
             },
             upstreams: vec![Upstream {
@@ -430,7 +430,7 @@ routes:
         assert_eq!(config.server.listen_addr, "127.0.0.1:8080");
         assert_eq!(config.server.worker_threads, Some(2));
         assert_eq!(config.telemetry.level, Some("info".to_string()));
-        assert_eq!(config.telemetry.access_log, AccessLogConfig::False);
+        assert_eq!(config.telemetry.access_log, AccessLogConfig::Disabled);
         let upstream = &config.upstreams[0];
         assert_eq!(upstream.load_balancer, LoadBalancer::RoundRobin);
         assert_eq!(upstream.http_version, HttpVersion::H2);

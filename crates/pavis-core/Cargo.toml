@@ -17,3 +17,4 @@ thiserror = "1"
 http = "1.4"
 
 [dev-dependencies]
+serde_json = "1.0"

@@ -60,14 +60,14 @@ make help
 
 ## pavctl
 
-`pavctl` is the primary CLI tool for managing Pavis. It is used to generate binary `.pvs` configurations, inspect them, and will eventually manage the proxy runtime.
+`pavctl` is the primary CLI tool for managing Pavis. It is used to generate binary `.pvs` configurations, view them, and will eventually manage the proxy runtime.
 
 ```bash
-# Generate a binary config from YAML
-cargo run --bin pavctl -- generate -i config.yaml -o config.pvs
+# Generate a binary config from YAML (auto-names to config.pvs)
+cargo run --bin pavctl -- gen config.yaml
 
-# Inspect a binary config
-cargo run --bin pavctl -- inspect -i config.pvs
+# View a binary config
+cargo run --bin pavctl -- view config.pvs
 ```
 
 For performance testing, see the **[Benchmark README](./bench/README.md)**.

@@ -298,17 +298,18 @@ Request -> Proxy -> Router (Match) -> Upstream Manager (Select Endpoint) -> Clus
 ### 5.1. Command Categories
 
 1.  **Binary Protocol Tooling**:
-    *   **Generate**: Compiles high-level configurations (YAML/xDS) into optimized `.pvs` payloads.
-    *   **Parse/Inspect**: Provides human-readable views of binary state and protocol headers.
-    *   **Validate**: Ensures `.pvs` files are free from corruption and semantic errors.
+    *   **gen**: Compiles high-level configurations (YAML/xDS) into optimized `.pvs` payloads.
+    *   **view**: Provides human-readable views of binary state and protocol headers.
+    *   **check**: Ensures configurations are free from corruption and semantic errors.
+    *   **convert**: Reconstructs source configurations from binary files.
 
 2.  **Runtime Orchestration**:
-    *   **Apply**: Dynamically pushes configuration to active proxy instances via the xDS bridge.
-    *   **Status/Logs**: Real-time health monitoring and troubleshooting.
+    *   **apply**: Dynamically pushes configuration to active proxy instances via the xDS bridge.
+    *   **status/logs**: Real-time health monitoring and troubleshooting.
 
 3.  **Configuration Management**:
-    *   **Rollback**: Instant recovery by reverting to previous configuration versions.
-    *   **Simulate**: Predicts routing outcomes for a given configuration without impacting traffic.
+    *   **rollback**: Instant recovery by reverting to previous configuration versions.
+    *   **simulate**: Predicts routing outcomes for a given configuration without impacting traffic.
 
 ## 6. Safety & Resilience
 

@@ -125,15 +125,10 @@ async fn test_tls_support() {
         let pavctl_bin = find_binary("pavctl").expect("pavctl binary not found");
         let output_pvs = config_path.with_extension("pvs");
 
-        println!(
-            "🔨 Generating PVS from YAML: {:?} -> {:?}",
-            config_path, output_pvs
-        );
+        println!("🔨 Generating PVS from YAML: {config_path:?} -> {output_pvs:?}");
         let status = Command::new(&pavctl_bin)
-            .arg("generate")
-            .arg("--input")
+            .arg("gen")
             .arg(&config_path)
-            .arg("--output")
             .arg(&output_pvs)
             .status()
             .expect("Failed to run pavctl");

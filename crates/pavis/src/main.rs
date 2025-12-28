@@ -83,7 +83,7 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let access_log_desc = match &config.telemetry.access_log {
-        AccessLogConfig::False => "off".to_string(),
+        AccessLogConfig::Disabled => "off".to_string(),
         AccessLogConfig::Stdout => "stdout".to_string(),
         AccessLogConfig::File(path) => format!("file:{}", path),
     };

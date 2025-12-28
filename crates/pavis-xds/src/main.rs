@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use pavis_adapter_yaml::config as yaml;
-use pavis_core::{self as binary, Config, ConfigSource};
+use pavis_core::{Config, ConfigSource, RuntimeConfig};
 use pavis_pvs as pvs;
 
 #[derive(Parser)]
@@ -45,7 +45,7 @@ fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     Config::validate(&yaml_config).context("Invalid configuration")?;
 
     // Convert to Pavis Structs
-    let pavis_config: binary::RuntimeConfig = yaml_config.build()?;
+    let pavis_config: RuntimeConfig = yaml_config.build()?;
 
     // 3. Write to Disk with explicit header
     pvs::write(&output_path, &pavis_config)?;

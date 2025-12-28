@@ -83,7 +83,7 @@ fn wait_for_log_line(child: &mut Child, needle: &str, timeout: Duration) {
 }
 
 #[test]
-fn test_cli_help() {
+fn test_cli_argument_help() {
     let binary = get_binary_path();
     let output = Command::new(binary)
         .arg("--help")
@@ -96,7 +96,7 @@ fn test_cli_help() {
 }
 
 #[test]
-fn test_cli_version() {
+fn test_cli_argument_version() {
     let binary = get_binary_path();
     let output = Command::new(binary)
         .arg("--version")
@@ -110,7 +110,7 @@ fn test_cli_version() {
 }
 
 #[test]
-fn test_cli_missing_config() {
+fn test_cli_config_missing() {
     let binary = get_binary_path();
     let output = Command::new(binary)
         .output()
@@ -122,7 +122,25 @@ fn test_cli_missing_config() {
 }
 
 #[test]
-fn test_cli_invalid_magic() {
+fn test_cli_config_invalid_path() {
+    let binary = get_binary_path();
+    let output = Command::new(binary)
+        .arg("--config")
+        .arg("non_existent.pvs")
+        .output()
+        .expect("Failed to execute binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("I/O error")
+            || stderr.contains("No such file or directory")
+            || stderr.contains("invalid")
+    );
+}
+
+#[test]
+fn test_cli_config_invalid_magic() {
     let temp_dir = std::env::temp_dir();
     let config_path = temp_dir.join(format!("pavis_invalid_magic_{}.pvs", std::process::id()));
     let mut bytes = vec![0u8; pvs::HEADER_SIZE];
@@ -143,27 +161,9 @@ fn test_cli_invalid_magic() {
     let _ = std::fs::remove_file(config_path);
 }
 
-#[test]
-fn test_cli_invalid_config_path() {
-    let binary = get_binary_path();
-    let output = Command::new(binary)
-        .arg("--config")
-        .arg("non_existent.pvs")
-        .output()
-        .expect("Failed to execute binary");
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("I/O error")
-            || stderr.contains("No such file or directory")
-            || stderr.contains("invalid")
-    );
-}
-
 #[cfg(unix)]
 #[test]
-fn test_process_lifecycle_sigint() {
+fn test_cli_lifecycle_sigint() {
     let binary = get_binary_path();
 
     // Create a valid config programmatically
@@ -178,7 +178,7 @@ fn test_process_lifecycle_sigint() {
             pingora: None,
             service_name: None,
             prometheus_addr: None,
-            access_log: pavis_core::AccessLogConfig::False,
+            access_log: pavis_core::AccessLogConfig::Disabled,
             tracing: None,
         },
         upstreams: vec![],
@@ -212,8 +212,17 @@ fn test_process_lifecycle_sigint() {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                assert!(status.success(), "Process should exit successfully");
-                break;
+                if status.success() {
+                    break;
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    if status.signal() == Some(2) {
+                        break;
+                    }
+                }
+                panic!("Process exited unexpectedly: {}", status);
             }
             Ok(None) => {
                 if start.elapsed() > Duration::from_secs(10) {

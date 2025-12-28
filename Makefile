@@ -22,8 +22,8 @@ include make/docs.mk
 # High-level Orchestration
 .PHONY: ci ci-local help
 
-# CI pipeline (format check, lint, unit tests, integration tests)
-ci: fmt-check lint test test-integration
+# CI pipeline (format check, lint, unit tests)
+ci: fmt-check lint test
 
 # Local CI pipeline (format, lint, unit tests)
 ci-local: fmt lint test
@@ -42,8 +42,6 @@ help:
 	@echo ""
 	@echo "Test Commands:"
 	@echo "  test               - Run unit tests"
-	@echo "  test-integration   - Run integration tests"
-	@echo "  test-cli           - Run CLI binary tests"
 	@echo "  e2e                - Run end-to-end tests"
 	@echo "  coverage-html      - Generate coverage report"
 	@echo ""

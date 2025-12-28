@@ -24,15 +24,15 @@
 ## 2. Test Structure
 *   **Naming:** Generally clear (e.g., `test_find_route_regex_match`, `test_upstream_tls`).
 *   **AAA Pattern:** Consistently followed in unit tests.
-*   **Stability:** `checksum.rs` and `cli.rs` use `std::thread::sleep` for process synchronization. This is brittle; recommended to move toward port-probing or log-watching.
+*   **Stability:** `config_integrity.rs` and `cli_features.rs` use `std::thread::sleep` for process synchronization. This is brittle; recommended to move toward port-probing or log-watching.
 
 ## 3. Test Maintenance
 *   **Isolation:** Unit tests are pure and parallel-safe. Integration tests use temporary directories and unique ports.
-*   **Redundancy**: `checksum.rs` and `cli.rs` overlap significantly in "black-box" binary testing and could be consolidated.
+*   **Redundancy**: `config_integrity.rs` and `cli_features.rs` overlap significantly in "black-box" binary testing and could be consolidated.
 
 ## 4. Error Handling
 *   **Coverage:** Validation tests explicitly check for error variants (`matches!(err, CoreValidationError::...)`).
-*   **Simulation:** `checksum.rs` effectively simulates file corruption (bit flipping) to verify integrity checks.
+*   **Simulation:** `config_integrity.rs` effectively simulates file corruption (bit flipping) to verify integrity checks.
 
 ## 5. Performance
 *   **Speed:** Unit tests are instantaneous.

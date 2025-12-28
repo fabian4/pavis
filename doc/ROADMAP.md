@@ -66,18 +66,18 @@
 - [x] Backwards compatibility validation between versions
 
 **`pavctl`** (Binary)
-- [x] `generate` command: YAML → `.pvs`
+- [x] `gen` command: YAML → `.pvs`
   - [x] Parse YAML config with serde
   - [x] Convert to `pavis-core` structs
   - [x] Serialize with rkyv and write with header
   - [x] Validate references (routes → upstreams)
   - [x] Output file size and compression stats
-- [x] `inspect` command: Debug binary files
+- [x] `view` command: Debug binary files
   - [x] Display header (magic, version)
   - [x] Pretty-print config tree
   - [x] Show binary size and structure stats
   - [x] Hex dump mode for debugging
-- [x] `validate` command: Check YAML without compiling
+- [x] `check` command: Check YAML without compiling
 - [x] `convert` command: Convert between versions
 - [ ] `apply` command: Push config to runtime (Phase 3)
 - [ ] `status` command: View runtime health (Phase 8)

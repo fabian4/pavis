@@ -25,32 +25,33 @@ pub enum CoreValidationError {
         route: String,
         error: String,
     },
-    #[error("route path is not normalized (host '{host}', path '{path}')")]
-    PathNotNormalized { host: String, path: String },
-    #[error("duplicate route (host '{host}', match '{match_type}', path '{path}')")]
-    DuplicateRoute {
-        host: String,
-        match_type: String,
-        path: String,
-    },
-    #[error("regex path too long (host '{host}', length {length}, max {max})")]
-    RegexTooLong {
-        host: String,
-        length: usize,
-        max: usize,
-    },
     #[error("{context}: header name cannot be empty")]
     EmptyHeaderName { context: String },
     #[error("{context}: invalid header name '{name}'")]
     InvalidHeaderName { context: String, name: String },
     #[error("{context}: invalid header value for '{name}'")]
     InvalidHeaderValue { context: String, name: String },
+    #[error("duplicate route '{route}' (match type {match_type:?}) for host '{host}'")]
+    DuplicateRoute {
+        host: String,
+        route: String,
+        match_type: MatchType,
+    },
+    #[error(
+        "path '{0}' is not normalized (must start with / and not have trailing slashes unless it is /)"
+    )]
+    PathNotNormalized(String),
+    #[error("regex for route '{route}' is too complex/long")]
+    RegexTooLong { route: String },
 }
 
 pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
 
 /// Validate canonical invariants on a fully constructed `RuntimeConfig`.
 /// This is intended to be called after parsing/adaptation and before runtime use.
+///
+/// # Errors
+/// Returns `CoreValidationError` if any semantic invariants are violated.
 pub fn validate_runtime(config: &RuntimeConfig) -> CoreValidationResult<()> {
     validate_server(config.server.listen_addr, config.server.tls.as_ref())?;
     validate_upstreams(&config.upstreams)?;
@@ -58,15 +59,10 @@ pub fn validate_runtime(config: &RuntimeConfig) -> CoreValidationResult<()> {
     Ok(())
 }
 
-const MAX_REGEX_LEN: usize = 2048;
-
-fn validate_server(
+const fn validate_server(
     _listen_addr: SocketAddr,
     tls: Option<&crate::runtime::TlsConfig>,
 ) -> CoreValidationResult<()> {
-    // SocketAddr is strictly typed, no parsing check needed.
-    // If we wanted to ban specific ports, we could do it here.
-
     if let Some(tls_cfg) = tls
         && tls_cfg.enabled
         && (tls_cfg.cert_path.is_none() || tls_cfg.key_path.is_none())
@@ -90,7 +86,6 @@ fn validate_upstreams(upstreams: &[Upstream]) -> CoreValidationResult<()> {
             if ep.weight == 0 {
                 return Err(CoreValidationError::EndpointWeightZero(u.name.clone()));
             }
-            // IpAddr is strictly typed.
         }
     }
     Ok(())
@@ -100,35 +95,31 @@ fn validate_routes(routes: &[VirtualHost], upstreams: &[Upstream]) -> CoreValida
     let upstream_names: HashSet<&str> = upstreams.iter().map(|u| u.name.as_str()).collect();
 
     for vhost in routes {
-        let mut seen_routes: HashSet<(u8, String)> = HashSet::new();
+        let mut seen_routes = HashSet::new();
         for route in &vhost.paths {
-            let normalized = normalize_path(&route.path);
-            if normalized != route.path {
-                return Err(CoreValidationError::PathNotNormalized {
-                    host: vhost.host.clone(),
-                    path: route.path.clone(),
-                });
+            // Path Normalization Check (Skipped for Regex)
+            if route.match_type != MatchType::Regex
+                && (!route.path.starts_with('/')
+                    || (route.path.len() > 1 && route.path.ends_with('/')))
+            {
+                return Err(CoreValidationError::PathNotNormalized(route.path.clone()));
             }
 
-            let match_key = match route.match_type {
-                MatchType::Prefix => 0,
-                MatchType::Exact => 1,
-                MatchType::Regex => 2,
-            };
-            if !seen_routes.insert((match_key, normalized.to_string())) {
+            // Duplicate Route Detection
+            let match_key = route.match_type;
+            let normalized = &route.path;
+            if !seen_routes.insert((match_key, normalized.clone())) {
                 return Err(CoreValidationError::DuplicateRoute {
                     host: vhost.host.clone(),
-                    match_type: format!("{:?}", route.match_type).to_lowercase(),
-                    path: route.path.clone(),
+                    route: route.path.clone(),
+                    match_type: route.match_type,
                 });
             }
 
             if route.match_type == MatchType::Regex {
-                if route.path.len() > MAX_REGEX_LEN {
+                if route.path.len() > 2048 {
                     return Err(CoreValidationError::RegexTooLong {
-                        host: vhost.host.clone(),
-                        length: route.path.len(),
-                        max: MAX_REGEX_LEN,
+                        route: route.path.clone(),
                     });
                 }
                 let _compiled =
@@ -208,23 +199,6 @@ fn validate_headers(headers: &HeaderOperations, context: &str) -> CoreValidation
     Ok(())
 }
 
-fn normalize_path(path: &str) -> String {
-    let mut normalized = String::with_capacity(path.len());
-    let mut prev_slash = false;
-    for ch in path.chars() {
-        if ch == '/' {
-            if !prev_slash {
-                normalized.push(ch);
-            }
-            prev_slash = true;
-        } else {
-            normalized.push(ch);
-            prev_slash = false;
-        }
-    }
-    normalized
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,7 +212,7 @@ mod tests {
     fn base_config() -> RuntimeConfig {
         RuntimeConfig {
             server: ServerConfig {
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
+                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
                 worker_threads: None,
                 tls: None,
             },
@@ -269,7 +243,7 @@ mod tests {
                     sni: Some("example.com".to_string()),
                 }),
                 endpoints: vec![Endpoint {
-                    ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
                     port: 80,
                     weight: 1,
                 }],
@@ -348,47 +322,10 @@ mod tests {
     }
 
     #[test]
-    fn path_not_normalized_fails() {
-        let mut cfg = base_config();
-        cfg.routes[0].paths[0].path = "//api".to_string();
-        let err = validate_runtime(&cfg).unwrap_err();
-        assert!(matches!(err, CoreValidationError::PathNotNormalized { .. }));
-    }
-
-    #[test]
-    fn duplicate_exact_route_fails() {
-        let mut cfg = base_config();
-        cfg.routes[0].paths[0].match_type = MatchType::Exact;
-        let duplicate = cfg.routes[0].paths[0].clone();
-        cfg.routes[0].paths.push(duplicate);
-        let err = validate_runtime(&cfg).unwrap_err();
-        assert!(matches!(err, CoreValidationError::DuplicateRoute { .. }));
-    }
-
-    #[test]
-    fn duplicate_prefix_route_fails() {
-        let mut cfg = base_config();
-        cfg.routes[0].paths[0].match_type = MatchType::Prefix;
-        let duplicate = cfg.routes[0].paths[0].clone();
-        cfg.routes[0].paths.push(duplicate);
-        let err = validate_runtime(&cfg).unwrap_err();
-        assert!(matches!(err, CoreValidationError::DuplicateRoute { .. }));
-    }
-
-    #[test]
-    fn regex_too_long_fails() {
-        let mut cfg = base_config();
-        cfg.routes[0].paths[0].match_type = MatchType::Regex;
-        cfg.routes[0].paths[0].path = "a".repeat(MAX_REGEX_LEN + 1);
-        let err = validate_runtime(&cfg).unwrap_err();
-        assert!(matches!(err, CoreValidationError::RegexTooLong { .. }));
-    }
-
-    #[test]
     fn invalid_header_name_fails() {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
-            vec![("".to_string(), "v".to_string())];
+            vec![(String::new(), "v".to_string())];
         let err = validate_runtime(&cfg).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
@@ -409,7 +346,7 @@ mod tests {
             .request_headers
             .as_mut()
             .unwrap()
-            .remove = vec!["".to_string()];
+            .remove = vec![String::new()];
         let err = validate_runtime(&cfg).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
@@ -421,7 +358,7 @@ mod tests {
             .request_headers
             .as_mut()
             .unwrap()
-            .remove = vec!["bad header".to_string()];
+            .remove = vec![("bad header".to_string())];
         let err = validate_runtime(&cfg).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
@@ -452,7 +389,7 @@ mod tests {
     #[test]
     fn empty_upstream_name_fails() {
         let mut cfg = base_config();
-        cfg.upstreams[0].name = "".to_string();
+        cfg.upstreams[0].name = String::new();
         let err = validate_runtime(&cfg).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyUpstreamName));
     }
@@ -495,5 +432,46 @@ mod tests {
             err,
             CoreValidationError::DestinationWeightZero(_, _, _)
         ));
+    }
+
+    #[test]
+    fn path_not_normalized_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].path = "api".to_string();
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::PathNotNormalized(_)));
+
+        cfg.routes[0].paths[0].path = "/api/".to_string();
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::PathNotNormalized(_)));
+    }
+
+    #[test]
+    fn duplicate_prefix_route_fails() {
+        let mut cfg = base_config();
+        let mut route = cfg.routes[0].paths[0].clone();
+        route.path = "/api".to_string();
+        cfg.routes[0].paths = vec![route.clone(), route];
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::DuplicateRoute { .. }));
+    }
+
+    #[test]
+    fn duplicate_exact_route_fails() {
+        let mut cfg = base_config();
+        let mut route = cfg.routes[0].paths[0].clone();
+        route.match_type = MatchType::Exact;
+        cfg.routes[0].paths = vec![route.clone(), route];
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::DuplicateRoute { .. }));
+    }
+
+    #[test]
+    fn regex_too_long_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].match_type = MatchType::Regex;
+        cfg.routes[0].paths[0].path = "a".repeat(2049);
+        let err = validate_runtime(&cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::RegexTooLong { .. }));
     }
 }

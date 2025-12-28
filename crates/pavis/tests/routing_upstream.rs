@@ -19,7 +19,7 @@ fn base_config() -> Config {
             pingora: None,
             service_name: None,
             prometheus_addr: None,
-            access_log: AccessLogConfig::False,
+            access_log: AccessLogConfig::Disabled,
             tracing: None,
         },
         upstreams: vec![],
@@ -28,7 +28,7 @@ fn base_config() -> Config {
 }
 
 #[test]
-fn test_configuration_driven_routing() {
+fn test_routing_prefix_match() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
         name: "backend-a".to_string(),
@@ -75,7 +75,7 @@ fn test_configuration_driven_routing() {
 }
 
 #[test]
-fn test_configuration_driven_routing_exact_and_regex() {
+fn test_routing_exact_and_regex_match() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
         name: "backend-exact".to_string(),
@@ -155,7 +155,7 @@ fn test_configuration_driven_routing_exact_and_regex() {
 }
 
 #[test]
-fn test_vhost_precedence_and_multiple_hosts() {
+fn test_routing_vhost_precedence() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
         name: "api-upstream".to_string(),
@@ -272,27 +272,7 @@ fn test_vhost_precedence_and_multiple_hosts() {
 }
 
 #[test]
-fn test_upstream_with_no_endpoints() {
-    let mut config = base_config();
-    config.upstreams.push(Upstream {
-        name: "empty-upstream".to_string(),
-        load_balancer: LoadBalancer::Random,
-        http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig {
-            idle_timeout_secs: 60,
-            connection_timeout_secs: 5,
-        },
-        tls: None,
-        endpoints: vec![],
-    });
-
-    let manager = Manager::new(&config.upstreams);
-    let cluster = manager.get("empty-upstream").expect("Cluster not found");
-    assert!(cluster.select_endpoint().is_none());
-}
-
-#[test]
-fn test_load_balancer_state_correctness() {
+fn test_upstream_load_balancer_round_robin() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
         name: "backend-rr".to_string(),
@@ -334,7 +314,27 @@ fn test_load_balancer_state_correctness() {
 }
 
 #[test]
-fn test_upstream_tls_config_parsing() {
+fn test_upstream_empty_endpoints() {
+    let mut config = base_config();
+    config.upstreams.push(Upstream {
+        name: "empty-upstream".to_string(),
+        load_balancer: LoadBalancer::Random,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
+        tls: None,
+        endpoints: vec![],
+    });
+
+    let manager = Manager::new(&config.upstreams);
+    let cluster = manager.get("empty-upstream").expect("Cluster not found");
+    assert!(cluster.select_endpoint().is_none());
+}
+
+#[test]
+fn test_upstream_tls_config() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
         name: "backend-secure".to_string(),

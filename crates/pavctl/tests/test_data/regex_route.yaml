@@ -1,0 +1,16 @@
+server:
+  listen_addr: "127.0.0.1:7070"
+telemetry: {}
+upstreams:
+  - name: "search"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 7071
+routes:
+  - host: "search.local"
+    paths:
+      - match_type: "regex"
+        path: "^/items/[0-9]+$"
+        destinations:
+          - upstream: "search"
+            weight: 1

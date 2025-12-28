@@ -75,7 +75,7 @@ fn wait_for_log_line(child: &mut Child, needle: &str, timeout: Duration) {
 }
 
 #[test]
-fn test_checksum_validation_success() {
+fn test_checksum_valid_pvs_starts() {
     let binary = get_binary_path();
 
     let config = RuntimeConfig {
@@ -89,7 +89,7 @@ fn test_checksum_validation_success() {
             pingora: None,
             service_name: None,
             prometheus_addr: None,
-            access_log: pavis_core::AccessLogConfig::False,
+            access_log: pavis_core::AccessLogConfig::Disabled,
             tracing: None,
         },
         upstreams: vec![],
@@ -132,7 +132,7 @@ fn test_checksum_validation_success() {
 }
 
 #[test]
-fn test_truncated_pvs() {
+fn test_checksum_corrupt_payload_rejected() {
     let binary = get_binary_path();
 
     let config = RuntimeConfig {
@@ -146,7 +146,53 @@ fn test_truncated_pvs() {
             pingora: None,
             service_name: None,
             prometheus_addr: None,
-            access_log: pavis_core::AccessLogConfig::False,
+            access_log: pavis_core::AccessLogConfig::Disabled,
+            tracing: None,
+        },
+        upstreams: vec![],
+        routes: vec![],
+    };
+
+    let temp_dir = std::env::temp_dir();
+    let config_path = temp_dir.join("pavis_checksum_fail.pvs");
+    pvs::write(&config_path, &config).expect("Failed to write config");
+
+    let mut bytes = std::fs::read(&config_path).expect("Failed to read config");
+    if bytes.len() <= pvs::HEADER_SIZE {
+        panic!("Expected payload to be present for corruption");
+    }
+    bytes[pvs::HEADER_SIZE] ^= 0xFF;
+    std::fs::write(&config_path, bytes).expect("Failed to write corrupted config");
+
+    let output = Command::new(binary)
+        .arg("--config")
+        .arg(&config_path)
+        .output()
+        .expect("Failed to execute binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Checksum mismatch"));
+
+    let _ = std::fs::remove_file(config_path);
+}
+
+#[test]
+fn test_checksum_truncated_payload_rejected() {
+    let binary = get_binary_path();
+
+    let config = RuntimeConfig {
+        server: pavis_core::ServerConfig {
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+            worker_threads: None,
+            tls: None,
+        },
+        telemetry: pavis_core::TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            prometheus_addr: None,
+            access_log: pavis_core::AccessLogConfig::Disabled,
             tracing: None,
         },
         upstreams: vec![],
@@ -179,52 +225,6 @@ fn test_truncated_pvs() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Binary integrity check failed"));
-
-    let _ = std::fs::remove_file(config_path);
-}
-
-#[test]
-fn test_checksum_validation_failure() {
-    let binary = get_binary_path();
-
-    let config = RuntimeConfig {
-        server: pavis_core::ServerConfig {
-            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-            worker_threads: None,
-            tls: None,
-        },
-        telemetry: pavis_core::TelemetryConfig {
-            level: None,
-            pingora: None,
-            service_name: None,
-            prometheus_addr: None,
-            access_log: pavis_core::AccessLogConfig::False,
-            tracing: None,
-        },
-        upstreams: vec![],
-        routes: vec![],
-    };
-
-    let temp_dir = std::env::temp_dir();
-    let config_path = temp_dir.join("pavis_checksum_fail.pvs");
-    pvs::write(&config_path, &config).expect("Failed to write config");
-
-    let mut bytes = std::fs::read(&config_path).expect("Failed to read config");
-    if bytes.len() <= pvs::HEADER_SIZE {
-        panic!("Expected payload to be present for corruption");
-    }
-    bytes[pvs::HEADER_SIZE] ^= 0xFF;
-    std::fs::write(&config_path, bytes).expect("Failed to write corrupted config");
-
-    let output = Command::new(binary)
-        .arg("--config")
-        .arg(&config_path)
-        .output()
-        .expect("Failed to execute binary");
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Checksum mismatch"));
 
     let _ = std::fs::remove_file(config_path);
 }

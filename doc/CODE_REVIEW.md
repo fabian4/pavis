@@ -26,8 +26,9 @@
 ## 🟡 Medium Priority
 
 ### 3. Access Log Configuration Cleanup
-- **Location:** `crates/pavis-core/src/runtime.rs` (previously `pavis/config`)
-- **Why:** `AccessLogConfig::False` is unconventional. Prefer `Option<AccessLogConfig>`.
+- **Location:** `crates/pavis-core/src/runtime.rs`
+- **Why:** `AccessLogConfig::False` was unconventional. Renamed to `AccessLogConfig::Disabled`.
+- **Status:** ✅ COMPLETED (2025-12-28)
 
 ### 4. Handle `respond_error` Result
 - **Location:** `crates/pavis/src/proxy.rs`

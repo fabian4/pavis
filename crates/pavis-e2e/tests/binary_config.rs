@@ -31,10 +31,8 @@ async fn test_binary_config_loading() -> Result<()> {
     };
 
     let status = Command::new(&pavctl_bin)
-        .arg("generate")
-        .arg("--input")
+        .arg("gen")
         .arg(&yaml_gen)
-        .arg("--output")
         .arg(&pvs_gen)
         .status()
         .expect("failed to execute pavctl");

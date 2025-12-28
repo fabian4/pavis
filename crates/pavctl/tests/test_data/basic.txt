@@ -1,0 +1,15 @@
+--- Pavis Header ---
+Magic: "PAVS"
+Version: 0
+Algorithm: 1
+Checksum: <checksum>
+
+--- Config Tree ---
+Listen Address: 127.0.0.1:8080
+Upstreams (1):
+- Upstream: backend, LB: Random, HTTP: H1, endpoints: 1
+  - 127.0.0.1:8081 weight=1
+Routes (1):
+Host: example.com
+  - [prefix] /
+      -> backend (weight 1)

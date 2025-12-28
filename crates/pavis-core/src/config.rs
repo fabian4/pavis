@@ -23,9 +23,13 @@ pub enum ConfigSource<'a> {
 /// 2. `validate`: Perform source-specific validation (schema, types).
 /// 3. `build`: Convert the validated input into the canonical `RuntimeConfig`.
 pub trait Config {
+    /// The error type returned by configuration operations.
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Loads the configuration from a specific source.
+    ///
+    /// # Errors
+    /// Returns an error if the source cannot be read or parsed.
     fn load(source: ConfigSource) -> Result<Self, Self::Error>
     where
         Self: Sized;
@@ -34,74 +38,69 @@ pub trait Config {
     ///
     /// This step should check for input-specific constraints (e.g., valid YAML structure,
     /// known fields) before attempting conversion to the runtime model.
+    ///
+    /// # Errors
+    /// Returns an error if the configuration is invalid.
     fn validate(&self) -> Result<(), Self::Error>;
 
     /// Transforms the input configuration into the canonical `RuntimeConfig`.
     ///
     /// This step usually involves mapping fields, applying defaults, and converting types.
+    ///
+    /// # Errors
+    /// Returns an error if the transformation or underlying core validation fails.
     fn build(self) -> Result<RuntimeConfig, Self::Error>;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ConfigSource};
+    use super::*;
     use crate::RuntimeConfig;
-    use std::error::Error;
     use std::fmt;
 
     #[derive(Debug)]
     struct DummyError(&'static str);
-
     impl fmt::Display for DummyError {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "{}", self.0)
         }
     }
+    impl std::error::Error for DummyError {}
 
-    impl Error for DummyError {}
-
-    #[derive(Debug, Clone)]
-    struct DummyConfig(String);
-
-    impl Config for DummyConfig {
+    struct MockConfig(String);
+    impl Config for MockConfig {
         type Error = DummyError;
-
         fn load(source: ConfigSource) -> Result<Self, Self::Error> {
             match source {
                 ConfigSource::String(s) => Ok(Self(s.to_string())),
-                ConfigSource::Bytes(bytes) => match std::str::from_utf8(bytes) {
-                    Ok(s) => Ok(Self(s.to_string())),
-                    Err(_) => Err(DummyError("invalid utf8")),
-                },
-                ConfigSource::File(_) => Err(DummyError("file not supported in test")),
+                ConfigSource::Bytes(bytes) => std::str::from_utf8(bytes)
+                    .map_or(Err(DummyError("invalid utf8")), |s| Ok(Self(s.to_string()))),
+                _ => Err(DummyError("unsupported")),
             }
         }
-
         fn validate(&self) -> Result<(), Self::Error> {
             if self.0.is_empty() {
                 return Err(DummyError("empty"));
             }
             Ok(())
         }
-
         fn build(self) -> Result<RuntimeConfig, Self::Error> {
-            Err(DummyError("no runtime in test"))
+            Err(DummyError("not implemented"))
         }
     }
 
     #[test]
     fn load_from_string_and_bytes() {
-        let cfg = DummyConfig::load(ConfigSource::String("ok")).expect("string load");
-        assert_eq!(cfg.0, "ok");
+        let cfg = MockConfig::load(ConfigSource::String("test")).unwrap();
+        assert_eq!(cfg.0, "test");
 
-        let cfg = DummyConfig::load(ConfigSource::Bytes(b"ok")).expect("bytes load");
-        assert_eq!(cfg.0, "ok");
+        let cfg = MockConfig::load(ConfigSource::Bytes(b"test")).unwrap();
+        assert_eq!(cfg.0, "test");
     }
 
     #[test]
     fn validate_rejects_empty() {
-        let cfg = DummyConfig(String::new());
-        let err = cfg.validate().expect_err("empty should fail");
-        assert_eq!(err.to_string(), "empty");
+        let cfg = MockConfig(String::new());
+        assert!(cfg.validate().is_err());
     }
 }

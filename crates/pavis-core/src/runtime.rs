@@ -54,10 +54,9 @@ pub enum LogLevel {
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[archive(check_bytes)]
 pub enum AccessLogConfig {
-    False,
+    Disabled,
     #[default]
     Stdout,
     File(String),
@@ -162,7 +161,9 @@ pub struct RetryPolicy {
     pub retry_on: Vec<String>,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default, Hash,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
@@ -190,18 +191,14 @@ pub struct WeightedDestination {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, LogLevel,
-        MatchType, Route, RuntimeConfig, ServerConfig, TelemetryConfig, Upstream, VirtualHost,
-        WeightedDestination,
-    };
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
     fn test_config_structure() {
         let config = RuntimeConfig {
             server: ServerConfig {
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
+                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
                 worker_threads: Some(4),
                 tls: None,
             },
@@ -223,7 +220,7 @@ mod tests {
                 },
                 tls: None,
                 endpoints: vec![Endpoint {
-                    ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
                     port: 8080,
                     weight: 1,
                 }],

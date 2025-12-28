@@ -40,7 +40,7 @@ mod tests {
             pingora: None,
             service_name: None,
             prometheus_addr: None,
-            access_log: AccessLogConfig::False,
+            access_log: AccessLogConfig::Disabled,
             tracing: None,
         });
         assert_eq!(worker.name(), "access_log");

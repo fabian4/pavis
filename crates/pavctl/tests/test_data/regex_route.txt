@@ -1,0 +1,15 @@
+--- Pavis Header ---
+Magic: "PAVS"
+Version: 0
+Algorithm: 1
+Checksum: <checksum>
+
+--- Config Tree ---
+Listen Address: 127.0.0.1:7070
+Upstreams (1):
+- Upstream: search, LB: Random, HTTP: H1, endpoints: 1
+  - 127.0.0.1:7071 weight=1
+Routes (1):
+Host: search.local
+  - [regex] ^/items/[0-9]+$
+      -> search (weight 1)

@@ -68,7 +68,7 @@ impl Service for AccessLogWorker {
                                         }
                                     }
                                 }
-                                AccessLogConfig::False => {}
+                                AccessLogConfig::Disabled => {}
                             }
                         }
                         None => break,
@@ -91,7 +91,7 @@ impl Service for AccessLogWorker {
 impl AccessLog {
     pub fn new(config: &AccessLogConfig) -> (Self, AccessLogWorker) {
         let (tx, rx) = mpsc::channel::<String>(4096);
-        let enabled = *config != AccessLogConfig::False;
+        let enabled = *config != AccessLogConfig::Disabled;
 
         let worker = AccessLogWorker {
             rx: Some(rx),
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn access_log_disabled_for_false() {
-        let (access_log, _worker) = AccessLog::new(&AccessLogConfig::False);
+        let (access_log, _worker) = AccessLog::new(&AccessLogConfig::Disabled);
         assert!(!access_log.enabled);
     }
 

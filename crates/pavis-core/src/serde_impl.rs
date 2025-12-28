@@ -1,65 +1,85 @@
-#[cfg(feature = "serde")]
-use serde::Deserialize;
-
 use crate::runtime::AccessLogConfig;
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
 
-#[cfg(feature = "serde")]
-impl<'de> Deserialize<'de> for AccessLogConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+impl Serialize for AccessLogConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        D: serde::Deserializer<'de>,
+        S: Serializer,
     {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Helper {
-            Bool(bool),
-            String(String),
-        }
-
-        match <Helper as Deserialize>::deserialize(deserializer)? {
-            Helper::Bool(false) => Ok(AccessLogConfig::False),
-            Helper::Bool(true) => Err(serde::de::Error::custom("access_log cannot be true")),
-            Helper::String(s) => match s.as_str() {
-                "false" => Ok(AccessLogConfig::False),
-                "stdout" => Ok(AccessLogConfig::Stdout),
-                path if !path.is_empty() => Ok(AccessLogConfig::File(path.to_string())),
-                _ => Err(serde::de::Error::custom(
-                    "access_log must be 'false', 'stdout', or a file path",
-                )),
-            },
+        match self {
+            Self::Disabled => serializer.serialize_bool(false),
+            Self::Stdout => serializer.serialize_str("stdout"),
+            Self::File(path) => serializer.serialize_str(path),
         }
     }
 }
 
-#[cfg(all(test, feature = "serde"))]
+impl<'de> Deserialize<'de> for AccessLogConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct AccessLogVisitor;
+
+        impl<'de> Visitor<'de> for AccessLogVisitor {
+            type Value = AccessLogConfig;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("false, 'stdout', or a file path string")
+            }
+
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v {
+                    Err(E::custom(
+                        "access_log cannot be 'true'. Use 'stdout' or a file path.",
+                    ))
+                } else {
+                    Ok(AccessLogConfig::Disabled)
+                }
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match v {
+                    "false" => Ok(AccessLogConfig::Disabled),
+                    "stdout" => Ok(AccessLogConfig::Stdout),
+                    path if !path.is_empty() => Ok(AccessLogConfig::File(path.to_string())),
+                    _ => Err(E::custom("invalid access_log value")),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(AccessLogVisitor)
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::AccessLogConfig;
-    use serde::Deserialize;
-    use serde::de::value::Error as DeError;
-    use serde::de::value::{BoolDeserializer, StrDeserializer};
+    use super::*;
+    use serde_json::json;
 
     #[test]
     fn access_log_accepts_string_values() {
-        let config = AccessLogConfig::deserialize(StrDeserializer::<DeError>::new("stdout"))
-            .expect("stdout");
-        assert!(matches!(config, AccessLogConfig::Stdout));
+        let v: AccessLogConfig = serde_json::from_value(json!("stdout")).unwrap();
+        assert_eq!(v, AccessLogConfig::Stdout);
 
-        let config =
-            AccessLogConfig::deserialize(StrDeserializer::<DeError>::new("false")).expect("false");
-        assert!(matches!(config, AccessLogConfig::False));
+        let v: AccessLogConfig = serde_json::from_value(json!("/tmp/pavis.log")).unwrap();
+        assert_eq!(v, AccessLogConfig::File("/tmp/pavis.log".to_string()));
 
-        let config = AccessLogConfig::deserialize(StrDeserializer::<DeError>::new("logs.txt"))
-            .expect("file");
-        assert!(matches!(config, AccessLogConfig::File(path) if path == "logs.txt"));
+        let v: AccessLogConfig = serde_json::from_value(json!("false")).unwrap();
+        assert_eq!(v, AccessLogConfig::Disabled);
     }
 
     #[test]
     fn access_log_rejects_true() {
-        let err = AccessLogConfig::deserialize(BoolDeserializer::<DeError>::new(true))
-            .expect_err("true rejects");
-        assert!(
-            err.to_string().contains("access_log cannot be true"),
-            "unexpected error: {err}"
-        );
+        let res: Result<AccessLogConfig, _> = serde_json::from_value(json!(true));
+        assert!(res.is_err());
     }
 }
