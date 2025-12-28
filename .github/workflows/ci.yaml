@@ -37,7 +37,6 @@ jobs:
         run: make e2e-binary
 
   build:
-    if: false
     needs: test
     runs-on: ubuntu-latest
     steps:

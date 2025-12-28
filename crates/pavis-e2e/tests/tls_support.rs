@@ -1,10 +1,33 @@
 use anyhow::Result;
+use pavis_e2e::utils::generate_pvs;
 use reqwest::Client;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
+
+fn generate_self_signed_cert(cert_path: &PathBuf, key_path: &PathBuf) {
+    let status = Command::new("openssl")
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            key_path.to_str().expect("key path"),
+            "-out",
+            cert_path.to_str().expect("cert path"),
+            "-subj",
+            "/CN=localhost",
+            "-days",
+            "1",
+        ])
+        .status()
+        .expect("failed to run openssl");
+    assert!(status.success(), "openssl failed to generate certs");
+}
 
 fn find_project_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap();
@@ -50,8 +73,7 @@ async fn test_tls_support() {
             )
         };
 
-    fs::write(&cert_host_path, include_str!("fixtures/cert.pem")).unwrap();
-    fs::write(&key_host_path, include_str!("fixtures/key.pem")).unwrap();
+    generate_self_signed_cert(&cert_host_path, &key_host_path);
 
     // 2. Generate Config
     let template = include_str!("../config/templates/tls_support.yaml");
@@ -80,10 +102,30 @@ async fn test_tls_support() {
     // 3. Start/Restart Pavis
     let mut process = None;
 
+    let release_dir = project_root.join("target/release");
+    let debug_dir = project_root.join("target/debug");
+
+    let find_binary = |name: &str| -> Result<PathBuf> {
+        let release_bin = release_dir.join(name);
+        if release_bin.exists() {
+            return Ok(release_bin);
+        }
+        let debug_bin = debug_dir.join(name);
+        if debug_bin.exists() {
+            return Ok(debug_bin);
+        }
+        Err(anyhow::anyhow!(
+            "Binary '{}' not found. Run cargo build.",
+            name
+        ))
+    };
+
     if mode == "docker" {
         println!("🐳 Restarting Pavis Container...");
-        let shared_config = project_root.join("crates/pavis-e2e/config/generated_config.yaml");
-        fs::copy(&config_path, &shared_config).unwrap();
+        let pavctl_bin = find_binary("pavctl").expect("pavctl binary not found");
+        let shared_config = project_root.join("crates/pavis-e2e/config/generated_config.pvs");
+
+        generate_pvs(&pavctl_bin, &config_path, &shared_config).expect("generate config");
 
         let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose.yaml");
         let status = Command::new("docker")
@@ -101,39 +143,13 @@ async fn test_tls_support() {
         assert!(status.success());
         sleep(Duration::from_secs(5)).await; // Wait for container start
     } else {
-        let release_dir = project_root.join("target/release");
-        let debug_dir = project_root.join("target/debug");
-
-        let find_binary = |name: &str| -> Result<PathBuf> {
-            let release_bin = release_dir.join(name);
-            if release_bin.exists() {
-                return Ok(release_bin);
-            }
-            let debug_bin = debug_dir.join(name);
-            if debug_bin.exists() {
-                return Ok(debug_bin);
-            }
-            Err(anyhow::anyhow!(
-                "Binary '{}' not found. Run cargo build.",
-                name
-            ))
-        };
-
         let pavis_bin = find_binary("pavis").expect("Pavis binary not found");
 
         // Generate YAML to PVS
         let pavctl_bin = find_binary("pavctl").expect("pavctl binary not found");
         let output_pvs = config_path.with_extension("pvs");
 
-        println!("🔨 Generating PVS from YAML: {config_path:?} -> {output_pvs:?}");
-        let status = Command::new(&pavctl_bin)
-            .arg("gen")
-            .arg(&config_path)
-            .arg(&output_pvs)
-            .status()
-            .expect("Failed to run pavctl");
-
-        assert!(status.success(), "Failed to generate config");
+        generate_pvs(&pavctl_bin, &config_path, &output_pvs).expect("generate config");
 
         println!("🚀 Starting Pavis Binary ({:?})...", output_pvs);
         let child = Command::new(pavis_bin)

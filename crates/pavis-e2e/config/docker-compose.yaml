@@ -33,8 +33,9 @@ services:
       - "8080:8080"  # Proxy Port
       - "8443:8443"  # TLS Proxy Port
       - "9091:9091"  # Prometheus Metrics
+    command: ["--config", "/etc/pavis/config.pvs"]
     volumes:
-      - ./generated_config.yaml:/etc/pavis/config.yaml
+      - ./generated_config.pvs:/etc/pavis/config.pvs
       - ./certs:/etc/pavis/certs
     depends_on:
       - backend-v1
