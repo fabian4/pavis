@@ -239,7 +239,10 @@ routes:
         let upstream = &config.upstreams[0];
         assert_eq!(upstream.load_balancer, LoadBalancer::Random);
         assert_eq!(upstream.http_version, HttpVersion::H1);
-        assert_eq!(upstream.connection_pool.idle_timeout, Duration::from_secs(60));
+        assert_eq!(
+            upstream.connection_pool.idle_timeout,
+            Duration::from_secs(60)
+        );
         assert_eq!(
             upstream.connection_pool.connection_timeout,
             Duration::from_secs(5)

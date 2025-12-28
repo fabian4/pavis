@@ -1,3 +1,4 @@
+use anyhow::Result;
 use pavis_e2e::utils::find_project_root;
 use reqwest::Client;
 use std::fs;
@@ -5,7 +6,6 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
-use anyhow::{Context, Result};
 
 #[tokio::test]
 async fn test_upstream_tls() {
@@ -172,16 +172,22 @@ async fn test_upstream_tls() {
             if debug_bin.exists() {
                 return Ok(debug_bin);
             }
-            Err(anyhow::anyhow!("Binary '{}' not found. Run cargo build.", name))
+            Err(anyhow::anyhow!(
+                "Binary '{}' not found. Run cargo build.",
+                name
+            ))
         };
 
         let pavis_bin = find_binary("pavis").expect("Pavis binary not found");
         let pavis_cli_bin = find_binary("pavis-cli").expect("Pavis CLI binary not found");
-        
+
         // Compile YAML to PVS
         let output_pvs = config_path.with_extension("pvs");
-        println!("🔨 Compiling YAML to PVS: {:?} -> {:?}", config_path, output_pvs);
-        
+        println!(
+            "🔨 Compiling YAML to PVS: {:?} -> {:?}",
+            config_path, output_pvs
+        );
+
         let status = Command::new(&pavis_cli_bin)
             .arg("compile")
             .arg("--input")
@@ -190,7 +196,7 @@ async fn test_upstream_tls() {
             .arg(&output_pvs)
             .status()
             .expect("Failed to run pavis-cli");
-            
+
         assert!(status.success(), "Failed to compile config");
 
         println!("🚀 Starting Pavis Binary ({:?})...", output_pvs);

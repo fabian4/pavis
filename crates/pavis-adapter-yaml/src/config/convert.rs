@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::net::{IpAddr, SocketAddr};
 
-use pavis_core::{self, validate_runtime_config, LogLevel};
+use pavis_core::{self, LogLevel, validate_runtime_config};
 
 use super::types::*;
 
@@ -363,7 +363,10 @@ routes:
             vec!["5xx".to_string(), "connect-failure".to_string()]
         );
         let request_headers = route.request_headers.as_ref().expect("request headers");
-        assert_eq!(request_headers.add, vec![("x-added".to_string(), "1".to_string())]);
+        assert_eq!(
+            request_headers.add,
+            vec![("x-added".to_string(), "1".to_string())]
+        );
         assert!(request_headers.remove.is_empty());
         let response_headers = route.response_headers.as_ref().expect("response headers");
         assert!(response_headers.add.is_empty());
@@ -439,7 +442,10 @@ routes:
         let upstream = &config.upstreams[0];
         assert_eq!(upstream.load_balancer, LoadBalancer::RoundRobin);
         assert_eq!(upstream.http_version, HttpVersion::H2);
-        assert_eq!(upstream.connection_pool.idle_timeout, Duration::from_secs(10));
+        assert_eq!(
+            upstream.connection_pool.idle_timeout,
+            Duration::from_secs(10)
+        );
         assert_eq!(
             upstream.connection_pool.connection_timeout,
             Duration::from_secs(2)

@@ -61,17 +61,26 @@ impl TestEnv {
                 if debug_bin.exists() {
                     return Ok(debug_bin);
                 }
-                Err(anyhow::anyhow!("Binary '{}' not found. Run cargo build.", name))
+                Err(anyhow::anyhow!(
+                    "Binary '{}' not found. Run cargo build.",
+                    name
+                ))
             };
 
             let pavis_bin = find_binary("pavis")?;
-            
+
             // If config is YAML, compile it to PVS
-            let run_config_path = if config_dest.extension().map_or(false, |ext| ext == "yaml" || ext == "yml") {
+            let run_config_path = if config_dest
+                .extension()
+                .is_some_and(|ext| ext == "yaml" || ext == "yml")
+            {
                 let pavis_cli_bin = find_binary("pavis-cli")?;
                 let output_pvs = config_dest.with_extension("pvs");
-                
-                println!("🔨 Compiling YAML to PVS: {:?} -> {:?}", config_dest, output_pvs);
+
+                println!(
+                    "🔨 Compiling YAML to PVS: {:?} -> {:?}",
+                    config_dest, output_pvs
+                );
                 let status = Command::new(&pavis_cli_bin)
                     .arg("compile")
                     .arg("--input")
