@@ -5,11 +5,12 @@ use pavis_core::{
     RuntimeConfig as Config, ServerConfig, TelemetryConfig, Upstream, UpstreamTlsConfig,
     VirtualHost, WeightedDestination,
 };
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 fn base_config() -> Config {
     Config {
         server: ServerConfig {
-            listen_addr: "0.0.0.0:8080".to_string(),
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
             worker_threads: None,
             tls: None,
         },
@@ -39,7 +40,7 @@ fn test_configuration_driven_routing() {
         },
         tls: None,
         endpoints: vec![Endpoint {
-            ip: "127.0.0.1".to_string(),
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             port: 8081,
             weight: 1,
         }],
@@ -87,12 +88,12 @@ fn test_load_balancer_state_correctness() {
         tls: None,
         endpoints: vec![
             Endpoint {
-                ip: "10.0.0.1".to_string(),
+                ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
                 port: 80,
                 weight: 1,
             },
             Endpoint {
-                ip: "10.0.0.2".to_string(),
+                ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
                 port: 80,
                 weight: 1,
             },
@@ -107,9 +108,12 @@ fn test_load_balancer_state_correctness() {
     let ep2 = cluster.select_endpoint().unwrap();
     let ep3 = cluster.select_endpoint().unwrap();
 
-    assert_eq!(ep1.ip, "10.0.0.1");
-    assert_eq!(ep2.ip, "10.0.0.2");
-    assert_eq!(ep3.ip, "10.0.0.1");
+    let ip1 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+    let ip2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+
+    assert_eq!(ep1.ip, ip1);
+    assert_eq!(ep2.ip, ip2);
+    assert_eq!(ep3.ip, ip1);
 }
 
 #[test]
@@ -130,7 +134,7 @@ fn test_upstream_tls_config_parsing() {
             sni: Some("secure.internal".to_string()),
         }),
         endpoints: vec![Endpoint {
-            ip: "10.0.0.1".to_string(),
+            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
             port: 443,
             weight: 1,
         }],

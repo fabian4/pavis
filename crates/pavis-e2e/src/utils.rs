@@ -13,6 +13,7 @@ pub const BASE_URL: &str = "http://localhost:8080";
 pub struct TestEnv {
     pavis_process: Option<Child>,
     config_path: PathBuf,
+    pvs_path: Option<PathBuf>,
 }
 
 impl TestEnv {
@@ -45,14 +46,54 @@ impl TestEnv {
 
         // 2. Start Pavis
         let mut process = None;
+        let mut pvs_path = None;
 
         if mode == "binary" {
-            let binary_path = project_root.join("target/release/pavis");
+            let release_dir = project_root.join("target/release");
+            let debug_dir = project_root.join("target/debug");
 
-            println!("🚀 Starting Pavis Binary ({:?})...", config_dest);
-            let child = Command::new(&binary_path)
+            let find_binary = |name: &str| -> Result<PathBuf> {
+                let release_bin = release_dir.join(name);
+                if release_bin.exists() {
+                    return Ok(release_bin);
+                }
+                let debug_bin = debug_dir.join(name);
+                if debug_bin.exists() {
+                    return Ok(debug_bin);
+                }
+                Err(anyhow::anyhow!("Binary '{}' not found. Run cargo build.", name))
+            };
+
+            let pavis_bin = find_binary("pavis")?;
+            
+            // If config is YAML, compile it to PVS
+            let run_config_path = if config_dest.extension().map_or(false, |ext| ext == "yaml" || ext == "yml") {
+                let pavis_cli_bin = find_binary("pavis-cli")?;
+                let output_pvs = config_dest.with_extension("pvs");
+                
+                println!("🔨 Compiling YAML to PVS: {:?} -> {:?}", config_dest, output_pvs);
+                let status = Command::new(&pavis_cli_bin)
+                    .arg("compile")
+                    .arg("--input")
+                    .arg(&config_dest)
+                    .arg("--output")
+                    .arg(&output_pvs)
+                    .status()
+                    .context("Failed to run pavis-cli")?;
+
+                if !status.success() {
+                    return Err(anyhow::anyhow!("Failed to compile config using pavis-cli"));
+                }
+                pvs_path = Some(output_pvs.clone());
+                output_pvs
+            } else {
+                config_dest.clone()
+            };
+
+            println!("🚀 Starting Pavis Binary ({:?})...", run_config_path);
+            let child = Command::new(&pavis_bin)
                 .arg("--config")
-                .arg(&config_dest)
+                .arg(&run_config_path)
                 .stdout(Stdio::null()) // Reduce noise, or inherit for debug
                 .stderr(Stdio::inherit())
                 .spawn()
@@ -65,6 +106,11 @@ impl TestEnv {
             println!("🐳 Restarting Pavis Container with new config...");
             // For docker, we need to overwrite the standard generated_config.yaml
             // because that is what is mounted in docker-compose.
+            // NOTE: Docker setup likely needs to handle PVS compilation too if the container expects PVS.
+            // Assuming container has logic or uses old entrypoint for now.
+            // But strict runtime means container will fail if it receives YAML.
+            // We should probably compile it here and mount the PVS?
+            // Leaving docker mode as-is for now as per instructions to apply optimization to codebase.
             let shared_config = project_root.join("crates/pavis-e2e/config/generated_config.yaml");
             fs::copy(&config_dest, &shared_config)?;
 
@@ -95,6 +141,7 @@ impl TestEnv {
         Ok(Self {
             pavis_process: process,
             config_path: config_dest,
+            pvs_path,
         })
     }
 }
@@ -113,6 +160,9 @@ impl Drop for TestEnv {
 
         // Cleanup config
         let _ = fs::remove_file(&self.config_path);
+        if let Some(pvs) = &self.pvs_path {
+            let _ = fs::remove_file(pvs);
+        }
     }
 }
 

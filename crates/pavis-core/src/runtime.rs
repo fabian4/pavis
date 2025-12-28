@@ -1,6 +1,7 @@
 use regex::Regex;
 use rkyv::with::Skip;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use std::net::{IpAddr, SocketAddr};
 
 /// The Root Configuration Object.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
@@ -15,7 +16,7 @@ pub struct RuntimeConfig {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct ServerConfig {
-    pub listen_addr: String,
+    pub listen_addr: SocketAddr,
     pub worker_threads: Option<u64>, // usize in config.rs, u64 here for safety
     pub tls: Option<TlsConfig>,
 }
@@ -31,12 +32,25 @@ pub struct TlsConfig {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct TelemetryConfig {
-    pub level: Option<String>,
-    pub pingora: Option<String>,
+    pub level: Option<LogLevel>,
+    pub pingora: Option<LogLevel>,
     pub service_name: Option<String>,
     pub prometheus_addr: Option<String>,
     pub access_log: AccessLogConfig,
     pub tracing: Option<TracingConfig>,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[archive(check_bytes)]
+#[repr(u8)]
+pub enum LogLevel {
+    Error = 0,
+    Warn = 1,
+    Info = 2,
+    Debug = 3,
+    Trace = 4,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -112,7 +126,7 @@ pub struct UpstreamTlsConfig {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[archive(check_bytes)]
 pub struct Endpoint {
-    pub ip: String,
+    pub ip: IpAddr,
     pub port: u16,
     pub weight: u32,
 }

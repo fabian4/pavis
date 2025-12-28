@@ -6,12 +6,13 @@ use pavis_core::{
     ServerConfig, TelemetryConfig, VirtualHost, WeightedDestination,
 };
 use pingora::http::{RequestHeader, ResponseHeader};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 fn create_test_config() -> Config {
     Config {
         server: ServerConfig {
-            listen_addr: "0.0.0.0:8080".to_string(),
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
             worker_threads: None,
             tls: None,
         },
@@ -129,7 +130,7 @@ fn test_find_route_wrong_host() {
 fn test_find_route_regex_match() {
     let config = Config {
         server: ServerConfig {
-            listen_addr: "0.0.0.0:8080".to_string(),
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
             worker_threads: None,
             tls: None,
         },
@@ -194,12 +195,12 @@ fn test_weighted_round_robin_respects_weights() {
         tls: None,
         endpoints: vec![
             pavis_core::Endpoint {
-                ip: "A".to_string(),
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 port: 8080,
                 weight: 3,
             },
             pavis_core::Endpoint {
-                ip: "B".to_string(),
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
                 port: 8081,
                 weight: 1,
             },
@@ -208,11 +209,14 @@ fn test_weighted_round_robin_respects_weights() {
 
     let cluster = Cluster::new(upstream);
 
-    assert_eq!(cluster.select_endpoint().unwrap().ip, "A"); // 0
-    assert_eq!(cluster.select_endpoint().unwrap().ip, "A"); // 1
-    assert_eq!(cluster.select_endpoint().unwrap().ip, "A"); // 2
-    assert_eq!(cluster.select_endpoint().unwrap().ip, "B"); // 3
-    assert_eq!(cluster.select_endpoint().unwrap().ip, "A"); // 4
+    let ip1 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+    let ip2 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+
+    assert_eq!(cluster.select_endpoint().unwrap().ip, ip1); // 0
+    assert_eq!(cluster.select_endpoint().unwrap().ip, ip1); // 1
+    assert_eq!(cluster.select_endpoint().unwrap().ip, ip1); // 2
+    assert_eq!(cluster.select_endpoint().unwrap().ip, ip2); // 3
+    assert_eq!(cluster.select_endpoint().unwrap().ip, ip1); // 4
 }
 
 #[test]
@@ -228,17 +232,17 @@ fn test_round_robin_cycles_endpoints_evenly() {
         tls: None,
         endpoints: vec![
             pavis_core::Endpoint {
-                ip: "127.0.0.1".to_string(),
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 port: 8081,
                 weight: 1,
             },
             pavis_core::Endpoint {
-                ip: "127.0.0.1".to_string(),
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 port: 8082,
                 weight: 1,
             },
             pavis_core::Endpoint {
-                ip: "127.0.0.1".to_string(),
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 port: 8083,
                 weight: 1,
             },
@@ -273,12 +277,12 @@ fn test_concurrent_round_robin() {
         tls: None,
         endpoints: vec![
             pavis_core::Endpoint {
-                ip: "A".to_string(),
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 port: 80,
                 weight: 1,
             },
             pavis_core::Endpoint {
-                ip: "B".to_string(),
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
                 port: 80,
                 weight: 1,
             },

@@ -57,7 +57,7 @@ impl ProxyHttp for Proxy {
 
         let upstream = &cluster.config;
 
-        let addr = pavis_core::format_address(&endpoint.ip, endpoint.port);
+        let addr = std::net::SocketAddr::new(endpoint.ip, endpoint.port);
 
         tracing::debug!(
             upstream = %upstream_name,

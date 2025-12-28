@@ -207,3 +207,45 @@ pub struct WeightedDestination {
     pub upstream: String,
     pub weight: u32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::YamlConfig;
+    use pavis_core::{AccessLogConfig, HttpVersion, LoadBalancer};
+    use std::time::Duration;
+
+    #[test]
+    fn parse_applies_defaults_for_upstream_and_telemetry() {
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    tls: {}
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+routes:
+  - host: "example.com"
+    paths:
+      - path: "/"
+        destinations:
+          - upstream: "backend"
+            weight: 1
+"#;
+
+        let config = YamlConfig::parse_str(yaml).expect("parse yaml");
+        let upstream = &config.upstreams[0];
+        assert_eq!(upstream.load_balancer, LoadBalancer::Random);
+        assert_eq!(upstream.http_version, HttpVersion::H1);
+        assert_eq!(upstream.connection_pool.idle_timeout, Duration::from_secs(60));
+        assert_eq!(
+            upstream.connection_pool.connection_timeout,
+            Duration::from_secs(5)
+        );
+        let tls = upstream.tls.as_ref().expect("tls config");
+        assert!(tls.enabled);
+        assert_eq!(config.telemetry.access_log, AccessLogConfig::Stdout);
+    }
+}

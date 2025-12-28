@@ -1,5 +1,6 @@
 use pavis_core::RuntimeConfig;
 use pavis_pvs as pvs;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -31,7 +32,7 @@ fn test_checksum_validation_success() {
 
     let config = RuntimeConfig {
         server: pavis_core::ServerConfig {
-            listen_addr: "127.0.0.1:0".to_string(),
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
             worker_threads: None,
             tls: None,
         },
@@ -88,7 +89,7 @@ fn test_checksum_validation_failure() {
 
     let config = RuntimeConfig {
         server: pavis_core::ServerConfig {
-            listen_addr: "127.0.0.1:0".to_string(),
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
             worker_threads: None,
             tls: None,
         },

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
+use anyhow::{Context, Result};
 
 fn find_project_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap();
@@ -100,28 +101,43 @@ async fn test_tls_support() {
         assert!(status.success());
         sleep(Duration::from_secs(5)).await; // Wait for container start
     } else {
-        let binary = project_root.join("target/release/pavis");
-        if !binary.exists() {
-            // Fallback to debug if release not found (e.g. running cargo test directly)
-            let debug_binary = project_root.join("target/debug/pavis");
-            if debug_binary.exists() {
-                println!("Using debug binary");
-            } else {
-                panic!("Pavis binary not found. Run cargo build --release first.");
-            }
-        }
+        let release_dir = project_root.join("target/release");
+        let debug_dir = project_root.join("target/debug");
 
-        // We need to find the binary again properly
-        let binary = if project_root.join("target/release/pavis").exists() {
-            project_root.join("target/release/pavis")
-        } else {
-            project_root.join("target/debug/pavis")
+        let find_binary = |name: &str| -> Result<PathBuf> {
+            let release_bin = release_dir.join(name);
+            if release_bin.exists() {
+                return Ok(release_bin);
+            }
+            let debug_bin = debug_dir.join(name);
+            if debug_bin.exists() {
+                return Ok(debug_bin);
+            }
+            Err(anyhow::anyhow!("Binary '{}' not found. Run cargo build.", name))
         };
 
-        println!("🚀 Starting Pavis Binary...");
-        let child = Command::new(binary)
-            .arg("--config")
+        let pavis_bin = find_binary("pavis").expect("Pavis binary not found");
+        
+        // Compile YAML to PVS
+        let pavis_cli_bin = find_binary("pavis-cli").expect("Pavis CLI binary not found");
+        let output_pvs = config_path.with_extension("pvs");
+        
+        println!("🔨 Compiling YAML to PVS: {:?} -> {:?}", config_path, output_pvs);
+        let status = Command::new(&pavis_cli_bin)
+            .arg("compile")
+            .arg("--input")
             .arg(&config_path)
+            .arg("--output")
+            .arg(&output_pvs)
+            .status()
+            .expect("Failed to run pavis-cli");
+            
+        assert!(status.success(), "Failed to compile config");
+
+        println!("🚀 Starting Pavis Binary ({:?})...", output_pvs);
+        let child = Command::new(pavis_bin)
+            .arg("--config")
+            .arg(&output_pvs)
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()
@@ -131,35 +147,16 @@ async fn test_tls_support() {
     }
 
     // 4. Make Request
-    // Pavis listens on 8443 in the config template.
-    // In Docker, we map 8080:8080. We need to map 8443 too?
-    // The docker-compose only maps 8080.
-    // We need to update docker-compose to map 8443 or change config to listen on 8080.
-    // The template says: listen_addr: "0.0.0.0:8443"
-    // Let's change the template to use a placeholder for port or just use 8443 and map it.
-    // Or simpler: Change config to listen on 8080 (if TLS is enabled on 8080).
-    // But wait, the template has `listen_addr: "0.0.0.0:8443"`.
-    // If I change it to 8080, it conflicts with the default mapping if I don't change compose.
-    // Actually, I can just map 8443:8443 in docker-compose.
-
-    // Let's update docker-compose to map 8443 as well.
-
     let client = Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .unwrap();
-
-    // If docker, we hit localhost:8443 (mapped). If binary, we hit localhost:8443 (direct).
-    // So we need to ensure 8443 is mapped in docker.
 
     let resp = client.get("https://localhost:8443/").send().await;
 
     // 5. Cleanup
     if let Some(mut child) = process {
         let _ = child.kill();
-    }
-    if mode == "docker" {
-        // Optional: stop container?
     }
     if mode == "binary" {
         let _ = fs::remove_dir_all(config_path.parent().unwrap());
@@ -170,12 +167,6 @@ async fn test_tls_support() {
         Ok(r) => {
             assert!(r.status().is_success(), "Response: {:?}", r.status());
             let text = r.text().await.unwrap();
-            // backend-v1 (echo-server) returns JSON usually, or text?
-            // echo-server returns JSON by default.
-            // But the previous test expected "Hello Backend".
-            // The previous test used a custom backend.
-            // Now we use echo-server.
-            // We should check if it contains "backend-v1" or similar.
             println!("Response: {}", text);
             assert!(
                 text.contains("backend-v1") || text.contains("echo-server"),

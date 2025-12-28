@@ -197,15 +197,15 @@ PvsHeader
 ```
 RuntimeConfig
 ├─ server: ServerConfig
-│  ├─ listen_addr: String                 // IP:port to bind
+│  ├─ listen_addr: SocketAddr             // IP:port to bind
 │  ├─ worker_threads: Option<u64>         // worker count override
 │  └─ tls: Option<TlsConfig>
 │     ├─ enabled: bool                    // enable TLS listener
 │     ├─ cert_path: Option<String>        // certificate path
 │     └─ key_path: Option<String>         // private key path
 ├─ telemetry: TelemetryConfig
-│  ├─ level: Option<String>               // log level (e.g., info, debug)
-│  ├─ pingora: Option<String>             // optional pingora log level
+│  ├─ level: Option<LogLevel>             // log level enum (Error, Warn, Info, Debug, Trace)
+│  ├─ pingora: Option<LogLevel>           // optional pingora log level
 │  ├─ service_name: Option<String>        // service identifier
 │  ├─ prometheus_addr: Option<String>     // metrics endpoint bind address
 │  ├─ access_log: AccessLogConfig         // False | Stdout | File(path)
@@ -226,7 +226,7 @@ RuntimeConfig
 │  │  ├─ verify_cert: bool                // enforce certificate validation
 │  │  └─ sni: Option<String>              // explicit SNI override
 │  └─ endpoints: Vec<Endpoint>
-│     ├─ ip: String                       // backend IP/hostname
+│     ├─ ip: IpAddr                       // backend IP/hostname
 │     ├─ port: u16                        // backend port
 │     └─ weight: u32                      // load-balancing weight
 └─ routes: Vec<VirtualHost>

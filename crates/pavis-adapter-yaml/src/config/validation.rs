@@ -21,3 +21,67 @@ pub fn validate(config: &mut YamlConfig) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::YamlConfig;
+
+    #[test]
+    fn validate_rejects_non_string_retry_on_values() {
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+routes:
+  - host: "example.com"
+    paths:
+      - path: "/"
+        destinations:
+          - upstream: "backend"
+            weight: 1
+        retry:
+          attempts: 2
+          per_try_timeout: "1s"
+          retry_on: [1]
+"#;
+        let mut config = YamlConfig::parse_str(yaml).expect("parse config");
+        let err = super::validate(&mut config).expect_err("validate should fail");
+        assert!(
+            err.to_string()
+                .contains("retry.retry_on entries must be strings"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_allows_string_retry_on_values() {
+        let yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+routes:
+  - host: "example.com"
+    paths:
+      - path: "/"
+        destinations:
+          - upstream: "backend"
+            weight: 1
+        retry:
+          attempts: 2
+          per_try_timeout: "1s"
+          retry_on: ["5xx", "connect-failure"]
+"#;
+        let mut config = YamlConfig::parse_str(yaml).expect("parse config");
+        super::validate(&mut config).expect("validate should succeed");
+    }
+}

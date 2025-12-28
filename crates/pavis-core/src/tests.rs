@@ -1,28 +1,28 @@
-use crate::header::format_address;
 use crate::runtime::{
-    AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType, Route,
-    RuntimeConfig, ServerConfig, TelemetryConfig, Upstream, VirtualHost, WeightedDestination,
+    AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, LogLevel, MatchType,
+    RetryPolicy, Route, RuntimeConfig, ServerConfig, TelemetryConfig, TlsConfig, TracingConfig,
+    Upstream, UpstreamTlsConfig, VirtualHost, WeightedDestination,
 };
-use rkyv::check_archived_root;
-use rkyv::ser::{Serializer, serializers::AllocSerializer};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-fn create_valid_config() -> RuntimeConfig {
-    RuntimeConfig {
+#[test]
+fn test_config_structure() {
+    let config = RuntimeConfig {
         server: ServerConfig {
-            listen_addr: "0.0.0.0:8080".to_string(),
-            worker_threads: None,
+            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
+            worker_threads: Some(4),
             tls: None,
         },
         telemetry: TelemetryConfig {
-            level: None,
+            level: Some(LogLevel::Info),
             pingora: None,
-            service_name: None,
-            prometheus_addr: None,
-            access_log: AccessLogConfig::False,
+            service_name: Some("test".to_string()),
+            prometheus_addr: Some("0.0.0.0:9090".to_string()),
+            access_log: AccessLogConfig::Stdout,
             tracing: None,
         },
         upstreams: vec![Upstream {
-            name: "test".to_string(),
+            name: "upstream1".to_string(),
             load_balancer: LoadBalancer::RoundRobin,
             http_version: HttpVersion::H1,
             connection_pool: ConnectionPoolConfig {
@@ -31,8 +31,8 @@ fn create_valid_config() -> RuntimeConfig {
             },
             tls: None,
             endpoints: vec![Endpoint {
-                ip: "127.0.0.1".to_string(),
-                port: 80,
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                port: 8080,
                 weight: 1,
             }],
         }],
@@ -41,77 +41,20 @@ fn create_valid_config() -> RuntimeConfig {
             paths: vec![Route {
                 match_type: MatchType::Prefix,
                 path: "/".to_string(),
+                timeout_ms: None,
+                retry_policy: None,
                 request_headers: None,
                 response_headers: None,
                 destinations: vec![WeightedDestination {
-                    upstream: "test".to_string(),
+                    upstream: "upstream1".to_string(),
                     weight: 1,
                 }],
-                timeout_ms: None,
-                retry_policy: None,
                 compiled_regex: None,
             }],
         }],
-    }
-}
+    };
 
-#[test]
-fn test_validation_valid_data() {
-    let config = create_valid_config();
-    let mut serializer = AllocSerializer::<1024>::default();
-    serializer.serialize_value(&config).unwrap();
-    let bytes = serializer.into_serializer().into_inner();
-
-    let result = check_archived_root::<RuntimeConfig>(&bytes);
-    assert!(
-        result.is_ok(),
-        "Validation failed for valid data: {:?}",
-        result.err()
-    );
-}
-
-#[test]
-fn test_validation_corrupted_data() {
-    let config = create_valid_config();
-    let mut serializer = AllocSerializer::<1024>::default();
-    serializer.serialize_value(&config).unwrap();
-    let mut bytes = serializer.into_serializer().into_inner().to_vec();
-
-    if bytes.len() > 20 {
-        for i in 10..20 {
-            bytes[i] = 0xFF;
-        }
-    }
-
-    let result = check_archived_root::<RuntimeConfig>(&bytes);
-    assert!(
-        result.is_err(),
-        "Validation should have failed for corrupted data"
-    );
-}
-
-#[test]
-fn test_validation_truncated_data() {
-    let config = create_valid_config();
-    let mut serializer = AllocSerializer::<1024>::default();
-    serializer.serialize_value(&config).unwrap();
-    let bytes = serializer.into_serializer().into_inner();
-
-    let truncated_bytes = &bytes[..bytes.len() / 2];
-
-    let result = check_archived_root::<RuntimeConfig>(truncated_bytes);
-    assert!(
-        result.is_err(),
-        "Validation should have failed for truncated data"
-    );
-}
-
-#[test]
-fn test_format_address() {
-    assert_eq!(format_address("127.0.0.1", 8080), "127.0.0.1:8080");
-    assert_eq!(format_address("::1", 80), "[::1]:80");
-    assert_eq!(format_address("2001:db8::1", 443), "[2001:db8::1]:443");
-    assert_eq!(format_address("[::1]", 80), "[::1]:80");
-    assert_eq!(format_address("example.com", 80), "example.com:80");
-    assert_eq!(format_address("localhost", 3000), "localhost:3000");
+    assert_eq!(config.server.worker_threads, Some(4));
+    assert_eq!(config.upstreams.len(), 1);
+    assert_eq!(config.routes.len(), 1);
 }

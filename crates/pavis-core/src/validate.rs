@@ -2,7 +2,7 @@ use crate::runtime::{HeaderOperations, MatchType, RuntimeConfig, Upstream, Virtu
 use http::header::{HeaderName, HeaderValue};
 use regex::Regex;
 use std::collections::HashSet;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::str::FromStr;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -13,16 +13,10 @@ pub enum CoreValidationError {
     EmptyUpstreamName,
     #[error("upstream {0} has endpoint with weight 0")]
     EndpointWeightZero(String),
-    #[error("upstream {0} has endpoint with empty ip/hostname")]
-    EmptyEndpointAddress(String),
-    #[error("upstream {upstream} has invalid endpoint ip/hostname: {value}")]
-    InvalidEndpointAddress { upstream: String, value: String },
     #[error("route '{0}' (host '{1}') references unknown upstream '{2}'")]
     UnknownDestination(String, String, String),
     #[error("route '{0}' (host '{1}') destination '{2}' has weight 0")]
     DestinationWeightZero(String, String, String),
-    #[error("invalid listen_addr '{0}'")]
-    InvalidListenAddr(String),
     #[error("tls enabled but cert_path/key_path missing")]
     MissingTlsFiles,
     #[error("invalid regex for route '{route}' (host '{host}'): {error}")]
@@ -44,7 +38,7 @@ pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
 /// Validate canonical invariants on a fully constructed `RuntimeConfig`.
 /// This is intended to be called after parsing/adaptation and before runtime use.
 pub fn validate_runtime_config(config: &RuntimeConfig) -> CoreValidationResult<()> {
-    validate_server(&config.server.listen_addr, config.server.tls.as_ref())?;
+    validate_server(config.server.listen_addr, config.server.tls.as_ref())?;
     validate_upstreams(&config.upstreams)?;
     validate_routes(&config.routes, &config.upstreams)?;
     Ok(())
@@ -56,12 +50,11 @@ pub fn validate_runtime(config: &RuntimeConfig) -> CoreValidationResult<()> {
 }
 
 fn validate_server(
-    listen_addr: &str,
+    _listen_addr: SocketAddr,
     tls: Option<&crate::runtime::TlsConfig>,
 ) -> CoreValidationResult<()> {
-    listen_addr
-        .parse::<SocketAddr>()
-        .map_err(|_| CoreValidationError::InvalidListenAddr(listen_addr.to_string()))?;
+    // SocketAddr is strictly typed, no parsing check needed.
+    // If we wanted to ban specific ports, we could do it here.
 
     if let Some(tls_cfg) = tls
         && tls_cfg.enabled
@@ -74,10 +67,6 @@ fn validate_server(
 
 fn validate_upstreams(upstreams: &[Upstream]) -> CoreValidationResult<()> {
     let mut names = HashSet::new();
-    let hostname_regex = Regex::new(
-        r"^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*)$",
-    )
-    .expect("hostname regex should compile");
 
     for u in upstreams {
         if u.name.is_empty() {
@@ -90,15 +79,7 @@ fn validate_upstreams(upstreams: &[Upstream]) -> CoreValidationResult<()> {
             if ep.weight == 0 {
                 return Err(CoreValidationError::EndpointWeightZero(u.name.clone()));
             }
-            if ep.ip.is_empty() {
-                return Err(CoreValidationError::EmptyEndpointAddress(u.name.clone()));
-            }
-            if IpAddr::from_str(&ep.ip).is_err() && !hostname_regex.is_match(&ep.ip) {
-                return Err(CoreValidationError::InvalidEndpointAddress {
-                    upstream: u.name.clone(),
-                    value: ep.ip.clone(),
-                });
-            }
+            // IpAddr is strictly typed.
         }
     }
     Ok(())
@@ -195,11 +176,12 @@ mod tests {
         RetryPolicy, Route, ServerConfig, TelemetryConfig, TlsConfig, TracingConfig, Upstream,
         UpstreamTlsConfig, VirtualHost, WeightedDestination,
     };
+    use std::net::{IpAddr, Ipv4Addr};
 
     fn base_config() -> RuntimeConfig {
         RuntimeConfig {
             server: ServerConfig {
-                listen_addr: "0.0.0.0:8080".to_string(),
+                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
                 worker_threads: None,
                 tls: None,
             },
@@ -230,7 +212,7 @@ mod tests {
                     sni: Some("example.com".to_string()),
                 }),
                 endpoints: vec![Endpoint {
-                    ip: "127.0.0.1".to_string(),
+                    ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                     port: 80,
                     weight: 1,
                 }],
@@ -268,14 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn invalid_listen_addr_fails() {
-        let mut cfg = base_config();
-        cfg.server.listen_addr = "bad".to_string();
-        let err = validate_runtime_config(&cfg).unwrap_err();
-        assert!(matches!(err, CoreValidationError::InvalidListenAddr(_)));
-    }
-
-    #[test]
     fn missing_tls_files_fails() {
         let mut cfg = base_config();
         cfg.server.tls = Some(TlsConfig {
@@ -285,17 +259,6 @@ mod tests {
         });
         let err = validate_runtime_config(&cfg).unwrap_err();
         assert!(matches!(err, CoreValidationError::MissingTlsFiles));
-    }
-
-    #[test]
-    fn invalid_endpoint_address_fails() {
-        let mut cfg = base_config();
-        cfg.upstreams[0].endpoints[0].ip = "bad ip".to_string();
-        let err = validate_runtime_config(&cfg).unwrap_err();
-        assert!(matches!(
-            err,
-            CoreValidationError::InvalidEndpointAddress { .. }
-        ));
     }
 
     #[test]

@@ -1,9 +1,11 @@
 use pavis_e2e::utils::find_project_root;
 use reqwest::Client;
 use std::fs;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
+use anyhow::{Context, Result};
 
 #[tokio::test]
 async fn test_upstream_tls() {
@@ -24,13 +26,7 @@ async fn test_upstream_tls() {
         (
             certs_dir.join("upstream_tls.pem"),
             certs_dir.join("upstream_tls.key"),
-            "/etc/pavis/certs/upstream_tls.pem".to_string(), // Not used in config for upstream TLS usually, but maybe for client certs?
-            // Wait, Upstream TLS config in Pavis currently only supports `verify_hostname` and `verify_cert`.
-            // It does NOT support client certificates yet.
-            // So we don't need to put cert paths in Pavis config for UPSTREAM TLS.
-            // We only need to configure Pavis to trust the CA or disable verification.
-            // The test disables verification.
-            // So we just need to generate certs for the BACKEND to use.
+            "/etc/pavis/certs/upstream_tls.pem".to_string(),
             "/unused".to_string(),
             "backend-tls",
             8443,
@@ -42,10 +38,6 @@ async fn test_upstream_tls() {
         let cert = tmp_dir.join("cert.pem");
         let key = tmp_dir.join("key.pem");
 
-        // For binary mode, we start a local server on a random port.
-        // We'll determine the port later when starting the backend.
-        // But we need to return something here.
-        // Let's restructure slightly.
         (
             cert,
             key,
@@ -64,7 +56,6 @@ async fn test_upstream_tls() {
         println!("🐳 Starting backend-tls container...");
         let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose.yaml");
 
-        // Restart backend-tls to pick up new certs
         let _ = Command::new("docker")
             .args([
                 "compose",
@@ -76,8 +67,6 @@ async fn test_upstream_tls() {
             .status()
             .expect("Failed to restart backend-tls");
 
-        // If it wasn't running, restart might fail or do nothing?
-        // Better to use `up -d --force-recreate`.
         let status = Command::new("docker")
             .args([
                 "compose",
@@ -110,7 +99,6 @@ async fn test_upstream_tls() {
             .arg("-accept")
             .arg(port.to_string())
             .arg("-www")
-            // .arg("-quiet")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -172,16 +160,43 @@ async fn test_upstream_tls() {
         assert!(status.success());
         sleep(Duration::from_secs(5)).await;
     } else {
-        let binary = if project_root.join("target/release/pavis").exists() {
-            project_root.join("target/release/pavis")
-        } else {
-            project_root.join("target/debug/pavis")
+        let release_dir = project_root.join("target/release");
+        let debug_dir = project_root.join("target/debug");
+
+        let find_binary = |name: &str| -> Result<PathBuf> {
+            let release_bin = release_dir.join(name);
+            if release_bin.exists() {
+                return Ok(release_bin);
+            }
+            let debug_bin = debug_dir.join(name);
+            if debug_bin.exists() {
+                return Ok(debug_bin);
+            }
+            Err(anyhow::anyhow!("Binary '{}' not found. Run cargo build.", name))
         };
 
-        println!("🚀 Starting Pavis Binary...");
-        let child = Command::new(binary)
-            .arg("--config")
+        let pavis_bin = find_binary("pavis").expect("Pavis binary not found");
+        let pavis_cli_bin = find_binary("pavis-cli").expect("Pavis CLI binary not found");
+        
+        // Compile YAML to PVS
+        let output_pvs = config_path.with_extension("pvs");
+        println!("🔨 Compiling YAML to PVS: {:?} -> {:?}", config_path, output_pvs);
+        
+        let status = Command::new(&pavis_cli_bin)
+            .arg("compile")
+            .arg("--input")
             .arg(&config_path)
+            .arg("--output")
+            .arg(&output_pvs)
+            .status()
+            .expect("Failed to run pavis-cli");
+            
+        assert!(status.success(), "Failed to compile config");
+
+        println!("🚀 Starting Pavis Binary ({:?})...", output_pvs);
+        let child = Command::new(pavis_bin)
+            .arg("--config")
+            .arg(&output_pvs)
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()
@@ -203,18 +218,11 @@ async fn test_upstream_tls() {
     }
     if let Some(mut child) = backend_process {
         let _ = child.kill();
-        // Print output
         if let Some(mut out) = child.stdout.take() {
             let mut s = String::new();
             use std::io::Read;
             out.read_to_string(&mut s).unwrap_or_default();
             println!("OpenSSL Stdout: {}", s);
-        }
-        if let Some(mut err) = child.stderr.take() {
-            let mut s = String::new();
-            use std::io::Read;
-            err.read_to_string(&mut s).unwrap_or_default();
-            println!("OpenSSL Stderr: {}", s);
         }
     }
     if mode == "binary" {
@@ -231,7 +239,6 @@ async fn test_upstream_tls() {
             );
             let text = r.text().await.unwrap();
             println!("Response text: {}", text);
-            // openssl s_server -www returns a page with "OpenSSL" or similar info
             assert!(
                 text.to_lowercase().contains("openssl") || text.contains("s_server"),
                 "Response did not look like openssl s_server output"

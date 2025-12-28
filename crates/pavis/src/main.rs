@@ -10,13 +10,24 @@ use pavis::proxy::Proxy;
 use pavis::router::Router;
 use pavis::telemetry::Telemetry;
 use pavis::upstream::Manager;
-use pavis_core::AccessLogConfig;
+use pavis_core::{AccessLogConfig, LogLevel};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(short, long)]
     config: String,
+}
+
+fn log_level_to_str(level: Option<LogLevel>) -> &'static str {
+    match level {
+        Some(LogLevel::Error) => "error",
+        Some(LogLevel::Warn) => "warn",
+        Some(LogLevel::Info) => "info",
+        Some(LogLevel::Debug) => "debug",
+        Some(LogLevel::Trace) => "trace",
+        None => "info",
+    }
 }
 
 fn main() -> Result<()> {
@@ -38,14 +49,15 @@ fn main() -> Result<()> {
 
     let config = Arc::new(config);
 
-    let log_level = config.telemetry.level.as_deref().unwrap_or("info");
+    let log_level = log_level_to_str(config.telemetry.level);
     let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
 
-    if let Some(p_level) = &config.telemetry.pingora {
+    if let Some(p_level) = config.telemetry.pingora {
+        let p_str = log_level_to_str(Some(p_level));
         filter = filter
-            .add_directive(format!("pingora={}", p_level).parse()?)
-            .add_directive(format!("pingora_core={}", p_level).parse()?);
+            .add_directive(format!("pingora={}", p_str).parse()?)
+            .add_directive(format!("pingora_core={}", p_str).parse()?);
     }
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
@@ -87,6 +99,7 @@ fn main() -> Result<()> {
         },
     );
     // TODO: Support multiple listen addresses
+    let listen_addr_str = config.server.listen_addr.to_string();
     if let Some(tls_config) = &config.server.tls {
         if tls_config.enabled {
             // Core validation guarantees cert/key presence when enabled.
@@ -99,13 +112,13 @@ fn main() -> Result<()> {
                 .as_ref()
                 .expect("core validation must ensure key_path when TLS enabled");
             proxy_service
-                .add_tls(&config.server.listen_addr, cert_path, key_path)
+                .add_tls(&listen_addr_str, cert_path, key_path)
                 .context("Failed to add TLS listener")?;
         } else {
-            proxy_service.add_tcp(&config.server.listen_addr);
+            proxy_service.add_tcp(&listen_addr_str);
         }
     } else {
-        proxy_service.add_tcp(&config.server.listen_addr);
+        proxy_service.add_tcp(&listen_addr_str);
     }
 
     server.add_service(access_log_worker);
