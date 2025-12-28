@@ -41,3 +41,24 @@ impl Default for PvsHeader {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader, compute_checksum,
+    };
+
+    #[test]
+    fn checksum_is_deterministic() {
+        let payload = b"payload";
+        assert_eq!(compute_checksum(payload), compute_checksum(payload));
+    }
+
+    #[test]
+    fn default_header_uses_constants() {
+        let header = PvsHeader::default();
+        assert_eq!(header.magic, *PAVIS_MAGIC);
+        assert_eq!(header.version, PAVIS_VERSION);
+        assert_eq!(header.algorithm, PAVIS_HASH_ALGORITHM_SHA256);
+    }
+}

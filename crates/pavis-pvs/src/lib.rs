@@ -13,3 +13,15 @@ pub use header::{
 pub use read::read_header;
 pub use verify::{load, verify};
 pub use write::write;
+
+#[cfg(test)]
+mod tests {
+    use super::{PAVIS_MAGIC, compute_checksum};
+
+    #[test]
+    fn reexports_are_accessible() {
+        assert_eq!(PAVIS_MAGIC, b"PAVS");
+        let checksum = compute_checksum(b"payload");
+        assert_eq!(checksum.len(), 32);
+    }
+}

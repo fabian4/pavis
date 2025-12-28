@@ -26,3 +26,24 @@ impl Telemetry {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Telemetry;
+    use pavis_core::{AccessLogConfig, TelemetryConfig};
+    use pingora::services::Service;
+
+    #[test]
+    fn telemetry_creates_access_log_worker() {
+        let (telemetry, worker) = Telemetry::new(&TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            prometheus_addr: None,
+            access_log: AccessLogConfig::False,
+            tracing: None,
+        });
+        assert_eq!(worker.name(), "access_log");
+        assert_eq!(std::sync::Arc::strong_count(&telemetry.access_log), 1);
+    }
+}

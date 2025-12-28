@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "crates/pavis",
-    "crates/pavis-cli",
+    "crates/pavctl",
     "crates/pavis-xds",
     "crates/pavis-pvs",
     "crates/pavis-core",

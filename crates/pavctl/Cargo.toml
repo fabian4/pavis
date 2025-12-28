@@ -1,9 +1,13 @@
 [package]
-name = "pavis-cli"
+name = "pavctl"
 version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "Pavis CLI"
+
+[[bin]]
+name = "pavctl"
+path = "src/main.rs"
 
 [dependencies]
 pavis-core = { path = "../pavis-core" }

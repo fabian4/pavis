@@ -1,5 +1,3 @@
-mod common;
-
 use anyhow::Result;
 use pavis_e2e::utils::{find_project_root, get_upstream_name};
 use std::fs;
@@ -22,26 +20,26 @@ async fn test_binary_config_loading() -> Result<()> {
         .replace("${TEST_MODE}", "binary");
     fs::write(&yaml_gen, content)?;
 
-    // 3. Compile to .pvs using pavis-cli
-    // We assume pavis-cli is built (standard for E2E tests run via cargo)
-    let cli_path = project_root.join("target/debug/pavis-cli");
-    if !cli_path.exists() {
-        // Fallback to building it if not found (though slow)
-        let status = Command::new("cargo")
-            .args(["build", "-p", "pavis-cli"])
-            .status()?;
-        assert!(status.success(), "Failed to build pavis-cli");
-    }
+    // 3. Generate .pvs using pavctl
+    let release_dir = project_root.join("target/release");
+    let debug_dir = project_root.join("target/debug");
 
-    let status = Command::new(&cli_path)
-        .arg("compile")
+    let pavctl_bin = if release_dir.join("pavctl").exists() {
+        release_dir.join("pavctl")
+    } else {
+        debug_dir.join("pavctl")
+    };
+
+    let status = Command::new(&pavctl_bin)
+        .arg("generate")
         .arg("--input")
         .arg(&yaml_gen)
         .arg("--output")
         .arg(&pvs_gen)
-        .status()?;
+        .status()
+        .expect("failed to execute pavctl");
 
-    assert!(status.success(), "pavis-cli failed to compile config");
+    assert!(status.success(), "pavctl failed to generate config");
 
     // 4. Start Pavis with .pvs config
     // We manually manage the env here instead of common::setup because common::setup expects a YAML name

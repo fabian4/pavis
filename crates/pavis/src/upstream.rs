@@ -32,3 +32,34 @@ impl Manager {
         self.clusters.get(name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Manager;
+    use pavis_core::{ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, Upstream};
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn manager_returns_configured_cluster() {
+        let upstreams = vec![Upstream {
+            name: "backend".to_string(),
+            load_balancer: LoadBalancer::RoundRobin,
+            http_version: HttpVersion::H1,
+            connection_pool: ConnectionPoolConfig {
+                idle_timeout_secs: 60,
+                connection_timeout_secs: 5,
+            },
+            tls: None,
+            endpoints: vec![Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                port: 8080,
+                weight: 1,
+            }],
+        }];
+
+        let manager = Manager::new(&upstreams);
+        let cluster = manager.get("backend");
+        assert!(cluster.is_some());
+        assert_eq!(cluster.unwrap().config.name, "backend");
+    }
+}

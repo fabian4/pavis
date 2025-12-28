@@ -41,3 +41,78 @@ pub fn select_index(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::select_index;
+    use pavis_core::{Endpoint, LoadBalancer};
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn select_index_returns_zero_for_empty_or_zero_weight() {
+        let counter = AtomicUsize::new(0);
+        let idx = select_index(LoadBalancer::RoundRobin, &[], &counter, 0);
+        assert_eq!(idx, 0);
+
+        let endpoints = vec![Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: 8080,
+            weight: 0,
+        }];
+        let idx = select_index(LoadBalancer::Random, &endpoints, &counter, 0);
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn select_index_round_robin_respects_weights() {
+        let counter = AtomicUsize::new(0);
+        let endpoints = vec![
+            Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                port: 8080,
+                weight: 2,
+            },
+            Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+                port: 8081,
+                weight: 1,
+            },
+        ];
+        let total_weight = 3;
+        assert_eq!(
+            select_index(LoadBalancer::RoundRobin, &endpoints, &counter, total_weight),
+            0
+        );
+        assert_eq!(
+            select_index(LoadBalancer::RoundRobin, &endpoints, &counter, total_weight),
+            0
+        );
+        assert_eq!(
+            select_index(LoadBalancer::RoundRobin, &endpoints, &counter, total_weight),
+            1
+        );
+    }
+
+    #[test]
+    fn select_index_random_is_in_range() {
+        let counter = AtomicUsize::new(0);
+        let endpoints = vec![
+            Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                port: 8080,
+                weight: 1,
+            },
+            Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+                port: 8081,
+                weight: 1,
+            },
+        ];
+        let total_weight = 2;
+        for _ in 0..10 {
+            let idx = select_index(LoadBalancer::Random, &endpoints, &counter, total_weight);
+            assert!(idx < endpoints.len());
+        }
+    }
+}

@@ -74,31 +74,30 @@ impl TestEnv {
                 .extension()
                 .is_some_and(|ext| ext == "yaml" || ext == "yml")
             {
-                let pavis_cli_bin = find_binary("pavis-cli")?;
+                let pavctl_bin = find_binary("pavctl")?;
                 let output_pvs = config_dest.with_extension("pvs");
 
                 println!(
-                    "🔨 Compiling YAML to PVS: {:?} -> {:?}",
+                    "🔨 Generating PVS from YAML: {:?} -> {:?}",
                     config_dest, output_pvs
                 );
-                let status = Command::new(&pavis_cli_bin)
-                    .arg("compile")
+                let status = Command::new(&pavctl_bin)
+                    .arg("generate")
                     .arg("--input")
                     .arg(&config_dest)
                     .arg("--output")
                     .arg(&output_pvs)
                     .status()
-                    .context("Failed to run pavis-cli")?;
+                    .context("Failed to run pavctl")?;
 
                 if !status.success() {
-                    return Err(anyhow::anyhow!("Failed to compile config using pavis-cli"));
+                    return Err(anyhow::anyhow!("Failed to generate config using pavctl"));
                 }
                 pvs_path = Some(output_pvs.clone());
                 output_pvs
             } else {
                 config_dest.clone()
             };
-
             println!("🚀 Starting Pavis Binary ({:?})...", run_config_path);
             let child = Command::new(&pavis_bin)
                 .arg("--config")

@@ -16,3 +16,15 @@ pub fn load_file(path: &str) -> LoadResult<RuntimeConfig> {
 
     pavis_pvs::load(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::load_file;
+    use pavis_pvs::PvsError;
+
+    #[test]
+    fn load_file_rejects_non_pvs_extension() {
+        let err = load_file("config.yaml").expect_err("expected invalid extension error");
+        assert!(matches!(err, PvsError::InvalidExtension(_)));
+    }
+}

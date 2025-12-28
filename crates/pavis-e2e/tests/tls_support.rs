@@ -121,24 +121,24 @@ async fn test_tls_support() {
 
         let pavis_bin = find_binary("pavis").expect("Pavis binary not found");
 
-        // Compile YAML to PVS
-        let pavis_cli_bin = find_binary("pavis-cli").expect("Pavis CLI binary not found");
+        // Generate YAML to PVS
+        let pavctl_bin = find_binary("pavctl").expect("pavctl binary not found");
         let output_pvs = config_path.with_extension("pvs");
 
         println!(
-            "🔨 Compiling YAML to PVS: {:?} -> {:?}",
+            "🔨 Generating PVS from YAML: {:?} -> {:?}",
             config_path, output_pvs
         );
-        let status = Command::new(&pavis_cli_bin)
-            .arg("compile")
+        let status = Command::new(&pavctl_bin)
+            .arg("generate")
             .arg("--input")
             .arg(&config_path)
             .arg("--output")
             .arg(&output_pvs)
             .status()
-            .expect("Failed to run pavis-cli");
+            .expect("Failed to run pavctl");
 
-        assert!(status.success(), "Failed to compile config");
+        assert!(status.success(), "Failed to generate config");
 
         println!("🚀 Starting Pavis Binary ({:?})...", output_pvs);
         let child = Command::new(pavis_bin)

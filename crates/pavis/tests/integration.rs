@@ -75,6 +75,223 @@ fn test_configuration_driven_routing() {
 }
 
 #[test]
+fn test_configuration_driven_routing_exact_and_regex() {
+    let mut config = base_config();
+    config.upstreams.push(Upstream {
+        name: "backend-exact".to_string(),
+        load_balancer: LoadBalancer::Random,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
+        tls: None,
+        endpoints: vec![Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: 8082,
+            weight: 1,
+        }],
+    });
+    config.upstreams.push(Upstream {
+        name: "backend-regex".to_string(),
+        load_balancer: LoadBalancer::Random,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
+        tls: None,
+        endpoints: vec![Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: 8083,
+            weight: 1,
+        }],
+    });
+    config.routes.push(VirtualHost {
+        host: "*".to_string(),
+        paths: vec![
+            Route {
+                match_type: MatchType::Exact,
+                path: "/health".to_string(),
+                timeout_ms: None,
+                retry_policy: None,
+                request_headers: None,
+                response_headers: None,
+                destinations: vec![WeightedDestination {
+                    upstream: "backend-exact".to_string(),
+                    weight: 1,
+                }],
+                compiled_regex: None,
+            },
+            Route {
+                match_type: MatchType::Regex,
+                path: r"^/items/[0-9]+$".to_string(),
+                timeout_ms: None,
+                retry_policy: None,
+                request_headers: None,
+                response_headers: None,
+                destinations: vec![WeightedDestination {
+                    upstream: "backend-regex".to_string(),
+                    weight: 1,
+                }],
+                compiled_regex: None,
+            },
+        ],
+    });
+
+    let router = Router::new(config.routes).expect("Failed to create router");
+
+    let (_vhost, route) = router
+        .match_request(None, "/health")
+        .expect("Should match exact");
+    assert_eq!(route.destinations[0].upstream, "backend-exact");
+
+    let (_vhost, route) = router
+        .match_request(None, "/items/42")
+        .expect("Should match regex");
+    assert_eq!(route.destinations[0].upstream, "backend-regex");
+
+    assert!(router.match_request(None, "/items/abc").is_none());
+}
+
+#[test]
+fn test_vhost_precedence_and_multiple_hosts() {
+    let mut config = base_config();
+    config.upstreams.push(Upstream {
+        name: "api-upstream".to_string(),
+        load_balancer: LoadBalancer::Random,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
+        tls: None,
+        endpoints: vec![Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: 8084,
+            weight: 1,
+        }],
+    });
+    config.upstreams.push(Upstream {
+        name: "web-upstream".to_string(),
+        load_balancer: LoadBalancer::Random,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
+        tls: None,
+        endpoints: vec![Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: 8085,
+            weight: 1,
+        }],
+    });
+    config.upstreams.push(Upstream {
+        name: "wildcard-upstream".to_string(),
+        load_balancer: LoadBalancer::Random,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
+        tls: None,
+        endpoints: vec![Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: 8086,
+            weight: 1,
+        }],
+    });
+    config.routes = vec![
+        VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                match_type: MatchType::Exact,
+                path: "/".to_string(),
+                timeout_ms: None,
+                retry_policy: None,
+                request_headers: None,
+                response_headers: None,
+                destinations: vec![WeightedDestination {
+                    upstream: "wildcard-upstream".to_string(),
+                    weight: 1,
+                }],
+                compiled_regex: None,
+            }],
+        },
+        VirtualHost {
+            host: "api.com".to_string(),
+            paths: vec![Route {
+                match_type: MatchType::Exact,
+                path: "/".to_string(),
+                timeout_ms: None,
+                retry_policy: None,
+                request_headers: None,
+                response_headers: None,
+                destinations: vec![WeightedDestination {
+                    upstream: "api-upstream".to_string(),
+                    weight: 1,
+                }],
+                compiled_regex: None,
+            }],
+        },
+        VirtualHost {
+            host: "web.com".to_string(),
+            paths: vec![Route {
+                match_type: MatchType::Exact,
+                path: "/".to_string(),
+                timeout_ms: None,
+                retry_policy: None,
+                request_headers: None,
+                response_headers: None,
+                destinations: vec![WeightedDestination {
+                    upstream: "web-upstream".to_string(),
+                    weight: 1,
+                }],
+                compiled_regex: None,
+            }],
+        },
+    ];
+
+    let router = Router::new(config.routes).expect("Failed to create router");
+
+    let (vhost, _route) = router
+        .match_request(Some("api.com"), "/")
+        .expect("api.com should match");
+    assert_eq!(vhost.host, "api.com");
+
+    let (vhost, _route) = router
+        .match_request(Some("web.com"), "/")
+        .expect("web.com should match");
+    assert_eq!(vhost.host, "web.com");
+
+    let (vhost, _route) = router
+        .match_request(Some("unknown.com"), "/")
+        .expect("wildcard should match");
+    assert_eq!(vhost.host, "*");
+}
+
+#[test]
+fn test_upstream_with_no_endpoints() {
+    let mut config = base_config();
+    config.upstreams.push(Upstream {
+        name: "empty-upstream".to_string(),
+        load_balancer: LoadBalancer::Random,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
+        tls: None,
+        endpoints: vec![],
+    });
+
+    let manager = Manager::new(&config.upstreams);
+    let cluster = manager.get("empty-upstream").expect("Cluster not found");
+    assert!(cluster.select_endpoint().is_none());
+}
+
+#[test]
 fn test_load_balancer_state_correctness() {
     let mut config = base_config();
     config.upstreams.push(Upstream {

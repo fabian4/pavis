@@ -15,7 +15,7 @@
 - Strict responsibilities:
   - `pavis-core`: protocol + canonical semantics; canonical validation of `RuntimeConfig`; no I/O, parsing, or format concerns.
   - `pavis-adapter-*`: input DTOs, source-specific defaults/validation, transforms to `pavis-core::RuntimeConfig`.
-  - `pavis-cli` / `pavis-xds`: I/O orchestration shells that invoke adapters.
+  - `pavctl` / `pavis-xds`: I/O orchestration shells that invoke adapters.
   - `pavis-pvs`: the only place to read/inspect `.pvs`, do magic/version/checksum checks, and run rkyv byte validation; runtime must not touch archive internals.
   - `pavis` runtime: consumes trusted `RuntimeConfig`; only defensive crash-safety checks; no parsing/serde/rkyv, no semantic validation or config decoding (normal runtime state allocation is fine).
 - Dependency direction is one-way: `pavis-core` is foundational; adapters/producers depend on core; runtime depends on core; runtime must not depend on adapters/serde/rkyv. Shared domain types live in core.
@@ -42,8 +42,8 @@
 
 ## Tooling & Validation
 
-- After any Rust code change: run `cargo fmt --all`, `cargo clippy --all`.
-- Validate builds/tests with `cargo build --workspace && cargo test --workspace --exclude pavis-e2e` after edits.
+- After any Rust code change: run `make fmt`, `make lint`.
+- Validate builds/tests with `make build test` or `make ci` after edits.
 
 ## Code Style
 

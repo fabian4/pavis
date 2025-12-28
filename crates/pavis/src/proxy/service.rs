@@ -21,6 +21,11 @@ pub struct Proxy {
 
 impl Proxy {}
 
+fn apply_route_headers(ctx: &mut RouterContext, route: &pavis_core::Route) {
+    ctx.request_headers = route.request_headers.clone();
+    ctx.response_headers = route.response_headers.clone();
+}
+
 #[async_trait]
 impl ProxyHttp for Proxy {
     type CTX = RouterContext;
@@ -129,8 +134,7 @@ impl ProxyHttp for Proxy {
                 pick -= dest.weight;
             }
 
-            ctx.request_headers = route.request_headers.clone();
-            ctx.response_headers = route.response_headers.clone();
+            apply_route_headers(ctx, route);
 
             return Ok(false);
         }
@@ -162,5 +166,88 @@ impl ProxyHttp for Proxy {
             .access_log
             .log(session, ctx.upstream_name.as_deref(), ctx.start_time)
             .await;
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::apply_route_headers;
+    use crate::proxy::context::RouterContext;
+    use pavis_core::{HeaderOperations, MatchType, Route, WeightedDestination};
+
+    #[test]
+    fn apply_route_headers_populates_router_context() {
+        let route = Route {
+            match_type: MatchType::Exact,
+            path: "/".to_string(),
+            timeout_ms: None,
+            retry_policy: None,
+            request_headers: Some(HeaderOperations {
+                add: vec![("x-req".to_string(), "1".to_string())],
+                remove: vec!["x-remove".to_string()],
+            }),
+            response_headers: Some(HeaderOperations {
+                add: vec![("x-resp".to_string(), "ok".to_string())],
+                remove: vec![],
+            }),
+            destinations: vec![WeightedDestination {
+                upstream: "backend".to_string(),
+                weight: 1,
+            }],
+            compiled_regex: None,
+        };
+        let mut ctx = RouterContext {
+            upstream_name: None,
+            request_headers: None,
+            response_headers: None,
+            start_time: std::time::Instant::now(),
+        };
+
+        apply_route_headers(&mut ctx, &route);
+
+        assert!(ctx.request_headers.is_some());
+        assert!(ctx.response_headers.is_some());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Proxy;
+    use crate::router::Router;
+    use crate::telemetry::Telemetry;
+    use crate::upstream::Manager;
+    use pavis_core::{AccessLogConfig, TelemetryConfig};
+    use pingora::proxy::ProxyHttp;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    fn test_telemetry() -> Arc<Telemetry> {
+        let (telemetry, _worker) = Telemetry::new(&TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            prometheus_addr: None,
+            access_log: AccessLogConfig::False,
+            tracing: None,
+        });
+        Arc::new(telemetry)
+    }
+
+    #[test]
+    fn new_ctx_defaults_are_empty() {
+        let router = Arc::new(Router::new(vec![]).expect("empty routes"));
+        let manager = Manager::new(&[]);
+        let proxy = Proxy {
+            router,
+            upstream_manager: manager,
+            telemetry: test_telemetry(),
+        };
+
+        let before = Instant::now();
+        let ctx = proxy.new_ctx();
+        assert!(ctx.upstream_name.is_none());
+        assert!(ctx.request_headers.is_none());
+        assert!(ctx.response_headers.is_none());
+        assert!(ctx.start_time >= before);
     }
 }

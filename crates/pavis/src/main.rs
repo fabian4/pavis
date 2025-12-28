@@ -30,6 +30,26 @@ fn log_level_to_str(level: Option<LogLevel>) -> &'static str {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::log_level_to_str;
+    use pavis_core::LogLevel;
+
+    #[test]
+    fn log_level_to_str_defaults_to_info() {
+        assert_eq!(log_level_to_str(None), "info");
+    }
+
+    #[test]
+    fn log_level_to_str_maps_values() {
+        assert_eq!(log_level_to_str(Some(LogLevel::Error)), "error");
+        assert_eq!(log_level_to_str(Some(LogLevel::Warn)), "warn");
+        assert_eq!(log_level_to_str(Some(LogLevel::Info)), "info");
+        assert_eq!(log_level_to_str(Some(LogLevel::Debug)), "debug");
+        assert_eq!(log_level_to_str(Some(LogLevel::Trace)), "trace");
+    }
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 

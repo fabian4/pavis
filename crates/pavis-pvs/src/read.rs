@@ -39,3 +39,23 @@ pub(crate) fn parse_header(buf: &[u8]) -> PvsHeader {
         _reserved,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_header;
+    use crate::header::{PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION};
+
+    #[test]
+    fn parse_header_reads_fields() {
+        let mut buf = [0u8; 64];
+        buf[0..4].copy_from_slice(PAVIS_MAGIC);
+        buf[4..8].copy_from_slice(&PAVIS_VERSION.to_le_bytes());
+        buf[8..12].copy_from_slice(&PAVIS_HASH_ALGORITHM_SHA256.to_le_bytes());
+        buf[12..44].copy_from_slice(&[1u8; 32]);
+        let header = parse_header(&buf);
+        assert_eq!(header.magic, *PAVIS_MAGIC);
+        assert_eq!(header.version, PAVIS_VERSION);
+        assert_eq!(header.algorithm, PAVIS_HASH_ALGORITHM_SHA256);
+        assert_eq!(header.checksum, [1u8; 32]);
+    }
+}

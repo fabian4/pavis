@@ -41,3 +41,67 @@ pub trait Config {
     /// This step usually involves mapping fields, applying defaults, and converting types.
     fn build(self) -> Result<RuntimeConfig, Self::Error>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Config, ConfigSource};
+    use crate::RuntimeConfig;
+    use std::error::Error;
+    use std::fmt;
+
+    #[derive(Debug)]
+    struct DummyError(&'static str);
+
+    impl fmt::Display for DummyError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl Error for DummyError {}
+
+    #[derive(Debug, Clone)]
+    struct DummyConfig(String);
+
+    impl Config for DummyConfig {
+        type Error = DummyError;
+
+        fn load(source: ConfigSource) -> Result<Self, Self::Error> {
+            match source {
+                ConfigSource::String(s) => Ok(Self(s.to_string())),
+                ConfigSource::Bytes(bytes) => match std::str::from_utf8(bytes) {
+                    Ok(s) => Ok(Self(s.to_string())),
+                    Err(_) => Err(DummyError("invalid utf8")),
+                },
+                ConfigSource::File(_) => Err(DummyError("file not supported in test")),
+            }
+        }
+
+        fn validate(&self) -> Result<(), Self::Error> {
+            if self.0.is_empty() {
+                return Err(DummyError("empty"));
+            }
+            Ok(())
+        }
+
+        fn build(self) -> Result<RuntimeConfig, Self::Error> {
+            Err(DummyError("no runtime in test"))
+        }
+    }
+
+    #[test]
+    fn load_from_string_and_bytes() {
+        let cfg = DummyConfig::load(ConfigSource::String("ok")).expect("string load");
+        assert_eq!(cfg.0, "ok");
+
+        let cfg = DummyConfig::load(ConfigSource::Bytes(b"ok")).expect("bytes load");
+        assert_eq!(cfg.0, "ok");
+    }
+
+    #[test]
+    fn validate_rejects_empty() {
+        let cfg = DummyConfig(String::new());
+        let err = cfg.validate().expect_err("empty should fail");
+        assert_eq!(err.to_string(), "empty");
+    }
+}

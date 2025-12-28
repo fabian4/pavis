@@ -8,7 +8,7 @@ use pavis_core::{self as binary, Config, ConfigSource};
 use pavis_pvs as pvs;
 
 #[derive(Parser)]
-#[command(name = "pavis-cli")]
+#[command(name = "pavctl")]
 #[command(version, about = "The developer tool for Pavis", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -17,13 +17,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Compile a YAML config file into a Pavis binary (.pvs)
-    Compile {
-        /// Input YAML file
+    /// Generate a Pavis binary (.pvs) from a high-level config (e.g., YAML)
+    Generate {
+        /// Input config file (YAML)
         #[arg(short, long)]
         input: PathBuf,
 
-        /// Output Pavis file
+        /// Output Pavis file (.pvs)
         #[arg(short, long)]
         output: PathBuf,
     },
@@ -60,7 +60,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { input, output } => compile_config(input, output),
+        Commands::Generate { input, output } => compile_config(input, output),
         Commands::Inspect { input, hex } => inspect_config(input, hex),
         Commands::Validate { input } => validate_yaml(input),
         Commands::Convert { input, output } => convert_to_yaml(input, output),

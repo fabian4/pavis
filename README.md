@@ -35,3 +35,40 @@ These goals are exploratory and subject to change as the project evolves.
 > - APIs and on-disk formats are unstable
 > - Performance characteristics are still under evaluation
 > - Not intended for production use
+
+## Development
+
+The project uses a modular `Makefile` for common tasks.
+
+```bash
+# Build the workspace
+make build
+
+# Run unit and integration tests
+make test
+make test-integration
+
+# Run full CI suite (fmt, lint, test)
+make ci
+
+# Generate API documentation
+make docs
+
+# Show all available commands
+make help
+```
+
+## pavctl
+
+`pavctl` is the primary CLI tool for managing Pavis. It is used to generate binary `.pvs` configurations, inspect them, and will eventually manage the proxy runtime.
+
+```bash
+# Generate a binary config from YAML
+cargo run --bin pavctl -- generate -i config.yaml -o config.pvs
+
+# Inspect a binary config
+cargo run --bin pavctl -- inspect -i config.pvs
+```
+
+For performance testing, see the **[Benchmark README](./bench/README.md)**.
+For E2E testing, see the **[E2E README](./crates/pavis-e2e/README.md)**.

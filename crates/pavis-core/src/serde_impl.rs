@@ -30,3 +30,36 @@ impl<'de> Deserialize<'de> for AccessLogConfig {
         }
     }
 }
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::AccessLogConfig;
+    use serde::Deserialize;
+    use serde::de::value::Error as DeError;
+    use serde::de::value::{BoolDeserializer, StrDeserializer};
+
+    #[test]
+    fn access_log_accepts_string_values() {
+        let config = AccessLogConfig::deserialize(StrDeserializer::<DeError>::new("stdout"))
+            .expect("stdout");
+        assert!(matches!(config, AccessLogConfig::Stdout));
+
+        let config =
+            AccessLogConfig::deserialize(StrDeserializer::<DeError>::new("false")).expect("false");
+        assert!(matches!(config, AccessLogConfig::False));
+
+        let config = AccessLogConfig::deserialize(StrDeserializer::<DeError>::new("logs.txt"))
+            .expect("file");
+        assert!(matches!(config, AccessLogConfig::File(path) if path == "logs.txt"));
+    }
+
+    #[test]
+    fn access_log_rejects_true() {
+        let err = AccessLogConfig::deserialize(BoolDeserializer::<DeError>::new(true))
+            .expect_err("true rejects");
+        assert!(
+            err.to_string().contains("access_log cannot be true"),
+            "unexpected error: {err}"
+        );
+    }
+}

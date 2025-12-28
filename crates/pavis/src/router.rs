@@ -60,7 +60,59 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pavis_core::{MatchType, Route, VirtualHost};
+    use pavis_core::{MatchType, Route, VirtualHost, WeightedDestination};
+
+    fn create_routes() -> Vec<VirtualHost> {
+        vec![
+            VirtualHost {
+                host: "example.com".to_string(),
+                paths: vec![
+                    Route {
+                        match_type: MatchType::Exact,
+                        path: "/exact".to_string(),
+                        timeout_ms: None,
+                        retry_policy: None,
+                        request_headers: None,
+                        response_headers: None,
+                        destinations: vec![WeightedDestination {
+                            upstream: "backend-1".to_string(),
+                            weight: 1,
+                        }],
+                        compiled_regex: None,
+                    },
+                    Route {
+                        match_type: MatchType::Prefix,
+                        path: "/api".to_string(),
+                        timeout_ms: None,
+                        retry_policy: None,
+                        request_headers: None,
+                        response_headers: None,
+                        destinations: vec![WeightedDestination {
+                            upstream: "backend-1".to_string(),
+                            weight: 1,
+                        }],
+                        compiled_regex: None,
+                    },
+                ],
+            },
+            VirtualHost {
+                host: "*".to_string(),
+                paths: vec![Route {
+                    match_type: MatchType::Prefix,
+                    path: "/public".to_string(),
+                    timeout_ms: None,
+                    retry_policy: None,
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![WeightedDestination {
+                        upstream: "backend-2".to_string(),
+                        weight: 1,
+                    }],
+                    compiled_regex: None,
+                }],
+            },
+        ]
+    }
 
     #[test]
     fn test_invalid_regex_compilation() {
@@ -79,5 +131,124 @@ mod tests {
         }];
 
         assert!(Router::new(routes).is_err());
+    }
+
+    #[test]
+    fn test_find_route_exact_match() {
+        let router = Router::new(create_routes()).unwrap();
+        let (vhost, route) = router
+            .match_request(Some("example.com"), "/exact")
+            .expect("Should match");
+        assert_eq!(vhost.host, "example.com");
+        assert_eq!(route.path, "/exact");
+    }
+
+    #[test]
+    fn test_find_route_prefix_match() {
+        let router = Router::new(create_routes()).unwrap();
+        let (vhost, route) = router
+            .match_request(Some("example.com"), "/api/v1/users")
+            .expect("Should match");
+        assert_eq!(vhost.host, "example.com");
+        assert_eq!(route.path, "/api");
+    }
+
+    #[test]
+    fn test_find_route_wildcard_host() {
+        let router = Router::new(create_routes()).unwrap();
+        let (vhost, route) = router
+            .match_request(Some("any.com"), "/public/stuff")
+            .expect("Should match");
+        assert_eq!(vhost.host, "*");
+        assert_eq!(route.path, "/public");
+    }
+
+    #[test]
+    fn test_find_route_no_match() {
+        let router = Router::new(create_routes()).unwrap();
+        let result = router.match_request(Some("example.com"), "/notfound");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_route_wrong_host() {
+        let router = Router::new(create_routes()).unwrap();
+        let result = router.match_request(Some("other.com"), "/exact");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_route_regex_match() {
+        let routes = vec![VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                match_type: MatchType::Regex,
+                path: r"^/api/v[0-9]+/users/\d+$".to_string(),
+                timeout_ms: None,
+                retry_policy: None,
+                request_headers: None,
+                response_headers: None,
+                destinations: vec![WeightedDestination {
+                    upstream: "backend".to_string(),
+                    weight: 1,
+                }],
+                compiled_regex: None,
+            }],
+        }];
+
+        let router = Router::new(routes).unwrap();
+
+        let result = router.match_request(None, "/api/v1/users/123");
+        assert!(result.is_some());
+        let (_, route) = result.unwrap();
+        assert_eq!(route.match_type, MatchType::Regex);
+
+        let result = router.match_request(None, "/api/v2/users/456");
+        assert!(result.is_some());
+
+        let result = router.match_request(None, "/api/v1/users/");
+        assert!(result.is_none());
+
+        let result = router.match_request(None, "/api/v1/users/abc");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_route_order_precedence() {
+        let routes = vec![VirtualHost {
+            host: "*".to_string(),
+            paths: vec![
+                Route {
+                    match_type: MatchType::Prefix,
+                    path: "/app".to_string(),
+                    timeout_ms: None,
+                    retry_policy: None,
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![WeightedDestination {
+                        upstream: "backend-1".to_string(),
+                        weight: 1,
+                    }],
+                    compiled_regex: None,
+                },
+                Route {
+                    match_type: MatchType::Exact,
+                    path: "/app".to_string(),
+                    timeout_ms: None,
+                    retry_policy: None,
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![WeightedDestination {
+                        upstream: "backend-2".to_string(),
+                        weight: 1,
+                    }],
+                    compiled_regex: None,
+                },
+            ],
+        }];
+
+        let router = Router::new(routes).unwrap();
+        let (_, route) = router.match_request(None, "/app").expect("match");
+        assert_eq!(route.match_type, MatchType::Prefix);
     }
 }

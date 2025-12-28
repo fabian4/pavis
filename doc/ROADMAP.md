@@ -7,7 +7,7 @@
 | Phase | Focus | Status |
 |:-----:|-------|:------:|
 | 1 | Foundation (Pingora proxy) | ✅ |
-| 2 | Protocol (`.pvs` format, `pavis-core`, `pavis-cli`) | ✅ |
+| 2 | Protocol (`.pvs` format, `pavis-core`, `pavctl`) | ✅ |
 | 3 | Long Polling (dynamic config updates) | ⏳ |
 | 4 | xDS Bridge (Istio integration) | ⏳ |
 | 5 | Traffic Management (retries, timeouts, load balancing) | ⏳ |
@@ -65,8 +65,8 @@
 - [x] Add schema migration strategy documentation
 - [x] Backwards compatibility validation between versions
 
-**`pavis-cli`** (Binary)
-- [x] `compile` command: YAML → `.pvs`
+**`pavctl`** (Binary)
+- [x] `generate` command: YAML → `.pvs`
   - [x] Parse YAML config with serde
   - [x] Convert to `pavis-core` structs
   - [x] Serialize with rkyv and write with header
@@ -79,6 +79,9 @@
   - [x] Hex dump mode for debugging
 - [x] `validate` command: Check YAML without compiling
 - [x] `convert` command: Convert between versions
+- [ ] `apply` command: Push config to runtime (Phase 3)
+- [ ] `status` command: View runtime health (Phase 8)
+- [ ] `rollback` command: Revert config (Phase 3)
 
 **`pavis`** (Binary)
 - [x] Replace YAML loader with rkyv-based binary format
@@ -121,6 +124,10 @@
   - [ ] File watcher for local `.pvs` changes
   - [ ] Version increment on change
   - [ ] Config history (last N versions)
+
+**`pavctl`**
+- [ ] `apply` command: Upload `.pvs` to `pavis-xds`
+- [ ] `rollback` command: Tell `pavis-xds` to revert to version N
 
 **`pavis`** (Client)
 - [ ] Background config polling thread
@@ -436,8 +443,11 @@
   - [ ] `GET /connections` - active connections
   - [ ] `GET /certs` - certificate info and expiry
 
-**`pavis-cli`** (Debugging)
-- [ ] `proxy-status` command - query running proxy
+**`pavctl`** (Debugging)
+- [ ] `status` command - query running proxy health and version
+- [ ] `logs` command - stream proxy logs
+- [ ] `visualize` command - render logical configuration structure
+- [ ] `simulate` command - predict routing behavior for a config payload
 - [ ] `config-diff` command - compare two `.pvs` files
 - [ ] `traffic-tap` command - capture live traffic (development only)
 - [ ] `cert-info` command - display certificate details

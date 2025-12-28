@@ -58,3 +58,56 @@ pub fn apply_response_headers(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_request_headers, apply_response_headers};
+    use pavis_core::HeaderOperations;
+    use pingora::http::{RequestHeader, ResponseHeader};
+
+    #[test]
+    fn test_apply_headers() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.insert_header("X-Remove", "old-value").unwrap();
+
+        let ops = HeaderOperations {
+            add: vec![("X-Add".to_string(), "new-value".to_string())],
+            remove: vec!["X-Remove".to_string()],
+        };
+
+        apply_request_headers(&mut req, Some(&ops)).unwrap();
+
+        assert_eq!(
+            req.headers.get("X-Proxy-By").unwrap().to_str().unwrap(),
+            "Pavis"
+        );
+        assert_eq!(
+            req.headers.get("X-Add").unwrap().to_str().unwrap(),
+            "new-value"
+        );
+        assert!(req.headers.get("X-Remove").is_none());
+    }
+
+    #[test]
+    fn test_apply_response_headers() {
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        resp.insert_header("X-Remove-Resp", "bad-value").unwrap();
+
+        let ops = HeaderOperations {
+            add: vec![("X-Add-Resp".to_string(), "good-value".to_string())],
+            remove: vec!["X-Remove-Resp".to_string()],
+        };
+
+        apply_response_headers(&mut resp, Some(&ops)).unwrap();
+
+        assert_eq!(
+            resp.headers.get("X-Proxy-By").unwrap().to_str().unwrap(),
+            "Pavis"
+        );
+        assert_eq!(
+            resp.headers.get("X-Add-Resp").unwrap().to_str().unwrap(),
+            "good-value"
+        );
+        assert!(resp.headers.get("X-Remove-Resp").is_none());
+    }
+}

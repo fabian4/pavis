@@ -17,8 +17,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Compile a YAML config file into a Pavis binary
-    Compile {
+    /// Generate a Pavis binary from a YAML config file
+    Generate {
         /// Input YAML file
         #[arg(short, long)]
         input: PathBuf,
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { input, output } => compile_config(input, output),
+        Commands::Generate { input, output } => compile_config(input, output),
     }
 }
 

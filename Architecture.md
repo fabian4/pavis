@@ -27,7 +27,7 @@ pavis/
 │   ├── pavis-core/         # Protocol – Canonical types & memory layout
 │   ├── pavis-pvs/          # PVS Protocol – Header + integrity layer
 │   ├── pavis-adapter-yaml/ # Adapter – YAML Input DTOs, parsing, validation
-│   ├── pavis-cli/          # CLI – I/O shell for local config compilation
+│   ├── pavctl/       # pavctl – I/O shell for local config compilation
 │   └── pavis-xds/          # Bridge – I/O shell for xDS streams
 └── Cargo.toml              # Workspace configuration
 ```
@@ -37,7 +37,7 @@ pavis/
 *   **`pavis-core` (Root)**: The foundation. Depends on `rkyv`. No I/O, no Serde. Defines the shared `Config` trait and `ConfigSource`.
 *   **`pavis-pvs`**: Implements the `.pvs` protocol crate; depends on `pavis-core`.
 *   **`pavis-adapter-yaml`**: Depends on `pavis-core` and input libs (`serde`, `yaml`); implements `Config`.
-*   **`pavis-cli` / `pavis-xds`**: Depend on adapters and `pavis-pvs`; orchestrate `Config::load/validate/build`.
+*   **`pavctl` / `pavis-xds`**: Depend on adapters and `pavis-pvs`; orchestrate `Config::load/validate/build`.
 *   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs`. **Must not** depend on adapters or input libs.
 
 ### 2.3. Responsibilities
@@ -48,7 +48,7 @@ pavis/
 | **PVS Protocol** | `pavis-pvs` | Defines `.pvs` header/constants and verifies binary integrity; loads/writes `.pvs`. |
 | **Input DTOs** | `pavis-adapter-*` | Defines `YamlConfig`, `XdsConfig` optimized for UX/Defaults; each implements the `Config` trait. |
 | **Adaptation & Validation** | `pavis-adapter-*` | Source-specific defaults/compat cleanup via `Config::validate`; transforms Input DTO -> `RuntimeConfig` in `Config::build` and invokes core semantic validation. |
-| **I/O & Orchestration** | Producers | `cli` & `xds` read source configs/streams via `Config::load`, then call `validate/build` to produce `.pvs`; inspection of `.pvs` may be performed by tooling but must not redefine semantics (integrity and version checks only). |
+| **I/O & Orchestration** | Producers | `pavctl` & `xds` read source configs/streams via `Config::load`, then call `validate/build` to produce `.pvs`; inspection of `.pvs` may be performed by tooling but must not redefine semantics (integrity and version checks only). |
 | **Runtime Execution** | `pavis` | Consumes validated `RuntimeConfig`; builds router/upstream/telemetry state. No parsing, decoding, or semantic validation of config. |
 
 ### 2.4. Layering Principles
@@ -115,7 +115,7 @@ Pavis prioritizes speed and simplicity over complex in-place migrations.
     3.  No N-1 compatibility support currently.
 *   **Future Improvements**:
     *   Schema Reflection or FlatBuffers if N-1 compatibility becomes required.
-    *   `pavis-cli convert` tool for offline migration.
+    *   `pavctl convert` tool for offline migration.
 
 ### 3.4. Performance Benefits
 
@@ -291,7 +291,26 @@ Request -> Proxy -> Router (Match) -> Upstream Manager (Select Endpoint) -> Clus
         Telemetry (Log)
 ```
 
-## 5. Safety & Resilience
+## 5. pavctl: The Pavis CLI
+
+`pavctl` is the primary control interface for developers and operators, handling the lifecycle of `.pvs` configuration and providing observability into the data plane.
+
+### 5.1. Command Categories
+
+1.  **Binary Protocol Tooling**:
+    *   **Generate**: Compiles high-level configurations (YAML/xDS) into optimized `.pvs` payloads.
+    *   **Parse/Inspect**: Provides human-readable views of binary state and protocol headers.
+    *   **Validate**: Ensures `.pvs` files are free from corruption and semantic errors.
+
+2.  **Runtime Orchestration**:
+    *   **Apply**: Dynamically pushes configuration to active proxy instances via the xDS bridge.
+    *   **Status/Logs**: Real-time health monitoring and troubleshooting.
+
+3.  **Configuration Management**:
+    *   **Rollback**: Instant recovery by reverting to previous configuration versions.
+    *   **Simulate**: Predicts routing outcomes for a given configuration without impacting traffic.
+
+## 6. Safety & Resilience
 
 Pavis employs a multi-layered strategy to ensure configuration stability, correctness, and operational safety.
 
@@ -302,7 +321,7 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
     *   Ensures structural correctness and cross-resource invariants (e.g., reference integrity, regex validity).
     *   Source-agnostic and mandatory for all config producers.
 
-2.  **Source-Specific Validation (`pavis-cli`, `pavis-xds`, adapters)**:
+2.  **Source-Specific Validation (`pavctl`, `pavis-xds`, adapters)**:
     *   **Input Adaptation.** Enforces constraints tied to the input source (schema, defaults, compatibility).
     *   Transforms user intent into `RuntimeConfig` and invokes `pavis-core::validate_runtime`.
     *   May not redefine or partially duplicate core semantics.

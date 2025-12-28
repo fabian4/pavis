@@ -29,3 +29,14 @@ impl From<std::convert::Infallible> for PvsError {
         unreachable!("Infallible should never be converted to PvsError")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PvsError;
+
+    #[test]
+    fn invalid_extension_error_formats_path() {
+        let err = PvsError::InvalidExtension("config.yaml".into());
+        assert!(err.to_string().contains("config.yaml"));
+    }
+}

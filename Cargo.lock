@@ -1788,6 +1788,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pavctl"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap 4.5.53",
+ "hex",
+ "pavis-adapter-yaml",
+ "pavis-core",
+ "pavis-pvs",
+ "serde_yaml 0.9.34+deprecated",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "pavis"
 version = "0.0.0"
 dependencies = [
@@ -1819,21 +1834,6 @@ dependencies = [
  "serde_json",
  "serde_yaml 0.9.34+deprecated",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "pavis-cli"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "clap 4.5.53",
- "hex",
- "pavis-adapter-yaml",
- "pavis-core",
- "pavis-pvs",
- "serde_yaml 0.9.34+deprecated",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

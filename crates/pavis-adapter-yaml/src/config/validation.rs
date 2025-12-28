@@ -4,7 +4,7 @@
 //! This module should only contain validation logic that is specific to the
 //! YAML input format or user-friendly error reporting before conversion.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashSet;
 
 use super::types::*;
@@ -41,7 +41,7 @@ pub fn validate(config: &mut YamlConfig) -> Result<()> {
                 // Validate retry_on conditions are strings (serde_json::Value)
                 for cond in &retry.retry_on {
                     if !cond.is_string() {
-                         return Err(anyhow::anyhow!(
+                        return Err(anyhow::anyhow!(
                             "Retry condition must be a string, found: {:?}",
                             cond
                         ));

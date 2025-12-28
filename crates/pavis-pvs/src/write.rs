@@ -37,3 +37,44 @@ pub fn write(path: impl AsRef<Path>, config: &RuntimeConfig) -> PvsResult<()> {
     fs::write(path, final_bytes).map_err(PvsError::Io)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::write;
+    use crate::header::{HEADER_SIZE, PAVIS_MAGIC};
+    use pavis_core::{RuntimeConfig, ServerConfig, TelemetryConfig};
+
+    fn minimal_config() -> RuntimeConfig {
+        RuntimeConfig {
+            server: ServerConfig {
+                listen_addr: "127.0.0.1:8080".parse().expect("addr"),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: Default::default(),
+                tracing: None,
+            },
+            upstreams: Vec::new(),
+            routes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn write_emits_header_and_payload() {
+        let config = minimal_config();
+        let dir = std::env::temp_dir();
+        let path = dir.join("pavis_test_config.pvs");
+        write(&path, &config).expect("write config");
+
+        let bytes = std::fs::read(&path).expect("read file");
+        assert!(bytes.len() > HEADER_SIZE);
+        assert_eq!(&bytes[0..4], PAVIS_MAGIC);
+        assert!(bytes[44..64].iter().all(|b| *b == 0));
+        let _ = std::fs::remove_file(&path);
+    }
+}

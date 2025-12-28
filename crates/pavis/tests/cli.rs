@@ -1,8 +1,12 @@
 use pavis_core::RuntimeConfig;
 use pavis_pvs as pvs;
+use std::io::BufRead;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::process::Child;
 use std::process::Command;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 fn get_binary_path() -> PathBuf {
     // Try to find the binary in target/debug or target/release
@@ -34,6 +38,50 @@ fn get_binary_path() -> PathBuf {
     );
 }
 
+fn wait_for_log_line(child: &mut Child, needle: &str, timeout: Duration) {
+    let start = Instant::now();
+    let needle = needle.to_string();
+    let (tx, rx) = mpsc::channel();
+    let spawn_reader = |handle: Box<dyn std::io::Read + Send>| {
+        let tx = tx.clone();
+        let thread_needle = needle.clone();
+        std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(handle);
+            let mut line = String::new();
+            while let Ok(bytes) = reader.read_line(&mut line) {
+                if bytes == 0 {
+                    break;
+                }
+                if line.contains(&thread_needle) {
+                    let _ = tx.send(());
+                    break;
+                }
+                line.clear();
+            }
+        });
+    };
+
+    if let Some(stdout) = child.stdout.take() {
+        spawn_reader(Box::new(stdout));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        spawn_reader(Box::new(stderr));
+    }
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("Process exited before listen: {}", status);
+        }
+        if rx.try_recv().is_ok() {
+            return;
+        }
+        if start.elapsed() > timeout {
+            let _ = child.kill();
+            panic!("Timed out waiting for log line '{}'", needle);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn test_cli_help() {
     let binary = get_binary_path();
@@ -48,6 +96,20 @@ fn test_cli_help() {
 }
 
 #[test]
+fn test_cli_version() {
+    let binary = get_binary_path();
+    let output = Command::new(binary)
+        .arg("--version")
+        .output()
+        .expect("Failed to execute binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = env!("CARGO_PKG_VERSION");
+    assert!(stdout.contains(version));
+}
+
+#[test]
 fn test_cli_missing_config() {
     let binary = get_binary_path();
     let output = Command::new(binary)
@@ -57,6 +119,28 @@ fn test_cli_missing_config() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("required"));
+}
+
+#[test]
+fn test_cli_invalid_magic() {
+    let temp_dir = std::env::temp_dir();
+    let config_path = temp_dir.join(format!("pavis_invalid_magic_{}.pvs", std::process::id()));
+    let mut bytes = vec![0u8; pvs::HEADER_SIZE];
+    bytes[0..4].copy_from_slice(b"NOPE");
+    std::fs::write(&config_path, bytes).expect("Failed to write invalid config");
+
+    let binary = get_binary_path();
+    let output = Command::new(binary)
+        .arg("--config")
+        .arg(&config_path)
+        .output()
+        .expect("Failed to execute binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Invalid magic"));
+
+    let _ = std::fs::remove_file(config_path);
 }
 
 #[test]
@@ -80,9 +164,6 @@ fn test_cli_invalid_config_path() {
 #[cfg(unix)]
 #[test]
 fn test_process_lifecycle_sigint() {
-    use std::thread;
-    use std::time::{Duration, Instant};
-
     let binary = get_binary_path();
 
     // Create a valid config programmatically
@@ -105,19 +186,18 @@ fn test_process_lifecycle_sigint() {
     };
 
     let temp_dir = std::env::temp_dir();
-    let config_path = temp_dir.join("pavis_lifecycle_test.pvs");
+    let config_path = temp_dir.join(format!("pavis_lifecycle_test_{}.pvs", std::process::id()));
     pvs::write(&config_path, &config).expect("Failed to write config");
 
     let mut child = Command::new(binary)
         .arg("--config")
         .arg(&config_path)
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("Failed to spawn process");
 
-    // Give it a moment to start
-    thread::sleep(Duration::from_secs(2));
+    wait_for_log_line(&mut child, "Pavis starting", Duration::from_secs(5));
 
     // Send SIGINT using kill command
     let status = Command::new("kill")
@@ -140,7 +220,7 @@ fn test_process_lifecycle_sigint() {
                     let _ = child.kill();
                     panic!("Process did not exit within timeout");
                 }
-                thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => panic!("Failed to wait on child: {}", e),
         }

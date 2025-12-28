@@ -156,3 +156,21 @@ impl AccessLog {
         let _ = self.tx.try_send(log_line);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AccessLog;
+    use pavis_core::AccessLogConfig;
+
+    #[test]
+    fn access_log_disabled_for_false() {
+        let (access_log, _worker) = AccessLog::new(&AccessLogConfig::False);
+        assert!(!access_log.enabled);
+    }
+
+    #[test]
+    fn access_log_enabled_for_stdout() {
+        let (access_log, _worker) = AccessLog::new(&AccessLogConfig::Stdout);
+        assert!(access_log.enabled);
+    }
+}
