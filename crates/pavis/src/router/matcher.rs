@@ -1,6 +1,7 @@
 use crate::router::CompiledVirtualHost;
 use pavis_core::{MatchType, Route, VirtualHost};
 
+#[allow(clippy::collapsible_if)]
 pub fn match_request<'a>(
     routes: &'a [CompiledVirtualHost],
     host_header: Option<&str>,
@@ -29,38 +30,38 @@ pub fn match_request<'a>(
 
     if let Some(host) = normalized_host {
         for vhost in routes {
-            if vhost.config.host != "*"
-                && vhost.config.host == host
-                && let Some(found) = try_match(vhost)
-            {
-                return Some(found);
+            if vhost.config.host != "*" && vhost.config.host == host {
+                if let Some(found) = try_match(vhost) {
+                    return Some(found);
+                }
             }
         }
         for vhost in routes {
-            if vhost.config.host == "*"
-                && let Some(found) = try_match(vhost)
-            {
-                return Some(found);
+            if vhost.config.host == "*" {
+                if let Some(found) = try_match(vhost) {
+                    return Some(found);
+                }
             }
         }
         return None;
     }
 
     for vhost in routes {
-        if vhost.config.host == "*"
-            && let Some(found) = try_match(vhost)
-        {
-            return Some(found);
+        if vhost.config.host == "*" {
+            if let Some(found) = try_match(vhost) {
+                return Some(found);
+            }
         }
     }
     None
 }
 
+#[allow(clippy::collapsible_if)]
 fn normalize_host(host: &str) -> &str {
-    if let Some(stripped) = host.strip_prefix('[')
-        && let Some(end) = stripped.find(']')
-    {
-        return &stripped[..end];
+    if let Some(stripped) = host.strip_prefix('[') {
+        if let Some(end) = stripped.find(']') {
+            return &stripped[..end];
+        }
     }
     if let Some((host_only, _port)) = host.split_once(':') {
         return host_only;

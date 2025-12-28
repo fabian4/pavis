@@ -59,15 +59,17 @@ pub fn validate_runtime(config: &RuntimeConfig) -> CoreValidationResult<()> {
     Ok(())
 }
 
+#[allow(clippy::collapsible_if)]
 const fn validate_server(
     _listen_addr: SocketAddr,
     tls: Option<&crate::runtime::TlsConfig>,
 ) -> CoreValidationResult<()> {
-    if let Some(tls_cfg) = tls
-        && tls_cfg.enabled
-        && (tls_cfg.cert_path.is_none() || tls_cfg.key_path.is_none())
-    {
-        return Err(CoreValidationError::MissingTlsFiles);
+    if let Some(tls_cfg) = tls {
+        if tls_cfg.enabled {
+            if tls_cfg.cert_path.is_none() || tls_cfg.key_path.is_none() {
+                return Err(CoreValidationError::MissingTlsFiles);
+            }
+        }
     }
     Ok(())
 }

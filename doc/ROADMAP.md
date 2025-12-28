@@ -9,7 +9,7 @@
 | 1 | Foundation (Pingora proxy) | ✅ |
 | 2 | Protocol (`.pvs` format, `pavis-core`, `pavctl`) | ✅ |
 | 3 | Long Polling (dynamic config updates) | ⏳ |
-| 4 | xDS Bridge (Istio integration) | ⏳ |
+| 4 | Modular Ingestion (Manager, Feeds, Adapters) | ⏳ |
 | 5 | Traffic Management (retries, timeouts, load balancing) | ⏳ |
 | 6 | Security (mTLS, RBAC) | ⏳ |
 | 7 | Observability (metrics, tracing, logging) | ⏳ |
@@ -162,47 +162,31 @@
 
 ---
 
-## Phase 4: xDS Bridge ⏳
+## Phase 4: Modular Ingestion ⏳
 
-**Goal:** Integrate with Istio control plane.
+**Goal:** Standardize the configuration pipeline with Feeds and Adapters.
 
-**`pavis-xds`** (xDS Client)
-- [ ] gRPC client setup (Tonic)
-  - [ ] Connect to `istiod` discovery service
-  - [ ] mTLS authentication to control plane
-  - [ ] Reconnection with exponential backoff
-  - [ ] Connection health monitoring
-- [ ] xDS resource subscriptions
-  - [ ] LDS (Listener Discovery Service)
-  - [ ] RDS (Route Discovery Service)
-  - [ ] CDS (Cluster Discovery Service)
-  - [ ] EDS (Endpoint Discovery Service)
-  - [ ] SDS (Secret Discovery Service) - for certificates
-  - [ ] ECDS (Extension Config Discovery Service) - for WASM
-- [ ] Translation engine
-  - [ ] xDS Listener → `pavis-core` VirtualHost
-  - [ ] xDS Route → `pavis-core` Route
-  - [ ] xDS Cluster → `pavis-core` Upstream
-  - [ ] xDS ClusterLoadAssignment → `pavis-core` Endpoint
-  - [ ] Handle unsupported xDS features gracefully
-- [ ] Optimization
-  - [ ] Delta xDS (incremental updates)
-  - [ ] Only recompile on relevant changes
-  - [ ] Batch updates within time window
-  - [ ] Async compilation (don't block xDS stream)
-- [ ] Strategic filtering
-  - [ ] Per-pod config based on node metadata
-  - [ ] SidecarScope support
-  - [ ] Namespace isolation
-  - [ ] Workload selector matching
+**`pavis-manager`** (Orchestrator)
+- [ ] Registry system for one active Feed/Adapter pair
+- [ ] State reconciliation engine
+- [ ] NACK feedback loop for validation failures
+- [ ] Version management and PVS emission
 
-**E2E Tests** (requires mock Istio or test xDS server)
-- [ ] Connect to xDS server and receive initial config
-- [ ] Route update from xDS reflects in proxy
-- [ ] Endpoint addition/removal works
-- [ ] Reconnect after xDS server restart
-- [ ] Filter config by namespace
-- [ ] Unsupported xDS features don't crash
+**Feeds** (Source Connectivity)
+- [ ] `pavis-feed-file`: Local directory/file watcher
+- [ ] `pavis-feed-istio`: xDS gRPC client
+- [ ] `pavis-feed-kuma`: xDS gRPC client (reusing XdsAdapter)
+- [ ] `pavis-feed-k8s`: Kubernetes API watcher
+
+**Adapters** (Protocol Translation)
+- [ ] `pavis-adapter-xds`: Envoy Protobuf → `RuntimeConfig`
+- [ ] `pavis-adapter-yaml`: YAML DTO → `RuntimeConfig` (migrated from current adapter)
+- [ ] `pavis-adapter-crd`: K8s Gateway API → `RuntimeConfig`
+
+**E2E Tests**
+- [ ] Source switch: Verify proxy updates when manager switches feeds
+- [ ] Protocol reuse: Verify same XdsAdapter works for both Istio and Kuma feeds
+- [ ] Conflict gate: Verify manager prevents concurrent source definitions
 
 ---
 

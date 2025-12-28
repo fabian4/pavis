@@ -1,89 +1,149 @@
 # Architecture
 
-## 1. Overview
+## 1. Architecture Overview
 
-Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data Plane** architecture. Instead of every sidecar performing expensive parsing, Pavis offloads complexity to a centralized bridge, keeping the sidecar lightweight and fast.
+Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data Plane** architecture. Heavy lifting like parsing, defaulting, and semantic validation is offloaded to a centralized bridge, keeping the sidecar proxy lightweight and binary-focused.
 
+### 1.1. End-to-End Configuration Flow
+
+```text
+  Source Type          Connectivity (Feeds)     Translation (Adapters)        Management & Tools            Data Plane
+┌──────────────┐      ┌──────────────────┐      ┌────────────────────┐      ┌────────────────────┐      ┌──────────────────┐
+│ Mesh (Istio) │─────▶│ pavis-feed-istio │──┐   │ pavis-adapter-xds  │──┐   │   pavis-manager    │─────▶│    pavis-pvs     │
+└──────────────┘      └──────────────────┘  ├──▶│ (Protobuf → Core)  │  │   │  (Orchestration)   │  ┌──▶│ (Binary Protocol)│
+┌──────────────┐      ┌──────────────────┐  │   └────────────────────┘  ├──▶└──────────▲─────────┘  │   └──────────────────┘
+│ Mesh (Kuma)  │─────▶│ pavis-feed-kuma  │──┘                           │              │            │             
+└──────────────┘      └──────────────────┘      ┌────────────────────┐  │              │            │             
+┌──────────────┐      ┌──────────────────┐      │ pavis-adapter-crd  │──┘              │ (apply)    │   ┌──────────────────┐
+│ Kubernetes   │─────▶│ pavis-feed-k8s   │─────▶│ (K8s Gateway→Core) │                 │            └──▶│      pavis       │
+└──────────────┘      └──────────────────┘      └────────────────────┘      ┌──────────┴─────────┐      │    (Runtime)     │
+                                                                            │       pavctl       │─────▶└────────▲─────────┘
+┌──────────────┐                     ┌────────────────────┐                 │   (Tool / CLI)     │               │
+│ Static Files │◀───────────────────▶│  pavis-adapter-*   │◀───────────────▶│                    │──────(debug)──┘
+└──────────────┘                     │    (DTO → Core)    │                 └────────────────────┘
+                                     └────────────────────┘
 ```
-┌──────────────┐      ┌──────────────┐       ┌──────────────┐
-│   Istiod     │      │  pavis-xds   │       │    pavis     │
-│ (Control Pl) │─xDS─▶│   (Bridge)   │─HTTP─▶│   (Proxy)    │
-└──────────────┘      └──────────────┘       └──────────────┘
-                             │                      │
-                             │    .pvs file         │
-                             └──────────────────────┘
-```
 
-## 2. System Design & Boundaries
-
-The project is structured as a workspace with strict module boundaries to enforce the separation of concerns between protocol, producers, and runtime.
+The project is structured as a workspace with strict module boundaries to enforce the separation of concerns.
 
 ### 2.1. Components
 
-```
-pavis/
-├── crates/
-│   ├── pavis/              # Proxy – Runtime Engine (Reads .pvs only)
-│   ├── pavis-core/         # Protocol – Canonical types & memory layout
-│   ├── pavis-pvs/          # PVS Protocol – Header + integrity layer
-│   ├── pavis-adapter-yaml/ # Adapter – YAML Input DTOs, parsing, validation
-│   ├── pavctl/       # pavctl – I/O shell for local config compilation
-│   └── pavis-xds/          # Bridge – I/O shell for xDS streams
-└── Cargo.toml              # Workspace configuration
-```
+| Component | Description |
+| :--- | :--- |
+| **`pavis`** | Proxy – Runtime Engine. Reads optimized `.pvs` binary files only. |
+| **`pavis-core`** | Protocol – Canonical types, shared `Config` trait, and memory layout. |
+| **`pavis-manager`** | Orchestrator – Coordinates loading, validation, and forwarding. Enforces single-source authority. |
+| **`pavis-feed-*`** | Connectivity – Source-specific connectors (Istio, Kuma, K8s). |
+| **`pavis-adapter-*`** | Translation – Protocol-specific mappers (xDS, YAML, CRD) to the canonical model. |
+| **`pavis-pvs`** | Binary Protocol – Integrity layer (Header + Checksum + Encoding). |
+| **`pavctl`** | CLI – Developer tool for manual generation, conversion, and runtime management. |
 
 ### 2.2. Dependency Graph
 
-*   **`pavis-core` (Root)**: The foundation. Depends on `rkyv`. No I/O, no Serde. Defines the shared `Config` trait and `ConfigSource`.
-*   **`pavis-pvs`**: Implements the `.pvs` protocol crate; depends on `pavis-core`.
-*   **`pavis-adapter-yaml`**: Depends on `pavis-core` and input libs (`serde`, `yaml`); implements `Config`.
-*   **`pavctl` / `pavis-xds`**: Depend on adapters and `pavis-pvs`; orchestrate `Config::load/validate/build`.
-*   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs`. **Must not** depend on adapters or input libs.
+*   **`pavis-core` (Root)**: The foundation. Defines the shared `Config` trait. No I/O.
+*   **`pavis-pvs`**: Depends on `pavis-core`. Handles the binary lifecycle.
+*   **`pavis-adapter-*`**: Pure logic crates. Depend on `pavis-core` to map external protocols to `RuntimeConfig`.
+*   **`pavis-feed-*`**: Connectivity crates. Handle I/O and transport.
+*   **`pavis-manager`**: Depends on feeds and adapters to orchestrate the automated pipeline.
+*   **`pavctl`**: Depends on adapters and `pavis-pvs` to provide manual control and local tooling.
+*   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs`. **Must not** depend on feeds or adapters.
 
 ### 2.3. Responsibilities
 
 | Responsibility | Component | Description |
 | :--- | :--- | :--- |
-| **Protocol Definition** | `pavis-core` | Defines canonical domain structs and optimized `RuntimeConfig`. |
-| **PVS Protocol** | `pavis-pvs` | Defines `.pvs` header/constants and verifies binary integrity; loads/writes `.pvs`. |
-| **Input DTOs** | `pavis-adapter-*` | Defines `YamlConfig`, `XdsConfig` optimized for UX/Defaults; each implements the `Config` trait. |
-| **Adaptation & Validation** | `pavis-adapter-*` | Source-specific defaults/compat cleanup via `Config::validate`; transforms Input DTO -> `RuntimeConfig` in `Config::build` and invokes core semantic validation. |
-| **I/O & Orchestration** | Producers | `pavctl` & `xds` read source configs/streams via `Config::load`, then call `validate/build` to produce `.pvs`; inspection of `.pvs` may be performed by tooling but must not redefine semantics (integrity and version checks only). |
-| **Runtime Execution** | `pavis` | Consumes validated `RuntimeConfig`; builds router/upstream/telemetry state. No parsing, decoding, or semantic validation of config. |
+| **Connectivity** | `pavis-feed-*` | Subscribes to configuration sources. Handles auth and networking. |
+| **Protocol Translation** | `pavis-adapter-*` | Maps raw source data (e.g., Envoy Protobuf) to `RuntimeConfig`. |
+| **Orchestration** | `pavis-manager` | Picks **one** active Feed/Adapter pair. Validates results and emits `.pvs`. |
+| **Manual Tooling** | `pavctl` | Reuses adapters for local file generation (`gen`), conversion (`convert`), and manual `apply`. |
+| **Integrity** | `pavis-pvs` | Computes checksums and adds protocol headers to encoded payloads. |
+| **Execution** | `pavis` | Zero-copy execution of the binary config. No semantic knowledge of the source. |
 
-### 2.4. Layering Principles
+## 3. Modular Ingestion Pipeline
 
-1.  **Protocol Definition Layer (`pavis-core`)**
-    *   Defines only the protocol and semantics.
-    *   Includes `RuntimeConfig`, `ArchivedRuntimeConfig`, and canonical validation.
-    *   No dependency on YAML, CLI, or runtime.
-    *   Does not perform format conversion or legacy compatibility.
+To support diverse environments (Kubernetes, Service Meshes, and standalone files), Pavis employs a decoupled ingestion architecture coordinated by the **Manager**.
 
-2.  **PVS Protocol Layer (`pavis-pvs`)**
-    *   Defines `.pvs` header and protocol constants.
-    *   Owns binary/integrity validation: magic bytes, protocol version, checksum, and `rkyv::check_archived_root`.
-    *   Deserializes to `RuntimeConfig` and returns clean domain objects; no semantic validation or compensation.
-    *   Writes `.pvs` from validated `RuntimeConfig` (mechanical encoding only).
-    *   Exposes a safe API to the runtime and CLI without leaking archive internals.
+### 3.1. Roles and Responsibilities
 
-3.  **Runtime Layer (`pavis`)**
-    *   Consumes only semantically validated configuration.
-    *   Does not know about `rkyv`, `mmap`, or archive details.
-    *   Builds runtime state (router, upstream manager, telemetry) and may perform crash-safety guards; no parsing/semantic validation.
+1.  **pavis-feed-* (The Connectivity Layer)**:
+    *   **Responsibility**: Implements the transport logic to talk to external sources (e.g., Istiod gRPC, Kubernetes API).
+    *   **Output**: Emits raw, unparsed configuration events into the pipeline.
 
-> **Rule:** The Runtime never sees invalid or partial state. It relies on the Adapter to produce a valid `RuntimeConfig`.
+2.  **pavis-adapter-* (The Translation Layer)**:
+    *   **Responsibility**: Encapsulates the logic to map a specific protocol (xDS, YAML, CRD) into the Pavis canonical `RuntimeConfig` model.
+    *   **Purity**: Adapters are pure transformers; they do not perform I/O or networking.
 
-### 2.5. Module Layout
+3.  **pavis-manager (The Orchestrator)**:
+    *   **Responsibility**: Coordinates one active Feed/Adapter pair. It receives translated configurations, executes the core semantic validation gate, increments the protocol version, and emits the final `.pvs` payload via `pavis-pvs`.
+    *   **Authority**: Enforces the **Single Source Authority** rule—only one configuration source can control the proxy at a time.
 
-*   **No `mod.rs`**. Use `<module>.rs` with submodules in `<module>/`.
-*   Keep `<module>.rs` focused on module structure and re-exports; put logic in sibling files.
-*   Split by responsibility (types vs logic vs I/O), but avoid over-splitting by size alone.
+## 4. pavctl: The Pavis CLI
 
-## 3. The PVS Protocol
+`pavctl` is the primary control interface for developers and operators, providing both offline protocol tooling and online runtime management.
+
+### 4.1. Command Categories
+
+1.  **Binary Protocol Tooling**:
+    *   **gen**: Compiles high-level configurations (YAML/xDS) into optimized `.pvs` payloads.
+    *   **view**: Provides human-readable views of binary state and protocol headers.
+    *   **check**: Ensures source configurations (YAML) are free from semantic errors.
+    *   **convert**: Reconstructs source configurations from binary files.
+    *   **visualize**: Generates a visual representation of the logical configuration structure.
+
+2.  **Runtime Orchestration**:
+    *   **apply**: Dynamically pushes configuration to active proxy instances via the xDS bridge.
+    *   **status**: Displays the current health, uptime, and active configuration version of the runtime.
+    *   **logs**: Streams real-time logs from proxy instances for troubleshooting.
+
+3.  **Configuration Management**:
+    *   **rollback**: Instant recovery by reverting to a previous configuration version.
+    *   **simulate**: Predicts routing outcomes for a given configuration without impacting live traffic.
+
+## 5. Proxy Runtime Architecture
+
+The `pavis` crate has been refactored into a **Domain-Driven Architecture** with strict module boundaries and invariants.
+
+### 5.1. Modules
+
+1.  **Config (`config`)**:
+    *   **Role**: Internal Runtime Configuration.
+    *   **Invariant**: Decoupled from `pavis-core` types where appropriate. Loaded from `RuntimeConfig`.
+    *   **Key Types**: `Config`, `VirtualHost`, `Upstream`.
+
+2.  **Router (`router`)**:
+    *   **Role**: Immutable request matching logic.
+    *   **Invariant**: Deterministic matching order. Regexes are pre-compiled at initialization (never on the hot path).
+    *   **Key Types**: `Router`, `matcher`.
+
+3.  **Upstream Manager (`upstream`)**:
+    *   **Role**: Ownership of backend clusters and mutable load balancing state.
+    *   **Invariant**: Thread-safe endpoint selection. Atomic updates to state. False sharing mitigation via cache-line alignment (`AlignedCounter`).
+    *   **Key Types**: `Manager`, `Cluster`, `AlignedCounter`.
+
+4.  **Telemetry (`telemetry`)**:
+    *   **Role**: Performance-oriented logging and metrics.
+    *   **Invariant**: **Non-blocking**. Operations must never block the request path (use `try_send` or background tasks). Failures result in dropped data, not crashes.
+    *   **Key Types**: `Telemetry`, `AccessLog`.
+
+5.  **Proxy Service (`proxy`)**:
+    *   **Role**: The "Thin Controller" that orchestrates the above modules.
+    *   **Invariant**: No business logic. No blocking calls. No ownership of mutable global state.
+    *   **Key Types**: `Proxy` (implements `Pingora::ProxyHttp`).
+
+### 5.2. Data Flow
+
+```
+Request -> Proxy -> Router (Match) -> Upstream Manager (Select Endpoint) -> Cluster -> Endpoint
+             │
+             ▼
+        Telemetry (Log)
+```
+
+## 6. The PVS Protocol
 
 The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configuration format.
 
-### 3.1. File Format
+### 6.1. File Format
 
 | Offset | Size | Type | Value | Description |
 |--------|------|------|-------|-------------|
@@ -94,40 +154,40 @@ The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configu
 | `0x2C` | 20 | `[u8; 20]` | `0` | Reserved – Future proofing |
 | `0x40` | ... | `bytes` | ... | Payload – the `ArchivedRuntimeConfig` root |
 
-### 3.2. Versioning Strategy
+### 6.2. Versioning Strategy
 
 Pavis uses a simple monotonically increasing integer for the protocol version (`PAVIS_VERSION` in `pavis-pvs`).
 
 *   **Breaking Changes**: Any change to the `RuntimeConfig` struct layout (fields, enums) requires incrementing `PAVIS_VERSION`. `rkyv` is sensitive to layout.
 *   **Non-Breaking Changes**: Documentation or internal helper methods.
 
-### 3.3. Migration & Compatibility
+### 6.3. Migration & Compatibility
 
 Pavis prioritizes speed and simplicity over complex in-place migrations.
 
-*   **Bridge-Side (`pavis-xds`)**: Translates user intent (YAML/xDS) to the current protocol version. Must be redeployed when protocol changes.
+*   **Bridge-Side (`pavis-manager`)**: Translates user intent (YAML/xDS) to the current protocol version. Must be redeployed when protocol changes.
 *   **Proxy-Side (`pavis`)**: Performs strict version checking.
     *   **Magic Bytes**: Must be `PAVS`.
     *   **Version**: Must match exactly. `pavis-pvs` surfaces mismatch as an error; the runtime owns the policy (startup fail vs hot-reload rejection).
 *   **Upgrade Path**:
-    1.  Upgrade Control Plane (`pavis-xds`).
+    1.  Upgrade Control Plane (`pavis-manager`).
     2.  Rolling update of Proxies (`pavis`).
     3.  No N-1 compatibility support currently.
 *   **Future Improvements**:
     *   Schema Reflection or FlatBuffers if N-1 compatibility becomes required.
     *   `pavctl convert` tool for offline migration.
 
-### 3.4. Performance Benefits
+### 6.4. Performance Benefits
 
 1. **Minimized Parsing** – Pavis uses `mmap` to map the file into memory. *Note: Current implementation performs eager deserialization into owned DTOs for runtime safety. Future versions will move to true zero-copy access.*
 2. **Lazy Loading (Planned)** – In future versions, if config contains 10,000 routes (50MB) but the app only calls 2 services, the OS will only load the specific 4KB pages needed. Currently, the entire config is loaded into the heap at startup.
 
-### 3.5. Distribution (Long Polling)
+### 6.5. Distribution (Long Polling)
 
 Pavis avoids the complexity of gRPC bidirectional streams in the sidecar. It uses HTTP Long Polling.
 
 ```
-pavis-proxy                              pavis-xds
+pavis-proxy                              pavis-manager
      │                                       │
      │  GET /config                          │
      │  X-Pavis-Version: 105                 │
@@ -144,7 +204,7 @@ pavis-proxy                              pavis-xds
      ▼  verify checksum, write config.pvs   ▼
 ```
 
-### 3.6. rkyv Usage Guidelines
+### 6.6. rkyv Usage Guidelines
 
 **Purpose**: Safely load `.pvs` binary configs into domain objects (`RuntimeConfig`) while keeping runtime and core free from serialization details.
 
@@ -179,9 +239,9 @@ pavis-proxy                              pavis-xds
 
 > **Note:** rkyv is a storage protocol, adapters are implementation details, `pavis-pvs` isolates complexity.
 
-### 3.7. Core Structs (Reference)
+### 6.7. Core Structs (Reference)
 
-Quick reference for serialized types. `RuntimeConfig` lives in `crates/pavis-core/src/lib.rs`; the PVS header lives in `crates/pavis-pvs/src/header.rs`. Authoritative definitions remain in code.
+Quick reference for serialized types. `RuntimeConfig` lives in `crates/pavis-core/src/runtime.rs`; the PVS header lives in `crates/pavis-pvs/src/header.rs`. Authoritative definitions remain in code.
 
 #### `PvsHeader`
 ```
@@ -251,78 +311,18 @@ RuntimeConfig
       └─ compiled_regex: Option<regex::Regex>  // precompiled regex; runtime only
 ```
 
-## 4. Proxy Runtime Architecture
-
-The `pavis` crate has been refactored into a **Domain-Driven Architecture** with strict module boundaries and invariants.
-
-### 4.1. Modules
-
-1.  **Config (`config`)**:
-    *   **Role**: Internal Runtime Configuration.
-    *   **Invariant**: Decoupled from `pavis-core` types where appropriate. Loaded from `RuntimeConfig`.
-    *   **Key Types**: `Config`, `VirtualHost`, `Upstream`.
-
-2.  **Router (`router`)**:
-    *   **Role**: Immutable request matching logic.
-    *   **Invariant**: Deterministic matching order. Regexes are pre-compiled at initialization (never on the hot path).
-    *   **Key Types**: `Router`, `matcher`.
-
-3.  **Upstream Manager (`upstream`)**:
-    *   **Role**: Ownership of backend clusters and mutable load balancing state.
-    *   **Invariant**: Thread-safe endpoint selection. Atomic updates to state. False sharing mitigation via cache-line alignment (`AlignedCounter`).
-    *   **Key Types**: `Manager`, `Cluster`, `AlignedCounter`.
-
-4.  **Telemetry (`telemetry`)**:
-    *   **Role**: Performance-oriented logging and metrics.
-    *   **Invariant**: **Non-blocking**. Operations must never block the request path (use `try_send` or background tasks). Failures result in dropped data, not crashes.
-    *   **Key Types**: `Telemetry`, `AccessLog`.
-
-5.  **Proxy Service (`proxy`)**:
-    *   **Role**: The "Thin Controller" that orchestrates the above modules.
-    *   **Invariant**: No business logic. No blocking calls. No ownership of mutable global state.
-    *   **Key Types**: `Proxy` (implements `Pingora::ProxyHttp`).
-
-### 4.2. Data Flow
-
-```
-Request -> Proxy -> Router (Match) -> Upstream Manager (Select Endpoint) -> Cluster -> Endpoint
-             │
-             ▼
-        Telemetry (Log)
-```
-
-## 5. pavctl: The Pavis CLI
-
-`pavctl` is the primary control interface for developers and operators, handling the lifecycle of `.pvs` configuration and providing observability into the data plane.
-
-### 5.1. Command Categories
-
-1.  **Binary Protocol Tooling**:
-    *   **gen**: Compiles high-level configurations (YAML/xDS) into optimized `.pvs` payloads.
-    *   **view**: Provides human-readable views of binary state and protocol headers.
-    *   **check**: Ensures configurations are free from corruption and semantic errors.
-    *   **convert**: Reconstructs source configurations from binary files.
-
-2.  **Runtime Orchestration**:
-    *   **apply**: Dynamically pushes configuration to active proxy instances via the xDS bridge.
-    *   **status/logs**: Real-time health monitoring and troubleshooting.
-
-3.  **Configuration Management**:
-    *   **rollback**: Instant recovery by reverting to previous configuration versions.
-    *   **simulate**: Predicts routing outcomes for a given configuration without impacting traffic.
-
-## 6. Safety & Resilience
+## 7. Safety & Resilience
 
 Pavis employs a multi-layered strategy to ensure configuration stability, correctness, and operational safety.
 
-### 5.1. Validation Strategy
+### 7.1. Validation Strategy
 
 1.  **Core Semantic Validation (`pavis-core`)**:
     *   **Canonical Truth.** Defines absolute semantics of `RuntimeConfig`.
     *   Ensures structural correctness and cross-resource invariants (e.g., reference integrity, regex validity).
     *   Source-agnostic and mandatory for all config producers.
 
-2.  **Source-Specific Validation (`pavctl`, `pavis-xds`, adapters)**:
+2.  **Source-Specific Validation (`pavctl`, `pavis-manager`, adapters)**:
     *   **Input Adaptation.** Enforces constraints tied to the input source (schema, defaults, compatibility).
     *   Transforms user intent into `RuntimeConfig` and invokes `pavis-core::validate_runtime`.
     *   May not redefine or partially duplicate core semantics.
@@ -341,14 +341,14 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 
 **RuntimeConfig validation entrypoint:** Producers/adapters must call `pavis-core::validate_runtime` after adaptation and before serialization. The CLI should rely on the adapter’s conversion pipeline to invoke canonical validation; the runtime must not call it during startup or hot-reload.
 
-### 5.2. Crash-Loop Protection
+### 7.2. Crash-Loop Protection
 
 - Configuration persisted to disk (`/etc/pavis/config.pvs`)
 - If Control Plane is down during Pod restart, Pavis loads last known good config and serves traffic immediately
 
-### 5.3. Strategic Filtering
+### 7.3. Strategic Filtering
 
-To prevent "Config Bloat" (a major issue in Envoy), the Bridge (`pavis-xds`) performs aggressive filtering before compiling the `.pvs` file.
+To prevent "Config Bloat" (a major issue in Envoy), the Bridge (`pavis-manager`) performs aggressive filtering before compiling the `.pvs` file.
 
 - **Network Efficiency** – Only sends routes relevant to the specific Pod (based on Namespace or SidecarScope)
 - **Security** – A compromised sidecar only knows the IP addresses of services it is explicitly allowed to talk to
