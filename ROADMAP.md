@@ -24,7 +24,7 @@
 ## Architecture Alignment Checklist
 
 - [ ] Runtime (`pavis`) depends only on `pavis-core` and `pavis-pvs`
-- [ ] `pavis-pvs` performs binary integrity checks only (no semantic validation)
+- [x] `pavis-pvs` performs binary integrity checks only (no semantic validation)
 - [ ] Codecs call `pavis-core::validate_runtime` after adaptation
 - [ ] Relay (and later governor) owns migration and re-emits current-version PVS
 - [ ] Compatibility fixtures (vN, vN-1) validated in CI for header/version compatibility
@@ -90,7 +90,7 @@
 - [x] `view` command: Debug binary files
   - [x] Display header (magic, version)
   - [x] Pretty-print config tree
-  - [ ] Show binary size and structure stats
+  - [x] Show binary size and structure stats
   - [x] Hex dump mode for debugging
 - [x] `check` command: Check YAML without compiling
 - [x] `convert` command: `.pvs` → YAML (same version)
@@ -105,14 +105,14 @@
 - [x] Startup validation (magic bytes + version check)
 - [x] Graceful error messages for invalid configs
 - [x] Version mismatch handling (reject vs warn)
-- [ ] Remove semantic validation from `pavis-pvs`; ensure runtime only consumes already-validated configs
+- [x] Remove semantic validation from `pavis-pvs`; ensure runtime only consumes already-validated configs
 
 **E2E Tests**
 - [x] Compile YAML → `.pvs` and verify binary structure
 - [x] Load `.pvs` in proxy and forward traffic
 - [x] Reject invalid magic bytes
-- [ ] Reject version mismatch
-- [ ] Inspect command output verification
+- [x] Reject version mismatch
+- [x] Inspect command output verification
 - [x] Round-trip: YAML → `.pvs` → YAML (convert + validate)
 
 ---

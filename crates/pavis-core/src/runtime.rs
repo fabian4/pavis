@@ -34,6 +34,10 @@ impl ValidatedRuntimeConfig {
         Self { runtime }
     }
 
+    pub fn from_trusted(runtime: RuntimeConfig) -> Self {
+        Self { runtime }
+    }
+
     pub fn into_inner(self) -> RuntimeConfig {
         self.runtime
     }

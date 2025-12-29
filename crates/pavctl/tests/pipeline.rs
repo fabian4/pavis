@@ -104,6 +104,8 @@ fn normalize_output(input: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+        .trim_end()
+        .to_string()
 }
 
 fn pavctl_bin() -> PathBuf {

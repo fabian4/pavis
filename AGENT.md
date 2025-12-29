@@ -9,11 +9,13 @@
 | [ROADMAP.md](./ROADMAP.md)                                                     | Development phases and progress               |
 | [CODE_REVIEW.md](doc/CODE_REVIEW.md)                                           | Action plan and technical debt tracking       |
 | [Cargo.toml](./Cargo.toml)                                                     | Workspace configuration and dependencies      |
-| [doc/reports/ARCH_COMPLIANCE.md](doc/reports/ARCH_COMPLIANCE.md)               | Architecture compliance review report         |
-| [doc/reports/ARCH_ROADMAP_ALIGNMENT.md](doc/reports/ARCH_ROADMAP_ALIGNMENT.md) | Architecture vs roadmap alignment report      |
-| [doc/reports/ROADMAP_REVIEW.md](doc/reports/ROADMAP_REVIEW.md)                 | Roadmap vs implementation review report       |
-| [doc/reports/STRUCTURE_REVIEW.md](doc/reports/STRUCTURE_REVIEW.md)             | Rust code structure & file size review report |
-| [doc/reports/TEST_COVERAGE_REVIEW.md](doc/reports/TEST_COVERAGE_REVIEW.md)     | Test coverage & quality review report         |
+| [agent/audit/ARCH_COMPLIANCE.md](agent/audit/ARCH_COMPLIANCE.md)               | Architecture compliance review report         |
+| [agent/audit/ARCH_ROADMAP_ALIGNMENT.md](agent/audit/ARCH_ROADMAP_ALIGNMENT.md) | Architecture vs roadmap alignment report      |
+| [agent/audit/ROADMAP_REVIEW.md](agent/audit/ROADMAP_REVIEW.md)                 | Roadmap vs implementation review report       |
+| [agent/audit/STRUCTURE_REVIEW.md](agent/audit/STRUCTURE_REVIEW.md)             | Rust code structure & file size review report |
+| [agent/audit/TEST_COVERAGE_REVIEW.md](agent/audit/TEST_COVERAGE_REVIEW.md)     | Test coverage & quality review report         |
+| [agent/audit/PUBLIC_API_REVIEW.md](agent/audit/PUBLIC_API_REVIEW.md)           | Public API & boundary stability review report |
+| [agent/audit/COMMENT_REVIEW.md](agent/audit/COMMENT_REVIEW.md)                 | Code comment quality review report            |
 
 ## Workspace & Layering
 
@@ -79,15 +81,26 @@
 
 ## Ongoing Review Tasks
 
+## Review Report Rules
+
+- Each review task must write to a single fixed file under `agent/audit/`.
+- Reports are append-only; do not rewrite or delete historical reviews.
+- The newest entry must be inserted at the top of `Historical Reviews`.
+- Previously reported issues must be explicitly marked as `NEW`, `EXISTING`, or `DONE`.
+- Resolved issues must be removed from `Active Findings` and recorded as `DONE` in history.
+- `Active Findings` must only contain unresolved, currently relevant issues.
+- Every finding must include concrete evidence (file, symbol, or behavior).
+- Do not introduce new architectural ideas or redesigns in reports.
+
 ### Task 1: Architecture Compliance Review
 - Review the entire repository against `Architecture.md`.
-- Identify designs, modules, abstractions, or dependencies that do NOT follow the documented architecture.
+- Focus on structural, layering, and responsibility violations.
 - For each inconsistency:
-  - Describe what the architecture expects.
-  - Describe what the current code actually does.
-  - Explain the gap or violation clearly.
-- Output a structured analysis report summarizing findings and severity.
-- Write the report to `doc/reports/ARCH_COMPLIANCE.md` and keep it updated over time.
+  - State what the architecture specifies or intends.
+  - State what the current code actually does (with evidence).
+  - Explain the deviation clearly and concretely.
+- Output a structured analysis report with findings and severity.
+- Write the report to `agent/audit/ARCH_COMPLIANCE.md` and keep it updated over time.
 
 ### Task 2: Architecture vs Roadmap Consistency Review
 - Review `Architecture.md` and `ROADMAP.md` together for alignment.
@@ -101,7 +114,7 @@
   - Explain the incompatibility clearly.
   - Propose a roadmap adjustment that preserves the architecture.
 - Update `ROADMAP.md` accordingly, without altering Architecture.md.
-- Output the report to `doc/reports/ARCH_ROADMAP_ALIGNMENT.md` and keep it updated over time.
+- Output the report to `agent/audit/ARCH_ROADMAP_ALIGNMENT.md` and keep it updated over time.
 
 ### Task 3: Roadmap vs Implementation Review
 - Review the entire repository against `ROADMAP.md`.
@@ -116,7 +129,7 @@
   - Observed implementation evidence (file paths or code locations).
   - Suggested status change and rationale.
 - Update `ROADMAP.md` to reflect reality once evidence is collected.
-- Output the report to `doc/reports/ROADMAP_REVIEW.md` and keep it updated over time.
+- Output the report to `agent/audit/ROADMAP_REVIEW.md` and keep it updated over time.
 
 ### Task 4: Rust Code Structure & File Size Review
 - Review all Rust code in the repository, including test code.
@@ -128,7 +141,7 @@
 - Propose how to split or reorganize code strictly by feature/functionality.
 - Output a structured report describing problems and recommended refactors.
 - This task produces analysis only; do not refactor code unless explicitly requested.
-- Write the report to `doc/reports/STRUCTURE_REVIEW.md` and keep it updated over time.
+- Write the report to `agent/audit/STRUCTURE_REVIEW.md` and keep it updated over time.
 
 ### Task 5: Test Coverage & Quality Review
 - Review all test code in the repository.
@@ -139,4 +152,27 @@
 - Check whether important methods or features lack tests.
 - Evaluate whether existing tests are meaningful, redundant, or incorrectly scoped.
 - Output a detailed test coverage and quality report.
-- Write the report to `doc/reports/TEST_COVERAGE_REVIEW.md` and keep it updated over time.
+- Write the report to `agent/audit/TEST_COVERAGE_REVIEW.md` and keep it updated over time.
+
+### Task 6: Public API & Boundary Stability Review
+- Review all public (`pub`) APIs across all crates.
+- Identify public types, traits, functions, or modules that:
+  - Expose internal implementation details.
+  - Violate intended architectural boundaries.
+  - Create unnecessary coupling between layers or crates.
+- Evaluate whether public APIs are minimal, intentional, and stable.
+- Output a structured report with findings and recommendations.
+- Write the report to `agent/audit/PUBLIC_API_REVIEW.md` and keep it updated over time.
+
+### Task 7: Code Comment Quality Review
+- Review all code comments across the repository.
+- Evaluate comments for:
+  - Grammar and spelling correctness.
+  - Semantic clarity and technical accuracy.
+  - Redundancy or unnecessary verbosity.
+  - Alignment with actual code behavior.
+- Identify comments that are outdated, misleading, or restate obvious code.
+- Recommend whether each problematic comment should be revised, simplified, or removed.
+- Output a structured comment quality review report.
+- Write the report to `agent/audit/COMMENT_REVIEW.md` and keep it updated over time.
+- Include a UTC timestamp in the review entry (Notes) every time it is updated.

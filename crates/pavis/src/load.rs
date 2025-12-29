@@ -1,13 +1,11 @@
-use pavis_core::{CoreValidationError, ValidatedRuntimeConfig};
-use pavis_pvs::{PvsError, ValidatedLoadError};
+use pavis_core::ValidatedRuntimeConfig;
+use pavis_pvs::PvsError;
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeLoadError {
     #[error(transparent)]
     Pvs(#[from] PvsError),
-    #[error(transparent)]
-    Core(#[from] CoreValidationError),
 }
 
 pub type LoadResult<T> = Result<T, RuntimeLoadError>;
@@ -15,7 +13,7 @@ pub type LoadResult<T> = Result<T, RuntimeLoadError>;
 /// Orchestrates the loading of a configuration file.
 ///
 /// 1. Reads and deserializes the binary file via `pavis-pvs`.
-/// 2. Returns validated `RuntimeConfig` after semantic validation.
+/// 2. Returns a `RuntimeConfig` trusted to be semantically validated by the producer.
 pub fn load_file(path: &str) -> LoadResult<ValidatedRuntimeConfig> {
     if !path.ends_with(".pvs") {
         return Err(RuntimeLoadError::Pvs(PvsError::InvalidExtension(
@@ -23,10 +21,8 @@ pub fn load_file(path: &str) -> LoadResult<ValidatedRuntimeConfig> {
         )));
     }
 
-    pavis_pvs::load_validated(path).map_err(|err| match err {
-        ValidatedLoadError::Pvs(err) => RuntimeLoadError::Pvs(err),
-        ValidatedLoadError::Semantic(err) => RuntimeLoadError::Core(err),
-    })
+    let config = pavis_pvs::load(path)?;
+    Ok(ValidatedRuntimeConfig::from_trusted(config))
 }
 
 #[cfg(test)]

@@ -46,11 +46,7 @@ impl Service for AccessLogWorker {
         loop {
             tokio::select! {
                 _ = shutdown.changed() => {
-                    // Shutdown signal received
-                    // Check if we should exit immediately or drain?
-                    // Usually shutdown signal means "stop accepting new work".
-                    // But for access log, we might want to drain?
-                    // For now, let's just break.
+                    // Shutdown signal stops the worker loop.
                     break;
                 }
                 msg = rx.recv() => {

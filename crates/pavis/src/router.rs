@@ -12,7 +12,7 @@ use regex::Regex;
 
 pub mod matcher;
 
-pub struct CompiledVirtualHost {
+pub(crate) struct CompiledVirtualHost {
     pub config: VirtualHost,
     pub regexes: Vec<Option<Regex>>,
 }

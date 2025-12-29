@@ -88,9 +88,38 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
     out
 }
 
+pub fn format_stats(config: &binary::RuntimeConfig, total_bytes: u64) -> String {
+    let mut out = String::new();
+    let header_size = pavis_pvs::HEADER_SIZE as u64;
+    let payload_size = total_bytes.saturating_sub(header_size);
+    let endpoints: usize = config.upstreams.iter().map(|u| u.endpoints.len()).sum();
+    let routes: usize = config.routes.iter().map(|v| v.paths.len()).sum();
+    let destinations: usize = config
+        .routes
+        .iter()
+        .flat_map(|v| &v.paths)
+        .map(|r| r.destinations.len())
+        .sum();
+
+    writeln!(&mut out, "--- Binary Stats ---").ok();
+    writeln!(&mut out, "Total Size: {total_bytes} bytes").ok();
+    writeln!(&mut out, "Header Size: {header_size} bytes").ok();
+    writeln!(&mut out, "Payload Size: {payload_size} bytes").ok();
+    writeln!(&mut out).ok();
+
+    writeln!(&mut out, "--- Structure Stats ---").ok();
+    writeln!(&mut out, "Upstreams: {}", config.upstreams.len()).ok();
+    writeln!(&mut out, "Endpoints: {endpoints}").ok();
+    writeln!(&mut out, "Virtual Hosts: {}", config.routes.len()).ok();
+    writeln!(&mut out, "Routes: {routes}").ok();
+    writeln!(&mut out, "Destinations: {destinations}").ok();
+    writeln!(&mut out).ok();
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{format_config, format_header};
+    use super::{format_config, format_header, format_stats};
     use pavis_core::{
         AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
         Route, RuntimeConfig, ServerConfig, TelemetryConfig, Upstream, VirtualHost,
@@ -171,5 +200,66 @@ mod tests {
         assert!(output.contains("Host: example.com"));
         assert!(output.contains("[exact] /health"));
         assert!(output.contains("-> backend (weight 1)"));
+    }
+
+    #[test]
+    fn format_stats_emits_sizes_and_counts() {
+        let config = RuntimeConfig {
+            server: ServerConfig {
+                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: AccessLogConfig::Disabled,
+                tracing: None,
+            },
+            upstreams: vec![Upstream {
+                name: "backend".to_string(),
+                load_balancer: LoadBalancer::RoundRobin,
+                http_version: HttpVersion::H2,
+                connection_pool: ConnectionPoolConfig {
+                    idle_timeout_secs: 60,
+                    connection_timeout_secs: 5,
+                },
+                tls: None,
+                endpoints: vec![Endpoint {
+                    ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                    port: 8081,
+                    weight: 1,
+                }],
+            }],
+            routes: vec![VirtualHost {
+                host: "example.com".to_string(),
+                paths: vec![Route {
+                    match_type: MatchType::Exact,
+                    path: "/health".to_string(),
+                    timeout_ms: None,
+                    retry_policy: None,
+                    request_headers: None,
+                    response_headers: None,
+                    destinations: vec![WeightedDestination {
+                        upstream: "backend".to_string(),
+                        weight: 1,
+                    }],
+                    compiled_regex: None,
+                }],
+            }],
+        };
+
+        let output = format_stats(&config, 1024);
+        assert!(output.contains("--- Binary Stats ---"));
+        assert!(output.contains("Total Size: 1024 bytes"));
+        assert!(output.contains("Header Size: 64 bytes"));
+        assert!(output.contains("--- Structure Stats ---"));
+        assert!(output.contains("Upstreams: 1"));
+        assert!(output.contains("Endpoints: 1"));
+        assert!(output.contains("Virtual Hosts: 1"));
+        assert!(output.contains("Routes: 1"));
+        assert!(output.contains("Destinations: 1"));
     }
 }

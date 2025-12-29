@@ -14,6 +14,5 @@ pub mod context;
 pub mod header_ops;
 pub mod service;
 
-pub use context::RouterContext;
 pub use header_ops::{apply_request_headers, apply_response_headers};
 pub use service::Proxy;

@@ -34,7 +34,6 @@ fn get_binary_path() -> PathBuf {
         return release_path;
     }
 
-    // Fallback: try to build it? No, that might be too slow/complex.
     panic!(
         "Pavis binary not found at {:?} or {:?}. Please build it first.",
         debug_path, release_path
@@ -167,6 +166,29 @@ fn test_cli_config_invalid_magic() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Invalid magic"));
+
+    let _ = std::fs::remove_file(config_path);
+}
+
+#[test]
+fn test_cli_config_version_mismatch() {
+    let config_path = temp_path("pavis_version_mismatch", "pvs");
+    let mut bytes = vec![0u8; pvs::HEADER_SIZE];
+    bytes[0..4].copy_from_slice(pvs::PAVIS_MAGIC);
+    bytes[4..8].copy_from_slice(&(pvs::PAVIS_VERSION + 1).to_le_bytes());
+    bytes[8..12].copy_from_slice(&pvs::PAVIS_HASH_ALGORITHM_SHA256.to_le_bytes());
+    std::fs::write(&config_path, bytes).expect("Failed to write invalid config");
+
+    let binary = get_binary_path();
+    let output = Command::new(binary)
+        .arg("--config")
+        .arg(&config_path)
+        .output()
+        .expect("Failed to execute binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Version mismatch"));
 
     let _ = std::fs::remove_file(config_path);
 }

@@ -1,10 +1,10 @@
-use crate::error::{PvsError, PvsResult, ValidatedLoadError};
+use crate::error::{PvsError, PvsResult};
 use crate::header::{
     HEADER_SIZE, PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader,
     compute_checksum,
 };
 use crate::read::parse_header;
-use pavis_core::{RuntimeConfig, ValidatedRuntimeConfig, validate_runtime};
+use pavis_core::RuntimeConfig;
 use rkyv::Deserialize as _;
 use std::fs;
 use std::path::Path;
@@ -24,13 +24,6 @@ pub fn load(path: impl AsRef<Path>) -> PvsResult<RuntimeConfig> {
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
     let config: RuntimeConfig = archived.deserialize(&mut rkyv::Infallible)?;
     Ok(config)
-}
-
-pub fn load_validated(
-    path: impl AsRef<Path>,
-) -> Result<ValidatedRuntimeConfig, ValidatedLoadError> {
-    let config = load(path)?;
-    Ok(validate_runtime(config)?)
 }
 
 fn verify_bytes(bytes: &[u8]) -> PvsResult<(PvsHeader, &[u8])> {

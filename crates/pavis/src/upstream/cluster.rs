@@ -4,14 +4,14 @@ use std::sync::atomic::AtomicUsize;
 
 #[repr(align(64))]
 #[derive(Debug)]
-pub struct AlignedCounter(pub AtomicUsize);
+pub(crate) struct AlignedCounter(pub AtomicUsize);
 
 #[derive(Debug)]
 pub struct Cluster {
-    pub config: Upstream,
+    pub(crate) config: Upstream,
     // Co-located state
-    pub rr_counter: AlignedCounter,
-    pub total_weight: u32,
+    pub(crate) rr_counter: AlignedCounter,
+    pub(crate) total_weight: u32,
 }
 
 impl Cluster {

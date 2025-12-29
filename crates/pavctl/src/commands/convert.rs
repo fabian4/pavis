@@ -7,7 +7,7 @@ use pavis_codec_yaml::YamlCodec;
 use pavis_pvs as pvs;
 
 pub(crate) fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<()> {
-    let binary_config = pvs::load_validated(&input_path)?;
+    let binary_config = pvs::load(&input_path)?;
     let codec = YamlCodec;
     let env = codec
         .decompile(&binary_config)

@@ -370,6 +370,7 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 **Validated types:** Codecs must produce CheckedArtifact and then ValidatedRuntimeConfig before Relay accepts input. Relay MUST NOT accept raw Artifact or unvalidated RuntimeConfig.
 
 **Runtime input constraint:** The runtime sidecar MUST accept only `ValidatedRuntimeConfig` (via `pavis-pvs`), and MUST NOT attempt semantic validation.
+**`ValidatedRuntimeConfig::from_trusted` usage:** Only construct via this helper when the config is already validated by the control plane or codec pipeline; it is not a substitute for semantic validation.
 
 **RuntimeConfig validation entrypoint:** Producers/codecs must call `pavis-core::validate_runtime` after adaptation and before serialization. The CLI should rely on the codec conversion pipeline to invoke canonical validation; the runtime must not call it during startup or hot-reload.
 

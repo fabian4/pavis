@@ -2,7 +2,7 @@ use crate::router::CompiledVirtualHost;
 use pavis_core::{MatchType, Route, VirtualHost};
 
 #[allow(clippy::collapsible_if)]
-pub fn match_request<'a>(
+pub(crate) fn match_request<'a>(
     routes: &'a [CompiledVirtualHost],
     host_header: Option<&str>,
     uri_path: &str,
