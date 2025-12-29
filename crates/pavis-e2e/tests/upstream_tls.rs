@@ -1,6 +1,7 @@
 use anyhow::Result;
 use pavis_e2e::utils::find_project_root;
 use pavis_e2e::utils::generate_pvs;
+use pavis_e2e::utils::resolve_docker_service_ip;
 use reqwest::Client;
 use std::fs;
 use std::path::PathBuf;
@@ -152,9 +153,15 @@ async fn test_upstream_tls() {
         format!("127.0.0.1:{}", pavis_port)
     };
 
+    let upstream_host = if mode == "docker" {
+        resolve_docker_service_ip(&project_root, upstream_host).expect("resolve backend-tls IP")
+    } else {
+        upstream_host.to_string()
+    };
+
     let config = template
         .replace("${LISTEN_ADDR}", &listen_addr)
-        .replace("${UPSTREAM_HOST}", upstream_host)
+        .replace("${UPSTREAM_HOST}", &upstream_host)
         .replace("${UPSTREAM_PORT}", &actual_upstream_port.to_string());
 
     fs::write(&config_path, config).unwrap();

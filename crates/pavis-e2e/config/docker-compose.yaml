@@ -28,7 +28,7 @@ services:
 
   # Pavis Sidecar (The System Under Test)
   pavis:
-    image: pavis:ci
+    image: ${PAVIS_IMAGE:-pavis:ci}
     ports:
       - "8080:8080"  # Proxy Port
       - "8443:8443"  # TLS Proxy Port

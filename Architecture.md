@@ -26,6 +26,31 @@ Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data P
 
 The project is structured as a workspace with strict module boundaries to enforce the separation of concerns.
 
+### 1.2. Governance & Control Plane
+
+Pavis adds a lightweight Governance / Control layer above `pavis-manager` to separate *authorization* from *execution*.
+This layer is the gatekeeper for **which feed+adapter combinations are allowed**, **which policies must be enforced**,
+and **which releases are approved** before any `.pvs` is produced or activated.
+
+Key responsibilities:
+- **Admission & policy enforcement** (tenant, environment, limits, rollout rules).
+- **Plan approval**: turns a requested change into an approved, auditable plan.
+- **Rollout/rollback decisions** with auditability, without embedding a reconciliation loop.
+
+What it does *not* do:
+- It does not parse or validate schemas (still done in adapters and `pavis-core`).
+- It does not modify runtime behavior (runtime is unaware of governance).
+
+Governance sits above `pavis-manager`, which becomes an execution engine for **pre-approved plans**.
+`pavis-core` remains the single source of canonical semantic validation.
+
+```text
+Governance ──▶ pavis-manager (Execution) ──▶ pavis-pvs ──▶ pavis (Runtime)
+```
+
+`pavctl apply` is treated as a **release request**, not an immediate activation.
+Governance can approve, defer, or reject, and only approved plans are executed by `pavis-manager`.
+
 ### 2.1. Components
 
 | Component | Description |

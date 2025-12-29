@@ -1,5 +1,6 @@
 use anyhow::Result;
 use pavis_e2e::utils::generate_pvs;
+use pavis_e2e::utils::resolve_docker_service_ip;
 use reqwest::Client;
 use std::fs;
 use std::path::PathBuf;
@@ -76,6 +77,11 @@ async fn test_tls_support() {
     generate_self_signed_cert(&cert_host_path, &key_host_path);
 
     // 2. Generate Config
+    let upstream_host = if mode == "docker" {
+        resolve_docker_service_ip(&project_root, upstream_host).expect("resolve backend-v1 IP")
+    } else {
+        upstream_host.to_string()
+    };
     let template = include_str!("../config/templates/tls_support.yaml");
     let config_content = template
         .replacen("{}", &cert_config_path, 1)
@@ -90,7 +96,7 @@ async fn test_tls_support() {
     //       - ip: "127.0.0.1"
     //         port: {}
     // We need to change 127.0.0.1 to upstream_host if docker
-    let config_content = config_content.replace("127.0.0.1", upstream_host);
+    let config_content = config_content.replace("127.0.0.1", &upstream_host);
 
     let config_path = if mode == "docker" {
         project_root.join("crates/pavis-e2e/config/generated_tls_support.yaml")

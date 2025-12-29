@@ -39,6 +39,7 @@
 6. Follow `doc/CODE_REVIEW.md` for priorities and update statuses when tasks complete.
 7. Backward compatibility is a lower concern (no public release yet) unless the user requests stability explicitly.
 8. Do not create a new crate unless the user explicitly asks.
+9. Do not change the struct of `RuntimeConfig` unless explicitly instructed.
 
 ## Tooling & Validation
 

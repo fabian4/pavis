@@ -33,7 +33,7 @@ FROM builder AS final
 FROM gcr.io/distroless/cc-debian12
 COPY --from=builder /tmp/pavis_tmp /usr/local/bin/pavis
 
-ENV PAVIS_CONFIG=/etc/pavis/config.yaml
+ENV PAVIS_CONFIG=/etc/pavis/config.pvs
 
 ENTRYPOINT ["pavis"]
-CMD ["--config", "/etc/pavis/config.yaml"]
+CMD ["--config", "/etc/pavis/config.pvs"]

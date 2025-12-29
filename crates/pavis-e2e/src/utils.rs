@@ -3,7 +3,8 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -40,6 +41,8 @@ impl TestEnv {
         // 1. Generate Config
         let backend_v1 = env::var("BACKEND_V1_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let backend_v2 = env::var("BACKEND_V2_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+        let backend_v1 = resolve_docker_host_if_needed(&mode, &project_root, backend_v1)?;
+        let backend_v2 = resolve_docker_host_if_needed(&mode, &project_root, backend_v2)?;
 
         let content = fs::read_to_string(&config_src)
             .with_context(|| format!("Failed to read config: {config_src:?}"))?;
@@ -260,6 +263,69 @@ pub async fn get_upstream_name(client: &Client, path: &str) -> Result<String> {
     }
 
     Err(anyhow::anyhow!("Could not identify upstream from response"))
+}
+
+fn resolve_docker_host_if_needed(mode: &str, project_root: &Path, host: String) -> Result<String> {
+    if mode == "docker" && host.parse::<IpAddr>().is_err() {
+        resolve_docker_service_ip(project_root, &host)
+    } else {
+        Ok(host)
+    }
+}
+
+pub fn resolve_docker_service_ip(project_root: &Path, service: &str) -> Result<String> {
+    let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose.yaml");
+    let output = Command::new("docker")
+        .args([
+            "compose",
+            "-f",
+            compose_file
+                .to_str()
+                .context("docker compose path is not valid UTF-8")?,
+            "ps",
+            "-q",
+            service,
+        ])
+        .output()
+        .context("Failed to run docker compose ps")?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to resolve docker container for service '{service}'"
+        ));
+    }
+
+    let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if container_id.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No container found for docker service '{service}'"
+        ));
+    }
+
+    let output = Command::new("docker")
+        .args([
+            "inspect",
+            "-f",
+            "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+            &container_id,
+        ])
+        .output()
+        .context("Failed to run docker inspect")?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to inspect docker container for service '{service}'"
+        ));
+    }
+
+    let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if ip.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No IP found for docker service '{service}'"
+        ));
+    }
+
+    Ok(ip)
 }
 
 /// Helper to get a JSON response from the proxy.
