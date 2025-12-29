@@ -1,4 +1,4 @@
-//! Configuration types for Pavis proxy (Input/Adapter Layer).
+//! Configuration types for Pavis proxy (Codec Layer).
 //!
 //! These types are used for parsing YAML/JSON configuration and validating it
 //! before converting it to the efficient `pavis_core::RuntimeConfig`.

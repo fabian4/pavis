@@ -1,0 +1,11 @@
+[package]
+name = "pavis-relay"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Relay layer for Pavis"
+
+[dependencies]
+thiserror = "1"
+pavis-core = { path = "../pavis-core" }
+

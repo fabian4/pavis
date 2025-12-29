@@ -3,9 +3,9 @@ use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use pavctl::{format_config, format_header, parse_yaml_runtime_from_source};
-use pavis_codec_yaml::config as yaml;
-use pavis_core::ConfigSource;
+use pavctl::{format_config, format_header, parse_yaml_runtime_from_bytes};
+use pavis_codec_api::Codec;
+use pavis_codec_yaml::YamlCodec;
 use pavis_pvs as pvs;
 
 #[derive(Parser)]
@@ -79,34 +79,39 @@ fn get_default_output(input: &Path, new_ext: &str) -> PathBuf {
 }
 
 fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<()> {
-    let binary_config = pvs::load(&input_path)?;
-    let yaml_config: yaml::YamlConfig = binary_config.into();
-    let yaml_str = serde_yaml::to_string(&yaml_config).context("Failed to serialize to YAML")?;
+    let binary_config = pvs::load_validated(&input_path)?;
+    let codec = YamlCodec;
+    let env = codec
+        .decompile(&binary_config)
+        .context("Failed to encode YAML")?;
 
     match output_path {
         Some(path) => {
-            fs::write(&path, yaml_str).context("Failed to write output file")?;
+            fs::write(&path, &env.bytes).context("Failed to write output file")?;
             println!(
                 "✅ Successfully converted {:?} to YAML at {:?}",
                 input_path, path
             );
         }
         None => {
-            println!("{}", yaml_str);
+            let output = std::str::from_utf8(&env.bytes).context("YAML output not UTF-8")?;
+            println!("{}", output);
         }
     }
     Ok(())
 }
 
 fn validate_yaml(input_path: PathBuf) -> Result<()> {
-    let _runtime = parse_yaml_runtime_from_source(ConfigSource::File(input_path.as_path()))?;
+    let bytes = fs::read(&input_path).context("Failed to read input file")?;
+    let _runtime = parse_yaml_runtime_from_bytes(&bytes)?;
     println!("✅ Configuration is valid: {:?}", input_path);
     Ok(())
 }
 
 fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
     tracing::info!("Reading YAML config from {:?}", input_path);
-    let pavis_config = parse_yaml_runtime_from_source(ConfigSource::File(input_path.as_path()))?;
+    let bytes = fs::read(&input_path).context("Failed to read input file")?;
+    let pavis_config = parse_yaml_runtime_from_bytes(&bytes)?;
 
     // 3. Write to Disk with explicit header
     pvs::write(&output_path, &pavis_config)?;
@@ -235,7 +240,7 @@ routes:
 
         let err = validate_yaml(yaml_path.clone()).expect_err("should fail");
         let msg = format!("{err:#}");
-        assert!(msg.contains("unknown upstream"));
+        assert!(msg.contains("unknown upstream"), "{msg}");
 
         let _ = fs::remove_file(&yaml_path);
     }

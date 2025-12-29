@@ -4,7 +4,10 @@ members = [
     "crates/pavctl",
     "crates/pavis-pvs",
     "crates/pavis-core",
+    "crates/pavis-ingest-api",
+    "crates/pavis-codec-api",
     "crates/pavis-codec-yaml",
+    "crates/pavis-relay",
     "crates/pavis-e2e",
 ]
 resolver = "2"

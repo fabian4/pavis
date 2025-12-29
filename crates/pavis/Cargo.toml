@@ -16,6 +16,7 @@ rand = "0.9.2"
 http = "1.4.0"
 regex = "1"
 chrono = "0.4"
+thiserror = "1"
 tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }

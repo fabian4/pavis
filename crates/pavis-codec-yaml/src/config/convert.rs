@@ -146,7 +146,7 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
             routes,
         };
 
-        validate_runtime(&runtime).map_err(anyhow::Error::from)?;
+        validate_runtime(runtime.clone()).map_err(anyhow::Error::from)?;
         Ok(runtime)
     }
 }

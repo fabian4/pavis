@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::str;
 
 use pavis_core::RuntimeConfig;
-use pavis_core::{AccessLogConfig, Config, ConfigSource, HttpVersion, LoadBalancer, MatchType};
+use pavis_core::{AccessLogConfig, HttpVersion, LoadBalancer, MatchType};
 
 use super::validation;
 
@@ -20,51 +20,20 @@ impl YamlConfig {
     pub fn parse_str(content: &str) -> AnyResult<Self> {
         serde_yaml::from_str(content).map_err(Into::into)
     }
-}
 
-#[derive(Debug, thiserror::Error)]
-pub enum YamlConfigError {
-    #[error(transparent)]
-    Anyhow(#[from] anyhow::Error),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("UTF-8 error: {0}")]
-    Utf8(#[from] str::Utf8Error),
-}
-
-impl Config for YamlConfig {
-    type Error = YamlConfigError;
-
-    fn load(source: ConfigSource) -> Result<Self, Self::Error> {
-        let result: AnyResult<Self> = match source {
-            ConfigSource::File(path) => {
-                let content = std::fs::read_to_string(path)
-                    .with_context(|| format!("Failed to read config file: {path:?}"))?;
-                YamlConfig::parse_str(&content).context("Failed to parse YAML")
-            }
-            ConfigSource::String(content) => {
-                YamlConfig::parse_str(content).context("Failed to parse YAML")
-            }
-            ConfigSource::Bytes(bytes) => {
-                let content = str::from_utf8(bytes).context("Config bytes must be UTF-8")?;
-                YamlConfig::parse_str(content).context("Failed to parse YAML")
-            }
-        };
-        result.map_err(YamlConfigError::Anyhow)
+    pub fn parse_bytes(bytes: &[u8]) -> AnyResult<Self> {
+        let content = str::from_utf8(bytes).context("Config bytes must be UTF-8")?;
+        Self::parse_str(content)
     }
 
-    fn validate(&self) -> Result<(), Self::Error> {
-        let mut config = self.clone();
-        validation::validate(&mut config).map_err(YamlConfigError::Anyhow)
+    pub fn validate(&mut self) -> AnyResult<()> {
+        validation::validate(self)
     }
 
-    fn build(self) -> Result<RuntimeConfig, Self::Error> {
-        let result: AnyResult<RuntimeConfig> = (|| {
-            let mut config = self;
-            validation::validate(&mut config)?;
-            config.try_into()
-        })();
-        result.map_err(YamlConfigError::Anyhow)
+    pub fn build(self) -> AnyResult<RuntimeConfig> {
+        let mut config = self;
+        validation::validate(&mut config)?;
+        config.try_into()
     }
 }
 

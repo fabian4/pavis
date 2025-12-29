@@ -161,6 +161,35 @@ pub struct RetryPolicy {
     pub retry_on: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ValidatedRuntimeConfig {
+    runtime: RuntimeConfig,
+}
+
+impl ValidatedRuntimeConfig {
+    pub(crate) fn new(runtime: RuntimeConfig) -> Self {
+        Self { runtime }
+    }
+
+    pub fn into_inner(self) -> RuntimeConfig {
+        self.runtime
+    }
+}
+
+impl AsRef<RuntimeConfig> for ValidatedRuntimeConfig {
+    fn as_ref(&self) -> &RuntimeConfig {
+        &self.runtime
+    }
+}
+
+impl std::ops::Deref for ValidatedRuntimeConfig {
+    type Target = RuntimeConfig;
+
+    fn deref(&self) -> &Self::Target {
+        &self.runtime
+    }
+}
+
 #[derive(
     Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default, Hash,
 )]

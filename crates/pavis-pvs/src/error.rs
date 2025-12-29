@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use pavis_core::CoreValidationError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum PvsError {
     #[error("I/O error: {0}")]
@@ -23,6 +25,14 @@ pub enum PvsError {
 }
 
 pub type PvsResult<T> = Result<T, PvsError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValidatedLoadError {
+    #[error(transparent)]
+    Pvs(#[from] PvsError),
+    #[error(transparent)]
+    Semantic(#[from] CoreValidationError),
+}
 
 impl From<std::convert::Infallible> for PvsError {
     fn from(_: std::convert::Infallible) -> Self {

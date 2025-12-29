@@ -1,0 +1,12 @@
+[package]
+name = "pavis-codec-api"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Codec API traits for Pavis"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = "1"
+pavis-core = { path = "../pavis-core" }
+pavis-ingest-api = { path = "../pavis-ingest-api" }

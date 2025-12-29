@@ -1,4 +1,6 @@
-use crate::runtime::{HeaderOperations, MatchType, RuntimeConfig, Upstream, VirtualHost};
+use crate::runtime::{
+    HeaderOperations, MatchType, RuntimeConfig, Upstream, ValidatedRuntimeConfig, VirtualHost,
+};
 use http::header::{HeaderName, HeaderValue};
 use regex::Regex;
 use std::collections::HashSet;
@@ -52,11 +54,11 @@ pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
 ///
 /// # Errors
 /// Returns `CoreValidationError` if any semantic invariants are violated.
-pub fn validate_runtime(config: &RuntimeConfig) -> CoreValidationResult<()> {
+pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<ValidatedRuntimeConfig> {
     validate_server(config.server.listen_addr, config.server.tls.as_ref())?;
     validate_upstreams(&config.upstreams)?;
     validate_routes(&config.routes, &config.upstreams)?;
-    Ok(())
+    Ok(ValidatedRuntimeConfig::new(config))
 }
 
 #[allow(clippy::collapsible_if)]
@@ -279,7 +281,7 @@ mod tests {
     #[test]
     fn valid_config_passes() {
         let cfg = base_config();
-        assert!(validate_runtime(&cfg).is_ok());
+        assert!(validate_runtime(cfg.clone()).is_ok());
     }
 
     #[test]
@@ -290,7 +292,7 @@ mod tests {
             cert_path: None,
             key_path: Some("key.pem".to_string()),
         });
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::MissingTlsFiles));
     }
 
@@ -302,7 +304,7 @@ mod tests {
             cert_path: Some("cert.pem".to_string()),
             key_path: None,
         });
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::MissingTlsFiles));
     }
 
@@ -311,7 +313,7 @@ mod tests {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].match_type = MatchType::Regex;
         cfg.routes[0].paths[0].path = "[unclosed".to_string();
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidRegex { .. }));
     }
 
@@ -320,7 +322,7 @@ mod tests {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].match_type = MatchType::Regex;
         cfg.routes[0].paths[0].path = "^/items/[0-9]+$".to_string();
-        assert!(validate_runtime(&cfg).is_ok());
+        assert!(validate_runtime(cfg.clone()).is_ok());
     }
 
     #[test]
@@ -328,7 +330,7 @@ mod tests {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
             vec![(String::new(), "v".to_string())];
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
 
@@ -337,7 +339,7 @@ mod tests {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
             vec![("bad header".to_string(), "v".to_string())];
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
 
@@ -349,7 +351,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .remove = vec![String::new()];
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
 
@@ -361,7 +363,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .remove = vec![("bad header".to_string())];
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
 
@@ -370,7 +372,7 @@ mod tests {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
             vec![("x".to_string(), "\u{7f}".to_string())];
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(
             err,
             CoreValidationError::InvalidHeaderValue { .. }
@@ -384,7 +386,7 @@ mod tests {
             add: vec![("bad header".to_string(), "v".to_string())],
             remove: Vec::new(),
         });
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
 
@@ -392,7 +394,7 @@ mod tests {
     fn empty_upstream_name_fails() {
         let mut cfg = base_config();
         cfg.upstreams[0].name = String::new();
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyUpstreamName));
     }
 
@@ -402,7 +404,7 @@ mod tests {
         let mut duplicate = cfg.upstreams[0].clone();
         duplicate.endpoints[0].port = 81;
         cfg.upstreams.push(duplicate);
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::DuplicateUpstream(_)));
     }
 
@@ -410,7 +412,7 @@ mod tests {
     fn endpoint_weight_zero_fails() {
         let mut cfg = base_config();
         cfg.upstreams[0].endpoints[0].weight = 0;
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EndpointWeightZero(_)));
     }
 
@@ -418,7 +420,7 @@ mod tests {
     fn unknown_destination_fails() {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].destinations[0].upstream = "missing".to_string();
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(
             err,
             CoreValidationError::UnknownDestination(_, _, _)
@@ -429,7 +431,7 @@ mod tests {
     fn destination_weight_zero_fails() {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].destinations[0].weight = 0;
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(
             err,
             CoreValidationError::DestinationWeightZero(_, _, _)
@@ -440,11 +442,11 @@ mod tests {
     fn path_not_normalized_fails() {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].path = "api".to_string();
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::PathNotNormalized(_)));
 
         cfg.routes[0].paths[0].path = "/api/".to_string();
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::PathNotNormalized(_)));
     }
 
@@ -454,7 +456,7 @@ mod tests {
         let mut route = cfg.routes[0].paths[0].clone();
         route.path = "/api".to_string();
         cfg.routes[0].paths = vec![route.clone(), route];
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::DuplicateRoute { .. }));
     }
 
@@ -464,7 +466,7 @@ mod tests {
         let mut route = cfg.routes[0].paths[0].clone();
         route.match_type = MatchType::Exact;
         cfg.routes[0].paths = vec![route.clone(), route];
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::DuplicateRoute { .. }));
     }
 
@@ -473,7 +475,7 @@ mod tests {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].match_type = MatchType::Regex;
         cfg.routes[0].paths[0].path = "a".repeat(2049);
-        let err = validate_runtime(&cfg).unwrap_err();
+        let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::RegexTooLong { .. }));
     }
 }

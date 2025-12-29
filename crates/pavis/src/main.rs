@@ -5,7 +5,7 @@ use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
 use std::sync::Arc;
 
-use pavis::load::{self, LoadError};
+use pavis::load::{self, RuntimeLoadError};
 use pavis::proxy::Proxy;
 use pavis::router::Router;
 use pavis::telemetry::Telemetry;
@@ -56,11 +56,13 @@ fn main() -> Result<()> {
     // Load configuration
     // TODO: Support config file watching for hot reload
     let config = load::load_file(&args.config).map_err(|e| match e {
-        LoadError::VersionMismatch { file, expected } => anyhow::anyhow!(
-            "Version mismatch! File: {}, Runtime expects: {}. Recompile config.",
-            file,
-            expected
-        ),
+        RuntimeLoadError::Pvs(pavis_pvs::PvsError::VersionMismatch { file, expected }) => {
+            anyhow::anyhow!(
+                "Version mismatch! File: {}, Runtime expects: {}. Recompile config.",
+                file,
+                expected
+            )
+        }
         other => anyhow::anyhow!(other),
     })?;
 

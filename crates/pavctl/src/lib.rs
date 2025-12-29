@@ -1,13 +1,17 @@
 use anyhow::{Context, Result};
-use pavis_codec_yaml::config as yaml;
-use pavis_core::{self as binary, Config, ConfigSource};
+use pavis_codec_api::Codec;
+use pavis_codec_yaml::YamlCodec;
+use pavis_core::{self as binary};
+use pavis_ingest_api::{Artifact, Format, SourceInfo};
 use std::fmt::Write;
 
-pub fn parse_yaml_runtime_from_source(source: ConfigSource<'_>) -> Result<binary::RuntimeConfig> {
-    let yaml_config = yaml::YamlConfig::load(source).context("Failed to load YAML config")?;
-    Config::validate(&yaml_config).context("Configuration validation failed")?;
-    let runtime: binary::RuntimeConfig = yaml_config.build()?;
-    Ok(runtime)
+pub fn parse_yaml_runtime_from_bytes(bytes: &[u8]) -> Result<binary::RuntimeConfig> {
+    let env = Artifact::new(bytes.to_vec().into(), Format::Yaml, SourceInfo::unknown());
+    let codec = YamlCodec;
+    let validated = codec
+        .materialize(env)
+        .context("Failed to decode YAML config")?;
+    Ok(validated.into_inner())
 }
 
 pub fn format_header(header: &pavis_pvs::PvsHeader) -> String {

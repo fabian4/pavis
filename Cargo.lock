@@ -1639,8 +1639,10 @@ dependencies = [
  "anyhow",
  "clap 4.5.53",
  "hex",
+ "pavis-codec-api",
  "pavis-codec-yaml",
  "pavis-core",
+ "pavis-ingest-api",
  "pavis-pvs",
  "serde_yaml 0.9.34+deprecated",
  "tracing",
@@ -1661,9 +1663,20 @@ dependencies = [
  "pingora",
  "rand 0.9.2",
  "regex",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "pavis-codec-api"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "pavis-core",
+ "pavis-ingest-api",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1673,7 +1686,9 @@ dependencies = [
  "anyhow",
  "http",
  "humantime-serde",
+ "pavis-codec-api",
  "pavis-core",
+ "pavis-ingest-api",
  "regex",
  "serde",
  "serde_json",
@@ -1707,12 +1722,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "pavis-ingest-api"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures-core",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "pavis-pvs"
 version = "0.0.0"
 dependencies = [
  "pavis-core",
  "rkyv",
  "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "pavis-relay"
+version = "0.0.0"
+dependencies = [
+ "pavis-core",
  "thiserror 1.0.69",
 ]
 

@@ -1,8 +1,6 @@
-pub mod config;
 pub mod runtime;
 pub mod validate;
 
-pub use config::{Config, ConfigSource};
 pub use runtime::*;
 pub use validate::{CoreValidationError, CoreValidationResult, validate_runtime};
 
@@ -11,11 +9,10 @@ mod serde_impl;
 
 #[cfg(test)]
 mod tests {
-    use super::{AccessLogConfig, ConfigSource, RuntimeConfig, ServerConfig, TelemetryConfig};
+    use super::{AccessLogConfig, RuntimeConfig, ServerConfig, TelemetryConfig};
 
     #[test]
     fn reexports_are_accessible() {
-        let _ = ConfigSource::String("ok");
         let _cfg = RuntimeConfig {
             server: ServerConfig {
                 listen_addr: "127.0.0.1:8080".parse().expect("socket addr"),

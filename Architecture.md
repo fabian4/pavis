@@ -24,6 +24,8 @@ Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data P
 ```
 
 All arrows represent data or artifact flow, not call graphs or control flow.
+Fixed dataflow: **Ingest → Artifact → Codec → RuntimeConfig → Relay → PVS → Runtime**.
+Type-level validation flow: **Artifact → CheckedArtifact → RuntimeConfig → ValidatedRuntimeConfig → Relay**.
 
 The project is structured as a workspace with strict module boundaries to enforce the separation of concerns.
 
@@ -37,10 +39,12 @@ The project is structured as a workspace with strict module boundaries to enforc
 | Component | Description |
 | :--- | :--- |
 | **`pavis`** | Proxy – Runtime Engine. Reads optimized `.pvs` binary files only. |
-| **`pavis-core`** | Protocol – Canonical types, shared `Config` trait, and memory layout. |
+| **`pavis-core`** | Protocol – Canonical types, semantic validation, and memory layout. |
 | **`pavis-relay`** | Relay – Versions `.pvs`, manages caches/last-known-good, and distributes artifacts via long poll. |
 | **`pavis-ingest-*`** | Ingest – Source connectivity (xDS, K8s, file watch): streams, auth, retries, resync. |
+| **`pavis-ingest-api`** | Ingest API – Artifact (raw bytes + metadata) and ingest trait boundary. |
 | **`pavis-codec-*`** | Codec – DTO ↔ RuntimeConfig transforms, mechanical defaults, compatibility, and core validation. |
+| **`pavis-codec-api`** | Codec API – Codec trait boundary for Artifact ↔ RuntimeConfig transforms. |
 | **`pavis-pvs`** | Binary Protocol – Integrity layer (Header + Checksum + Encoding). |
 | **`pavctl`** | CLI – Developer tool for manual generation, conversion, and runtime management. |
 
@@ -50,10 +54,12 @@ The project is structured as a workspace with strict module boundaries to enforc
 
 ### 2.2. Dependency Graph
 
-*   **`pavis-core` (Root)**: The foundation. Defines the shared `Config` trait. No I/O.
+*   **`pavis-core` (Root)**: The foundation. Canonical types and semantic validation. No I/O.
 *   **`pavis-pvs`**: Depends on `pavis-core`. Handles the binary lifecycle.
-*   **`pavis-codec-*`**: Pure logic crates. Depend on `pavis-core` for DTO ↔ RuntimeConfig mapping and semantic validation.
-*   **`pavis-ingest-*`**: Connectivity crates. Handle I/O and transport to upstream sources; emit raw DTO events only.
+*   **`pavis-codec-api`**: Defines the Codec boundary. Depends on `pavis-core` and ingest envelope types.
+*   **`pavis-ingest-api`**: Defines the Ingest boundary (envelope + metadata).
+*   **`pavis-codec-*`**: Pure logic crates. Depend on `pavis-core` and `pavis-codec-api` for DTO ↔ RuntimeConfig mapping and semantic validation.
+*   **`pavis-ingest-*`**: Connectivity crates. Handle I/O and transport to upstream sources; emit envelopes (bytes + metadata) only.
 *   **`pavis-relay`**: Coordinates ingest/codec outputs, versions artifacts, and distributes `.pvs` (no protocol parsing).
 *   **`pavctl`**: Depends on codecs and `pavis-pvs` to provide manual control and local tooling.
 *   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs` only. **Must not** depend on ingest/codec/relay/governor.
@@ -78,12 +84,12 @@ To support diverse environments (Kubernetes, Service Meshes, and standalone file
 
 1.  **pavis-ingest-* (The Connectivity Layer)**:
     *   **Responsibility**: Implements transport logic to upstream sources (gRPC streams, watches, auth, retries, reconnect, resync).
-    *   **Output**: Emits raw DTO / protocol events into the pipeline.
+    *   **Output**: Emits artifacts (raw bytes + metadata) into the pipeline.
 
 2.  **pavis-codec-* (The Transformation Layer)**:
-    *   **Responsibility**: Converts DTOs (xDS, YAML, CRD, JSON) into the canonical `RuntimeConfig` model and back (best-effort).
+    *   **Responsibility**: Converts artifacts (xDS, YAML, CRD, JSON bytes) into the canonical `RuntimeConfig` model and back (best-effort).
     *   **Purity**: Codecs are pure transformers; no I/O, no networking.
-    *   **Validation**: Applies mechanical defaults and invokes canonical semantic validation in `pavis-core`.
+    *   **Validation**: Performs source-specific preflight validation (Artifact → CheckedArtifact), then invokes canonical semantic validation in `pavis-core` (RuntimeConfig → ValidatedRuntimeConfig).
 
 3.  **pavis-relay (The Distribution Layer)**:
     *   **Responsibility**: Manages `.pvs` artifacts (versioning, checksums, cache/last-known-good) and distributes them via long polling.
@@ -118,7 +124,7 @@ The `pavis` crate has been refactored into a **Domain-Driven Architecture** with
 
 1.  **Config (`config`)**:
     *   **Role**: Internal Runtime Configuration.
-    *   **Invariant**: Decoupled from `pavis-core` types where appropriate. Loaded from `RuntimeConfig`.
+    *   **Invariant**: Decoupled from `pavis-core` types where appropriate. Loaded from `ValidatedRuntimeConfig` only.
     *   **Key Types**: `Config`, `VirtualHost`, `Upstream`.
 
 2.  **Router (`router`)**:
@@ -333,11 +339,12 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
     *   Ensures structural correctness and cross-resource invariants (e.g., reference integrity, regex validity).
     *   Source-agnostic and mandatory for all config producers.
 
-2.  **Source-Specific Validation (`pavctl`, codecs)**:
-    *   **Input Adaptation.** Enforces constraints tied to the input source (schema, defaults, compatibility).
-    *   Transforms user intent into `RuntimeConfig` and invokes `pavis-core::validate_runtime`.
-    *   `pavis-relay` executes only pre-validated artifacts and may enforce size/version/integrity constraints.
-    *   May not redefine or partially duplicate core semantics.
+2.  **Preflight / Input Validation (`pavis-codec-*`)**:
+    *   **Artifact-level checks.** Enforces constraints tied to the input source (schema, defaults, compatibility).
+    *   Produces a **CheckedArtifact** only after successful preflight checks.
+    *   Decode/compile is allowed only from CheckedArtifact.
+    *   Must invoke `pavis-core::validate_runtime` for canonical semantic validation.
+    *   Must not redefine or partially duplicate core semantics.
 
 3.  **PVS Integrity Validation (`pavis-pvs`)**:
     *   **Binary Safety.** Validates magic bytes, protocol version, checksum, and `rkyv::check_archived_root`.
@@ -351,7 +358,41 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 
 > **Principle:** Semantics live in `pavis-core`; codecs produce validated configs; `pavis-pvs` guarantees binary integrity; runtime executes with minimal defensive guards.
 
+**Validated types:** Codecs must produce CheckedArtifact and then ValidatedRuntimeConfig before Relay accepts input. Relay MUST NOT accept raw Artifact or unvalidated RuntimeConfig.
+
+**Runtime input constraint:** The runtime sidecar MUST accept only `ValidatedRuntimeConfig` (via `pavis-pvs`), and MUST NOT attempt semantic validation.
+
 **RuntimeConfig validation entrypoint:** Producers/codecs must call `pavis-core::validate_runtime` after adaptation and before serialization. The CLI should rely on the codec conversion pipeline to invoke canonical validation; the runtime must not call it during startup or hot-reload.
+
+### 7.1.1. Boundary Non-Goals
+
+- **Codec MUST NOT** perform I/O, networking, filesystem access, or governance decisions.
+- **Relay MUST NOT** parse DTO schemas or perform source-specific decoding.
+- **Runtime MUST NOT** interpret upstream protocols or perform semantic validation.
+
+### 7.1.2. Validation Layer Summary
+
+| Layer | MUST validate | MUST NOT validate | Owner | Trigger point |
+| :--- | :--- | :--- | :--- | :--- |
+| **Artifact-level (preflight)** | Input shape, schema, format version, feature gates, source-specific constraints | Canonical semantics, binary integrity | `pavis-codec-*` | `Artifact → CheckedArtifact` |
+| **Canonical semantic** | Cross-resource consistency, referential integrity, canonical defaults/invariants | Input schema/syntax, binary integrity | `pavis-core` | `RuntimeConfig → ValidatedRuntimeConfig` |
+| **Binary integrity** | Magic bytes, protocol version, checksum, archive integrity | Input schema/syntax, canonical semantics | `pavis-pvs` | `PVS → RuntimeConfig` |
+
+### 7.1.3. Error Taxonomy and Ownership
+
+| Error class | Constructed by | Notes |
+| :--- | :--- | :--- |
+| **Input / schema / syntax** | `pavis-codec-*` | User-correctable input errors |
+| **Compatibility / feature-gate** | `pavis-codec-*` | User-correctable incompatibilities |
+| **Canonical semantic** | `pavis-core` | Canonical invariants; must not be fabricated elsewhere |
+| **Binary integrity** | `pavis-pvs` | Integrity/compatibility failures |
+| **Internal / invariant** | Local layer only | Signals bugs or violated assumptions |
+
+### 7.1.4. Error Propagation Rules
+
+- **Codec** MUST pass through `pavis-core` errors as a distinct semantic variant; MUST NOT reinterpret them as input errors.
+- **Relay** MAY summarize for API responses but MUST preserve original error details for logs/diagnostics.
+- **Runtime** MUST surface `pavis-pvs` errors distinctly and MUST NOT attempt semantic validation.
 
 ### 7.2. Crash-Loop Protection
 
