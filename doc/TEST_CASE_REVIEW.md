@@ -1,7 +1,7 @@
 # Test Case Review Report
 
 **Date:** 2025-12-28
-**Scope:** `crates/pavis-core`, `crates/pavis`, `crates/pavis-pvs`, `crates/pavis-adapter-yaml`, `crates/pavctl`
+**Scope:** `crates/pavis-core`, `crates/pavis`, `crates/pavis-pvs`, `crates/pavis-codec-yaml`, `crates/pavctl`
 
 ## 1. Test Coverage
 *   **Strengths:**
@@ -14,7 +14,7 @@
         *   **VHost Precedence**: No tests for multiple specific hosts (e.g., `api.com` vs `*`) to verify selection logic.
         *   **Header Propagation**: No test verifying that headers defined in `RuntimeConfig` correctly populate the `RouterContext`.
         *   **Cluster Edge Cases**: Missing tests for upstreams with **zero endpoints**.
-    *   **pavis-adapter-yaml (UX)**:
+    *   **pavis-codec-yaml (UX)**:
         *   **Field Strictness**: No tests for `deny_unknown_fields` behavior.
         *   **Malformed Durations**: Missing tests for invalid humantime strings (e.g., `-5s`).
     *   **pavis-pvs (Integrity)**:
@@ -51,6 +51,6 @@ The test suite is "logic-complete" for happy paths but "boundary-incomplete" for
 | `pavis` | **Medium** | CLI `--version` check (matches README) |
 | `pavis-core` | **High** | Route overlap/conflict detection |
 | `pavis-pvs` | **Medium** | Truncated payload integrity & Invalid Magic |
-| `pavis-adapter` | **Low** | Strictness of unknown YAML fields |
+| `pavis-codec` | **Low** | Strictness of unknown YAML fields |
 
 **Action Plan:** Address the "README vs Implementation" gaps first (Version flag and Regex integration) to ensure documented features are actually verified.

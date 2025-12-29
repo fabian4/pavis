@@ -1,9 +1,9 @@
 [package]
-name = "pavis-adapter-yaml"
+name = "pavis-codec-yaml"
 version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "YAML Input adapter for Pavis"
+description = "YAML codec for Pavis"
 
 [dependencies]
 # Pavis

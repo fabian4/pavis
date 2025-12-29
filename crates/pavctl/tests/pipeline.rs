@@ -1,4 +1,4 @@
-use pavis_adapter_yaml::config as yaml;
+use pavis_codec_yaml::config as yaml;
 use pavis_core::ConfigSource;
 use std::fs;
 use std::path::{Path, PathBuf};

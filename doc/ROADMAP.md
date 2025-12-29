@@ -104,7 +104,6 @@
 
 **Goal:** Dynamic configuration updates via HTTP long polling.
 
-**`pavis-xds`** (Server)
 - [ ] HTTP server setup (Axum)
   - [ ] `GET /v1/config` - fetch current config
   - [ ] `GET /v1/config/version` - fetch version only
@@ -126,8 +125,6 @@
   - [ ] Config history (last N versions)
 
 **`pavctl`**
-- [ ] `apply` command: Upload `.pvs` to `pavis-xds`
-- [ ] `rollback` command: Tell `pavis-xds` to revert to version N
 
 **`pavis`** (Client)
 - [ ] Background config polling thread
@@ -180,7 +177,7 @@
 
 **Adapters** (Protocol Translation)
 - [ ] `pavis-adapter-xds`: Envoy Protobuf → `RuntimeConfig`
-- [ ] `pavis-adapter-yaml`: YAML DTO → `RuntimeConfig` (migrated from current adapter)
+- [ ] `pavis-codec-yaml`: YAML DTO → `RuntimeConfig` (migrated from current adapter)
 - [ ] `pavis-adapter-crd`: K8s Gateway API → `RuntimeConfig`
 
 **E2E Tests**
@@ -521,7 +518,6 @@
 - [ ] Controller implementation
   - [ ] Watch Kubernetes services
   - [ ] Generate pavis-core configs
-  - [ ] Manage pavis-xds deployment
 - [ ] Integration with Gateway API
   - [ ] `HTTPRoute` support
   - [ ] `GRPCRoute` support

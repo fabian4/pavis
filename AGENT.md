@@ -14,11 +14,11 @@
 
 - Strict responsibilities:
   - `pavis-core`: protocol + canonical semantics; canonical validation of `RuntimeConfig`; no I/O, parsing, or format concerns.
-  - `pavis-adapter-*`: input DTOs, source-specific defaults/validation, transforms to `pavis-core::RuntimeConfig`.
-  - `pavctl` / `pavis-xds`: I/O orchestration shells that invoke adapters.
+  - `pavis-codec-*`: input DTOs, source-specific defaults/validation, transforms to `pavis-core::RuntimeConfig`.
+  - `pavctl`: I/O orchestration shell that invokes codecs.
   - `pavis-pvs`: the only place to read/inspect `.pvs`, do magic/version/checksum checks, and run rkyv byte validation; runtime must not touch archive internals.
   - `pavis` runtime: consumes trusted `RuntimeConfig`; only defensive crash-safety checks; no parsing/serde/rkyv, no semantic validation or config decoding (normal runtime state allocation is fine).
-- Dependency direction is one-way: `pavis-core` is foundational; adapters/producers depend on core; runtime depends on core; runtime must not depend on adapters/serde/rkyv. Shared domain types live in core.
+- Dependency direction is one-way: `pavis-core` is foundational; codecs/producers depend on core; runtime depends on core; runtime must not depend on codecs/serde/rkyv. Shared domain types live in core.
 
 ## Modules & Structure
 

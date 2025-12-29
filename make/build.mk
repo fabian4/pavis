@@ -1,4 +1,4 @@
-.PHONY: build binary-build docker-build-local docker-build-ci run-pavis run-pavis-xds fmt fmt-check lint
+.PHONY: build binary-build docker-build-local docker-build-ci run-pavis fmt fmt-check lint
 
 BUILDER ?= builder
 
@@ -36,9 +36,6 @@ run-pavis:
 	RUST_LOG=debug cargo run -p pavis -- --config crates/pavis/config.yaml
 
 # Run the Pavis xDS controller
-run-pavis-xds:
-	cargo run -p pavis-xds
-
 # Format all code in the workspace
 fmt:
 	cargo fmt
@@ -50,4 +47,3 @@ fmt-check:
 # Lint all code using Clippy
 lint:
 	cargo clippy --workspace -- -D warnings
-

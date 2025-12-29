@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use pavis_adapter_yaml::config as yaml;
+use pavis_codec_yaml::config as yaml;
 use pavis_core::{self as binary, Config, ConfigSource};
 use std::fmt::Write;
 

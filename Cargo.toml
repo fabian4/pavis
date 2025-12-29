@@ -2,10 +2,9 @@
 members = [
     "crates/pavis",
     "crates/pavctl",
-    "crates/pavis-xds",
     "crates/pavis-pvs",
     "crates/pavis-core",
-    "crates/pavis-adapter-yaml",
+    "crates/pavis-codec-yaml",
     "crates/pavis-e2e",
 ]
 resolver = "2"

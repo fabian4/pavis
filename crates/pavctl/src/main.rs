@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use pavctl::{format_config, format_header, parse_yaml_runtime_from_source};
-use pavis_adapter_yaml::config as yaml;
+use pavis_codec_yaml::config as yaml;
 use pavis_core::ConfigSource;
 use pavis_pvs as pvs;
 
