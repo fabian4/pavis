@@ -44,7 +44,7 @@ setup_env() {
     fi
 }
 
-# 2. Build Binary (if needed)
+# 2. Build Binaries (if needed)
 ensure_binary() {
     if [ "$TEST_MODE" == "binary" ]; then
         if [ -f "$WORKSPACE_ROOT/target/release/pavis" ]; then
@@ -54,6 +54,14 @@ ensure_binary() {
             cd "$WORKSPACE_ROOT"
             cargo build -p pavis --release
         fi
+    fi
+
+    if [ -f "$WORKSPACE_ROOT/target/release/pavctl" ] || [ -f "$WORKSPACE_ROOT/target/debug/pavctl" ]; then
+        echo "✅ pavctl binary found, skipping build."
+    else
+        echo "🚀 Building pavctl..."
+        cd "$WORKSPACE_ROOT"
+        cargo build -p pavctl
     fi
 }
 

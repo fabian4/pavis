@@ -2,54 +2,35 @@
 
 ## 1. Architecture Overview
 
-Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data Plane** architecture. Heavy lifting like parsing, defaulting, and semantic validation is offloaded to a centralized bridge, keeping the sidecar proxy lightweight and binary-focused.
+Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data Plane** architecture. Heavy lifting like parsing, defaulting, and semantic validation is offloaded to a centralized relay, keeping the sidecar proxy lightweight and binary-focused.
 
 ### 1.1. End-to-End Configuration Flow
 
 ```text
-  Source Type          Connectivity (Feeds)     Translation (Adapters)        Management & Tools            Data Plane
-┌──────────────┐      ┌──────────────────┐      ┌────────────────────┐      ┌────────────────────┐      ┌──────────────────┐
-│ Mesh (Istio) │─────▶│ pavis-feed-istio │──┐   │ pavis-adapter-xds  │──┐   │   pavis-manager    │─────▶│    pavis-pvs     │
-└──────────────┘      └──────────────────┘  ├──▶│ (Protobuf → Core)  │  │   │  (Orchestration)   │  ┌──▶│ (Binary Protocol)│
-┌──────────────┐      ┌──────────────────┐  │   └────────────────────┘  ├──▶└──────────▲─────────┘  │   └──────────────────┘
-│ Mesh (Kuma)  │─────▶│ pavis-feed-kuma  │──┘                           │              │            │             
-└──────────────┘      └──────────────────┘      ┌────────────────────┐  │              │            │             
-┌──────────────┐      ┌──────────────────┐      │ pavis-adapter-crd  │──┘              │ (apply)    │   ┌──────────────────┐
-│ Kubernetes   │─────▶│ pavis-feed-k8s   │─────▶│ (K8s Gateway→Core) │                 │            └──▶│      pavis       │
-└──────────────┘      └──────────────────┘      └────────────────────┘      ┌──────────┴─────────┐      │    (Runtime)     │
-                                                                            │       pavctl       │─────▶└────────▲─────────┘
-┌──────────────┐                     ┌────────────────────┐                 │   (Tool / CLI)     │               │
-│ Static Files │◀───────────────────▶│  pavis-adapter-*   │◀───────────────▶│                    │──────(debug)──┘
-└──────────────┘                     │    (DTO → Core)    │                 └────────────────────┘
-                                     └────────────────────┘
+  Source Type         Connectivity (Ingest)      Transformation (Codec)      Distribution & Tools           Data Plane
+┌──────────────┐      ┌──────────────────┐                                  ┌────────────────────┐      ┌──────────────────┐
+│ Mesh (Istio) │─────▶│ pavis-ingest-xds │──┐   ┌────────────────────┐  ┌──▶│    pavis-relay     │─────▶│    pavis-pvs     │
+└──────────────┘      └──────────────────┘  ├──▶│  pavis-codec-xds   │──│   │ (Artifact Engine)  │  ┌──▶│ (Binary Protocol)│
+┌──────────────┐      ┌──────────────────┐  │   └────────────────────┘  │   └──────────▲─────────┘  │   └──────────────────┘
+│ Mesh (Kuma)  │─────▶│ pavis-ingest-xds │──┘                           │              │            │             
+└──────────────┘      └──────────────────┘                              │              │            │             
+┌──────────────┐      ┌──────────────────┐      ┌────────────────────┐  │              │ (apply)    │   ┌──────────────────┐
+│ Kubernetes   │─────▶│ pavis-ingest-k8s │─────▶│  pavis-codec-crd   │──│              │            └──▶│      pavis       │
+└──────────────┘      └──────────────────┘      └────────────────────┘  │   ┌──────────┴─────────┐      │    (Runtime)     │
+┌──────────────┐      ┌───────────────────┐      ┌───────────────────┐  │   │       pavctl       │      └────────▲─────────┘
+│ Static Files │─────▶│ pavis-ingest-file │─────▶│   pavis-codec-*   │──┘   │   (Tool / CLI)     │──────(debug)──┘
+└──────────────┘      └───────────────────┘      └───────────────────┘      └────────────────────┘
+                                                
 ```
+
+All arrows represent data or artifact flow, not call graphs or control flow.
 
 The project is structured as a workspace with strict module boundaries to enforce the separation of concerns.
 
-### 1.2. Governance & Control Plane
+### 1.2. Layer Rationale (Why these boundaries exist)
 
-Pavis adds a lightweight Governance / Control layer above `pavis-manager` to separate *authorization* from *execution*.
-This layer is the gatekeeper for **which feed+adapter combinations are allowed**, **which policies must be enforced**,
-and **which releases are approved** before any `.pvs` is produced or activated.
-
-Key responsibilities:
-- **Admission & policy enforcement** (tenant, environment, limits, rollout rules).
-- **Plan approval**: turns a requested change into an approved, auditable plan.
-- **Rollout/rollback decisions** with auditability, without embedding a reconciliation loop.
-
-What it does *not* do:
-- It does not parse or validate schemas (still done in adapters and `pavis-core`).
-- It does not modify runtime behavior (runtime is unaware of governance).
-
-Governance sits above `pavis-manager`, which becomes an execution engine for **pre-approved plans**.
-`pavis-core` remains the single source of canonical semantic validation.
-
-```text
-Governance ──▶ pavis-manager (Execution) ──▶ pavis-pvs ──▶ pavis (Runtime)
-```
-
-`pavctl apply` is treated as a **release request**, not an immediate activation.
-Governance can approve, defer, or reject, and only approved plans are executed by `pavis-manager`.
+- **Relay exists today** to integrate with existing Envoy ecosystems: it publishes versioned `.pvs` artifacts and distributes them without imposing governance.
+- **Codec stays a logical boundary** even if later embedded inside governor: the DTO ↔ RuntimeConfig transformation remains pure and testable.
 
 ### 2.1. Components
 
@@ -57,50 +38,56 @@ Governance can approve, defer, or reject, and only approved plans are executed b
 | :--- | :--- |
 | **`pavis`** | Proxy – Runtime Engine. Reads optimized `.pvs` binary files only. |
 | **`pavis-core`** | Protocol – Canonical types, shared `Config` trait, and memory layout. |
-| **`pavis-manager`** | Orchestrator – Coordinates loading, validation, and forwarding. Enforces single-source authority. |
-| **`pavis-feed-*`** | Connectivity – Source-specific connectors (Istio, Kuma, K8s). |
-| **`pavis-adapter-*`** | Translation – Protocol-specific mappers (xDS, YAML, CRD) to the canonical model. |
+| **`pavis-relay`** | Relay – Versions `.pvs`, manages caches/last-known-good, and distributes artifacts via long poll. |
+| **`pavis-ingest-*`** | Ingest – Source connectivity (xDS, K8s, file watch): streams, auth, retries, resync. |
+| **`pavis-codec-*`** | Codec – DTO ↔ RuntimeConfig transforms, mechanical defaults, compatibility, and core validation. |
 | **`pavis-pvs`** | Binary Protocol – Integrity layer (Header + Checksum + Encoding). |
 | **`pavctl`** | CLI – Developer tool for manual generation, conversion, and runtime management. |
+
+**Crate naming guidance:**
+- `pavis-ingest-istio`, `pavis-ingest-k8s`, `pavis-ingest-file`
+- `pavis-codec-xds`, `pavis-codec-crd`, `pavis-codec-yaml`, `pavis-codec-json`
 
 ### 2.2. Dependency Graph
 
 *   **`pavis-core` (Root)**: The foundation. Defines the shared `Config` trait. No I/O.
 *   **`pavis-pvs`**: Depends on `pavis-core`. Handles the binary lifecycle.
-*   **`pavis-adapter-*`**: Pure logic crates. Depend on `pavis-core` to map external protocols to `RuntimeConfig`.
-*   **`pavis-feed-*`**: Connectivity crates. Handle I/O and transport.
-*   **`pavis-manager`**: Depends on feeds and adapters to orchestrate the automated pipeline.
-*   **`pavctl`**: Depends on adapters and `pavis-pvs` to provide manual control and local tooling.
-*   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs`. **Must not** depend on feeds or adapters.
+*   **`pavis-codec-*`**: Pure logic crates. Depend on `pavis-core` for DTO ↔ RuntimeConfig mapping and semantic validation.
+*   **`pavis-ingest-*`**: Connectivity crates. Handle I/O and transport to upstream sources; emit raw DTO events only.
+*   **`pavis-relay`**: Coordinates ingest/codec outputs, versions artifacts, and distributes `.pvs` (no protocol parsing).
+*   **`pavctl`**: Depends on codecs and `pavis-pvs` to provide manual control and local tooling.
+*   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs` only. **Must not** depend on ingest/codec/relay/governor.
 
 ### 2.3. Responsibilities
 
 | Responsibility | Component | Description |
 | :--- | :--- | :--- |
-| **Connectivity** | `pavis-feed-*` | Subscribes to configuration sources. Handles auth and networking. |
-| **Protocol Translation** | `pavis-adapter-*` | Maps raw source data (e.g., Envoy Protobuf) to `RuntimeConfig`. |
-| **Orchestration** | `pavis-manager` | Picks **one** active Feed/Adapter pair. Validates results and emits `.pvs`. |
-| **Manual Tooling** | `pavctl` | Reuses adapters for local file generation (`gen`), conversion (`convert`), and manual `apply`. |
+| **Ingest** | `pavis-ingest-*` | Subscribes to configuration sources. Handles auth, watch/stream, retries, and resync. |
+| **Codec** | `pavis-codec-*` | Maps raw source DTOs to `RuntimeConfig`, applies mechanical defaults, and invokes core validation. |
+| **Relay** | `pavis-relay` | Versions artifacts, manages caches/last-known-good, and serves `.pvs` via long-poll. |
+| **Governor** | `pavis-governor` | Admission, policy enforcement, and approval of change plans (future/optional). |
+| **Manual Tooling** | `pavctl` | Reuses codecs for local file generation (`gen`), conversion (`convert`), and manual `apply`. |
 | **Integrity** | `pavis-pvs` | Computes checksums and adds protocol headers to encoded payloads. |
 | **Execution** | `pavis` | Zero-copy execution of the binary config. No semantic knowledge of the source. |
 
-## 3. Modular Ingestion Pipeline
+## 3. Modular Ingest Pipeline
 
-To support diverse environments (Kubernetes, Service Meshes, and standalone files), Pavis employs a decoupled ingestion architecture coordinated by the **Manager**.
+To support diverse environments (Kubernetes, Service Meshes, and standalone files), Pavis employs a decoupled ingest architecture coordinated by the **Relay**.
 
 ### 3.1. Roles and Responsibilities
 
-1.  **pavis-feed-* (The Connectivity Layer)**:
-    *   **Responsibility**: Implements the transport logic to talk to external sources (e.g., Istiod gRPC, Kubernetes API).
-    *   **Output**: Emits raw, unparsed configuration events into the pipeline.
+1.  **pavis-ingest-* (The Connectivity Layer)**:
+    *   **Responsibility**: Implements transport logic to upstream sources (gRPC streams, watches, auth, retries, reconnect, resync).
+    *   **Output**: Emits raw DTO / protocol events into the pipeline.
 
-2.  **pavis-adapter-* (The Translation Layer)**:
-    *   **Responsibility**: Encapsulates the logic to map a specific protocol (xDS, YAML, CRD) into the Pavis canonical `RuntimeConfig` model.
-    *   **Purity**: Adapters are pure transformers; they do not perform I/O or networking.
+2.  **pavis-codec-* (The Transformation Layer)**:
+    *   **Responsibility**: Converts DTOs (xDS, YAML, CRD, JSON) into the canonical `RuntimeConfig` model and back (best-effort).
+    *   **Purity**: Codecs are pure transformers; no I/O, no networking.
+    *   **Validation**: Applies mechanical defaults and invokes canonical semantic validation in `pavis-core`.
 
-3.  **pavis-manager (The Orchestrator)**:
-    *   **Responsibility**: Coordinates one active Feed/Adapter pair. It receives translated configurations, executes the core semantic validation gate, increments the protocol version, and emits the final `.pvs` payload via `pavis-pvs`.
-    *   **Authority**: Enforces the **Single Source Authority** rule—only one configuration source can control the proxy at a time.
+3.  **pavis-relay (The Distribution Layer)**:
+    *   **Responsibility**: Manages `.pvs` artifacts (versioning, checksums, cache/last-known-good) and distributes them via long polling.
+    *   **Invariant**: Enforces the **Single Source Authority** execution-time constraint—only one approved source controls the proxy at a time.
 
 ## 4. pavctl: The Pavis CLI
 
@@ -116,7 +103,6 @@ To support diverse environments (Kubernetes, Service Meshes, and standalone file
     *   **visualize**: Generates a visual representation of the logical configuration structure.
 
 2.  **Runtime Orchestration**:
-    *   **apply**: Dynamically pushes configuration to active proxy instances via the xDS bridge.
     *   **status**: Displays the current health, uptime, and active configuration version of the runtime.
     *   **logs**: Streams real-time logs from proxy instances for troubleshooting.
 
@@ -190,12 +176,12 @@ Pavis uses a simple monotonically increasing integer for the protocol version (`
 
 Pavis prioritizes speed and simplicity over complex in-place migrations.
 
-*   **Bridge-Side (`pavis-manager`)**: Translates user intent (YAML/xDS) to the current protocol version. Must be redeployed when protocol changes.
+*   **Codec + Relay**: Codecs translate DTOs (YAML/xDS/CRD/JSON) to the current protocol version and relay distributes the resulting `.pvs`. Both must be redeployed when protocol changes.
 *   **Proxy-Side (`pavis`)**: Performs strict version checking.
     *   **Magic Bytes**: Must be `PAVS`.
     *   **Version**: Must match exactly. `pavis-pvs` surfaces mismatch as an error; the runtime owns the policy (startup fail vs hot-reload rejection).
 *   **Upgrade Path**:
-    1.  Upgrade Control Plane (`pavis-manager`).
+    1.  Upgrade `pavis-relay`.
     2.  Rolling update of Proxies (`pavis`).
     3.  No N-1 compatibility support currently.
 *   **Future Improvements**:
@@ -212,7 +198,7 @@ Pavis prioritizes speed and simplicity over complex in-place migrations.
 Pavis avoids the complexity of gRPC bidirectional streams in the sidecar. It uses HTTP Long Polling.
 
 ```
-pavis-proxy                              pavis-manager
+pavis-proxy                               pavis-relay
      │                                       │
      │  GET /config                          │
      │  X-Pavis-Version: 105                 │
@@ -250,19 +236,19 @@ pavis-proxy                              pavis-manager
 
 3.  **Runtime (`pavis`)**
     *   Consume `RuntimeConfig` for business logic.
-    *   Do not depend on rkyv, `.pvs` format, or adapters.
+    *   Do not depend on rkyv, `.pvs` format, or codecs.
     *   Build runtime state; only minimal crash-safety guards, no parsing or semantic validation.
 
 #### Adapters (`#[with(...)]`)
 *   Only for fields that cannot archive directly (String, Vec<T>, Regex, etc.).
-*   Never wrap the entire root or expose adapters in API.
+*   Never wrap the entire root or expose codecs in API.
 
 #### Key Principles
 1.  **Core**: define structure only.
 2.  **PVS Protocol Crate**: digest binary format, provide clean domain object.
 3.  **Runtime**: pure business logic, no serialization knowledge.
 
-> **Note:** rkyv is a storage protocol, adapters are implementation details, `pavis-pvs` isolates complexity.
+> **Note:** rkyv is a storage protocol, codecs are implementation details, `pavis-pvs` isolates complexity.
 
 ### 6.7. Core Structs (Reference)
 
@@ -347,9 +333,10 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
     *   Ensures structural correctness and cross-resource invariants (e.g., reference integrity, regex validity).
     *   Source-agnostic and mandatory for all config producers.
 
-2.  **Source-Specific Validation (`pavctl`, `pavis-manager`, adapters)**:
+2.  **Source-Specific Validation (`pavctl`, codecs)**:
     *   **Input Adaptation.** Enforces constraints tied to the input source (schema, defaults, compatibility).
     *   Transforms user intent into `RuntimeConfig` and invokes `pavis-core::validate_runtime`.
+    *   `pavis-relay` executes only pre-validated artifacts and may enforce size/version/integrity constraints.
     *   May not redefine or partially duplicate core semantics.
 
 3.  **PVS Integrity Validation (`pavis-pvs`)**:
@@ -362,9 +349,9 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
     *   Applies runtime policy for version mismatches (startup fail vs hot-reload rejection).
     *   No parsing, decoding, or semantic validation.
 
-> **Principle:** Semantics live in `pavis-core`; adapters produce validated configs; `pavis-pvs` guarantees binary integrity; runtime executes with minimal defensive guards.
+> **Principle:** Semantics live in `pavis-core`; codecs produce validated configs; `pavis-pvs` guarantees binary integrity; runtime executes with minimal defensive guards.
 
-**RuntimeConfig validation entrypoint:** Producers/adapters must call `pavis-core::validate_runtime` after adaptation and before serialization. The CLI should rely on the adapter’s conversion pipeline to invoke canonical validation; the runtime must not call it during startup or hot-reload.
+**RuntimeConfig validation entrypoint:** Producers/codecs must call `pavis-core::validate_runtime` after adaptation and before serialization. The CLI should rely on the codec conversion pipeline to invoke canonical validation; the runtime must not call it during startup or hot-reload.
 
 ### 7.2. Crash-Loop Protection
 
@@ -373,7 +360,37 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 
 ### 7.3. Strategic Filtering
 
-To prevent "Config Bloat" (a major issue in Envoy), the Bridge (`pavis-manager`) performs aggressive filtering before compiling the `.pvs` file.
+To prevent "Config Bloat" (a major issue in Envoy), the Relay (`pavis-relay`) performs aggressive filtering after codec normalization and before `.pvs` emission.
 
 - **Network Efficiency** – Only sends routes relevant to the specific Pod (based on Namespace or SidecarScope)
 - **Security** – A compromised sidecar only knows the IP addresses of services it is explicitly allowed to talk to
+
+## Future: Governor (Control Plane)
+
+Governor is not present in early deployments; external control planes (Istio/Kuma) remain authoritative initially.
+It is introduced only when Pavis evolves toward a first-party control plane that replaces external authorities.
+
+When introduced, Governor sits above `pavis-relay` to separate *authorization* from *execution*.
+It is the gatekeeper for **which codec are allowed**, **which policies must be enforced**,
+and **which releases are approved** before any `.pvs` is produced or activated.
+
+Key responsibilities:
+- **Admission & policy enforcement** (tenant, environment, limits, rollout rules).
+- **Plan approval**: turns a requested change into an approved, auditable plan.
+- **Rollout/rollback decisions** with auditability, without embedding a reconciliation loop.
+
+What it does *not* do:
+- It does not parse or validate schemas (still done in codecs and `pavis-core`).
+- It does not modify runtime behavior (runtime is unaware of governance).
+
+When introduced, Governor sits above `pavis-relay`, which becomes an execution engine for **pre-approved plans**.
+`pavis-core` remains the single source of canonical semantic validation.
+
+Governor is optional in early deployments and not required while Pavis relays existing Envoy ecosystems. It becomes mandatory as multi-tenant policy and audit requirements mature.
+
+```text
+Governor ──▶ pavis-relay (Execution) ──▶ pavis-pvs ──▶ pavis (Runtime)
+```
+
+When Governor is present, `pavctl apply` becomes a **release request** subject to approval.
+Governor can approve, defer, or reject, and only approved plans are executed by `pavis-relay`.
