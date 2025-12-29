@@ -42,7 +42,8 @@ pub(crate) fn parse_header(buf: &[u8]) -> PvsHeader {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_header;
+    use super::{parse_header, read_header};
+    use crate::error::PvsError;
     use crate::header::{PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION};
 
     #[test]
@@ -57,5 +58,22 @@ mod tests {
         assert_eq!(header.version, PAVIS_VERSION);
         assert_eq!(header.algorithm, PAVIS_HASH_ALGORITHM_SHA256);
         assert_eq!(header.checksum, [1u8; 32]);
+    }
+
+    #[test]
+    fn read_header_rejects_too_small_file() {
+        let path = std::env::temp_dir().join(format!(
+            "pavis_read_header_small_{}.pvs",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::write(&path, [0u8; 4]).expect("write small file");
+
+        let err = read_header(&path).expect_err("too small");
+        assert!(matches!(err, PvsError::TooSmall { .. }));
+
+        let _ = std::fs::remove_file(path);
     }
 }

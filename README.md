@@ -19,12 +19,12 @@ Pavis is primarily a **research and prototyping effort**, intended to validate a
 Modern service mesh sidecars are powerful but often come with significant complexity and resource overhead.  
 Pavis investigates whether a Rust-based, memory-safe implementation with a more modular data plane can offer:
 
-| Focus | Notes |
-|------|------|
-| 🛡️ Memory safety | Leveraging Rust to avoid common classes of memory bugs |
-| 🪶 Reduced footprint | Designed with sidecar constraints in mind |
-| 🔀 Split data plane | Separating control-heavy logic from the hot path |
-| ⚙️ Pingora runtime | Reusing proven async networking infrastructure |
+| Focus               | Notes                                                  |
+| ------------------- | ------------------------------------------------------ |
+| 🛡️ Memory safety    | Leveraging Rust to avoid common classes of memory bugs |
+| 🪶 Reduced footprint | Designed with sidecar constraints in mind              |
+| 🔀 Split data plane  | Separating control-heavy logic from the hot path       |
+| ⚙️ Pingora runtime  | Reusing proven async networking infrastructure         |
 
 These goals are exploratory and subject to change as the project evolves.
 

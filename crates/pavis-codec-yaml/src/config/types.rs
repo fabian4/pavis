@@ -90,4 +90,24 @@ routes:
         assert!(tls.enabled);
         assert_eq!(config.telemetry.access_log, AccessLogConfig::Stdout);
     }
+
+    #[test]
+    fn parse_rejects_invalid_duration() {
+        let yaml = r#"
+server:
+  listen_addr: "127.0.0.1:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    connection_pool:
+      idle_timeout: "not-a-duration"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+routes: []
+"#;
+
+        let err = YamlConfig::parse_str(yaml).expect_err("invalid duration");
+        assert!(err.to_string().contains("idle_timeout"));
+    }
 }

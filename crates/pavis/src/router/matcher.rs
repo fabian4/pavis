@@ -145,4 +145,23 @@ mod tests {
         let routes = vec![compiled_vhost("example.com", route, None)];
         assert!(match_request(&routes, Some("example.com:8080"), "/").is_some());
     }
+
+    #[test]
+    fn matcher_normalizes_ipv6_host_header() {
+        let route = Route {
+            match_type: MatchType::Exact,
+            path: "/".to_string(),
+            timeout_ms: None,
+            retry_policy: None,
+            request_headers: None,
+            response_headers: None,
+            destinations: vec![WeightedDestination {
+                upstream: "backend".to_string(),
+                weight: 1,
+            }],
+            compiled_regex: None,
+        };
+        let routes = vec![compiled_vhost("::1", route, None)];
+        assert!(match_request(&routes, Some("[::1]:8080"), "/").is_some());
+    }
 }

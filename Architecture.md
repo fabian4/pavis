@@ -36,17 +36,17 @@ The project is structured as a workspace with strict module boundaries to enforc
 
 ### 2.1. Components
 
-| Component | Description |
-| :--- | :--- |
-| **`pavis`** | Proxy – Runtime Engine. Reads optimized `.pvs` binary files only. |
-| **`pavis-core`** | Protocol – Canonical types, semantic validation, and memory layout. |
-| **`pavis-relay`** | Relay – Versions `.pvs`, manages caches/last-known-good, and distributes artifacts via long poll. |
-| **`pavis-ingest-*`** | Ingest – Source connectivity (xDS, K8s, file watch): streams, auth, retries, resync. |
-| **`pavis-ingest-api`** | Ingest API – Artifact (raw bytes + metadata) and ingest trait boundary. |
-| **`pavis-codec-*`** | Codec – DTO ↔ RuntimeConfig transforms, mechanical defaults, compatibility, and core validation. |
-| **`pavis-codec-api`** | Codec API – Codec trait boundary for Artifact ↔ RuntimeConfig transforms. |
-| **`pavis-pvs`** | Binary Protocol – Integrity layer (Header + Checksum + Encoding). |
-| **`pavctl`** | CLI – Developer tool for manual generation, conversion, and runtime management. |
+| Component              | Description                                                                                       |
+| :--------------------- | :------------------------------------------------------------------------------------------------ |
+| **`pavis`**            | Proxy – Runtime Engine. Reads optimized `.pvs` binary files only.                                 |
+| **`pavis-core`**       | Protocol – Canonical types, semantic validation, and memory layout.                               |
+| **`pavis-relay`**      | Relay – Versions `.pvs`, manages caches/last-known-good, and distributes artifacts via long poll. |
+| **`pavis-ingest-*`**   | Ingest – Source connectivity (xDS, K8s, file watch): streams, auth, retries, resync.              |
+| **`pavis-ingest-api`** | Ingest API – Artifact (raw bytes + metadata) and ingest trait boundary.                           |
+| **`pavis-codec-*`**    | Codec – DTO ↔ RuntimeConfig transforms, mechanical defaults, compatibility, and core validation.  |
+| **`pavis-codec-api`**  | Codec API – Codec trait boundary for Artifact ↔ RuntimeConfig transforms.                         |
+| **`pavis-pvs`**        | Binary Protocol – Integrity layer (Header + Checksum + Encoding).                                 |
+| **`pavctl`**           | CLI – Developer tool for manual generation, conversion, and runtime management.                   |
 
 **Crate naming guidance:**
 - `pavis-ingest-istio`, `pavis-ingest-k8s`, `pavis-ingest-file`
@@ -66,15 +66,15 @@ The project is structured as a workspace with strict module boundaries to enforc
 
 ### 2.3. Responsibilities
 
-| Responsibility | Component | Description |
-| :--- | :--- | :--- |
-| **Ingest** | `pavis-ingest-*` | Subscribes to configuration sources. Handles auth, watch/stream, retries, and resync. |
-| **Codec** | `pavis-codec-*` | Maps raw source DTOs to `RuntimeConfig`, applies mechanical defaults, and invokes core validation. |
-| **Relay** | `pavis-relay` | Versions artifacts, manages caches/last-known-good, and serves `.pvs` via long-poll. |
-| **Governor** | `pavis-governor` | Admission, policy enforcement, and approval of change plans (future/optional). |
-| **Manual Tooling** | `pavctl` | Reuses codecs for local file generation (`gen`), conversion (`convert`), and manual `apply`. |
-| **Integrity** | `pavis-pvs` | Computes checksums and adds protocol headers to encoded payloads. |
-| **Execution** | `pavis` | Zero-copy execution of the binary config. No semantic knowledge of the source. |
+| Responsibility     | Component        | Description                                                                                        |
+| :----------------- | :--------------- | :------------------------------------------------------------------------------------------------- |
+| **Ingest**         | `pavis-ingest-*` | Subscribes to configuration sources. Handles auth, watch/stream, retries, and resync.              |
+| **Codec**          | `pavis-codec-*`  | Maps raw source DTOs to `RuntimeConfig`, applies mechanical defaults, and invokes core validation. |
+| **Relay**          | `pavis-relay`    | Versions artifacts, manages caches/last-known-good, and serves `.pvs` via long-poll.               |
+| **Governor**       | `pavis-governor` | Admission, policy enforcement, and approval of change plans (future/optional).                     |
+| **Manual Tooling** | `pavctl`         | Reuses codecs for local file generation (`gen`), conversion (`convert`), and manual `apply`.       |
+| **Integrity**      | `pavis-pvs`      | Computes checksums and adds protocol headers to encoded payloads.                                  |
+| **Execution**      | `pavis`          | Zero-copy execution of the binary config. No semantic knowledge of the source.                     |
 
 ## 3. Modular Ingest Pipeline
 
@@ -162,14 +162,14 @@ The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configu
 
 ### 6.1. File Format
 
-| Offset | Size | Type | Value | Description |
-|--------|------|------|-------|-------------|
-| `0x00` | 4 | `[u8; 4]` | `PAVS` | Magic bytes – identifies file type |
-| `0x04` | 4 | `u32` | `0` | Version – schema version for compatibility |
-| `0x08` | 4 | `u32` | `1` | Algorithm – Hash Algorithm ID (1 = SHA-256) |
-| `0x0C` | 32 | `[u8; 32]` | ... | Checksum – SHA-256 hash of the payload |
-| `0x2C` | 20 | `[u8; 20]` | `0` | Reserved – Future proofing |
-| `0x40` | ... | `bytes` | ... | Payload – the `ArchivedRuntimeConfig` root |
+| Offset | Size | Type       | Value  | Description                                 |
+| ------ | ---- | ---------- | ------ | ------------------------------------------- |
+| `0x00` | 4    | `[u8; 4]`  | `PAVS` | Magic bytes – identifies file type          |
+| `0x04` | 4    | `u32`      | `0`    | Version – schema version for compatibility  |
+| `0x08` | 4    | `u32`      | `1`    | Algorithm – Hash Algorithm ID (1 = SHA-256) |
+| `0x0C` | 32   | `[u8; 32]` | ...    | Checksum – SHA-256 hash of the payload      |
+| `0x2C` | 20   | `[u8; 20]` | `0`    | Reserved – Future proofing                  |
+| `0x40` | ...  | `bytes`    | ...    | Payload – the `ArchivedRuntimeConfig` root  |
 
 ### 6.2. Versioning Strategy
 
@@ -381,21 +381,21 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 
 ### 7.1.2. Validation Layer Summary
 
-| Layer | MUST validate | MUST NOT validate | Owner | Trigger point |
-| :--- | :--- | :--- | :--- | :--- |
-| **Artifact-level (preflight)** | Input shape, schema, format version, feature gates, source-specific constraints | Canonical semantics, binary integrity | `pavis-codec-*` | `Artifact → CheckedArtifact` |
-| **Canonical semantic** | Cross-resource consistency, referential integrity, canonical defaults/invariants | Input schema/syntax, binary integrity | `pavis-core` | `RuntimeConfig → ValidatedRuntimeConfig` |
-| **Binary integrity** | Magic bytes, protocol version, checksum, archive integrity | Input schema/syntax, canonical semantics | `pavis-pvs` | `PVS → RuntimeConfig` |
+| Layer                          | MUST validate                                                                    | MUST NOT validate                        | Owner           | Trigger point                            |
+| :----------------------------- | :------------------------------------------------------------------------------- | :--------------------------------------- | :-------------- | :--------------------------------------- |
+| **Artifact-level (preflight)** | Input shape, schema, format version, feature gates, source-specific constraints  | Canonical semantics, binary integrity    | `pavis-codec-*` | `Artifact → CheckedArtifact`             |
+| **Canonical semantic**         | Cross-resource consistency, referential integrity, canonical defaults/invariants | Input schema/syntax, binary integrity    | `pavis-core`    | `RuntimeConfig → ValidatedRuntimeConfig` |
+| **Binary integrity**           | Magic bytes, protocol version, checksum, archive integrity                       | Input schema/syntax, canonical semantics | `pavis-pvs`     | `PVS → RuntimeConfig`                    |
 
 ### 7.1.3. Error Taxonomy and Ownership
 
-| Error class | Constructed by | Notes |
-| :--- | :--- | :--- |
-| **Input / schema / syntax** | `pavis-codec-*` | User-correctable input errors |
-| **Compatibility / feature-gate** | `pavis-codec-*` | User-correctable incompatibilities |
-| **Canonical semantic** | `pavis-core` | Canonical invariants; must not be fabricated elsewhere |
-| **Binary integrity** | `pavis-pvs` | Integrity/compatibility failures |
-| **Internal / invariant** | Local layer only | Signals bugs or violated assumptions |
+| Error class                      | Constructed by   | Notes                                                  |
+| :------------------------------- | :--------------- | :----------------------------------------------------- |
+| **Input / schema / syntax**      | `pavis-codec-*`  | User-correctable input errors                          |
+| **Compatibility / feature-gate** | `pavis-codec-*`  | User-correctable incompatibilities                     |
+| **Canonical semantic**           | `pavis-core`     | Canonical invariants; must not be fabricated elsewhere |
+| **Binary integrity**             | `pavis-pvs`      | Integrity/compatibility failures                       |
+| **Internal / invariant**         | Local layer only | Signals bugs or violated assumptions                   |
 
 ### 7.1.4. Error Propagation Rules
 

@@ -116,6 +116,26 @@ mod tests {
     }
 
     #[test]
+    fn verify_bytes_rejects_version_mismatch() {
+        let mut bytes = vec![0u8; HEADER_SIZE];
+        bytes[0..4].copy_from_slice(PAVIS_MAGIC);
+        bytes[4..8].copy_from_slice(&(PAVIS_VERSION + 1).to_le_bytes());
+        bytes[8..12].copy_from_slice(&PAVIS_HASH_ALGORITHM_SHA256.to_le_bytes());
+        let err = verify_bytes(&bytes).expect_err("version mismatch");
+        assert!(matches!(err, PvsError::VersionMismatch { .. }));
+    }
+
+    #[test]
+    fn verify_bytes_rejects_unsupported_algorithm() {
+        let mut bytes = vec![0u8; HEADER_SIZE];
+        bytes[0..4].copy_from_slice(PAVIS_MAGIC);
+        bytes[4..8].copy_from_slice(&PAVIS_VERSION.to_le_bytes());
+        bytes[8..12].copy_from_slice(&(PAVIS_HASH_ALGORITHM_SHA256 + 1).to_le_bytes());
+        let err = verify_bytes(&bytes).expect_err("unsupported algorithm");
+        assert!(matches!(err, PvsError::UnsupportedAlgorithm(_)));
+    }
+
+    #[test]
     fn verify_bytes_rejects_truncated_payload() {
         let payload = b"payload";
         let checksum = compute_checksum(payload);

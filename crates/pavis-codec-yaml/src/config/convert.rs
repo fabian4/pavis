@@ -220,4 +220,38 @@ routes:
             &vec!["x-remove".to_string()]
         );
     }
+
+    #[test]
+    fn yaml_to_runtime_rejects_invalid_listen_addr() {
+        let yaml = r#"
+server:
+  listen_addr: "invalid-addr"
+telemetry: {}
+upstreams: []
+routes: []
+"#;
+
+        let config = YamlConfig::parse_str(yaml).expect("parse yaml");
+        let err = pavis_core::RuntimeConfig::try_from(config).expect_err("invalid listen addr");
+        assert!(err.to_string().contains("Invalid listen_addr"));
+    }
+
+    #[test]
+    fn yaml_to_runtime_rejects_invalid_endpoint_ip() {
+        let yaml = r#"
+server:
+  listen_addr: "127.0.0.1:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints:
+      - ip: "not-an-ip"
+        port: 8081
+routes: []
+"#;
+
+        let config = YamlConfig::parse_str(yaml).expect("parse yaml");
+        let err = pavis_core::RuntimeConfig::try_from(config).expect_err("invalid endpoint ip");
+        assert!(err.to_string().contains("Invalid endpoint IP"));
+    }
 }

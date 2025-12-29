@@ -9,6 +9,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 fn get_binary_path() -> PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_pavis") {
+        return PathBuf::from(path);
+    }
     // Try to find the binary in target/debug or target/release
     // We assume we are running from workspace root or crate root.
     // Let's try to find Cargo.toml to locate root.
@@ -36,6 +39,14 @@ fn get_binary_path() -> PathBuf {
         "Pavis binary not found at {:?} or {:?}. Please build it first.",
         debug_path, release_path
     );
+}
+
+fn temp_path(prefix: &str, ext: &str) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}_{nanos}.{ext}"))
 }
 
 fn wait_for_log_line(child: &mut Child, needle: &str, timeout: Duration) {
@@ -141,8 +152,7 @@ fn test_cli_config_invalid_path() {
 
 #[test]
 fn test_cli_config_invalid_magic() {
-    let temp_dir = std::env::temp_dir();
-    let config_path = temp_dir.join(format!("pavis_invalid_magic_{}.pvs", std::process::id()));
+    let config_path = temp_path("pavis_invalid_magic", "pvs");
     let mut bytes = vec![0u8; pvs::HEADER_SIZE];
     bytes[0..4].copy_from_slice(b"NOPE");
     std::fs::write(&config_path, bytes).expect("Failed to write invalid config");
@@ -185,8 +195,7 @@ fn test_cli_lifecycle_sigint() {
         routes: vec![],
     };
 
-    let temp_dir = std::env::temp_dir();
-    let config_path = temp_dir.join(format!("pavis_lifecycle_test_{}.pvs", std::process::id()));
+    let config_path = temp_path("pavis_lifecycle_test", "pvs");
     pvs::write(&config_path, &config).expect("Failed to write config");
 
     let mut child = Command::new(binary)

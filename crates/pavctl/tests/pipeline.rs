@@ -22,11 +22,12 @@ fn yaml_files_match_pipeline_outputs() {
             continue;
         }
 
-        // 1. Generate (Positional + Default Output)
-        let pvs_path = path.with_extension("pvs");
+        // 1. Generate (Explicit Output to Temp)
+        let pvs_path = temp_path("pavctl_gen", "pvs");
         let status = Command::new(&pavctl_bin)
             .arg("gen")
             .arg(&path)
+            .arg(&pvs_path)
             .status()
             .expect("run pavctl gen");
         assert!(status.success(), "gen failed for {:?}", path);

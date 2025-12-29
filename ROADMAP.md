@@ -4,18 +4,18 @@
 
 ## Overview
 
-| Phase | Focus | Status |
-|:-----:|-------|:------:|
-| 1 | Foundation (Pingora proxy) | ✅ |
-| 2 | Protocol (`.pvs` format, `pavis-core`, `pavctl`) | 🚧 |
-| 3 | Long Polling (dynamic config updates) | ⏳ |
-| 4 | Modular Ingestion (ingest + codec + relay) | ⏳ |
-| 5 | Traffic Management (retries, timeouts, load balancing) | ⏳ |
-| 6 | Security (mTLS, RBAC) | ⏳ |
-| 7 | Observability (metrics, tracing, logging) | ⏳ |
-| 8 | Operations (health checks, graceful shutdown) | ⏳ |
-| 9 | Advanced Features (rate limiting, fault injection, WASM) | ⏳ |
-| 10 | Kubernetes Integration (operator, sidecar injection) | ⏳ |
+| Phase | Focus                                                    | Status |
+| :---: | -------------------------------------------------------- | :----: |
+| 1     | Foundation (Pingora proxy)                               | ✅      |
+| 2     | Protocol (`.pvs` format, `pavis-core`, `pavctl`)         | 🚧      |
+| 3     | Long Polling (dynamic config updates)                    | ⏳      |
+| 4     | Modular Ingestion (ingest + codec + relay)               | ⏳      |
+| 5     | Traffic Management (retries, timeouts, load balancing)   | ⏳      |
+| 6     | Security (mTLS, RBAC)                                    | ⏳      |
+| 7     | Observability (metrics, tracing, logging)                | ⏳      |
+| 8     | Operations (health checks, graceful shutdown)            | ⏳      |
+| 9     | Advanced Features (rate limiting, fault injection, WASM) | ⏳      |
+| 10    | Kubernetes Integration (operator, sidecar injection)     | ⏳      |
 
 **Legend:** 🚧 In Progress · ⏳ Planned · ✅ Complete
 
