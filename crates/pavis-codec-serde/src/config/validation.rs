@@ -1,16 +1,16 @@
-//! Validation logic for YAML-specific constraints.
+//! Validation logic for serde-backed constraints.
 //!
 //! Canonical semantic validation now lives in `pavis-core::validate_runtime`.
 //! This module should only contain validation logic that is specific to the
-//! YAML input format or user-friendly error reporting before conversion.
+//! input format or user-friendly error reporting before conversion.
 
 use anyhow::Result;
 use std::collections::HashSet;
 
 use super::types::*;
 
-/// Perform YAML-specific validation on the configuration.
-pub fn validate(config: &mut YamlConfig) -> Result<()> {
+/// Perform format-specific validation on the configuration.
+pub fn validate(config: &mut SerdeConfig) -> Result<()> {
     // 1. Basic field checks
     if config.upstreams.is_empty() {
         // It's technically allowed to have no upstreams, but let's warn or check consistency.
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn validate_allows_string_retry_on_values() {
-        let mut config = YamlConfig {
+        let mut config = SerdeConfig {
             server: Default::default(),
             telemetry: Default::default(),
             upstreams: vec![],
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_non_string_retry_on_values() {
-        let mut config = YamlConfig {
+        let mut config = SerdeConfig {
             server: Default::default(),
             telemetry: Default::default(),
             upstreams: vec![],

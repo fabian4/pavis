@@ -7,12 +7,12 @@ use anyhow::Result;
 
 use pavis_core::validate_runtime;
 
-use super::types::YamlConfig;
+use super::types::SerdeConfig;
 
-impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
+impl TryFrom<SerdeConfig> for pavis_core::RuntimeConfig {
     type Error = anyhow::Error;
 
-    fn try_from(src: YamlConfig) -> Result<Self, Self::Error> {
+    fn try_from(src: SerdeConfig) -> Result<Self, Self::Error> {
         let server = server::to_runtime(src.server)?;
         let telemetry = telemetry::to_runtime(src.telemetry);
         let upstreams = upstreams::to_runtime(src.upstreams)?;
@@ -30,9 +30,9 @@ impl TryFrom<YamlConfig> for pavis_core::RuntimeConfig {
     }
 }
 
-impl From<pavis_core::RuntimeConfig> for YamlConfig {
+impl From<pavis_core::RuntimeConfig> for SerdeConfig {
     fn from(binary: pavis_core::RuntimeConfig) -> Self {
-        YamlConfig {
+        SerdeConfig {
             server: server::from_runtime(binary.server),
             telemetry: telemetry::from_runtime(binary.telemetry),
             upstreams: upstreams::from_runtime(binary.upstreams),
@@ -43,7 +43,8 @@ impl From<pavis_core::RuntimeConfig> for YamlConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::types::YamlConfig;
+    use crate::SerdeFormat;
+    use crate::config::types::SerdeConfig;
     use pavis_core::{
         AccessLogConfig, ConnectionPoolConfig, Endpoint, HeaderOperations, HttpVersion,
         LoadBalancer, LogLevel, MatchType, RetryPolicy, Route, RuntimeConfig, ServerConfig,
@@ -84,7 +85,7 @@ routes:
             weight: 1
 "#;
 
-        let config = YamlConfig::parse_str(yaml).expect("parse yaml");
+        let config = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect("parse yaml");
         let runtime: RuntimeConfig = config.try_into().expect("convert to runtime");
 
         let upstream = &runtime.upstreams[0];
@@ -176,7 +177,7 @@ routes:
             }],
         };
 
-        let config: YamlConfig = runtime.into();
+        let config: SerdeConfig = runtime.into();
         assert_eq!(config.server.listen_addr, "127.0.0.1:8080");
         assert_eq!(config.server.worker_threads, Some(2));
         assert_eq!(config.telemetry.level, Some("info".to_string()));
@@ -231,7 +232,7 @@ upstreams: []
 routes: []
 "#;
 
-        let config = YamlConfig::parse_str(yaml).expect("parse yaml");
+        let config = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect("parse yaml");
         let err = pavis_core::RuntimeConfig::try_from(config).expect_err("invalid listen addr");
         assert!(err.to_string().contains("Invalid listen_addr"));
     }
@@ -250,7 +251,7 @@ upstreams:
 routes: []
 "#;
 
-        let config = YamlConfig::parse_str(yaml).expect("parse yaml");
+        let config = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect("parse yaml");
         let err = pavis_core::RuntimeConfig::try_from(config).expect_err("invalid endpoint ip");
         assert!(err.to_string().contains("Invalid endpoint IP"));
     }

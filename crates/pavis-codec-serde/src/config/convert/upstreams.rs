@@ -45,7 +45,7 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
 }
 
 pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream> {
-    let mut yaml_upstreams = Vec::new();
+    let mut serde_upstreams = Vec::new();
 
     for u in upstreams {
         let mut endpoints = Vec::new();
@@ -71,7 +71,7 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
             sni: t.sni,
         });
 
-        yaml_upstreams.push(Upstream {
+        serde_upstreams.push(Upstream {
             name: u.name,
             load_balancer: u.load_balancer,
             http_version: u.http_version,
@@ -83,5 +83,5 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
         });
     }
 
-    yaml_upstreams
+    serde_upstreams
 }

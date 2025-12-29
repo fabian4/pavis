@@ -200,7 +200,7 @@
 
 **Codecs** (Protocol Translation)
 - [ ] `pavis-codec-xds`: Envoy Protobuf → `RuntimeConfig`
-- [x] `pavis-codec-yaml`: YAML DTO → `RuntimeConfig`
+- [x] `pavis-codec-serde`: Serde DTO → `RuntimeConfig` (YAML/JSON)
 - [ ] `pavis-codec-crd`: K8s Gateway API → `RuntimeConfig`
 
 **E2E Tests**

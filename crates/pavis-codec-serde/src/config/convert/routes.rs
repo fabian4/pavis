@@ -77,7 +77,7 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
 }
 
 pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualHost> {
-    let mut yaml_routes = Vec::new();
+    let mut serde_routes = Vec::new();
 
     for v in routes {
         let mut paths = Vec::new();
@@ -124,11 +124,11 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
             });
         }
 
-        yaml_routes.push(VirtualHost {
+        serde_routes.push(VirtualHost {
             host: v.host,
             paths,
         });
     }
 
-    yaml_routes
+    serde_routes
 }

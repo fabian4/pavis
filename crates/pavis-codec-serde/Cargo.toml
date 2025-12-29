@@ -1,9 +1,9 @@
 [package]
-name = "pavis-codec-yaml"
+name = "pavis-codec-serde"
 version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "YAML codec for Pavis"
+description = "Serde-based codecs for Pavis"
 
 [dependencies]
 # Pavis

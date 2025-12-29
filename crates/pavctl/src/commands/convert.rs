@@ -3,12 +3,14 @@ use std::fs;
 use std::path::PathBuf;
 
 use pavis_codec_api::Codec;
-use pavis_codec_yaml::YamlCodec;
+use pavis_codec_serde::{SerdeCodec, SerdeFormat};
 use pavis_pvs as pvs;
 
 pub(crate) fn convert_to_yaml(input_path: PathBuf, output_path: Option<PathBuf>) -> Result<()> {
     let binary_config = pvs::load(&input_path)?;
-    let codec = YamlCodec;
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
     let env = codec
         .decompile(&binary_config)
         .context("Failed to encode YAML")?;

@@ -50,7 +50,7 @@ The project is structured as a workspace with strict module boundaries to enforc
 
 **Crate naming guidance:**
 - `pavis-ingest-istio`, `pavis-ingest-k8s`, `pavis-ingest-file`
-- `pavis-codec-xds`, `pavis-codec-crd`, `pavis-codec-yaml`, `pavis-codec-json`
+- `pavis-codec-xds`, `pavis-codec-crd`, `pavis-codec-serde`
 
 ### 2.2. Dependency Graph
 
@@ -120,6 +120,62 @@ Publish endpoint (early deployments):
 Optional operational endpoints:
 - GET /v1/artifacts/{version} for debugging or rollback.
 - GET /v1/metrics for Prometheus-style monitoring.
+
+### 3.x. Relay Packaging and Build Strategy
+
+Pavis-relay is a standalone binary and Docker image. It orchestrates ingest + codec pipelines and distributes `.pvs` artifacts over HTTP long-polling. Ingest crates handle upstream I/O, codec crates are pure transformations, and the relay itself never parses DTOs. Pipelines are compiled into the relay as static plugins, selected at runtime from the bootstrap YAML only if they were built into the image.
+
+#### Release Strategies
+
+**A) Full relay image (early-stage convenience)**
+- One image includes all supported ingest + codec combinations compiled in.
+- Pros: Simple to distribute, fewer artifacts to manage.
+- Cons: Larger image, broader attack surface, less deterministic deployments.
+
+**B) Minimal relay images (recommended for production)**
+- Multiple images, each built with a specific ingest + codec pipeline.
+- Pros: Smaller images, tighter supply chain, explicit deployment intent.
+- Cons: More build artifacts and CI work.
+
+#### Cargo Features: Compile-Time Pipeline Selection
+
+Use Cargo features to include specific ingest + codec crates in `pavis-relay`. Each pipeline feature enables exactly one ingest + codec pair.
+
+Example feature mapping (illustrative):
+- `plugin-file-yaml` -> `pavis-ingest-file` + `pavis-codec-serde`
+- `plugin-xds-xds` -> `pavis-ingest-xds` + `pavis-codec-xds`
+- `plugin-k8s-crd` -> `pavis-ingest-k8s` + `pavis-codec-crd`
+- `full` -> enables all supported `plugin-*` features
+
+Relay startup behavior:
+- The bootstrap YAML specifies the ingest + codec pipeline by name.
+- On startup, the relay checks that the configured pipeline is compiled in.
+- If the pipeline is not compiled in, startup fails fast with a clear error.
+
+#### Docker Image Builds Per Pipeline
+
+Build images by selecting Cargo features at build time:
+- Full image: `--features full`
+- Minimal image: `--features plugin-file-yaml` (or other curated pipeline)
+
+Tag images by pipeline so operators can select the correct artifact:
+- `pavis-relay:full`
+- `pavis-relay:file-yaml`
+- `pavis-relay:xds-xds`
+- `pavis-relay:k8s-crd`
+
+#### CI Strategy: Curated Build Matrix
+
+CI should build only a small, curated set of official pipelines to avoid matrix explosion:
+- Use a build matrix (GitHub Actions/GitLab CI) or `docker buildx bake`.
+- Each matrix entry maps to one pipeline feature set and image tag.
+- Keep the list short and explicit; new pipelines require explicit approval.
+
+#### Runtime Selection and Guardrails
+
+- The bootstrap YAML selects the ingest + codec pipeline at runtime.
+- Only pipelines compiled into the image are valid.
+- This preserves relay purity (no DTO parsing) and keeps deployments deterministic.
 
 Design principles:
 - Relay handles artifacts, not configuration semantics.

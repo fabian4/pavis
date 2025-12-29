@@ -1,4 +1,4 @@
-use pavis_codec_yaml::config as yaml;
+use pavis_codec_serde::config as codec;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -73,7 +73,7 @@ fn yaml_files_match_pipeline_outputs() {
         let converted_yaml = fs::read_to_string(&out_yaml).expect("read converted yaml");
         let runtime =
             pavctl::parse_yaml_runtime_from_bytes(original_yaml.as_bytes()).expect("parse yaml");
-        let canonical_yaml: yaml::YamlConfig = runtime.into();
+        let canonical_yaml: codec::SerdeConfig = runtime.into();
         let expected_value =
             serde_yaml::to_value(canonical_yaml).expect("serialize canonical yaml");
         let converted_value: serde_yaml::Value =

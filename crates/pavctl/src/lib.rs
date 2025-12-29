@@ -1,13 +1,15 @@
 use anyhow::{Context, Result};
 use pavis_codec_api::Codec;
-use pavis_codec_yaml::YamlCodec;
+use pavis_codec_serde::{SerdeCodec, SerdeFormat};
 use pavis_core::{self as binary};
 use pavis_ingest_api::{Artifact, Format, SourceInfo};
 use std::fmt::Write;
 
 pub fn parse_yaml_runtime_from_bytes(bytes: &[u8]) -> Result<binary::RuntimeConfig> {
     let env = Artifact::new(bytes.to_vec().into(), Format::Yaml, SourceInfo::unknown());
-    let codec = YamlCodec;
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
     let validated = codec
         .materialize(env)
         .context("Failed to decode YAML config")?;
