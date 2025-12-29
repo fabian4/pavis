@@ -1,7 +1,7 @@
 mod common;
 
 use anyhow::Result;
-use pavis_e2e::utils::get_upstream_name;
+use pavis_e2e::support::get_upstream_name;
 
 #[tokio::test]
 async fn test_regex_matching() -> Result<()> {

@@ -1,4 +1,4 @@
-use pavis_e2e::utils::TestEnv;
+use pavis_e2e::support::TestEnv;
 use reqwest::Client;
 use std::time::Duration;
 

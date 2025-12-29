@@ -1,7 +1,7 @@
 mod common;
 
 use anyhow::Result;
-use pavis_e2e::utils::get_upstream_name;
+use pavis_e2e::support::get_upstream_name;
 
 /// Test that HTTP version configuration works correctly.
 /// Note: The echo-server backends are HTTP/1.1 only, so we can't verify actual H2 negotiation.

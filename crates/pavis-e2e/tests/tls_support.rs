@@ -1,6 +1,6 @@
 use anyhow::Result;
-use pavis_e2e::utils::generate_pvs;
-use pavis_e2e::utils::resolve_docker_service_ip;
+use pavis_e2e::support::generate_pvs;
+use pavis_e2e::support::resolve_docker_service_ip;
 use reqwest::Client;
 use std::fs;
 use std::path::PathBuf;

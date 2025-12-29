@@ -1,11 +1,9 @@
-use crate::runtime::{
-    HeaderOperations, MatchType, RuntimeConfig, Upstream, ValidatedRuntimeConfig, VirtualHost,
-};
-use http::header::{HeaderName, HeaderValue};
-use regex::Regex;
-use std::collections::HashSet;
-use std::net::SocketAddr;
-use std::str::FromStr;
+mod headers;
+mod routes;
+mod server;
+mod upstreams;
+
+use crate::runtime::{MatchType, RuntimeConfig, ValidatedRuntimeConfig};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CoreValidationError {
@@ -55,163 +53,21 @@ pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
 /// # Errors
 /// Returns `CoreValidationError` if any semantic invariants are violated.
 pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<ValidatedRuntimeConfig> {
-    validate_server(config.server.listen_addr, config.server.tls.as_ref())?;
-    validate_upstreams(&config.upstreams)?;
-    validate_routes(&config.routes, &config.upstreams)?;
+    server::validate_server(config.server.listen_addr, config.server.tls.as_ref())?;
+    upstreams::validate_upstreams(&config.upstreams)?;
+    routes::validate_routes(&config.routes, &config.upstreams)?;
     Ok(ValidatedRuntimeConfig::new(config))
-}
-
-#[allow(clippy::collapsible_if)]
-const fn validate_server(
-    _listen_addr: SocketAddr,
-    tls: Option<&crate::runtime::TlsConfig>,
-) -> CoreValidationResult<()> {
-    if let Some(tls_cfg) = tls {
-        if tls_cfg.enabled {
-            if tls_cfg.cert_path.is_none() || tls_cfg.key_path.is_none() {
-                return Err(CoreValidationError::MissingTlsFiles);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_upstreams(upstreams: &[Upstream]) -> CoreValidationResult<()> {
-    let mut names = HashSet::new();
-
-    for u in upstreams {
-        if u.name.is_empty() {
-            return Err(CoreValidationError::EmptyUpstreamName);
-        }
-        if !names.insert(&u.name) {
-            return Err(CoreValidationError::DuplicateUpstream(u.name.clone()));
-        }
-        for ep in &u.endpoints {
-            if ep.weight == 0 {
-                return Err(CoreValidationError::EndpointWeightZero(u.name.clone()));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_routes(routes: &[VirtualHost], upstreams: &[Upstream]) -> CoreValidationResult<()> {
-    let upstream_names: HashSet<&str> = upstreams.iter().map(|u| u.name.as_str()).collect();
-
-    for vhost in routes {
-        let mut seen_routes = HashSet::new();
-        for route in &vhost.paths {
-            // Path Normalization Check (Skipped for Regex)
-            if route.match_type != MatchType::Regex
-                && (!route.path.starts_with('/')
-                    || (route.path.len() > 1 && route.path.ends_with('/')))
-            {
-                return Err(CoreValidationError::PathNotNormalized(route.path.clone()));
-            }
-
-            // Duplicate Route Detection
-            let match_key = route.match_type;
-            let normalized = &route.path;
-            if !seen_routes.insert((match_key, normalized.clone())) {
-                return Err(CoreValidationError::DuplicateRoute {
-                    host: vhost.host.clone(),
-                    route: route.path.clone(),
-                    match_type: route.match_type,
-                });
-            }
-
-            if route.match_type == MatchType::Regex {
-                if route.path.len() > 2048 {
-                    return Err(CoreValidationError::RegexTooLong {
-                        route: route.path.clone(),
-                    });
-                }
-                let _compiled =
-                    Regex::new(&route.path).map_err(|e| CoreValidationError::InvalidRegex {
-                        host: vhost.host.clone(),
-                        route: route.path.clone(),
-                        error: e.to_string(),
-                    })?;
-            }
-
-            if let Some(headers) = &route.request_headers {
-                validate_headers(headers, &format!("Route '{}' request headers", route.path))?;
-            }
-            if let Some(headers) = &route.response_headers {
-                validate_headers(headers, &format!("Route '{}' response headers", route.path))?;
-            }
-
-            validate_destinations(route, vhost, &upstream_names)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_destinations(
-    route: &crate::runtime::Route,
-    vhost: &VirtualHost,
-    upstream_names: &HashSet<&str>,
-) -> CoreValidationResult<()> {
-    for dest in &route.destinations {
-        if !upstream_names.contains(dest.upstream.as_str()) {
-            return Err(CoreValidationError::UnknownDestination(
-                route.path.clone(),
-                vhost.host.clone(),
-                dest.upstream.clone(),
-            ));
-        }
-        if dest.weight == 0 {
-            return Err(CoreValidationError::DestinationWeightZero(
-                route.path.clone(),
-                vhost.host.clone(),
-                dest.upstream.clone(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_headers(headers: &HeaderOperations, context: &str) -> CoreValidationResult<()> {
-    for (name, value) in &headers.add {
-        if name.is_empty() {
-            return Err(CoreValidationError::EmptyHeaderName {
-                context: context.to_string(),
-            });
-        }
-        HeaderName::from_str(name).map_err(|_| CoreValidationError::InvalidHeaderName {
-            context: context.to_string(),
-            name: name.clone(),
-        })?;
-        HeaderValue::from_str(value).map_err(|_| CoreValidationError::InvalidHeaderValue {
-            context: context.to_string(),
-            name: name.clone(),
-        })?;
-    }
-
-    for name in &headers.remove {
-        if name.is_empty() {
-            return Err(CoreValidationError::EmptyHeaderName {
-                context: context.to_string(),
-            });
-        }
-        HeaderName::from_str(name).map_err(|_| CoreValidationError::InvalidHeaderName {
-            context: context.to_string(),
-            name: name.clone(),
-        })?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::{
-        AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
-        RetryPolicy, Route, ServerConfig, TelemetryConfig, TlsConfig, TracingConfig, Upstream,
-        UpstreamTlsConfig, VirtualHost, WeightedDestination,
+        AccessLogConfig, ConnectionPoolConfig, Endpoint, HeaderOperations, HttpVersion,
+        LoadBalancer, MatchType, RetryPolicy, Route, ServerConfig, TelemetryConfig, TlsConfig,
+        TracingConfig, Upstream, UpstreamTlsConfig, VirtualHost, WeightedDestination,
     };
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     fn base_config() -> RuntimeConfig {
         RuntimeConfig {

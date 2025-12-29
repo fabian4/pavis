@@ -124,7 +124,7 @@ The `pavis` crate has been refactored into a **Domain-Driven Architecture** with
 
 1.  **Config (`config`)**:
     *   **Role**: Internal Runtime Configuration.
-    *   **Invariant**: Decoupled from `pavis-core` types where appropriate. Loaded from `ValidatedRuntimeConfig` only.
+    *   **Invariant**: `pavis-core` is the canonical model and the runtime may depend on it directly. If a `config` module exists, it should be a thin wrapper (runtime-only fields like compiled regexes are OK) and must be loaded from `ValidatedRuntimeConfig` only.
     *   **Key Types**: `Config`, `VirtualHost`, `Upstream`.
 
 2.  **Router (`router`)**:
@@ -180,19 +180,28 @@ Pavis uses a simple monotonically increasing integer for the protocol version (`
 
 ### 6.3. Migration & Compatibility
 
-Pavis prioritizes speed and simplicity over complex in-place migrations.
+Pavis prioritizes speed and simplicity over complex in-place migrations, while keeping
+compatibility logic in the control plane rather than the runtime.
 
-*   **Codec + Relay**: Codecs translate DTOs (YAML/xDS/CRD/JSON) to the current protocol version and relay distributes the resulting `.pvs`. Both must be redeployed when protocol changes.
-*   **Proxy-Side (`pavis`)**: Performs strict version checking.
-    *   **Magic Bytes**: Must be `PAVS`.
-    *   **Version**: Must match exactly. `pavis-pvs` surfaces mismatch as an error; the runtime owns the policy (startup fail vs hot-reload rejection).
-*   **Upgrade Path**:
-    1.  Upgrade `pavis-relay`.
-    2.  Rolling update of Proxies (`pavis`).
-    3.  No N-1 compatibility support currently.
-*   **Future Improvements**:
-    *   Schema Reflection or FlatBuffers if N-1 compatibility becomes required.
-    *   `pavctl convert` tool for offline migration.
+**Compatibility validation (always on):**
+*   Maintain versioned "golden" PVS fixtures (e.g., vN, vN-1).
+*   New `pavis-pvs` builds must parse and validate headers of older fixtures.
+*   CI runs compatibility checks against prior fixtures to detect breaking changes early.
+*   Validation does not imply runtime execution; it makes failures explicit and diagnosable.
+
+**Control-plane migration (relay/governor):**
+*   `pavis-relay` may accept older PVS versions (N-1).
+*   Relay decodes older artifacts, materializes a canonical `RuntimeConfig`, runs core validation,
+    and re-emits a PVS artifact in the current protocol version.
+*   Offline tooling (e.g., `pavctl convert --from <old> --to <current>`) provides explicit migration.
+
+**Runtime contract (strict):**
+*   `pavis` only accepts current-version PVS artifacts.
+*   Any version mismatch is a hard error; the runtime does not load or migrate older versions.
+
+**Upgrade Path:**
+1.  Upgrade `pavis-relay`.
+2.  Roll proxies (`pavis`), which remain strict to the current protocol version.
 
 ### 6.4. Performance Benefits
 

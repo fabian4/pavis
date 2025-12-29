@@ -7,9 +7,9 @@
 | Phase | Focus | Status |
 |:-----:|-------|:------:|
 | 1 | Foundation (Pingora proxy) | ✅ |
-| 2 | Protocol (`.pvs` format, `pavis-core`, `pavctl`) | ✅ |
+| 2 | Protocol (`.pvs` format, `pavis-core`, `pavctl`) | 🚧 |
 | 3 | Long Polling (dynamic config updates) | ⏳ |
-| 4 | Modular Ingestion (Manager, Feeds, Adapters) | ⏳ |
+| 4 | Modular Ingestion (ingest + codec + relay) | ⏳ |
 | 5 | Traffic Management (retries, timeouts, load balancing) | ⏳ |
 | 6 | Security (mTLS, RBAC) | ⏳ |
 | 7 | Observability (metrics, tracing, logging) | ⏳ |
@@ -21,7 +21,17 @@
 
 ---
 
-## Phase 1: Foundation 🚧
+## Architecture Alignment Checklist
+
+- [ ] Runtime (`pavis`) depends only on `pavis-core` and `pavis-pvs`
+- [ ] `pavis-pvs` performs binary integrity checks only (no semantic validation)
+- [ ] Codecs call `pavis-core::validate_runtime` after adaptation
+- [ ] Relay (and later governor) owns migration and re-emits current-version PVS
+- [ ] Compatibility fixtures (vN, vN-1) validated in CI for header/version compatibility
+
+---
+
+## Phase 1: Foundation ✅
 
 **Goal:** Functional HTTP proxy with static configuration.
 
@@ -33,7 +43,7 @@
 - [x] Basic routing (prefix, exact match)
 - [x] Weighted traffic splitting (destination selection)
 - [x] Request header manipulation (add/remove)
-- [x] Round-robin load balancing (currently random)
+- [x] Round-robin load balancing
 - [x] Response header manipulation
 - [x] Regex route matching
 
@@ -49,21 +59,25 @@
 
 ---
 
-## Phase 2: Protocol ✅
+## Phase 2: Protocol 🚧
 
 **Goal:** Define `.pvs` binary format and build tooling.
 
 **`pavis-core`** (Library)
-- [x] `PvsHeader`: Magic bytes (`PAVS`) + version (u32)
 - [x] `RuntimeConfig` root struct with rkyv derivation
 - [x] Basic types: `Upstream`, `Endpoint`, `VirtualHost`, `Route`
 - [x] `LoadBalancer` enum (RoundRobin, Random)
 - [x] `MatchType` enum (Prefix, Exact, Regex)
 - [x] `HeaderOperations` for request/response manipulation
 - [x] `WeightedDestination` for traffic splitting
-- [x] Add `check_bytes` validation tests
 - [x] Add schema migration strategy documentation
-- [x] Backwards compatibility validation between versions
+
+**`pavis-pvs`** (Protocol)
+- [x] `PvsHeader`: Magic bytes (`PAVS`) + version (u32)
+- [x] Header checksum verification + archive validation
+- [ ] `check_archived_root` regression tests for corrupted payloads
+- [ ] Version mismatch/unsupported algorithm coverage in tests
+- [ ] Compatibility fixtures (vN, vN-1) header validation in CI
 
 **`pavctl`** (Binary)
 - [x] `gen` command: YAML → `.pvs`
@@ -71,14 +85,16 @@
   - [x] Convert to `pavis-core` structs
   - [x] Serialize with rkyv and write with header
   - [x] Validate references (routes → upstreams)
-  - [x] Output file size and compression stats
+  - [x] Output file size
+  - [ ] Output compression stats
 - [x] `view` command: Debug binary files
   - [x] Display header (magic, version)
   - [x] Pretty-print config tree
-  - [x] Show binary size and structure stats
+  - [ ] Show binary size and structure stats
   - [x] Hex dump mode for debugging
 - [x] `check` command: Check YAML without compiling
-- [x] `convert` command: Convert between versions
+- [x] `convert` command: `.pvs` → YAML (same version)
+- [ ] `convert` command: Convert between versions (`--from`/`--to`)
 - [ ] `apply` command: Push config to runtime (Phase 3)
 - [ ] `status` command: View runtime health (Phase 8)
 - [ ] `rollback` command: Revert config (Phase 3)
@@ -89,14 +105,15 @@
 - [x] Startup validation (magic bytes + version check)
 - [x] Graceful error messages for invalid configs
 - [x] Version mismatch handling (reject vs warn)
+- [ ] Remove semantic validation from `pavis-pvs`; ensure runtime only consumes already-validated configs
 
 **E2E Tests**
 - [x] Compile YAML → `.pvs` and verify binary structure
 - [x] Load `.pvs` in proxy and forward traffic
 - [x] Reject invalid magic bytes
-- [x] Reject version mismatch
-- [x] Inspect command output verification
-- [x] Round-trip: YAML → `.pvs` → inspect → verify
+- [ ] Reject version mismatch
+- [ ] Inspect command output verification
+- [x] Round-trip: YAML → `.pvs` → YAML (convert + validate)
 
 ---
 
@@ -104,6 +121,7 @@
 
 **Goal:** Dynamic configuration updates via HTTP long polling.
 
+**`pavis-relay`** (Server)
 - [ ] HTTP server setup (Axum)
   - [ ] `GET /v1/config` - fetch current config
   - [ ] `GET /v1/config/version` - fetch version only
@@ -123,6 +141,10 @@
   - [ ] File watcher for local `.pvs` changes
   - [ ] Version increment on change
   - [ ] Config history (last N versions)
+
+**Compatibility & Migration (Control Plane)**
+- [ ] Relay accepts N-1 PVS and re-emits current version after core validation
+- [ ] Record migration audit metadata (source version, target version)
 
 **`pavctl`**
 
@@ -161,29 +183,29 @@
 
 ## Phase 4: Modular Ingestion ⏳
 
-**Goal:** Standardize the configuration pipeline with Feeds and Adapters.
+**Goal:** Standardize the configuration pipeline with ingest sources, codecs, and relay orchestration.
 
-**`pavis-manager`** (Orchestrator)
-- [ ] Registry system for one active Feed/Adapter pair
+**`pavis-relay`** (Orchestrator)
+- [ ] Registry system for one active ingest/codec pair
 - [ ] State reconciliation engine
 - [ ] NACK feedback loop for validation failures
 - [ ] Version management and PVS emission
 
-**Feeds** (Source Connectivity)
-- [ ] `pavis-feed-file`: Local directory/file watcher
-- [ ] `pavis-feed-istio`: xDS gRPC client
-- [ ] `pavis-feed-kuma`: xDS gRPC client (reusing XdsAdapter)
-- [ ] `pavis-feed-k8s`: Kubernetes API watcher
+**Ingest** (Source Connectivity)
+- [ ] `pavis-ingest-file`: Local directory/file watcher
+- [ ] `pavis-ingest-istio`: xDS gRPC client
+- [ ] `pavis-ingest-kuma`: xDS gRPC client (reusing xDS ingest)
+- [ ] `pavis-ingest-k8s`: Kubernetes API watcher
 
-**Adapters** (Protocol Translation)
-- [ ] `pavis-adapter-xds`: Envoy Protobuf → `RuntimeConfig`
-- [ ] `pavis-codec-yaml`: YAML DTO → `RuntimeConfig` (migrated from current adapter)
-- [ ] `pavis-adapter-crd`: K8s Gateway API → `RuntimeConfig`
+**Codecs** (Protocol Translation)
+- [ ] `pavis-codec-xds`: Envoy Protobuf → `RuntimeConfig`
+- [x] `pavis-codec-yaml`: YAML DTO → `RuntimeConfig`
+- [ ] `pavis-codec-crd`: K8s Gateway API → `RuntimeConfig`
 
 **E2E Tests**
-- [ ] Source switch: Verify proxy updates when manager switches feeds
-- [ ] Protocol reuse: Verify same XdsAdapter works for both Istio and Kuma feeds
-- [ ] Conflict gate: Verify manager prevents concurrent source definitions
+- [ ] Source switch: Verify proxy updates when relay switches ingest sources
+- [ ] Protocol reuse: Verify same xDS codec works for both Istio and Kuma ingest
+- [ ] Conflict gate: Verify relay prevents concurrent source definitions
 
 ---
 
@@ -192,10 +214,10 @@
 **Goal:** Advanced traffic control features.
 
 **Retries** (`pavis-core` + `pavis`)
-- [ ] `RetryPolicy` struct in `pavis-core`
-  - [ ] `attempts` - max retry count
-  - [ ] `per_try_timeout` - timeout per attempt
-  - [ ] `retry_on` - conditions (5xx, connect-failure, reset, etc.)
+- [x] `RetryPolicy` struct in `pavis-core`
+  - [x] `attempts` - max retry count
+  - [x] `per_try_timeout` - timeout per attempt
+  - [x] `retry_on` - conditions (5xx, connect-failure, reset, etc.)
   - [ ] `retry_back_off` - base interval and max interval
   - [ ] `retriable_headers` - retry on specific response headers
 - [ ] Retry implementation in `pavis`
@@ -241,7 +263,7 @@
   - [ ] Gradually increase traffic to new endpoints
 
 **Traffic Splitting** (`pavis`)
-- [ ] Weighted routing (canary deployments)
+- [x] Weighted routing (canary deployments)
 - [ ] Header-based routing
 - [ ] Cookie-based routing (sticky sessions)
 - [ ] Mirror/shadow traffic

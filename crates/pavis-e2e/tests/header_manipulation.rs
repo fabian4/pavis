@@ -1,7 +1,7 @@
 mod common;
 
 use anyhow::Result;
-use pavis_e2e::utils::get_response_json;
+use pavis_e2e::support::get_response_json;
 use std::collections::HashMap;
 
 #[tokio::test]
