@@ -7,5 +7,9 @@ description = "Relay layer for Pavis"
 
 [dependencies]
 thiserror = "1"
-pavis-core = { path = "../pavis-core" }
+axum = "0.7"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
 
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

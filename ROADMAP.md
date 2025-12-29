@@ -122,25 +122,26 @@
 **Goal:** Dynamic configuration updates via HTTP long polling.
 
 **`pavis-relay`** (Server)
-- [ ] HTTP server setup (Axum)
-  - [ ] `GET /v1/config` - fetch current config
-  - [ ] `GET /v1/config/version` - fetch version only
-  - [ ] `GET /health` - liveness probe
-  - [ ] `GET /ready` - readiness probe
-- [ ] Long polling implementation
-  - [ ] Accept `X-Pavis-Version` header
-  - [ ] Hold connection when client is up-to-date (configurable timeout, default 60s)
-  - [ ] Respond immediately on config change
-  - [ ] Handle multiple concurrent clients
+- [x] HTTP server setup (Axum)
+  - [x] `GET /v1/config` - long-poll config fetch
+  - [x] `GET /v1/status` - relay status/health
+  - [x] `POST /v1/publish` - publish new `.pvs`
+  - [x] `GET /v1/artifacts/{version}` - fetch specific version (optional)
+  - [x] `GET /v1/metrics` - Prometheus metrics (optional)
+- [x] Long polling implementation
+  - [x] Accept `X-Pavis-Version` header
+  - [x] Hold connection when client is up-to-date (configurable timeout, default 60s)
+  - [x] Respond immediately on config change
+  - [x] Handle multiple concurrent clients
 - [ ] Response headers
-  - [ ] `X-Pavis-Version` - current version number
+  - [x] `X-Pavis-Version` - current version number
   - [ ] `X-Pavis-Checksum` - xxhash for integrity verification
   - [ ] `X-Pavis-Generated-At` - timestamp of config generation
-- [ ] Config storage
-  - [ ] In-memory config cache
+- [x] Config storage
+  - [x] In-memory config cache
   - [ ] File watcher for local `.pvs` changes
   - [ ] Version increment on change
-  - [ ] Config history (last N versions)
+  - [x] Config history (last N versions)
 
 **Compatibility & Migration (Control Plane)**
 - [ ] Relay accepts N-1 PVS and re-emits current version after core validation

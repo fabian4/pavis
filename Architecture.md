@@ -94,6 +94,38 @@ To support diverse environments (Kubernetes, Service Meshes, and standalone file
 3.  **pavis-relay (The Distribution Layer)**:
     *   **Responsibility**: Manages `.pvs` artifacts (versioning, checksums, cache/last-known-good) and distributes them via long polling.
     *   **Invariant**: Enforces the **Single Source Authority** execution-time constraint—only one approved source controls the proxy at a time.
+    *   **Constraint**: The relay MUST NOT ingest, parse, decode, validate, or interpret any source configuration. It operates exclusively on versioned `.pvs` artifacts and distribution state.
+
+Pavis-relay exposes a small HTTP surface for distributing versioned `.pvs` artifacts to sidecars. It is a pure artifact distribution server that uses long-polling so sidecars can fetch new configs as they become available without push channels or schema knowledge.
+
+Core endpoints:
+- GET /v1/config
+  - Purpose: Sidecar configuration fetch via long-poll.
+  - Required request headers: X-Pavis-Version (current client version).
+  - Behavior: If the relay version is newer, returns the active `.pvs` immediately. Otherwise holds the connection until a new version is published or a timeout occurs.
+  - Responses:
+    - 200 OK with `.pvs` bytes and headers X-Pavis-Version and X-Pavis-Checksum.
+    - 204 No Content on timeout.
+- GET /v1/status
+  - Purpose: Operational status and health.
+  - Returns current active version, checksum, artifact size, uptime, and last update time.
+
+Publish endpoint (early deployments):
+- POST /v1/publish
+  - Purpose: Publish a new `.pvs` artifact to the relay.
+  - Request body: Raw `.pvs` bytes.
+  - Relay responsibilities: Validate PVS integrity (magic, version, checksum), persist the artifact, update the active version, and wake long-polling clients.
+  - The relay does not parse or interpret configuration semantics.
+
+Optional operational endpoints:
+- GET /v1/artifacts/{version} for debugging or rollback.
+- GET /v1/metrics for Prometheus-style monitoring.
+
+Design principles:
+- Relay handles artifacts, not configuration semantics.
+- Relay never processes DTOs.
+- Relay enforces a single active version at distribution time.
+- Runtime pulls configuration; relay never pushes.
 
 ## 4. pavctl: The Pavis CLI
 
