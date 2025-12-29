@@ -7,11 +7,11 @@ mod write;
 pub use error::{PvsError, PvsResult};
 pub use header::{
     HEADER_SIZE, PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader,
-    compute_checksum,
+    algorithm_label, checksum_hex, compute_checksum,
 };
 
 pub use read::read_header;
-pub use verify::{load, verify};
+pub use verify::{PvsHeaderView, VerifiedPvs, inspect, load, read_from_path, verify};
 pub use write::write;
 
 #[cfg(test)]

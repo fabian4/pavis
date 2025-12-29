@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 #[archive(check_bytes)]
 pub struct ServerConfig {
     pub listen_addr: SocketAddr,
-    pub worker_threads: Option<u64>, // usize in config.rs, u64 here for safety
+    pub worker_threads: Option<u64>, // Store as u64 in the serialized model to avoid narrowing.
     pub tls: Option<TlsConfig>,
 }
 

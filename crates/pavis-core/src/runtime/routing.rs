@@ -30,8 +30,7 @@ pub struct Route {
 pub struct RetryPolicy {
     pub attempts: u32,
     pub per_try_timeout_ms: u64,
-    // Simple list of status codes or conditions?
-    // For now let's stick to what was in pavis/config.rs: Vec<String>
+    // Simple list of status codes or conditions expressed as strings.
     pub retry_on: Vec<String>,
 }
 

@@ -23,9 +23,9 @@
 
 ## Architecture Alignment Checklist
 
-- [ ] Runtime (`pavis`) depends only on `pavis-core` and `pavis-pvs`
+- [x] Runtime (`pavis`) depends only on `pavis-core` and `pavis-pvs`
 - [x] `pavis-pvs` performs binary integrity checks only (no semantic validation)
-- [ ] Codecs call `pavis-core::validate_runtime` after adaptation
+- [x] Codecs call `pavis-core::validate_runtime` after adaptation
 - [ ] Relay (and later governor) owns migration and re-emits current-version PVS
 - [ ] Compatibility fixtures (vN, vN-1) validated in CI for header/version compatibility
 
@@ -75,8 +75,8 @@
 **`pavis-pvs`** (Protocol)
 - [x] `PvsHeader`: Magic bytes (`PAVS`) + version (u32)
 - [x] Header checksum verification + archive validation
-- [ ] `check_archived_root` regression tests for corrupted payloads
-- [ ] Version mismatch/unsupported algorithm coverage in tests
+- [x] `check_archived_root` regression tests for corrupted payloads
+- [x] Version mismatch/unsupported algorithm coverage in tests
 - [ ] Compatibility fixtures (vN, vN-1) header validation in CI
 
 **`pavctl`** (Binary)
@@ -104,7 +104,7 @@
 - [ ] Implement `mmap` + zero-copy access (see Optimization section)
 - [x] Startup validation (magic bytes + version check)
 - [x] Graceful error messages for invalid configs
-- [x] Version mismatch handling (reject vs warn)
+- [x] Version mismatch handling (reject)
 - [x] Remove semantic validation from `pavis-pvs`; ensure runtime only consumes already-validated configs
 
 **E2E Tests**
@@ -135,13 +135,14 @@
   - [x] Handle multiple concurrent clients
 - [ ] Response headers
   - [x] `X-Pavis-Version` - current version number
-  - [ ] `X-Pavis-Checksum` - xxhash for integrity verification
+  - [x] `X-Pavis-Checksum` - sha256 payload checksum
+  - [x] `X-Pavis-Checksum-Alg` - checksum algorithm label
   - [ ] `X-Pavis-Generated-At` - timestamp of config generation
 - [x] Config storage
   - [x] In-memory config cache
   - [ ] File watcher for local `.pvs` changes
   - [ ] Version increment on change
-- [x] Config history (last N versions)
+- [x] Config history (unbounded; pruning TBD)
 
 **`pavis-relay`** (Config Surface by Function)
 - [ ] Identity metadata: identity.cluster, identity.instance_id
@@ -156,7 +157,7 @@
 - [ ] Codec options: pipeline.codec.options.strict_unknown_fields
 - [ ] Versioning strategy: pipeline.execution.versioning.scheme, pipeline.execution.versioning.state_file
 - [ ] Publish durability: pipeline.execution.publish.atomic_write, pipeline.execution.publish.fsync
-- [ ] Long-poll header override: distribution.long_poll.headers.algorithm
+- [x] Long-poll header override: distribution.long_poll.headers.algorithm
 - [ ] Long-poll timeouts: distribution.long_poll.timeouts.hold_seconds, distribution.long_poll.timeouts.idle_seconds
 - [ ] Direct fetch enable: distribution.direct_fetch.enabled
 - [ ] Security auth: security.auth.mode, security.auth.bearer.token
@@ -312,14 +313,14 @@
 **Goal:** Secure service-to-service communication.
 
 **mTLS** (`pavis-core` + `pavis`)
-- [ ] TLS configuration in `pavis-core`
-  - [ ] `TlsConfig` struct (cert, key, CA paths)
+- [x] TLS configuration in `pavis-core`
+  - [x] `TlsConfig` struct (cert, key; CA paths pending)
   - [ ] `TlsMode` enum (Disable, Permissive, Strict)
   - [ ] Cipher suite configuration
   - [ ] TLS version constraints (1.2, 1.3)
-- [ ] TLS implementation in `pavis` (using `rustls`)
-  - [ ] Server-side TLS termination
-  - [ ] Client-side TLS origination
+- [ ] TLS implementation in `pavis` (via Pingora/OpenSSL)
+  - [x] Server-side TLS termination
+  - [x] Client-side TLS origination
   - [ ] mTLS with client certificate validation
   - [ ] SNI-based routing
 - [ ] Certificate management
@@ -352,7 +353,7 @@
   - [ ] Claims extraction for routing
 
 **E2E Tests**
-- [ ] TLS termination with valid cert
+- [x] TLS termination with valid cert
 - [ ] Reject invalid client certificate
 - [ ] mTLS handshake between services
 - [ ] Certificate hot reload without downtime

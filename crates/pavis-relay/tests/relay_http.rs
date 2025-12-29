@@ -3,30 +3,59 @@ use axum::body::Bytes;
 use axum::http::HeaderName;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use pavis_core::{RuntimeConfig, ServerConfig, TelemetryConfig};
 use pavis_pvs::{
     HEADER_SIZE, PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, compute_checksum,
 };
 use pavis_relay::{RelayOptions, RelayState, router};
+use rkyv::ser::Serializer as _;
+use rkyv::ser::serializers::AllocSerializer;
 use tower::util::ServiceExt;
 
-fn valid_pvs_bytes(payload: &[u8]) -> Bytes {
-    let checksum = compute_checksum(payload);
+fn minimal_config(label: &str) -> RuntimeConfig {
+    RuntimeConfig {
+        server: ServerConfig {
+            listen_addr: "127.0.0.1:8080".parse().expect("addr"),
+            worker_threads: None,
+            tls: None,
+        },
+        telemetry: TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: Some(label.to_string()),
+            prometheus_addr: None,
+            access_log: Default::default(),
+            tracing: None,
+        },
+        upstreams: Vec::new(),
+        routes: Vec::new(),
+    }
+}
+
+fn valid_pvs_bytes(label: &str) -> Bytes {
+    let config = minimal_config(label);
+    let mut serializer = AllocSerializer::<1024>::default();
+    serializer
+        .serialize_value(&config)
+        .expect("serialize config");
+    let payload = serializer.into_serializer().into_inner();
+    let checksum = compute_checksum(&payload);
     let mut bytes = Vec::with_capacity(HEADER_SIZE + payload.len());
     bytes.extend_from_slice(PAVIS_MAGIC);
     bytes.extend_from_slice(&PAVIS_VERSION.to_le_bytes());
     bytes.extend_from_slice(&PAVIS_HASH_ALGORITHM_SHA256.to_le_bytes());
     bytes.extend_from_slice(&checksum);
     bytes.extend_from_slice(&[0u8; 20]);
-    bytes.extend_from_slice(payload);
+    bytes.extend_from_slice(&payload);
     Bytes::from(bytes)
 }
 
 fn test_state() -> RelayState {
-    RelayState::new(7, valid_pvs_bytes(b"seed")).expect("state")
+    RelayState::new(7, valid_pvs_bytes("seed")).expect("state")
 }
 
 fn test_state_with_options(options: RelayOptions) -> RelayState {
-    RelayState::new_with_options(7, valid_pvs_bytes(b"seed"), options).expect("state")
+    RelayState::new_with_options(7, valid_pvs_bytes("seed"), options).expect("state")
 }
 
 #[tokio::test]
@@ -74,14 +103,12 @@ async fn config_and_status_endpoints_ok() {
 async fn publish_and_fetch_artifact() {
     let app = router(test_state());
 
-    let bytes = Bytes::from_static(b"next");
-
     let response = app
         .clone()
         .oneshot(
             Request::post("/v1/publish")
                 .header("x-pavis-version", "8")
-                .body(Body::from(valid_pvs_bytes(&bytes)))
+                .body(Body::from(valid_pvs_bytes("next")))
                 .unwrap(),
         )
         .await
@@ -134,7 +161,7 @@ async fn publish_rejects_non_increasing_version() {
         .oneshot(
             Request::post("/v1/publish")
                 .header("x-pavis-version", "7")
-                .body(Body::from(valid_pvs_bytes(b"same")))
+                .body(Body::from(valid_pvs_bytes("same")))
                 .unwrap(),
         )
         .await
@@ -199,7 +226,7 @@ async fn config_long_poll_returns_update_with_headers() {
 
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-    let expected = valid_pvs_bytes(b"next");
+    let expected = valid_pvs_bytes("next");
     let publish_response = app
         .oneshot(
             Request::post("/v1/publish")
@@ -240,7 +267,7 @@ async fn config_long_poll_returns_update_with_headers() {
 async fn publish_then_fetch_config_returns_latest_bytes() {
     let app = router(test_state());
 
-    let expected = valid_pvs_bytes(b"fresh");
+    let expected = valid_pvs_bytes("fresh");
     let publish_response = app
         .clone()
         .oneshot(
@@ -283,7 +310,7 @@ async fn publish_then_fetch_config_returns_latest_bytes() {
 async fn publish_twice_preserves_prior_artifact_as_lkg() {
     let app = router(test_state());
 
-    let expected = valid_pvs_bytes(b"first");
+    let expected = valid_pvs_bytes("first");
     let response = app
         .clone()
         .oneshot(
@@ -301,7 +328,7 @@ async fn publish_twice_preserves_prior_artifact_as_lkg() {
         .oneshot(
             Request::post("/v1/publish")
                 .header("x-pavis-version", "10")
-                .body(Body::from(valid_pvs_bytes(b"second")))
+                .body(Body::from(valid_pvs_bytes("second")))
                 .unwrap(),
         )
         .await
@@ -326,7 +353,7 @@ async fn publish_twice_preserves_prior_artifact_as_lkg() {
 async fn publish_same_version_keeps_original_config() {
     let app = router(test_state());
 
-    let expected = valid_pvs_bytes(b"first");
+    let expected = valid_pvs_bytes("first");
     let response = app
         .clone()
         .oneshot(
@@ -344,7 +371,7 @@ async fn publish_same_version_keeps_original_config() {
         .oneshot(
             Request::post("/v1/publish")
                 .header("x-pavis-version", "9")
-                .body(Body::from(valid_pvs_bytes(b"second")))
+                .body(Body::from(valid_pvs_bytes("second")))
                 .unwrap(),
         )
         .await

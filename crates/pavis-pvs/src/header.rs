@@ -19,6 +19,25 @@ pub fn compute_checksum(payload: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Formats a header checksum as lowercase hex.
+pub fn checksum_hex(header: &PvsHeader) -> String {
+    let mut out = String::with_capacity(header.checksum.len() * 2);
+    for byte in header.checksum {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+/// Returns a human-readable algorithm label.
+pub fn algorithm_label(header: &PvsHeader) -> String {
+    if header.algorithm == PAVIS_HASH_ALGORITHM_SHA256 {
+        "sha256".to_string()
+    } else {
+        header.algorithm.to_string()
+    }
+}
+
 /// The header of a PVS configuration file.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

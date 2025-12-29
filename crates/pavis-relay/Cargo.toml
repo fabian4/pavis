@@ -18,3 +18,5 @@ pavis-pvs = { path = "../pavis-pvs" }
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
+pavis-core = { path = "../pavis-core" }
+rkyv = { version = "0.7", features = ["validation"] }

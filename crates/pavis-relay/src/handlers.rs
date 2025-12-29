@@ -1,9 +1,9 @@
-use crate::pvs;
 use crate::state::RelayState;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use pavis_pvs::{inspect, verify};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -45,12 +45,12 @@ pub(crate) async fn get_config(
     }
 
     let snapshot = state.snapshot().await;
-    let meta = match pvs::validate(&snapshot.pvs_bytes) {
+    let meta = match inspect(&snapshot.pvs_bytes) {
         Ok(meta) => meta,
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response(),
     };
-    let checksum = pvs::checksum_hex(&meta.header);
-    let algorithm = pvs::algorithm_label(&meta.header);
+    let checksum = meta.checksum_hex();
+    let algorithm = meta.algorithm_label();
 
     let mut response = snapshot.pvs_bytes.into_response();
     let headers = response.headers_mut();
@@ -83,11 +83,8 @@ pub(crate) async fn get_status(State(state): State<Arc<RelayState>>) -> Response
     let snapshot = state.snapshot().await;
     let version = snapshot.version;
     let size = snapshot.pvs_bytes.len();
-    let (checksum, algorithm) = match pvs::validate(&snapshot.pvs_bytes) {
-        Ok(meta) => (
-            pvs::checksum_hex(&meta.header),
-            pvs::algorithm_label(&meta.header),
-        ),
+    let (checksum, algorithm) = match inspect(&snapshot.pvs_bytes) {
+        Ok(meta) => (meta.checksum_hex(), meta.algorithm_label()),
         Err(_) => ("invalid".to_string(), "unknown".to_string()),
     };
     let updated_at = format_unix_time(snapshot.updated_at);
@@ -134,7 +131,7 @@ pub(crate) async fn post_publish(
         }
     };
 
-    if let Err(err) = pvs::validate(&body) {
+    if let Err(err) = verify(&body) {
         return (StatusCode::UNPROCESSABLE_ENTITY, format!("{err}\n")).into_response();
     }
 
@@ -155,12 +152,12 @@ pub(crate) async fn get_artifact(
         None => return (StatusCode::NOT_FOUND, "unknown version\n").into_response(),
     };
 
-    let meta = match pvs::validate(&bytes) {
+    let meta = match inspect(&bytes) {
         Ok(meta) => meta,
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response(),
     };
-    let checksum = pvs::checksum_hex(&meta.header);
-    let algorithm = pvs::algorithm_label(&meta.header);
+    let checksum = meta.checksum_hex();
+    let algorithm = meta.algorithm_label();
 
     let mut response = bytes.into_response();
     let headers = response.headers_mut();

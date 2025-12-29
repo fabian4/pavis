@@ -14,10 +14,10 @@ pub struct Route {
     #[serde(default)]
     pub match_type: MatchType,
     pub path: String,
-    // TODO: Implement request timeout
+    // TODO: Runtime enforcement for request timeout.
     #[serde(default, with = "humantime_serde")]
     pub timeout: Option<std::time::Duration>,
-    // TODO: Implement retry policy
+    // TODO: Runtime enforcement for retry policy.
     pub retry: Option<RetryPolicy>,
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,

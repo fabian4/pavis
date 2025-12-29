@@ -7,7 +7,6 @@
 | [README.md](./README.md)                                                       | Project overview and quick start              |
 | [Architecture.md](./Architecture.md)                                           | System design and protocol details            |
 | [ROADMAP.md](./ROADMAP.md)                                                     | Development phases and progress               |
-| [CODE_REVIEW.md](doc/CODE_REVIEW.md)                                           | Action plan and technical debt tracking       |
 | [Cargo.toml](./Cargo.toml)                                                     | Workspace configuration and dependencies      |
 | [agent/audit/ARCH_COMPLIANCE.md](agent/audit/ARCH_COMPLIANCE.md)               | Architecture compliance review report         |
 | [agent/audit/ARCH_ROADMAP_ALIGNMENT.md](agent/audit/ARCH_ROADMAP_ALIGNMENT.md) | Architecture vs roadmap alignment report      |

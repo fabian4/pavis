@@ -6,6 +6,69 @@
 
 ## Historical Reviews
 
+### Review 2025-12-29T18:09:48Z
+
+Scope:
+- Commit / branch / tag reviewed: local workspace (uncommitted)
+- Directories or crates covered: `crates/pavis-relay`, `crates/pavis`, `crates/pavctl`
+
+Summary:
+- Split relay config handling into focused modules, moved proxy service tests out of the runtime file, and separated pavctl formatting/parsing utilities.
+
+Findings:
+- [DONE] `crates/pavis-relay/src/config.rs` combines config schema, parsing, env expansion, and tests in a single 673-line file
+  - Evidence: `crates/pavis-relay/src/config/` now contains `types.rs`, `load.rs`, `env.rs`, and `tests.rs`.
+  - Resolution: `crates/pavis-relay/src/config.rs` now acts as a thin module re-exporter.
+
+- [DONE] `crates/pavis/src/proxy/service.rs` mixes core proxy logic with extensive test helpers and cases
+  - Evidence: Tests moved into `crates/pavis/src/proxy/service/service_tests.rs`.
+  - Resolution: `crates/pavis/src/proxy/service.rs` now contains only runtime logic plus a test module declaration.
+
+- [DONE] `crates/pavctl/src/lib.rs` bundles parsing, formatting, and stats output without module separation
+  - Evidence: `crates/pavctl/src/format.rs` and `crates/pavctl/src/parse.rs` now host the logic.
+  - Resolution: `crates/pavctl/src/lib.rs` now re-exports the focused modules.
+
+Resolved:
+- `crates/pavis-relay/src/config.rs` combines config schema, parsing, env expansion, and tests in a single 673-line file.
+- `crates/pavis/src/proxy/service.rs` mixes core proxy logic with extensive test helpers and cases.
+- `crates/pavctl/src/lib.rs` bundles parsing, formatting, and stats output without module separation.
+
+Notes:
+- Timestamp (UTC): 2025-12-29T18:09:48Z
+- Limitations: Structural refactor only; behavior assumed unchanged.
+
+### Review 2025-12-29T17:42:57Z
+
+Scope:
+- Commit / branch / tag reviewed: local workspace (uncommitted)
+- Directories or crates covered: full workspace
+
+Summary:
+- Identified three large or multi-responsibility modules that would benefit from feature- or responsibility-based splits.
+
+Findings:
+- [NEW] `crates/pavis-relay/src/config.rs` combines config schema, parsing, env expansion, and tests in a single 673-line file
+  - Evidence: `crates/pavis-relay/src/config.rs` defines all config structs, parsing helpers, env expansion, and tests.
+  - Impact: Harder to navigate and reason about changes; increases merge conflicts.
+  - Recommendation: Split into `config/types.rs` (structs), `config/load.rs` (decode/normalize), `config/env.rs` (env expansion), with tests in `config/tests.rs`.
+
+- [NEW] `crates/pavis/src/proxy/service.rs` mixes core proxy logic with extensive test helpers and cases
+  - Evidence: `crates/pavis/src/proxy/service.rs` contains Proxy implementation plus multiple `#[cfg(test)]` modules and helper functions.
+  - Impact: Production logic and tests are interleaved, slowing navigation and review.
+  - Recommendation: Move test helpers/tests into `crates/pavis/src/proxy/tests.rs` or integration tests, keeping `service.rs` focused on runtime behavior.
+
+- [NEW] `crates/pavctl/src/lib.rs` bundles parsing, formatting, and stats output without module separation
+  - Evidence: `crates/pavctl/src/lib.rs` includes runtime parsing, header formatting, config formatting, and stats formatting in one file.
+  - Impact: Cross-cutting concerns are co-located, making future command additions harder to isolate.
+  - Recommendation: Extract `format.rs` (header/config/stats), `parse.rs` (codec materialization), and keep `lib.rs` as a thin re-export layer.
+
+Resolved:
+- None.
+
+Notes:
+- Timestamp (UTC): 2025-12-29T17:42:57Z
+- Limitations: Structural review only; no refactors performed.
+
 ### Review 2025-12-29T14:12:48Z
 
 Scope:
