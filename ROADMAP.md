@@ -141,7 +141,27 @@
   - [x] In-memory config cache
   - [ ] File watcher for local `.pvs` changes
   - [ ] Version increment on change
-  - [x] Config history (last N versions)
+- [x] Config history (last N versions)
+
+**`pavis-relay`** (Config Surface by Function)
+- [ ] Identity metadata: identity.cluster, identity.instance_id
+- [ ] HTTP/admin binding: http.admin_bind
+- [ ] Storage backend: storage.type
+- [ ] Artifact naming/paths: artifact.name, artifact.pvs_filename, artifact.artifacts_dir
+- [ ] Artifact limits: artifact.limits.max_pvs_bytes, artifact.limits.max_routes
+- [ ] Pipeline source ID: pipeline.source_id
+- [ ] Ingest selection: pipeline.ingest.source.kind, pipeline.ingest.source.config.path
+- [ ] Ingest mode tuning: pipeline.ingest.mode.kind, pipeline.ingest.mode.config.debounce_ms
+- [ ] Codec selection: pipeline.codec.kind
+- [ ] Codec options: pipeline.codec.options.strict_unknown_fields
+- [ ] Versioning strategy: pipeline.execution.versioning.scheme, pipeline.execution.versioning.state_file
+- [ ] Publish durability: pipeline.execution.publish.atomic_write, pipeline.execution.publish.fsync
+- [ ] Long-poll header override: distribution.long_poll.headers.algorithm
+- [ ] Long-poll timeouts: distribution.long_poll.timeouts.hold_seconds, distribution.long_poll.timeouts.idle_seconds
+- [ ] Direct fetch enable: distribution.direct_fetch.enabled
+- [ ] Security auth: security.auth.mode, security.auth.bearer.token
+- [ ] Logging: logging.level, logging.access_log
+- [ ] Metrics bind: metrics.prometheus_bind
 
 **Compatibility & Migration (Control Plane)**
 - [ ] Relay accepts N-1 PVS and re-emits current version after core validation
@@ -226,6 +246,7 @@
   - [ ] Retry on connection failures
   - [ ] Respect retry budget (prevent retry storms)
   - [ ] Hedged requests (speculative retries)
+  - [ ] Honor route-level `retry` config in runtime behavior
 
 **Timeouts** (`pavis-core` + `pavis`)
 - [ ] `TimeoutPolicy` struct in `pavis-core`
@@ -236,6 +257,7 @@
 - [ ] Timeout enforcement in `pavis`
   - [ ] Per-route timeout overrides
   - [ ] Timeout headers (`x-envoy-upstream-rq-timeout-ms`)
+  - [ ] Honor route-level `timeout` config in runtime behavior
 
 **Circuit Breaking** (`pavis-core` + `pavis`)
 - [ ] `CircuitBreaker` struct in `pavis-core`
@@ -248,6 +270,7 @@
   - [ ] Open → Half-Open after timeout
   - [ ] Half-Open → Closed on success
   - [ ] Circuit breaker metrics and events
+  - [ ] Honor upstream `circuit_breaker` config in runtime behavior
 
 **Load Balancing** (`pavis-core` + `pavis`)
 - [ ] Additional algorithms in `LoadBalancer` enum
@@ -364,6 +387,8 @@
   - [ ] `pavis_memory_bytes` (gauge)
   - [ ] `pavis_cpu_seconds_total` (counter)
   - [ ] `pavis_file_descriptors` (gauge)
+  - [ ] Honor telemetry `prometheus_addr` config for metrics binding
+  - [ ] Honor telemetry `service_name` config for metrics labeling
 
 **Distributed Tracing** (`pavis`)
 - [ ] OpenTelemetry integration
@@ -379,6 +404,7 @@
   - [ ] HTTP method, path, status
   - [ ] Upstream name and address
   - [ ] Error details
+  - [ ] Honor telemetry `tracing` config for tracing setup
 
 **Access Logging** (`pavis`)
 - [ ] Configurable log format (JSON, text, custom template)
@@ -427,6 +453,7 @@
   - [ ] Eject endpoints temporarily
   - [ ] Success rate ejection
   - [ ] Configurable ejection time
+  - [ ] Honor upstream `health_check` config in runtime behavior
 
 **Graceful Shutdown** (`pavis`)
 - [ ] SIGTERM handling

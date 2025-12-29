@@ -1,11 +1,12 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use pavis_codec_serde::SerdeFormat;
 use std::path::PathBuf;
 
 mod commands;
 
 use commands::{
-    compile_config, convert_to_yaml, get_default_output, inspect_config, validate_yaml,
+    compile_config, convert_to_config, get_default_output, inspect_config, validate_config,
 };
 
 #[derive(Parser)]
@@ -18,10 +19,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Generate a Pavis binary (.pvs) from a high-level config (e.g., YAML)
+    /// Generate a Pavis binary (.pvs) from a high-level config (e.g., YAML/YML/JSON)
     #[command(name = "gen")]
     Generate {
-        /// Input config file (YAML)
+        /// Input config file (YAML/YML/JSON)
         input: PathBuf,
 
         /// Output Pavis file (.pvs). Defaults to input name with .pvs extension.
@@ -37,20 +38,24 @@ enum Commands {
         /// Input Pavis file
         input: PathBuf,
     },
-    /// Check a YAML config file without compiling
+    /// Check a config file without compiling
     #[command(name = "check")]
     Check {
-        /// Input YAML file
+        /// Input config file (YAML/YML/JSON)
         input: PathBuf,
     },
-    /// Convert a Pavis binary file (.pvs) back to YAML
+    /// Convert a Pavis binary file (.pvs) back to YAML/YML/JSON
     #[command(name = "convert")]
     Convert {
         /// Input Pavis file
         input: PathBuf,
 
-        /// Output YAML file. Defaults to input name with .yaml extension.
+        /// Output config file. If omitted, prints to stdout.
         output: Option<PathBuf>,
+
+        /// Output format when writing to stdout or when output extension is missing.
+        #[arg(long, default_value = "yaml")]
+        format: String,
     },
 }
 
@@ -64,10 +69,28 @@ fn main() -> Result<()> {
             compile_config(input, out)
         }
         Commands::View { input, hex } => inspect_config(input, hex),
-        Commands::Check { input } => validate_yaml(input),
-        Commands::Convert { input, output } => {
-            let out = output.unwrap_or_else(|| get_default_output(&input, "yaml"));
-            convert_to_yaml(input, Some(out))
+        Commands::Check { input } => validate_config(input),
+        Commands::Convert {
+            input,
+            output,
+            format,
+        } => {
+            let format = parse_format_from_args(output.as_ref(), &format)?;
+            convert_to_config(input, output, format)
         }
+    }
+}
+
+fn parse_format_from_args(output: Option<&PathBuf>, fallback: &str) -> Result<SerdeFormat> {
+    let ext = output.and_then(|path| path.extension().and_then(|ext| ext.to_str()));
+    match ext {
+        Some("json") => Ok(SerdeFormat::Json),
+        Some("yaml") | Some("yml") => Ok(SerdeFormat::Yaml),
+        Some(other) => anyhow::bail!("Unsupported format: {other}"),
+        None => match fallback {
+            "json" => Ok(SerdeFormat::Json),
+            "yaml" | "yml" => Ok(SerdeFormat::Yaml),
+            other => anyhow::bail!("Unsupported format: {other}"),
+        },
     }
 }

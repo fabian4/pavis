@@ -2,7 +2,7 @@
 
 ## 1. Architecture Overview
 
-Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data Plane** architecture. Heavy lifting like parsing, defaulting, and semantic validation is offloaded to a centralized relay, keeping the sidecar proxy lightweight and binary-focused.
+Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data Plane** architecture. Heavy lifting like parsing, defaulting, and semantic validation is offloaded to the ingest + codec pipeline, keeping the sidecar proxy lightweight and binary-focused while the relay focuses on artifact distribution.
 
 ### 1.1. End-to-End Configuration Flow
 
@@ -60,7 +60,7 @@ The project is structured as a workspace with strict module boundaries to enforc
 *   **`pavis-ingest-api`**: Defines the Ingest boundary (envelope + metadata).
 *   **`pavis-codec-*`**: Pure logic crates. Depend on `pavis-core` and `pavis-codec-api` for DTO ↔ RuntimeConfig mapping and semantic validation.
 *   **`pavis-ingest-*`**: Connectivity crates. Handle I/O and transport to upstream sources; emit envelopes (bytes + metadata) only.
-*   **`pavis-relay`**: Coordinates ingest/codec outputs, versions artifacts, and distributes `.pvs` (no protocol parsing).
+*   **`pavis-relay`**: Coordinates ingest/codec outputs, versions artifacts, and distributes `.pvs`. It does artifact-level header/payload handling only and does not decode DTOs or `RuntimeConfig`.
 *   **`pavctl`**: Depends on codecs and `pavis-pvs` to provide manual control and local tooling.
 *   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs` only. **Must not** depend on ingest/codec/relay/governor.
 
@@ -94,9 +94,10 @@ To support diverse environments (Kubernetes, Service Meshes, and standalone file
 3.  **pavis-relay (The Distribution Layer)**:
     *   **Responsibility**: Manages `.pvs` artifacts (versioning, checksums, cache/last-known-good) and distributes them via long polling.
     *   **Invariant**: Enforces the **Single Source Authority** execution-time constraint—only one approved source controls the proxy at a time.
-    *   **Constraint**: The relay MUST NOT ingest, parse, decode, validate, or interpret any source configuration. It operates exclusively on versioned `.pvs` artifacts and distribution state.
+    *   **Constraint**: The relay MUST NOT parse DTOs or decode `RuntimeConfig`, but it MUST handle artifact bytes. This includes reading/writing the fixed 64-byte PVS header, splitting header vs payload at offset `0x40`, computing the payload checksum (header excluded), and caching/serving versioned artifacts.
+    *   **HTTP API Contract**: See `crates/pavis-relay/README.md` for the endpoint-level contract and long-poll semantics.
 
-Pavis-relay exposes a small HTTP surface for distributing versioned `.pvs` artifacts to sidecars. It is a pure artifact distribution server that uses long-polling so sidecars can fetch new configs as they become available without push channels or schema knowledge.
+Pavis-relay exposes a small HTTP surface for distributing versioned `.pvs` artifacts to sidecars. It is a pure artifact distribution server that uses long-polling so sidecars can fetch new configs as they become available without push channels or schema knowledge. Relay operates on artifact bytes (header + payload) and never decodes the payload into `RuntimeConfig`.
 
 Core endpoints:
 - GET /v1/config
@@ -104,8 +105,8 @@ Core endpoints:
   - Required request headers: X-Pavis-Version (current client version).
   - Behavior: If the relay version is newer, returns the active `.pvs` immediately. Otherwise holds the connection until a new version is published or a timeout occurs.
   - Responses:
-    - 200 OK with `.pvs` bytes and headers X-Pavis-Version and X-Pavis-Checksum.
-    - 204 No Content on timeout.
+    - 200 OK with `.pvs` bytes and headers X-Pavis-Version and X-Pavis-Checksum (payload checksum; header excluded).
+    - 304 Not Modified (or 204 No Content if configured) on timeout.
 - GET /v1/status
   - Purpose: Operational status and health.
   - Returns current active version, checksum, artifact size, uptime, and last update time.
@@ -114,7 +115,7 @@ Publish endpoint (early deployments):
 - POST /v1/publish
   - Purpose: Publish a new `.pvs` artifact to the relay.
   - Request body: Raw `.pvs` bytes.
-  - Relay responsibilities: Validate PVS integrity (magic, version, checksum), persist the artifact, update the active version, and wake long-polling clients.
+  - Relay responsibilities: Validate PVS header/payload integrity (magic, version, payload checksum), persist the artifact, update the active version, and wake long-polling clients.
   - The relay does not parse or interpret configuration semantics.
 
 Optional operational endpoints:
@@ -279,8 +280,8 @@ compatibility logic in the control plane rather than the runtime.
 
 **Control-plane migration (relay/governor):**
 *   `pavis-relay` may accept older PVS versions (N-1).
-*   Relay decodes older artifacts, materializes a canonical `RuntimeConfig`, runs core validation,
-    and re-emits a PVS artifact in the current protocol version.
+*   Relay validates older artifact headers/payloads and coordinates re-emission into the current
+    protocol version via the ingest/codec control-plane path; it does not decode `RuntimeConfig`.
 *   Offline tooling (e.g., `pavctl convert --from <old> --to <current>`) provides explicit migration.
 
 **Runtime contract (strict):**
@@ -312,10 +313,10 @@ pavis-proxy                               pavis-relay
      │                                       │
      │  200 OK                               │
      │  X-Pavis-Version: 106                 │
-     │  X-Pavis-Checksum: <xxhash>           │
+     │  X-Pavis-Checksum: <sha256>           │
      │◀──────────────────────────────────────│
      │                                       │
-     ▼  verify checksum, write config.pvs   ▼
+     ▼  verify payload checksum, write config.pvs   ▼
 ```
 
 ### 6.6. rkyv Usage Guidelines

@@ -2,13 +2,19 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
-use pavctl::parse_yaml_runtime_from_bytes;
+use pavctl::parse_runtime_from_bytes;
+use pavis_codec_serde::SerdeFormat;
 use pavis_pvs as pvs;
 
 pub(crate) fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Result<()> {
-    tracing::info!("Reading YAML config from {:?}", input_path);
+    tracing::info!("Reading config from {:?}", input_path);
     let bytes = fs::read(&input_path).context("Failed to read input file")?;
-    let pavis_config = parse_yaml_runtime_from_bytes(&bytes)?;
+    let format = match input_path.extension().and_then(|ext| ext.to_str()) {
+        Some("json") => SerdeFormat::Json,
+        Some("yaml") | Some("yml") | None => SerdeFormat::Yaml,
+        Some(other) => anyhow::bail!("Unsupported config extension: {other}"),
+    };
+    let pavis_config = parse_runtime_from_bytes(format, &bytes)?;
 
     // 3. Write to Disk with explicit header
     pvs::write(&output_path, &pavis_config)?;

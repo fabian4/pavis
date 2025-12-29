@@ -1,6 +1,7 @@
 use axum::body::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::sync::{Notify, RwLock};
 
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +18,8 @@ pub enum RelayError {
     Policy(String),
     #[error("http server error: {0}")]
     Http(String),
+    #[error("config error: {0}")]
+    Config(String),
 }
 
 pub fn execute_plan(current_version: u64, proposed_version: u64) -> Result<(), RelayError> {
@@ -30,10 +33,18 @@ pub fn execute_plan(current_version: u64, proposed_version: u64) -> Result<(), R
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RelaySnapshot {
     version: u64,
     pvs_bytes: Bytes,
+    updated_at: SystemTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct RelaySnapshotView {
+    pub version: u64,
+    pub pvs_bytes: Bytes,
+    pub updated_at: SystemTime,
 }
 
 #[derive(Clone)]
@@ -41,16 +52,51 @@ pub struct RelayState {
     inner: Arc<RwLock<RelaySnapshot>>,
     history: Arc<RwLock<HashMap<u64, Bytes>>>,
     notify: Arc<Notify>,
+    options: RelayOptions,
+}
+
+#[derive(Clone, Debug)]
+pub struct RelayOptions {
+    pub version_header: axum::http::HeaderName,
+    pub checksum_header: axum::http::HeaderName,
+    pub checksum_alg_header: axum::http::HeaderName,
+    pub long_poll_enabled: bool,
+    pub identity_name: String,
+}
+
+impl Default for RelayOptions {
+    fn default() -> Self {
+        Self {
+            version_header: axum::http::HeaderName::from_static("x-pavis-version"),
+            checksum_header: axum::http::HeaderName::from_static("x-pavis-checksum"),
+            checksum_alg_header: axum::http::HeaderName::from_static("x-pavis-checksum-alg"),
+            long_poll_enabled: true,
+            identity_name: String::new(),
+        }
+    }
 }
 
 impl RelayState {
     pub fn new(version: u64, pvs_bytes: Bytes) -> Result<Self, RelayError> {
+        Self::new_with_options(version, pvs_bytes, RelayOptions::default())
+    }
+
+    pub fn new_with_options(
+        version: u64,
+        pvs_bytes: Bytes,
+        options: RelayOptions,
+    ) -> Result<Self, RelayError> {
         let mut history = HashMap::new();
         history.insert(version, pvs_bytes.clone());
         Ok(Self {
-            inner: Arc::new(RwLock::new(RelaySnapshot { version, pvs_bytes })),
+            inner: Arc::new(RwLock::new(RelaySnapshot {
+                version,
+                pvs_bytes,
+                updated_at: SystemTime::now(),
+            })),
             history: Arc::new(RwLock::new(history)),
             notify: Arc::new(Notify::new()),
+            options,
         })
     }
 
@@ -58,9 +104,13 @@ impl RelayState {
         self.inner.read().await.version
     }
 
-    pub async fn snapshot(&self) -> (u64, Bytes) {
+    pub async fn snapshot(&self) -> RelaySnapshotView {
         let snapshot = self.inner.read().await;
-        (snapshot.version, snapshot.pvs_bytes.clone())
+        RelaySnapshotView {
+            version: snapshot.version,
+            pvs_bytes: snapshot.pvs_bytes.clone(),
+            updated_at: snapshot.updated_at,
+        }
     }
 
     pub async fn publish(&self, proposed_version: u64, body: Bytes) -> Result<(), RelayError> {
@@ -69,6 +119,7 @@ impl RelayState {
 
         inner.version = proposed_version;
         inner.pvs_bytes = body.clone();
+        inner.updated_at = SystemTime::now();
         drop(inner);
 
         let mut history = self.history.write().await;
@@ -86,5 +137,9 @@ impl RelayState {
 
     pub fn notifier(&self) -> &Notify {
         &self.notify
+    }
+
+    pub fn options(&self) -> &RelayOptions {
+        &self.options
     }
 }

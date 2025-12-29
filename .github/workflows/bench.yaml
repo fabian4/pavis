@@ -102,11 +102,13 @@ jobs:
 
       - name: Benchmark Pavis
         working-directory: bench
-        run: BENCHMARK_TARGET=pavis bash scripts/run.sh
+        run: |
+          BENCHMARK_TARGET=pavis bash scripts/run.sh
 
       - name: Benchmark Envoy
         working-directory: bench
-        run: BENCHMARK_TARGET=envoy bash scripts/run.sh
+        run: |
+          BENCHMARK_TARGET=envoy bash scripts/run.sh
 #
 #      - name: Benchmark Nginx
 #        working-directory: bench

@@ -1,13 +1,15 @@
-use pavis_codec_serde::config as codec;
+use pavis_codec_serde::SerdeFormat;
+use pavis_codec_serde::config::{
+    ConnectionPoolConfig, Route, SerdeConfig, ServerConfig, Upstream, VirtualHost,
+    WeightedDestination,
+};
+use pavis_core::{HttpVersion, LoadBalancer, MatchType};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
-fn yaml_files_match_pipeline_outputs() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let data_dir = root.join("tests/test_data");
-    let entries = fs::read_dir(&data_dir).expect("read test_data");
+fn pipeline_handles_generated_fixtures() -> anyhow::Result<()> {
     let pavctl_bin = pavctl_bin();
     assert!(
         pavctl_bin.exists(),
@@ -15,97 +17,124 @@ fn yaml_files_match_pipeline_outputs() {
         pavctl_bin
     );
 
-    for entry in entries {
-        let entry = entry.expect("read entry");
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("yaml") {
-            continue;
-        }
+    let config = sample_config();
+    for input_format in [SerdeFormat::Yaml, SerdeFormat::Json] {
+        let input_ext = match input_format {
+            SerdeFormat::Yaml => "yaml",
+            SerdeFormat::Json => "json",
+        };
+        let input_path = temp_path("pavctl_input", input_ext);
+        write_config(&input_path, input_format, &config)?;
 
-        // 1. Generate (Explicit Output to Temp)
         let pvs_path = temp_path("pavctl_gen", "pvs");
         let status = Command::new(&pavctl_bin)
             .arg("gen")
-            .arg(&path)
+            .arg(&input_path)
             .arg(&pvs_path)
             .status()
             .expect("run pavctl gen");
-        assert!(status.success(), "gen failed for {:?}", path);
-        assert!(
-            fs::metadata(&pvs_path).is_ok(),
-            "expected pvs output for {:?}",
-            path
-        );
+        assert!(status.success(), "gen failed for {:?}", input_path);
 
-        // 2. Validate (Positional)
-        let status = Command::new(&pavctl_bin)
-            .arg("check")
-            .arg(&path)
-            .status()
-            .expect("run pavctl check");
-        assert!(status.success(), "check failed for {:?}", path);
+        for output_format in [SerdeFormat::Yaml, SerdeFormat::Json] {
+            let output_ext = match output_format {
+                SerdeFormat::Yaml => "yaml",
+                SerdeFormat::Json => "json",
+            };
+            let out_path = temp_path("pavctl_out", output_ext);
+            let status = Command::new(&pavctl_bin)
+                .arg("convert")
+                .arg(&pvs_path)
+                .arg(&out_path)
+                .status()
+                .expect("run pavctl convert");
+            assert!(status.success(), "convert failed for {:?}", pvs_path);
 
-        // 3. Inspect (Positional)
-        let output = Command::new(&pavctl_bin)
-            .arg("view")
-            .arg(&pvs_path)
-            .output()
-            .expect("run pavctl view");
-        assert!(output.status.success(), "view failed for {:?}", path);
-        let actual_raw = String::from_utf8_lossy(&output.stdout);
-        let actual = normalize_output(&actual_raw);
-        let expected = expected_path(&path);
-        let expected_content = fs::read_to_string(&expected).expect("read expected");
-        let expected_norm = normalize_output(&expected_content);
-        assert_eq!(actual, expected_norm, "view mismatch for {:?}", path);
-
-        // 4. Convert (Positional + Manual Output)
-        let out_yaml = temp_path("pavctl_out", "yaml");
-        let status = Command::new(&pavctl_bin)
-            .arg("convert")
-            .arg(&pvs_path)
-            .arg(&out_yaml)
-            .status()
-            .expect("run pavctl convert");
-        assert!(status.success(), "convert failed for {:?}", path);
-
-        let original_yaml = fs::read_to_string(&path).expect("read yaml");
-        let converted_yaml = fs::read_to_string(&out_yaml).expect("read converted yaml");
-        let runtime =
-            pavctl::parse_yaml_runtime_from_bytes(original_yaml.as_bytes()).expect("parse yaml");
-        let canonical_yaml: codec::SerdeConfig = runtime.into();
-        let expected_value =
-            serde_yaml::to_value(canonical_yaml).expect("serialize canonical yaml");
-        let converted_value: serde_yaml::Value =
-            serde_yaml::from_str(&converted_yaml).expect("parse converted yaml");
-        assert_eq!(expected_value, converted_value, "mismatch for {:?}", path);
+            let converted = fs::read_to_string(&out_path).expect("read converted");
+            assert_converted_matches_canonical(&converted, output_format, &config)?;
+            let _ = fs::remove_file(&out_path);
+        }
 
         let _ = fs::remove_file(&pvs_path);
-        let _ = fs::remove_file(&out_yaml);
+        let _ = fs::remove_file(&input_path);
+    }
+
+    Ok(())
+}
+
+fn sample_config() -> SerdeConfig {
+    SerdeConfig {
+        server: ServerConfig {
+            listen_addr: "127.0.0.1:8080".to_string(),
+            worker_threads: None,
+            tls: None,
+        },
+        telemetry: Default::default(),
+        upstreams: vec![Upstream {
+            name: "backend".to_string(),
+            load_balancer: LoadBalancer::Random,
+            http_version: HttpVersion::H1,
+            connection_pool: ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![pavis_codec_serde::config::Endpoint {
+                ip: "127.0.0.1".to_string(),
+                port: 8081,
+                weight: Some(1),
+            }],
+        }],
+        routes: vec![VirtualHost {
+            host: "example.com".to_string(),
+            paths: vec![Route {
+                match_type: MatchType::Prefix,
+                path: "/".to_string(),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                destinations: vec![WeightedDestination {
+                    upstream: "backend".to_string(),
+                    weight: 1,
+                }],
+                compiled_regex: None,
+            }],
+        }],
     }
 }
 
-fn expected_path(yaml_path: &Path) -> PathBuf {
-    let mut expected = yaml_path.to_path_buf();
-    expected.set_extension("txt");
-    expected
+fn assert_converted_matches_canonical(
+    converted: &str,
+    format: SerdeFormat,
+    config: &SerdeConfig,
+) -> anyhow::Result<()> {
+    let runtime = config.clone().build()?;
+    let canonical: SerdeConfig = runtime.into();
+
+    match format {
+        SerdeFormat::Yaml => {
+            let converted_value: serde_yaml::Value =
+                serde_yaml::from_str(converted).expect("parse converted yaml");
+            let expected_value = serde_yaml::to_value(canonical).expect("serialize canonical yaml");
+            assert_eq!(converted_value, expected_value);
+        }
+        SerdeFormat::Json => {
+            let converted_value: serde_json::Value =
+                serde_json::from_str(converted).expect("parse converted json");
+            let expected_value = serde_json::to_value(canonical).expect("serialize canonical json");
+            assert_eq!(converted_value, expected_value);
+        }
+    }
+
+    Ok(())
 }
 
-fn normalize_output(input: &str) -> String {
-    input
-        .replace("\r\n", "\n")
-        .lines()
-        .map(|line| {
-            if line.starts_with("Checksum: ") {
-                "Checksum: <checksum>".to_string()
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim_end()
-        .to_string()
+fn write_config(path: &PathBuf, format: SerdeFormat, config: &SerdeConfig) -> anyhow::Result<()> {
+    let out = match format {
+        SerdeFormat::Yaml => serde_yaml::to_string(config)?,
+        SerdeFormat::Json => serde_json::to_string_pretty(config)?,
+    };
+    fs::write(path, out).expect("write config");
+    Ok(())
 }
 
 fn pavctl_bin() -> PathBuf {

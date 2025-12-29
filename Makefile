@@ -37,6 +37,7 @@ help:
 	@echo "  binary-build       - Build release workspace"
 	@echo "  docker-build-local - Build local docker image"
 	@echo "  run-pavis          - Run proxy engine"
+	@echo "  run-relay          - Run relay service"
 	@echo "  fmt                - Format code"
 	@echo "  lint               - Run clippy"
 	@echo ""

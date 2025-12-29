@@ -1,0 +1,19 @@
+identity:
+  name: pavis-relay
+
+http:
+  bind: "0.0.0.0:8080"
+
+storage:
+  root_dir: "/var/lib/pavis"
+
+artifact:
+  # Last-known-good artifact path (used at startup and for crash recovery)
+  lkg_path: "/var/lib/pavis/lkg/config.pvs"
+
+distribution:
+  long_poll:
+    enabled: true
+    headers:
+      version: "X-Pavis-Version"
+      checksum: "X-Pavis-Checksum"

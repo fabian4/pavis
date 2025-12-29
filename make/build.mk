@@ -1,6 +1,7 @@
-.PHONY: build binary-build docker-build-local docker-build-ci run-pavis fmt fmt-check lint
+.PHONY: build binary-build docker-build-local docker-build-ci run-pavis run-relay fmt fmt-check lint
 
 BUILDER ?= builder
+ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 
 # Build all crates in the workspace (debug mode)
 build:
@@ -33,7 +34,11 @@ docker-build-ci:
 
 # Run the Pavis engine with debug logging
 run-pavis:
-	RUST_LOG=debug cargo run -p pavis -- --config crates/pavis/config.yaml
+	RUST_LOG=debug cargo run -p pavis -- --config $(ROOT_DIR)/crates/pavis/config.yaml
+
+# Run the Pavis relay with the example config
+run-relay:
+	RUST_LOG=debug cargo run -p pavis-relay -- --config $(ROOT_DIR)/crates/pavis-relay/relay.yaml
 
 # Run the Pavis xDS controller
 # Format all code in the workspace

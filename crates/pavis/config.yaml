@@ -10,12 +10,6 @@ telemetry:
   level: "debug"
   pingora: "warn"
   access_log: "stdout"  # Options: stdout (default), false, or file path
-  # service_name: "pavis-proxy" # Not supported yet
-  # prometheus_addr: "0.0.0.0:9090" # Not supported yet
-  # tracing: # Not supported yet
-  #   enabled: true
-  #   provider: "opentelemetry"
-  #   sampling_rate: 1.0
 
 upstreams:
   - name: "backend-v1"
@@ -28,16 +22,6 @@ upstreams:
     #   enabled: true
     #   verify_hostname: true
     #   sni: "backend.example.com"
-    # circuit_breaker: # Not supported yet
-    #   max_connections: 1024
-    #   max_pending_requests: 500
-    #   max_retries: 3
-    # health_check: # Not supported yet
-    #   path: "/healthz"
-    #   interval: "5s"
-    #   timeout: "1s"
-    #   unhealthy_threshold: 3
-    #   healthy_threshold: 1
     endpoints:
       - ip: "127.0.0.1"
         port: 8081
@@ -56,11 +40,6 @@ routes:
     paths:
       - match_type: "prefix" # Options: prefix (default), exact, regex
         path: "/api/v1"
-        # timeout: "2s" # Not supported yet
-        # retry: # Not supported yet
-        #   attempts: 3
-        #   retry_on: [500, 502, 503, "gateway_error", "connect_failure"]
-        #   per_try_timeout: "500ms"
         request_headers:
           add:
             x-sidecar-proxy: "pavis"

@@ -5,8 +5,8 @@ mod view;
 
 use std::path::{Path, PathBuf};
 
-pub(crate) use check::validate_yaml;
-pub(crate) use convert::convert_to_yaml;
+pub(crate) use check::validate_config;
+pub(crate) use convert::convert_to_config;
 pub(crate) use r#gen::compile_config;
 pub(crate) use view::inspect_config;
 
@@ -19,8 +19,9 @@ pub(crate) fn get_default_output(input: &Path, new_ext: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        compile_config, convert_to_yaml, get_default_output, inspect_config, validate_yaml,
+        compile_config, convert_to_config, get_default_output, inspect_config, validate_config,
     };
+    use pavis_codec_serde::SerdeFormat;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -82,8 +83,9 @@ routes:
 
         compile_config(yaml_path.clone(), pvs_path.clone()).expect("compile");
         inspect_config(pvs_path.clone(), false).expect("inspect");
-        convert_to_yaml(pvs_path.clone(), Some(out_yaml.clone())).expect("convert");
-        validate_yaml(out_yaml.clone()).expect("validate output");
+        convert_to_config(pvs_path.clone(), Some(out_yaml.clone()), SerdeFormat::Yaml)
+            .expect("convert");
+        validate_config(out_yaml.clone()).expect("validate output");
 
         let _ = fs::remove_file(&yaml_path);
         let _ = fs::remove_file(&pvs_path);
@@ -112,7 +114,7 @@ routes:
 "#;
         write_yaml(&yaml_path, content);
 
-        let err = validate_yaml(yaml_path.clone()).expect_err("should fail");
+        let err = validate_config(yaml_path.clone()).expect_err("should fail");
         let msg = format!("{err:#}");
         assert!(msg.contains("unknown upstream"), "{msg}");
 

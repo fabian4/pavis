@@ -21,3 +21,6 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 hex = "0.4.3"
+
+[dev-dependencies]
+serde_json = "1.0"

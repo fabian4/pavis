@@ -5,14 +5,17 @@ use pavis_core::{self as binary};
 use pavis_ingest_api::{Artifact, Format, SourceInfo};
 use std::fmt::Write;
 
-pub fn parse_yaml_runtime_from_bytes(bytes: &[u8]) -> Result<binary::RuntimeConfig> {
-    let env = Artifact::new(bytes.to_vec().into(), Format::Yaml, SourceInfo::unknown());
-    let codec = SerdeCodec {
-        format: SerdeFormat::Yaml,
+pub fn parse_runtime_from_bytes(
+    format: SerdeFormat,
+    bytes: &[u8],
+) -> Result<binary::RuntimeConfig> {
+    let ingest_format = match format {
+        SerdeFormat::Yaml => Format::Yaml,
+        SerdeFormat::Json => Format::Json,
     };
-    let validated = codec
-        .materialize(env)
-        .context("Failed to decode YAML config")?;
+    let env = Artifact::new(bytes.to_vec().into(), ingest_format, SourceInfo::unknown());
+    let codec = SerdeCodec { format };
+    let validated = codec.materialize(env).context("Failed to decode config")?;
     Ok(validated.into_inner())
 }
 

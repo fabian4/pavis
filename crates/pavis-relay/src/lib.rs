@@ -1,6 +1,7 @@
 mod handlers;
+mod pvs;
 mod routes;
 mod state;
 
 pub use routes::{router, serve};
-pub use state::{RelayError, RelayState, execute_plan};
+pub use state::{RelayError, RelayOptions, RelayState, execute_plan};
