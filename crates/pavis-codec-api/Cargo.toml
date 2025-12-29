@@ -10,3 +10,6 @@ anyhow = { workspace = true }
 thiserror = "1"
 pavis-core = { path = "../pavis-core" }
 pavis-ingest-api = { path = "../pavis-ingest-api" }
+
+[dev-dependencies]
+bytes = "1"

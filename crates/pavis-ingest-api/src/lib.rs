@@ -94,3 +94,47 @@ pub trait Ingest {
 
     async fn stream(&mut self) -> Result<Self::Stream, IngestError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use std::time::SystemTime;
+
+    #[test]
+    fn artifact_constructors_populate_defaults() {
+        let before = SystemTime::now();
+        let source = SourceInfo::new("source-a");
+        let artifact = Artifact::new(Bytes::from_static(b"data"), Format::Yaml, source.clone());
+        let after = SystemTime::now();
+
+        assert_eq!(artifact.format, Format::Yaml);
+        assert_eq!(artifact.source.name, "source-a");
+        assert!(artifact.version.is_none());
+        assert!(artifact.etag.is_none());
+        assert!(artifact.content_type.is_none());
+        assert!(artifact.received_at >= before);
+        assert!(artifact.received_at <= after);
+
+        let artifact = artifact.with_content_type("application/yaml");
+        assert_eq!(artifact.content_type.as_deref(), Some("application/yaml"));
+        assert_eq!(artifact.source.name, "source-a");
+    }
+
+    #[test]
+    fn source_info_defaults_are_consistent() {
+        let source = SourceInfo::new("source-b");
+        assert_eq!(source.name, "source-b");
+        assert!(source.labels.is_empty());
+
+        let source = SourceInfo::unknown();
+        assert_eq!(source.name, "unknown");
+        assert!(source.labels.is_empty());
+    }
+
+    #[test]
+    fn ingest_error_from_anyhow_maps_to_io() {
+        let err: IngestError = anyhow::anyhow!("boom").into();
+        assert!(matches!(err, IngestError::Io(_)));
+    }
+}

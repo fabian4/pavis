@@ -1736,6 +1736,7 @@ name = "pavis-codec-api"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "pavis-core",
  "pavis-ingest-api",
  "thiserror 1.0.69",
@@ -1809,6 +1810,7 @@ name = "pavis-relay"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "http-body-util",
  "serde",
  "thiserror 1.0.69",
  "tokio",
