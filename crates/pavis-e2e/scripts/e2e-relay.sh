@@ -8,7 +8,7 @@ export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:ci}
 echo "🚀 Starting Relay E2E Test Suite in [$TEST_MODE] mode..."
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-WORKSPACE_ROOT="$SCRIPT_DIR/../.."
+WORKSPACE_ROOT="$SCRIPT_DIR/../../.."
 
 ensure_binary() {
     if [ -f "$WORKSPACE_ROOT/target/release/pavis-relay" ]; then

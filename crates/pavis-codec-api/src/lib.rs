@@ -1,36 +1,57 @@
-use pavis_core::{CoreValidationError, ValidatedRuntimeConfig};
+use pavis_core::{CoreValidationError, RuntimeConfig, ValidatedRuntimeConfig};
 use pavis_ingest_api::Artifact;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CodecError {
-    #[error("check error: {0}")]
-    Check(anyhow::Error),
-    #[error("compile error: {0}")]
-    Compile(anyhow::Error),
+    #[error("codec check failed")]
+    Check(#[source] anyhow::Error),
+    #[error("codec compile failed")]
+    Compile(#[source] anyhow::Error),
     #[error(transparent)]
-    Core(#[from] CoreValidationError),
+    Core(CoreValidationError),
 }
 
-/// Artifact that passed codec-level checks (syntax/schema/version gates).
+impl From<CoreValidationError> for CodecError {
+    fn from(err: CoreValidationError) -> Self {
+        CodecError::Core(err)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompactionLevel {
+    #[default]
+    Off,
+    Trim,
+    Prune,
+}
+
 #[derive(Debug, Clone)]
 pub struct CheckedArtifact(pub Artifact);
 
 pub trait Codec {
-    type Error: std::error::Error + Send + Sync + 'static;
+    type Error: std::error::Error + Send + Sync + 'static + From<CoreValidationError>;
 
     fn check(&self, art: Artifact) -> Result<CheckedArtifact, Self::Error>;
 
-    fn compile(&self, checked: &CheckedArtifact) -> Result<pavis_core::RuntimeConfig, Self::Error>;
+    fn compile(&self, checked: &CheckedArtifact) -> Result<RuntimeConfig, Self::Error>;
 
-    fn decompile(&self, cfg: &pavis_core::RuntimeConfig) -> Result<Artifact, Self::Error>;
+    fn pack(&self, cfg: &RuntimeConfig) -> Result<Artifact, Self::Error>;
 
-    fn materialize(&self, art: Artifact) -> Result<ValidatedRuntimeConfig, Self::Error>
-    where
-        Self::Error: From<CoreValidationError>,
-    {
+    fn compact(&self, _cfg: &mut RuntimeConfig, _level: CompactionLevel) {}
+
+    fn materialize(
+        &self,
+        art: Artifact,
+        level: CompactionLevel,
+    ) -> Result<ValidatedRuntimeConfig, Self::Error> {
         let checked = self.check(art)?;
-        let cfg = self.compile(&checked)?;
+        let mut cfg = self.compile(&checked)?;
+        self.compact(&mut cfg, level);
         pavis_core::validate_runtime(cfg).map_err(Self::Error::from)
+    }
+
+    fn materialize_default(&self, art: Artifact) -> Result<ValidatedRuntimeConfig, Self::Error> {
+        self.materialize(art, CompactionLevel::Off)
     }
 }
 
@@ -93,7 +114,7 @@ mod tests {
             }
         }
 
-        fn decompile(&self, _cfg: &pavis_core::RuntimeConfig) -> Result<Artifact, Self::Error> {
+        fn pack(&self, _cfg: &pavis_core::RuntimeConfig) -> Result<Artifact, Self::Error> {
             Ok(Artifact::new(
                 Bytes::from_static(b"out"),
                 pavis_ingest_api::Format::Yaml,
@@ -167,29 +188,43 @@ mod tests {
     #[test]
     fn materialize_propagates_check_error() {
         let codec = MockCodec::new(Mode::CheckErr);
-        let err = codec.materialize(test_artifact()).unwrap_err();
+        let err = codec
+            .materialize(test_artifact(), CompactionLevel::Off)
+            .unwrap_err();
         assert_eq!(err, TestError::Check);
     }
 
     #[test]
     fn materialize_propagates_compile_error() {
         let codec = MockCodec::new(Mode::CompileErr);
-        let err = codec.materialize(test_artifact()).unwrap_err();
+        let err = codec
+            .materialize(test_artifact(), CompactionLevel::Off)
+            .unwrap_err();
         assert_eq!(err, TestError::Compile);
     }
 
     #[test]
     fn materialize_propagates_core_validation_error() {
         let codec = MockCodec::new(Mode::InvalidConfig);
-        let err = codec.materialize(test_artifact()).unwrap_err();
+        let err = codec
+            .materialize(test_artifact(), CompactionLevel::Off)
+            .unwrap_err();
         assert_eq!(err, TestError::Core(CoreValidationError::EmptyUpstreamName));
     }
 
     #[test]
     fn materialize_returns_validated_config() {
         let codec = MockCodec::new(Mode::Ok);
-        let cfg = codec.materialize(test_artifact()).expect("materialize");
+        let cfg = codec
+            .materialize(test_artifact(), CompactionLevel::Off)
+            .expect("materialize");
         assert_eq!(cfg.upstreams.len(), 1);
         assert_eq!(cfg.upstreams[0].name, "upstream1");
+    }
+
+    #[test]
+    fn codec_error_implements_error() {
+        fn assert_error<E: std::error::Error>() {}
+        assert_error::<CodecError>();
     }
 }

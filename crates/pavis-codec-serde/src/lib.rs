@@ -2,7 +2,7 @@ pub mod config;
 pub mod serde_helpers;
 
 use pavis_codec_api::{CheckedArtifact, Codec, CodecError};
-use pavis_core::{RuntimeConfig, ValidatedRuntimeConfig};
+use pavis_core::RuntimeConfig;
 use pavis_ingest_api::{Artifact, Format, SourceInfo};
 
 use crate::config::types::SerdeConfig;
@@ -52,7 +52,7 @@ impl Codec for SerdeCodec {
         Ok(runtime)
     }
 
-    fn decompile(&self, cfg: &RuntimeConfig) -> Result<Artifact, CodecError> {
+    fn pack(&self, cfg: &RuntimeConfig) -> Result<Artifact, CodecError> {
         let config: SerdeConfig = cfg.clone().into();
         let bytes = emit_with_format(self.format, &config)
             .map_err(|err| CodecError::Compile(anyhow::anyhow!("Failed to serialize: {err}")))?;
@@ -61,11 +61,5 @@ impl Codec for SerdeCodec {
             self.format.ingest_format(),
             SourceInfo::unknown(),
         ))
-    }
-
-    fn materialize(&self, art: Artifact) -> Result<ValidatedRuntimeConfig, CodecError> {
-        let checked = self.check(art)?;
-        let cfg = self.compile(&checked)?;
-        pavis_core::validate_runtime(cfg).map_err(CodecError::Core)
     }
 }

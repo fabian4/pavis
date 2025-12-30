@@ -513,13 +513,78 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 
 ### 7.3. Strategic Filtering
 
-To prevent "Config Bloat" (a major issue in Envoy), **filtering is a control-plane responsibility**.
-It must happen **before** `.pvs` emission, in the codec/governor path, not inside the relay.
+To prevent "Config Bloat" (a major issue in Envoy), configuration is filtered and compacted during the codec transformation phase, before `.pvs` emission.
 
-- **Network Efficiency** – Only emit routes relevant to the target workload (Namespace, SidecarScope, or policy).
-- **Security** – A compromised sidecar only receives IPs it is explicitly allowed to talk to.
+Compaction operates on `RuntimeConfig` (not raw DTO bytes). The relay never compacts.
 
-Relay remains a byte-level distributor and MUST NOT decode `RuntimeConfig` to perform filtering.
+#### Compaction Levels
+
+**Off**
+- MUST be a no-op on `RuntimeConfig` structure and ordering.
+- MUST NOT alter values, ordering, or presence of any fields.
+
+**Trim**
+- MUST only perform semantic-preserving transformations.
+- MUST NOT change routing semantics, matching behavior, or effective traffic policy.
+- MUST NOT reorder lists when ordering is part of semantics (e.g., route precedence).
+
+**Prune**
+- MAY remove config only when it can prove “no impact for the requesting sidecar”.
+- MUST require explicit scope/identity input (namespace/workload labels/allowed services/SidecarScope).
+- MUST be disabled when scope is unavailable or ambiguous.
+
+#### Trim Checklist (Allowed Transformations)
+
+All Trim operations MUST preserve behavior.
+
+- **Canonicalization**
+  - Normalize header names to canonical casing where semantics are case-insensitive.
+  - Normalize path strings where runtime treats equivalent forms identically.
+  - Example: `X-Request-Id` -> `x-request-id`.
+- **Deduplication**
+  - Remove duplicate upstream endpoints with identical identity and weight.
+  - Remove duplicate headers in add/remove lists where duplicates are no-ops.
+  - Example: two identical `remove: ["X-Foo", "X-Foo"]` -> one `X-Foo`.
+- **No-op elimination**
+  - Drop header mutations that cancel out (add then remove same header).
+  - Drop routes or destinations that are provably unreachable within the same config block.
+  - Example: header add with empty value when runtime treats it as no-op.
+- **Stable ordering (only when order is not semantic)**
+  - Sort upstream endpoints where the load balancer does not depend on list order.
+  - Sort header mutation lists to provide deterministic output.
+  - Example: endpoints sorted by `(ip, port, weight)` if load balancing ignores order.
+
+#### Prune (Scope-Based)
+
+Prune removes configuration irrelevant to a specific sidecar scope. It MUST preserve behavior for the requesting sidecar and MUST pass core validation after pruning.
+
+Allowed removals (when provably out of scope):
+- Virtual hosts that cannot match the sidecar’s SNI/host scope.
+- Routes that cannot be selected by the sidecar’s allowed host/path/method scope.
+- Upstreams that are never referenced by remaining routes.
+- Endpoints that are not allowed by the sidecar’s service/namespace scope.
+
+Guardrails:
+- MUST NOT reorder routes or hosts (route precedence is semantic).
+- MUST NOT drop defaults or fallback routes that the sidecar may still match.
+- MUST preserve behavior for all requests the sidecar is allowed to send.
+- MUST run `pavis-core::validate_runtime` after pruning.
+
+#### Recommendation (Envoy Ecosystem)
+
+- Default to **Trim** for early Envoy-integrated deployments.
+- Use **Off** for debugging and parity checks.
+- Enable **Prune** only when scope is available and well-tested (SidecarScope or equivalent).
+
+**Relay Distribution:**
+The Relay acts as a pure artifact distributor. It does not perform semantic filtering, decode `RuntimeConfig`, or parse DTOs. It distributes pre-filtered artifacts produced by the codec.
+
+- **Compile-Time Filtering**: Filtering happens at artifact compilation time, not at request time.
+- **Artifact Selection**: The Relay selects among pre-built artifacts based on client identity metadata but does not modify the artifact payload.
+
+**Outcome:**
+- **Network Efficiency** – The sidecar receives a compact binary optimized for zero-copy loading.
+- **Security** – A compromised sidecar only receives IPs it is explicitly allowed to talk to (enforced by upstream scoping).
 
 ## Future: Governor (Control Plane)
 

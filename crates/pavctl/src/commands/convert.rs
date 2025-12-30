@@ -23,7 +23,7 @@ pub(crate) fn convert_to_config(
     };
     let codec = SerdeCodec { format };
     let env = codec
-        .decompile(&binary_config)
+        .pack(&binary_config)
         .context("Failed to encode config")?;
 
     match output_path {
