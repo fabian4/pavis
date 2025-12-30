@@ -28,10 +28,10 @@ docker-build:
 	@set -e; \
 	if [ "$(IMAGE)" = "pavis" ]; then \
 		DOCKERFILE=crates/pavis/Dockerfile; \
-		TAG=pavis:$(MODE); \
+		TAG=pavis:local; \
 	elif [ "$(IMAGE)" = "relay" ]; then \
 		DOCKERFILE=crates/pavis-relay/Dockerfile; \
-		TAG=pavis-relay:$(MODE); \
+		TAG=pavis-relay:local; \
 	else \
 		echo "Unsupported IMAGE=$(IMAGE) (use pavis or relay)"; \
 		exit 2; \

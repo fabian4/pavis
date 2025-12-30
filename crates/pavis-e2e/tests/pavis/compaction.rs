@@ -2,10 +2,14 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use pavis_codec_api::{Codec, CompactionLevel};
 use pavis_codec_serde::{SerdeCodec, SerdeFormat};
-use pavis_e2e::support::{find_binary, find_project_root, get_upstream_name, wait_for_pavis};
+use pavis_e2e::support::{
+    find_binary, find_project_root, get_upstream_name, resolve_docker_service_ip, wait_for_pavis,
+};
 use pavis_ingest_api::{Artifact, Format, SourceInfo};
 use reqwest::Client;
 use std::env;
+use std::fs;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -25,6 +29,15 @@ fn pavis_bin() -> Result<PathBuf> {
 
 fn backend_host(env_key: &str) -> String {
     env::var(env_key).unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+fn resolve_backend_host(host: String) -> Result<String> {
+    if matches!(test_mode(), TestMode::Docker) && host.parse::<IpAddr>().is_err() {
+        let project_root = find_project_root()?;
+        resolve_docker_service_ip(&project_root, &host)
+    } else {
+        Ok(host)
+    }
 }
 
 fn write_config(path: &Path, host: &str, port: u16) -> Result<()> {
@@ -69,25 +82,69 @@ fn write_pvs_with_compaction(
 }
 
 struct PavisProcess {
-    child: Child,
+    child: Option<Child>,
 }
 
 impl Drop for PavisProcess {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+enum TestMode {
+    Binary,
+    Docker,
+}
+
+fn test_mode() -> TestMode {
+    match env::var("TEST_MODE")
+        .unwrap_or_else(|_| "binary".to_string())
+        .as_str()
+    {
+        "docker" => TestMode::Docker,
+        _ => TestMode::Binary,
     }
 }
 
 async fn spawn_pavis(pvs_path: &Path) -> Result<PavisProcess> {
-    let pavis = pavis_bin()?;
-    let child = Command::new(&pavis)
-        .arg("--config")
-        .arg(pvs_path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .context("spawn pavis")?;
+    let mut child = None;
+    match test_mode() {
+        TestMode::Binary => {
+            let pavis = pavis_bin()?;
+            let process = Command::new(&pavis)
+                .arg("--config")
+                .arg(pvs_path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .context("spawn pavis")?;
+            child = Some(process);
+        }
+        TestMode::Docker => {
+            let project_root = find_project_root()?;
+            let shared_config = project_root.join("crates/pavis-e2e/config/generated_config.pvs");
+            fs::copy(pvs_path, &shared_config).context("copy pvs")?;
+            let compose_file =
+                project_root.join("crates/pavis-e2e/config/docker-compose-pavis.yaml");
+            let status = Command::new("docker")
+                .args([
+                    "compose",
+                    "-f",
+                    compose_file.to_str().expect("valid path"),
+                    "up",
+                    "-d",
+                    "--force-recreate",
+                    "pavis",
+                ])
+                .status()?;
+            if !status.success() {
+                return Err(anyhow::anyhow!("Failed to restart docker container"));
+            }
+        }
+    }
 
     let client = Client::builder()
         .timeout(Duration::from_secs(1))
@@ -128,7 +185,7 @@ async fn routing_snapshot(client: &Client) -> Result<(u16, u16)> {
 #[tokio::test]
 async fn compaction_preserves_routing_semantics() -> Result<()> {
     let config_path = unique_path("pavis_compaction", "yaml");
-    let host = backend_host("BACKEND_V1_HOST");
+    let host = resolve_backend_host(backend_host("BACKEND_V1_HOST"))?;
     write_config(&config_path, &host, 8081)?;
 
     let pvs_off = unique_path("pavis_compaction_off", "pvs");

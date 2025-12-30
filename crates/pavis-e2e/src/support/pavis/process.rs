@@ -80,7 +80,8 @@ impl TestEnv {
                 shared_config.clone()
             };
 
-            let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose.yaml");
+            let compose_file =
+                project_root.join("crates/pavis-e2e/config/docker-compose-pavis.yaml");
 
             let status = Command::new("docker")
                 .args([

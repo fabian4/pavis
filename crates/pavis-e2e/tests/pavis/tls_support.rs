@@ -115,7 +115,7 @@ async fn test_tls_support() {
 
         generate_pvs(&pavctl_bin, &config_path, &shared_config).expect("generate config");
 
-        let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose.yaml");
+        let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose-pavis.yaml");
         let status = Command::new("docker")
             .args([
                 "compose",

@@ -16,7 +16,9 @@ const RELAY_CONTAINER_PORT: u16 = 8080;
 
 pub struct RelayEnv {
     child: Option<Child>,
-    container_id: Option<String>,
+    compose_project: Option<String>,
+    compose_file: Option<PathBuf>,
+    compose_shared: bool,
     base_url: String,
     config_path: PathBuf,
     work_dir: PathBuf,
@@ -33,6 +35,19 @@ impl RelayEnv {
         let lkg_path = work_dir.join("lkg").join("config.pvs");
         let config_path = work_dir.join("relay.yaml");
         let container_port = RELAY_CONTAINER_PORT;
+        let project_root = if matches!(mode, TestMode::Docker) {
+            Some(find_project_root()?)
+        } else {
+            None
+        };
+        let compose_override = env::var("RELAY_COMPOSE_FILE").ok();
+        let compose_file = match (mode, compose_override) {
+            (TestMode::Docker, Some(path)) => Some(PathBuf::from(path)),
+            (TestMode::Docker, None) => project_root
+                .as_ref()
+                .map(|root| root.join("crates/pavis-e2e/config/docker-compose-relay.yaml")),
+            _ => None,
+        };
 
         let (bind, storage_root, config_lkg_path) = match mode {
             TestMode::Binary => {
@@ -51,14 +66,28 @@ impl RelayEnv {
 
         write_config(&config_path, &bind, &storage_root, &config_lkg_path)?;
 
-        let (child, container_id) = match mode {
+        let mut compose_shared = false;
+        let (child, compose_project) = match mode {
             TestMode::Binary => (Some(spawn_relay(&config_path)?), None),
-            TestMode::Docker => (None, Some(spawn_relay_docker(&work_dir, port)?)),
+            TestMode::Docker => {
+                let compose_file = compose_file
+                    .as_ref()
+                    .expect("compose file required in docker mode");
+                let project_override = env::var("RELAY_COMPOSE_PROJECT").ok();
+                if project_override.is_some() {
+                    compose_shared = true;
+                }
+                let project =
+                    spawn_relay_docker(compose_file, &work_dir, port, project_override.as_deref())?;
+                (None, Some(project))
+            }
         };
 
         let env = Self {
             child,
-            container_id,
+            compose_project,
+            compose_file,
+            compose_shared,
             base_url,
             config_path,
             work_dir,
@@ -82,7 +111,16 @@ impl RelayEnv {
                     .next()
                     .and_then(|value| value.parse::<u16>().ok())
                     .context("parse relay port")?;
-                self.container_id = Some(spawn_relay_docker(&self.work_dir, port)?);
+                let compose_file = self
+                    .compose_file
+                    .as_ref()
+                    .expect("compose file required in docker mode");
+                self.compose_project = Some(spawn_relay_docker(
+                    compose_file,
+                    &self.work_dir,
+                    port,
+                    self.compose_project.as_deref(),
+                )?);
             }
         }
         self.wait_for_ready().await
@@ -101,9 +139,23 @@ impl RelayEnv {
             let _ = child.kill();
             let _ = child.wait();
         }
-        if let Some(container) = self.container_id.take() {
+        if let (Some(project), Some(compose_file)) =
+            (self.compose_project.take(), self.compose_file.as_ref())
+        {
+            let action = if self.compose_shared { "stop" } else { "down" };
+            let mut args = vec![
+                "compose",
+                "-f",
+                compose_file.to_str().expect("valid path"),
+                "-p",
+                &project,
+                action,
+            ];
+            if self.compose_shared {
+                args.push("relay");
+            }
             let _ = Command::new("docker")
-                .args(["stop", &container])
+                .args(&args)
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
@@ -208,38 +260,45 @@ fn find_binary(project_root: &Path, name: &str) -> Result<PathBuf> {
     ))
 }
 
-fn spawn_relay_docker(work_dir: &Path, host_port: u16) -> Result<String> {
+fn spawn_relay_docker(
+    compose_file: &Path,
+    work_dir: &Path,
+    host_port: u16,
+    project_override: Option<&str>,
+) -> Result<String> {
     let image = env::var("RELAY_IMAGE").unwrap_or_else(|_| "pavis-relay:ci".to_string());
-    let container_name = format!(
-        "pavis-relay-e2e-{}",
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
-    let output = Command::new("docker")
+    let project = project_override
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| {
+            env::var("RELAY_COMPOSE_PROJECT").unwrap_or_else(|_| {
+                format!(
+                    "pavis-relay-e2e-{}",
+                    COUNTER.fetch_add(1, Ordering::Relaxed)
+                )
+            })
+        });
+    let status = Command::new("docker")
+        .env("RELAY_IMAGE", image)
+        .env("RELAY_PORT", host_port.to_string())
+        .env("RELAY_WORK_DIR", work_dir.display().to_string())
         .args([
-            "run",
-            "-d",
-            "--rm",
-            "--name",
-            &container_name,
+            "compose",
+            "-f",
+            compose_file.to_str().expect("valid path"),
             "-p",
-            &format!("{host_port}:{RELAY_CONTAINER_PORT}"),
-            "-v",
-            &format!("{}:/relay", work_dir.display()),
-            &image,
-            "--config",
-            "/relay/relay.yaml",
+            &project,
+            "up",
+            "-d",
+            "relay",
         ])
-        .output()
+        .status()
         .context("spawn relay container")?;
 
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Failed to start relay container: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if !status.success() {
+        return Err(anyhow::anyhow!("Failed to start relay container"));
     }
 
-    Ok(container_name)
+    Ok(project)
 }
 
 fn test_mode() -> TestMode {

@@ -79,7 +79,7 @@ async fn test_upstream_tls() {
     // 2. Start TLS Backend
     let (backend_process, actual_upstream_port) = if mode == "docker" {
         println!("🐳 Starting backend-tls container...");
-        let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose.yaml");
+        let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose-pavis.yaml");
 
         let _ = Command::new("docker")
             .args([
@@ -189,7 +189,7 @@ async fn test_upstream_tls() {
 
         generate_pvs(&pavctl_bin, &config_path, &shared_config).expect("generate config");
 
-        let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose.yaml");
+        let compose_file = project_root.join("crates/pavis-e2e/config/docker-compose-pavis.yaml");
         let status = Command::new("docker")
             .args([
                 "compose",

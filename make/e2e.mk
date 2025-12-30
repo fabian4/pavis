@@ -1,13 +1,13 @@
-.PHONY: e2e e2e-binary e2e-docker e2e-pavis e2e-pavis-binary e2e-pavis-docker e2e-relay e2e-relay-binary e2e-relay-docker e2e-down
+.PHONY: e2e e2e-binary e2e-docker e2e-pavis e2e-pavis-binary e2e-pavis-docker e2e-relay e2e-relay-binary e2e-relay-docker e2e-integrated e2e-integrated-binary e2e-integrated-docker e2e-down
 
 # Run all E2E tests (defaults to binary mode)
 e2e: e2e-binary
 
 # Run all E2E tests in binary mode
-e2e-binary: e2e-pavis-binary e2e-relay-binary
+e2e-binary: e2e-pavis-binary e2e-relay-binary e2e-integrated-binary
 
 # Run all E2E tests in docker mode
-e2e-docker: e2e-pavis-docker e2e-relay-docker
+e2e-docker: e2e-pavis-docker e2e-relay-docker e2e-integrated-docker
 
 # Run Pavis E2E tests (defaults to binary mode)
 e2e-pavis: e2e-pavis-binary
@@ -30,6 +30,17 @@ e2e-relay-binary:
 # Run Relay E2E tests in docker mode
 e2e-relay-docker:
 	TEST_MODE=docker bash ./crates/pavis-e2e/scripts/e2e-relay.sh
+
+# Run Integrated E2E tests (defaults to binary mode)
+e2e-integrated: e2e-integrated-binary
+
+# Run Integrated E2E tests in binary mode
+e2e-integrated-binary:
+	TEST_MODE=binary bash ./crates/pavis-e2e/scripts/e2e-integrated.sh
+
+# Run Integrated E2E tests in docker mode
+e2e-integrated-docker:
+	TEST_MODE=docker bash ./crates/pavis-e2e/scripts/e2e-integrated.sh
 
 # Stop and cleanup the E2E environment
 e2e-down:

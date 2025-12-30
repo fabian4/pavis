@@ -3,14 +3,15 @@ set -e
 
 # Usage: TEST_MODE=binary|docker ./e2e.sh
 export TEST_MODE=${TEST_MODE:-binary} # Default to binary if not set
+export PAVIS_IMAGE=${PAVIS_IMAGE:-pavis:local}
 
-echo "🚀 Starting E2E Test Suite in [$TEST_MODE] mode..."
+echo "🚀 Starting Pavis E2E Test Suite in [$TEST_MODE] mode..."
 
 # Define paths (relative to workspace root)
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WORKSPACE_ROOT="$SCRIPT_DIR/../../.."
 CONFIG_DIR="$WORKSPACE_ROOT/crates/pavis-e2e/config"
-COMPOSE_FILE="$CONFIG_DIR/docker-compose.yaml"
+COMPOSE_FILE="$CONFIG_DIR/docker-compose-pavis.yaml"
 
 # Cleanup function
 cleanup() {
@@ -20,7 +21,7 @@ cleanup() {
   # Cleanup generated configs logic handled by Rust TestEnv drop, 
   # but we can do a sweep here just in case of panic aborts.
   rm -f "$CONFIG_DIR"/generated_*.yaml
-  rm -f "$CONFIG_DIR"/certs/*
+  rm -rf "$CONFIG_DIR"/certs
 }
 trap cleanup EXIT
 
@@ -44,24 +45,36 @@ setup_env() {
     fi
 }
 
-# 2. Build Binaries (if needed)
+# 2. Build Binaries / Images (if needed)
 ensure_binary() {
     if [ "$TEST_MODE" == "binary" ]; then
         if [ -f "$WORKSPACE_ROOT/target/release/pavis" ]; then
             echo "✅ Pavis binary found at target/release/pavis, skipping build."
         else
-            echo "🚀 Building Pavis Binary..."
+            echo "🚀 Building pavis..."
             cd "$WORKSPACE_ROOT"
             cargo build -p pavis --release
         fi
-    fi
 
-    if [ -f "$WORKSPACE_ROOT/target/release/pavctl" ] || [ -f "$WORKSPACE_ROOT/target/debug/pavctl" ]; then
-        echo "✅ pavctl binary found, skipping build."
-    else
-        echo "🚀 Building pavctl..."
-        cd "$WORKSPACE_ROOT"
-        cargo build -p pavctl
+        if [ -f "$WORKSPACE_ROOT/target/release/pavctl" ] || [ -f "$WORKSPACE_ROOT/target/debug/pavctl" ]; then
+            echo "✅ pavctl binary found, skipping build."
+        else
+            echo "🚀 Building pavctl..."
+            cd "$WORKSPACE_ROOT"
+            cargo build -p pavctl
+        fi
+    fi
+}
+
+ensure_image() {
+    if [ "$TEST_MODE" == "docker" ]; then
+        if docker image inspect "$PAVIS_IMAGE" > /dev/null 2>&1; then
+            echo "✅ Pavis image $PAVIS_IMAGE found, skipping build."
+        else
+            echo "🚀 Building pavis image $PAVIS_IMAGE..."
+            cd "$WORKSPACE_ROOT"
+            docker build -f crates/pavis/Dockerfile -t "$PAVIS_IMAGE" .
+        fi
     fi
 }
 
@@ -89,12 +102,13 @@ start_infrastructure() {
 # Execution
 setup_env
 ensure_binary
+ensure_image
 start_infrastructure
 
 # 4. Run Tests
-echo "🧪 Running Tests via Rust Harness..."
+echo "🧪 Running Pavis Tests via Rust Harness..."
 cd "$WORKSPACE_ROOT"
 # Use -j 1 to run test binaries sequentially (avoids race conditions on shared docker container)
 cargo test -j 1 -p pavis-e2e --test pavis -- --test-threads=1 --nocapture
 
-echo "🎉 All tests passed!"
+echo "🎉 Pavis tests passed!"

@@ -3,7 +3,7 @@ set -e
 
 # Usage: TEST_MODE=binary|docker ./e2e-relay.sh
 export TEST_MODE=${TEST_MODE:-binary}
-export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:ci}
+export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:local}
 
 echo "🚀 Starting Relay E2E Test Suite in [$TEST_MODE] mode..."
 
