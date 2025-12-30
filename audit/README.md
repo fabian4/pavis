@@ -59,15 +59,15 @@
 
 ## 🧪 Coverage Health (From `audit/coverage.md`)
 
-- **Line Coverage:** 95.07%
+- **Line Coverage:** 95.68%
 - **Branch Coverage:** Unavailable
 
 ### 🚨 Notable Coverage Gaps (High Risk Paths)
 
 | File | Coverage | Risk |
 |------|:--------:|------|
-| `crates/pavis-e2e/src/support/pavis/http.rs` | 0.00% | E2E infrastructure |
 | `crates/pavis-relay/src/main.rs` | 0.00% | Startup path |
+| `crates/pavis/src/main.rs` | 73.61% | Runtime startup path |
 | `crates/pavis-relay/src/app.rs` | 76.67% | Startup orchestration |
 | `crates/pavis-relay/src/handlers.rs` | 93.41% | HTTP handler logic |
 | `crates/pavis-core/src/serde_impl.rs` | 95.24% | Serde adapters |

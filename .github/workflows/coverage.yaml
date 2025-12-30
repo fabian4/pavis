@@ -27,10 +27,11 @@ jobs:
       - name: Generate code coverage
         run: |
           cargo +nightly tarpaulin \
-            --verbose \
             --all-features \
             --workspace \
             --exclude pavis-e2e \
+            --exclude-files 'crates/pavis-e2e/*' \
+            --exclude-files 'crates/*/tests/*' \
             --timeout 120 \
             --out xml
 
