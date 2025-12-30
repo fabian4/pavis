@@ -2,29 +2,9 @@
 
 > **Reference:** [Architecture.md](./Architecture.md) for technical details on components and protocols.
 
-## Overview
-
-| Phase | Focus                                                    | Status      |
-| :---: | -------------------------------------------------------- | :---------: |
-| 1     | Foundation (Pingora proxy)                               | ✅ (18/18)  |
-| 2     | Protocol (`.pvs` format, `pavis-core`, `pavctl`)         | 🚧 (35/42)  |
-| 3     | Long Polling (dynamic config updates)                    | 🚧 (18/66)  |
-| 4     | Modular Ingestion (ingest + codec + relay)               | ⏸️          |
-| 5     | Traffic Management (retries, timeouts, load balancing)   | ⏸️ (0/3)    |
-| 6     | Security (mTLS, RBAC)                                    | 🚧 (5/42)   |
-| 7     | Observability (metrics, tracing, logging)                | ⏳ (0/34)   |
-| 8     | Operations (health checks, graceful shutdown)            | ⏳ (0/37)   |
-| 9     | Advanced Features (rate limiting, fault injection, WASM) | ⏳ (0/31)   |
-| 10    | Kubernetes Integration (operator, sidecar injection)     | ⏳ (0/22)   |
-
-**Legend:** 🚧 In Progress · ⏳ Planned · ✅ Complete · ⏸️ Deferred
-
----
-
 ## Strategic Focus (Iron Triangle)
 
 The roadmap is now centered on a three-part “iron triangle” that determines system viability.
-Phase 4 and Phase 5 are intentionally deferred (not abandoned) to focus all effort here.
 
 **A. Close the Loop – Dynamic Configuration**
 - Scope: Complete Phase 3 client-side implementation and enable live, in-memory updates in `pavis-relay`.

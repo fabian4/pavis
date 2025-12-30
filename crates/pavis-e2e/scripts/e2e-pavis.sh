@@ -8,7 +8,7 @@ echo "🚀 Starting E2E Test Suite in [$TEST_MODE] mode..."
 
 # Define paths (relative to workspace root)
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-WORKSPACE_ROOT="$SCRIPT_DIR/.."
+WORKSPACE_ROOT="$SCRIPT_DIR/../.."
 CONFIG_DIR="$WORKSPACE_ROOT/crates/pavis-e2e/config"
 COMPOSE_FILE="$CONFIG_DIR/docker-compose.yaml"
 

@@ -1,14 +1,54 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 2
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 1 · 🧹 Low: 0 · ✅ Resolved: 2
 
 ---
 
 ## Open Findings (Prioritized)
 
-No open findings.
+| ID  | Severity | Area | Short Title |
+|----:|:--------:|------|-------------|
+| F-1 | Medium | Relay Plugin | Relay lacks ingest/codec plugin dependencies |
 
 ---
+
+## Review Entry — 2025-12-30T04:15:22Z
+
+### Scope
+- Repository-wide architecture compliance scan.
+
+---
+
+### Method
+- Cross-check of `Architecture.md` boundaries against code structure and responsibilities.
+
+
+### Model
+- gemini-2.0-flash-exp
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Medium | Relay Plugin | Relay lacks ingest/codec plugin dependencies | Open |
+
+---
+
+### Detailed Findings
+
+#### F-1: Relay lacks ingest/codec plugin dependencies
+- **Expectation:** `Architecture.md` (Sec 3.x) requires `pavis-relay` to support compile-time inclusion of ingest/codec pipelines via Cargo features.
+- **Observed:** `crates/pavis-relay/Cargo.toml` has no dependencies on `pavis-codec-*` or `pavis-ingest-*`.
+- **Evidence:** `crates/pavis-relay/Cargo.toml` dependencies list.
+- **Assessment (Reason):** Relay cannot function as the control plane orchestrator as defined in the architecture without these plugins.
+- **Recommendation (Suggestion):** Add `pavis-codec-*` and `pavis-ingest-*` as optional dependencies in `pavis-relay` and implement the feature flag selection logic.
+- **Doc Drift?:** No — implementation is lagging behind architecture.
+
+---
+
+> Older review entries continue below this point, in reverse chronological order.
 
 ## Review Entry — 2025-12-30T03:18:52Z
 
@@ -45,8 +85,6 @@ No open findings.
 - **Doc Drift?:** No — change aligns with documented layering rules.
 
 ---
-
-> Older review entries continue below this point, in reverse chronological order.
 
 ## Review Entry — 2025-12-30T03:08:16Z
 

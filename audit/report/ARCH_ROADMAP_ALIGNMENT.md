@@ -1,14 +1,64 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 2
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 1 · 🧹 Low: 1 · ✅ Resolved: 2
 
 ---
 
 ## Open Findings (Prioritized)
 
-No open findings.
+| ID  | Severity | Area | Short Title |
+|----:|:--------:|------|-------------|
+| F-3 | Medium | Relay Migration | Relay migration capability depends on paused Phase 4 |
+| F-4 | Low | Governance | Governor component concept diverges from K8s Operator plan |
 
 ---
+
+## Review Entry — 2025-12-30T04:20:10Z
+
+### Scope
+- `Architecture.md` and `ROADMAP.md` alignment review.
+
+---
+
+### Method
+- Manual comparison of architectural constraints against roadmap execution plan.
+
+
+### Model
+- gemini-2.0-flash-exp
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-3 | Medium | Relay Migration | Relay migration capability depends on paused Phase 4 | Open |
+| F-4 | Low | Governance | Governor component concept diverges from K8s Operator plan | Open |
+
+---
+
+### Detailed Findings
+
+#### F-3: Relay migration capability depends on paused Phase 4
+- **Expectation:** `Architecture.md` states Relay validates older artifacts and coordinates re-emission via ingest/codec path.
+- **Observed:** `ROADMAP.md` Phase 3 includes "Relay accepts N-1 PVS...", but Phase 4 "Modular Ingestion" (which provides the ingest/codec plugins) is paused.
+- **Evidence:** `Architecture.md` Sec 3.x vs `ROADMAP.md` Phase 3 & 4 status.
+- **Assessment (Reason):** Implementing migration in Phase 3 is blocked or requires violating architecture because the necessary plugin infrastructure is in the paused Phase 4.
+- **Recommendation (Suggestion):** Move "Compatibility & Migration" from Phase 3 to Phase 4, or un-pause Phase 4 to support this feature.
+- **Doc Drift?:** Yes — roadmap schedule conflicts with architectural dependencies.
+
+#### F-4: Governor component concept diverges from K8s Operator plan
+- **Expectation:** `Architecture.md` describes a "Governor" component sitting above Relay.
+- **Observed:** `ROADMAP.md` plans for a "Pavis Operator" in Phase 10 but does not explicitly mention a standalone Governor service.
+- **Evidence:** `Architecture.md` "Future: Governor" section vs `ROADMAP.md` Phase 10.
+- **Assessment (Reason):** The abstract "Governor" role seems to be fulfilled by the concrete "Operator", but the terminology differs.
+- **Recommendation (Suggestion):** Clarify in `Architecture.md` that the Governor role may be fulfilled by the Kubernetes Operator.
+- **Doc Drift?:** No — acceptable conceptual divergence, but worth noting for clarity.
+
+---
+
+> Older review entries continue below this point, in reverse chronological order.
 
 ## Review Entry — 2025-12-29T17:55:29Z
 
@@ -54,8 +104,6 @@ No open findings.
 - **Doc Drift?:** No — roadmap updated to match architecture.
 
 ---
-
-> Older review entries continue below this point, in reverse chronological order.
 
 ## Review Entry — 2025-12-29T17:42:57Z
 

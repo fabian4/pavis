@@ -19,12 +19,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake
+
       - name: Generate code coverage
         run: |
           cargo +nightly tarpaulin \
             --verbose \
             --all-features \
             --workspace \
+            --exclude pavis-e2e \
             --timeout 120 \
             --out xml
 

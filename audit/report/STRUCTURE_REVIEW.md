@@ -10,6 +10,30 @@ No open findings.
 
 ---
 
+## Review Entry — 2025-12-30T04:36:22Z
+
+### Scope
+- Repository-wide structure and file size review.
+
+---
+
+### Method
+- Automated scan for largest files (`find` + `wc -l`) and manual cohesion check.
+
+
+### Model
+- gemini-2.0-flash-exp
+
+---
+
+### Summary (Index)
+
+No new findings. Code structure is healthy with no files exceeding 500 lines of production code. The largest file (`crates/pavis-e2e/src/support/pavis/config.rs`, ~730 lines) is a test configuration builder, which is an acceptable exception.
+
+---
+
+> Older review entries continue below this point, in reverse chronological order.
+
 ## Review Entry — 2025-12-29T18:09:48Z
 
 ### Scope
@@ -64,8 +88,6 @@ No open findings.
 
 ---
 
-> Older review entries continue below this point, in reverse chronological order.
-
 ## Review Entry — 2025-12-29T17:42:57Z
 
 ### Scope
@@ -116,139 +138,4 @@ No open findings.
 - **Evidence:** `crates/pavctl/src/lib.rs` content.
 - **Assessment (Reason):** Cross-cutting concerns are co-located and harder to evolve.
 - **Recommendation (Suggestion):** Extract `format.rs` and `parse.rs`, keep `lib.rs` as re-exporter.
-- **Doc Drift?:** No.
-
----
-
-## Review Entry — 2025-12-29T14:12:48Z
-
-### Scope
-- `crates/pavis-relay` module structure verification after refactor.
-
----
-
-### Method
-- Inspection of module split and test placement.
-
-
-### Model
-- GPT-5
-
----
-
-### Summary (Index)
-
-| ID  | Severity | Area | Short Title | Status |
-|----:|:--------:|------|-------------|:------:|
-| F-1 | Medium | Relay module layout | Routing/state/handlers split into modules | Done |
-| F-2 | Medium | Relay feature layout | Feature buckets isolated into modules | Done |
-
----
-
-### Detailed Findings
-
-#### F-1: Routing/state/handlers split into modules
-- **Expectation:** Relay routing, state, handlers, and tests live in separate modules.
-- **Observed:** `pavis-relay` split into `state.rs`, `handlers.rs`, `routes.rs`, with tests in `tests/`.
-- **Evidence:** `crates/pavis-relay/src/state.rs`, `crates/pavis-relay/src/handlers.rs`, `crates/pavis-relay/src/routes.rs`, `crates/pavis-relay/tests/relay_http.rs`.
-- **Assessment (Reason):** Improves cohesion and test isolation.
-- **Recommendation (Suggestion):** None.
-- **Doc Drift?:** No.
-
-#### F-2: Feature buckets isolated into modules
-- **Expectation:** Long-poll, publish, artifacts, and metrics are separated by feature.
-- **Observed:** Feature buckets are in separate modules instead of a single `lib.rs` file.
-- **Evidence:** `crates/pavis-relay/src/handlers.rs` and related modules.
-- **Assessment (Reason):** Reduces coupling and improves navigation.
-- **Recommendation (Suggestion):** None.
-- **Doc Drift?:** No.
-
----
-
-## Review Entry — 2025-12-29T14:07:12Z
-
-### Scope
-- `crates/pavis-relay` structural review.
-
----
-
-### Method
-- Manual inspection of `crates/pavis-relay/src/lib.rs` responsibilities and test placement.
-
-
-### Model
-- GPT-5
-
----
-
-### Summary (Index)
-
-| ID  | Severity | Area | Short Title | Status |
-|----:|:--------:|------|-------------|:------:|
-| F-1 | Medium | Relay module layout | Relay `lib.rs` combines routing/state/handlers/tests | In Progress |
-| F-2 | Medium | Relay feature layout | Single file contains multiple unrelated features | In Progress |
-
----
-
-### Detailed Findings
-
-#### F-1: Relay `lib.rs` combines routing/state/handlers/tests
-- **Expectation:** Relay routing, state, handlers, and tests live in separate modules.
-- **Observed:** `crates/pavis-relay/src/lib.rs` contains router assembly, state/cache, handlers, and tests.
-- **Evidence:** `RelayState`, `RelaySnapshot`, `router`, `serve`, handlers, and tests in `crates/pavis-relay/src/lib.rs`.
-- **Assessment (Reason):** Blurs responsibility boundaries and complicates maintenance.
-- **Recommendation (Suggestion):** Split into `state.rs`, `handlers.rs`, `routes.rs`, and move tests into `tests/` or focused modules.
-- **Doc Drift?:** No.
-
-#### F-2: Single file contains multiple unrelated features
-- **Expectation:** Long-poll, publish, artifacts, and metrics features should be separated.
-- **Observed:** Features are implemented in one `lib.rs` file.
-- **Evidence:** Long-poll logic, publish/version control, metrics output, and artifact history co-located in `crates/pavis-relay/src/lib.rs`.
-- **Assessment (Reason):** Slows navigation and raises coupling risk.
-- **Recommendation (Suggestion):** Extract feature buckets into separate modules.
-- **Doc Drift?:** No.
-
----
-
-## Review Entry — 2025-12-29T13:43:40Z
-
-### Scope
-- `crates/pavis-relay` structural review.
-
----
-
-### Method
-- Manual inspection of `crates/pavis-relay/src/lib.rs` responsibilities and test placement.
-
-
-### Model
-- GPT-5
-
----
-
-### Summary (Index)
-
-| ID  | Severity | Area | Short Title | Status |
-|----:|:--------:|------|-------------|:------:|
-| F-1 | Medium | Relay module layout | Relay `lib.rs` combines routing/state/handlers/tests | Open |
-| F-2 | Medium | Relay feature layout | Single file contains multiple unrelated features | Open |
-
----
-
-### Detailed Findings
-
-#### F-1: Relay `lib.rs` combines routing/state/handlers/tests
-- **Expectation:** Relay routing, state, handlers, and tests live in separate modules.
-- **Observed:** `crates/pavis-relay/src/lib.rs` contains router assembly, state/cache, handlers, and tests.
-- **Evidence:** `RelayState`, `RelaySnapshot`, `router`, `serve`, handlers, and tests in `crates/pavis-relay/src/lib.rs`.
-- **Assessment (Reason):** Blurs responsibility boundaries and complicates maintenance.
-- **Recommendation (Suggestion):** Split into `state.rs`, `handlers.rs`, `routes.rs`, and move tests into `tests/` or focused modules.
-- **Doc Drift?:** No.
-
-#### F-2: Single file contains multiple unrelated features
-- **Expectation:** Long-poll, publish, artifacts, and metrics features should be separated.
-- **Observed:** Features are implemented in one `lib.rs` file.
-- **Evidence:** Long-poll logic, publish/version control, metrics output, and artifact history co-located in `crates/pavis-relay/src/lib.rs`.
-- **Assessment (Reason):** Slows navigation and raises coupling risk.
-- **Recommendation (Suggestion):** Extract feature buckets into separate modules.
 - **Doc Drift?:** No.

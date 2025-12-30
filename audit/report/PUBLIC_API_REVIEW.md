@@ -10,6 +10,30 @@ No open findings.
 
 ---
 
+## Review Entry — 2025-12-30T04:45:12Z
+
+### Scope
+- Public API surface scan across all crates.
+
+---
+
+### Method
+- Targeted scan of `pub` types and boundary bypass methods.
+
+
+### Model
+- gemini-2.0-flash-exp
+
+---
+
+### Summary (Index)
+
+No new findings. Public API boundaries remain stable. The `unsafe` marker on `ValidatedRuntimeConfig::from_trusted` is correctly enforcing explicit opt-in for validation bypass.
+
+---
+
+> Older review entries continue below this point, in reverse chronological order.
+
 ## Review Entry — 2025-12-30T03:33:22Z
 
 ### Scope
@@ -45,8 +69,6 @@ No open findings.
 - **Doc Drift?:** No.
 
 ---
-
-> Older review entries continue below this point, in reverse chronological order.
 
 ## Review Entry — 2025-12-30T03:25:01Z
 

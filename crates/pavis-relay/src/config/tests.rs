@@ -2,10 +2,17 @@ use super::RelayConfig;
 use super::env::expand_env;
 use super::load::decode_value;
 
-fn decode_str(input: &str) -> anyhow::Result<RelayConfig> {
+fn decode_str_with_env<F>(input: &str, lookup: F) -> anyhow::Result<RelayConfig>
+where
+    F: Fn(&str) -> Result<String, std::env::VarError>,
+{
     let mut value: serde_yaml::Value = serde_yaml::from_str(input)?;
-    expand_env(&mut value)?;
+    expand_env(&mut value, &lookup)?;
     decode_value(value)
+}
+
+fn decode_str(input: &str) -> anyhow::Result<RelayConfig> {
+    decode_str_with_env(input, |k| std::env::var(k))
 }
 
 #[test]
@@ -154,71 +161,25 @@ metrics:
 
 #[test]
 fn load_expands_environment_variables() -> anyhow::Result<()> {
-    unsafe {
-        std::env::set_var("PAVIS_RELAY_TEST", "dev");
-    }
-    let config = decode_str(
+    let lookup = |key: &str| -> Result<String, std::env::VarError> {
+        if key == "PAVIS_RELAY_TEST" {
+            Ok("dev".to_string())
+        } else {
+            Err(std::env::VarError::NotPresent)
+        }
+    };
+
+    let config = decode_str_with_env(
         r#"
-identity:
-  name: pavis-relay
-  cluster: "${PAVIS_RELAY_TEST}"
-  instance_id: "localhost"
-http:
-  bind: "127.0.0.1:8081"
-storage:
-  type: filesystem
-  root_dir: "/var/lib/pavis"
-artifact:
-  name: "default"
-  pvs_filename: "config.pvs"
-  lkg_path: "/var/lib/pavis/lkg/config.pvs"
-  artifacts_dir: "/var/lib/pavis/artifacts"
-  limits:
-    max_pvs_bytes: 1
-  pipeline:
-    source_id: "static:dev-config"
-    ingest:
-      source:
-        kind: static
-        config:
-          path: "/etc/pavis/input.yaml"
-      mode:
-        kind: watch
-        config:
-          debounce_ms: 200
-    codec:
-      kind: yaml
-      options:
-        strict_unknown_fields: true
-    execution:
-      versioning:
-        scheme: monotonic_u64
-        state_file: "/var/lib/pavis/state.json"
-      publish:
-        atomic_write: true
-        fsync: true
-distribution:
-  long_poll:
-    enabled: true
-    headers:
-      version: "X-Pavis-Version"
-      checksum: "X-Pavis-Checksum"
-    timeouts:
-      hold_seconds: 1
-      idle_seconds: 1
-  direct_fetch:
-    enabled: true
-security:
-  auth:
-    mode: none
-    bearer:
-      token: ""
-logging:
-  level: info
-  access_log: true
-metrics:
-  prometheus_bind: "0.0.0.0:9100"
+relay:
+  identity:
+    name: pavis-relay
+    cluster: "${PAVIS_RELAY_TEST}"
+    instance_id: "localhost"
+  http:
+    bind: "127.0.0.1:8081"
 "#,
+        lookup,
     )?;
 
     assert_eq!(config.identity.cluster, "dev");

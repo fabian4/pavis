@@ -1,18 +1,21 @@
 use anyhow::{Context, Result};
 
-pub(super) fn expand_env(value: &mut serde_yaml::Value) -> Result<()> {
+pub(super) fn expand_env<F>(value: &mut serde_yaml::Value, lookup: &F) -> Result<()>
+where
+    F: Fn(&str) -> Result<String, std::env::VarError>,
+{
     match value {
         serde_yaml::Value::String(s) => {
-            *s = expand_env_str(s)?;
+            *s = expand_env_str(s, lookup)?;
         }
         serde_yaml::Value::Sequence(seq) => {
             for item in seq {
-                expand_env(item)?;
+                expand_env(item, lookup)?;
             }
         }
         serde_yaml::Value::Mapping(map) => {
             for (_, value) in map.iter_mut() {
-                expand_env(value)?;
+                expand_env(value, lookup)?;
             }
         }
         _ => {}
@@ -20,7 +23,10 @@ pub(super) fn expand_env(value: &mut serde_yaml::Value) -> Result<()> {
     Ok(())
 }
 
-fn expand_env_str(input: &str) -> Result<String> {
+fn expand_env_str<F>(input: &str, lookup: &F) -> Result<String>
+where
+    F: Fn(&str) -> Result<String, std::env::VarError>,
+{
     let mut out = String::new();
     let mut rest = input;
     while let Some(start) = rest.find("${") {
@@ -32,8 +38,7 @@ fn expand_env_str(input: &str) -> Result<String> {
             ));
         };
         let key = &remaining[..end];
-        let value =
-            std::env::var(key).with_context(|| format!("missing environment variable: {key}"))?;
+        let value = lookup(key).with_context(|| format!("missing environment variable: {key}"))?;
         out.push_str(&value);
         rest = &remaining[end + 1..];
     }

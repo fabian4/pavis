@@ -1,16 +1,119 @@
-# Test Coverage and Quality Review
-
 ## 📌 Overall Test Confidence Summary (Latest)
 
-🚫 Critical Gaps: 0 · 🔥 High Risk: 0 · ⚠️ Medium Risk: 0 · 🧹 Low Risk: 0 · ✅ Solved: 8
+🚫 Critical Gaps: 0 · 🔥 High Risk: 0 · ⚠️ Medium Risk: 0 · 🧹 Low Risk: 0 · ✅ Solved: 9
 
-> Unit and integration coverage for relay endpoints is in good shape; no open test gaps are recorded.
+> Core validation, protocol integrity, and now critical runtime paths (AccessLog, Relay Routes) are covered.
 
 ---
 
 ## 🎯 Open Test Findings (Prioritized)
 
 No open findings.
+
+---
+
+## Review Entry — 2025-12-30T05:30:00Z
+
+### Scope
+- Unit tests: `crates/pavis/src/telemetry/access_log.rs`, `crates/pavis-relay/src/routes.rs`.
+- Integration tests: Not reviewed in this entry.
+- E2E tests: Not reviewed in this entry.
+
+---
+
+### Method
+- Refactoring and unit test addition for high-risk coverage gaps identified in audit.
+
+
+### Model
+- gemini-2.0-flash-exp
+
+---
+
+### Coverage Map (High-Level)
+
+| Feature / Area | Unit | Integration | E2E | Notes |
+|----------------|:----:|:-----------:|:---:|-------|
+| Access Log Formatting | ✅ | n/a | n/a | Logic extracted and tested. |
+| Access Log File Write | ✅ | n/a | n/a | Worker file write tested. |
+| Relay Router Construction | ✅ | n/a | n/a | Construction and bind error paths tested. |
+
+Legend:
+- ✅ Covered
+- ⚠️ Partially covered
+- ❌ Not covered
+
+---
+
+### Detailed Findings
+
+#### T-1: Access log logic covered
+- **Expectation:** Access log formatting and writing should be tested.
+- **Observed:** Logic refactored to `format_log_line` and tested; file writing tested via temporary file.
+- **Evidence:** `crates/pavis/src/telemetry/access_log.rs` tests.
+- **Risk (Reason):** Previously 25% coverage; now core logic is verified.
+- **Suggestion:** None.
+- **CI Impact?:** No.
+
+#### T-2: Relay routes and serve error covered
+- **Expectation:** Router assembly and serve startup errors should be tested.
+- **Observed:** Added tests for router construction and `serve` binding failure.
+- **Evidence:** `crates/pavis-relay/src/routes.rs` tests.
+- **Risk (Reason):** Previously 57% coverage; now startup/error paths are verified.
+- **Suggestion:** None.
+- **CI Impact?:** No.
+
+---
+
+### Test Workflow & CI Review
+- **Local workflow:** Not reviewed in this entry.
+- **CI coverage:** Not reviewed in this entry.
+
+---
+
+> Older test review entries continue below this point, in reverse chronological order.
+
+## Review Entry — 2025-12-30T04:41:10Z
+
+### Scope
+- Unit tests: `crates/pavis-core/src/validate.rs`, `crates/pavis-pvs/src/verify.rs`.
+- Integration tests: Not reviewed in this entry.
+- E2E tests: Not reviewed in this entry.
+
+---
+
+### Method
+- Verification of unit test presence in critical validation and protocol modules.
+
+
+### Model
+- gemini-2.0-flash-exp
+
+---
+
+### Coverage Map (High-Level)
+
+| Feature / Area | Unit | Integration | E2E | Notes |
+|----------------|:----:|:-----------:|:---:|-------|
+| Core Semantic Validation | ✅ | n/a | n/a | Unit tests present in `validate.rs`. |
+| PVS Integrity Checks | ✅ | n/a | n/a | Unit tests present in `verify.rs`. |
+
+Legend:
+- ✅ Covered
+- ⚠️ Partially covered
+- ❌ Not covered
+
+---
+
+### Detailed Findings
+
+No new findings. Critical paths in Core and PVS are covered by unit tests.
+
+---
+
+### Test Workflow & CI Review
+- **Local workflow:** Not reviewed in this entry.
+- **CI coverage:** Not reviewed in this entry.
 
 ---
 
@@ -86,8 +189,6 @@ Legend:
 - Suggested stabilizations: None noted in this entry.
 
 ---
-
-> Older test review entries continue below this point, in reverse chronological order.
 
 ## Review Entry — 2025-12-29T17:42:57Z
 

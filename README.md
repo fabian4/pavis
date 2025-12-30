@@ -7,6 +7,7 @@
 [![Engine](https://img.shields.io/badge/engine-Pingora-purple.svg)](https://github.com/cloudflare/pingora)
 [![Status](https://img.shields.io/badge/status-Pre--Alpha-red.svg)](#status)
 [![Crates.io](https://img.shields.io/crates/v/pavis.svg)](https://crates.io/crates/pavis)
+[![codecov](https://codecov.io/gh/fabian4/pavis/branch/main/graph/badge.svg?token=C1DRZN5YDL)](https://codecov.io/gh/fabian4/pavis)
 
 **Pavis** is an experimental **service mesh sidecar proxy** implemented in **Rust**, built on top of **Cloudflare Pingora**.
 

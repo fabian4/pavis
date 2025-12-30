@@ -24,12 +24,24 @@ Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data P
 ```
 
 All arrows represent data or artifact flow, not call graphs or control flow.
-Fixed dataflow: **Ingest → Artifact → Codec → RuntimeConfig → Relay → PVS → Runtime**.
-Type-level validation flow: **Artifact → CheckedArtifact → RuntimeConfig → ValidatedRuntimeConfig → Relay**.
+Fixed dataflow: **Ingest → SourceArtifact → Codec → RuntimeConfig → Relay → PVS Artifact → Runtime**.
+Type-level validation flow: **SourceArtifact → CheckedArtifact → RuntimeConfig → ValidatedRuntimeConfig → Relay**.
 
 The project is structured as a workspace with strict module boundaries to enforce the separation of concerns.
 
-### 1.2. Layer Rationale (Why these boundaries exist)
+### 1.2. Sidecar Scope (Outbound-first)
+
+Pavis is **outbound-first**: it primarily targets service-to-service proxying (Linkerd-style).
+Inbound use is possible but **optional/future** and tends to pull the runtime toward gateway/policy-engine concerns.
+Inbound behavior must be treated as an explicit tradeoff and **must not** leak gateway-style policy logic into the runtime by default.
+
+### 1.3. Terminology (Artifacts and Boundaries)
+
+- **SourceArtifact**: raw source bytes + metadata emitted by ingest (this is `Artifact` in `pavis-ingest-api`).
+- **PVS Artifact**: the `.pvs` binary produced from a validated `RuntimeConfig` by `pavis-pvs`.
+- **Envelope** (deprecated): avoid this term; use **SourceArtifact** instead to keep the ingest → codec boundary explicit.
+
+### 1.4. Layer Rationale (Why these boundaries exist)
 
 - **Relay exists today** to integrate with existing Envoy ecosystems: it publishes versioned `.pvs` artifacts and distributes them without imposing governance.
 - **Codec stays a logical boundary** even if later embedded inside governor: the DTO ↔ RuntimeConfig transformation remains pure and testable.
@@ -42,9 +54,9 @@ The project is structured as a workspace with strict module boundaries to enforc
 | **`pavis-core`**       | Protocol – Canonical types, semantic validation, and memory layout.                               |
 | **`pavis-relay`**      | Relay – Versions `.pvs`, manages caches/last-known-good, and distributes artifacts via long poll. |
 | **`pavis-ingest-*`**   | Ingest – Source connectivity (xDS, K8s, file watch): streams, auth, retries, resync.              |
-| **`pavis-ingest-api`** | Ingest API – Artifact (raw bytes + metadata) and ingest trait boundary.                           |
+| **`pavis-ingest-api`** | Ingest API – SourceArtifact (raw bytes + metadata) and ingest trait boundary.                    |
 | **`pavis-codec-*`**    | Codec – DTO ↔ RuntimeConfig transforms, mechanical defaults, compatibility, and core validation.  |
-| **`pavis-codec-api`**  | Codec API – Codec trait boundary for Artifact ↔ RuntimeConfig transforms.                         |
+| **`pavis-codec-api`**  | Codec API – Codec trait boundary for SourceArtifact ↔ RuntimeConfig transforms.                  |
 | **`pavis-pvs`**        | Binary Protocol – Integrity layer (Header + Checksum + Encoding).                                 |
 | **`pavctl`**           | CLI – Developer tool for manual generation, conversion, and runtime management.                   |
 
@@ -56,13 +68,15 @@ The project is structured as a workspace with strict module boundaries to enforc
 
 *   **`pavis-core` (Root)**: The foundation. Canonical types and semantic validation. No I/O.
 *   **`pavis-pvs`**: Depends on `pavis-core`. Handles the binary lifecycle.
-*   **`pavis-codec-api`**: Defines the Codec boundary. Depends on `pavis-core` and ingest envelope types.
-*   **`pavis-ingest-api`**: Defines the Ingest boundary (envelope + metadata).
+*   **`pavis-codec-api`**: Defines the Codec boundary. Depends on `pavis-core` and ingest SourceArtifact types.
+*   **`pavis-ingest-api`**: Defines the Ingest boundary (SourceArtifact + metadata).
 *   **`pavis-codec-*`**: Pure logic crates. Depend on `pavis-core` and `pavis-codec-api` for DTO ↔ RuntimeConfig mapping and semantic validation.
-*   **`pavis-ingest-*`**: Connectivity crates. Handle I/O and transport to upstream sources; emit envelopes (bytes + metadata) only.
+*   **`pavis-ingest-*`**: Connectivity crates. Handle I/O and transport to upstream sources; emit SourceArtifacts (bytes + metadata) only.
 *   **`pavis-relay`**: Coordinates ingest/codec outputs, versions artifacts, and distributes `.pvs`. It does artifact-level header/payload handling only and does not decode DTOs or `RuntimeConfig`.
 *   **`pavctl`**: Depends on codecs and `pavis-pvs` to provide manual control and local tooling.
 *   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs` only. **Must not** depend on ingest/codec/relay/governor.
+
+**Current implementation note:** The repository currently ships a relay that accepts **PVS Artifacts** via HTTP publish and long-poll distribution. The ingest/codec pipeline remains a control-plane concern and may be integrated later; relay must remain DTO-agnostic regardless.
 
 ### 2.3. Responsibilities
 
@@ -84,17 +98,17 @@ To support diverse environments (Kubernetes, Service Meshes, and standalone file
 
 1.  **pavis-ingest-* (The Connectivity Layer)**:
     *   **Responsibility**: Implements transport logic to upstream sources (gRPC streams, watches, auth, retries, reconnect, resync).
-    *   **Output**: Emits artifacts (raw bytes + metadata) into the pipeline.
+    *   **Output**: Emits **SourceArtifacts** (raw bytes + metadata) into the pipeline.
 
 2.  **pavis-codec-* (The Transformation Layer)**:
-    *   **Responsibility**: Converts artifacts (xDS, YAML, CRD, JSON bytes) into the canonical `RuntimeConfig` model and back (best-effort).
+    *   **Responsibility**: Converts SourceArtifacts (xDS, YAML, CRD, JSON bytes) into the canonical `RuntimeConfig` model and back (best-effort).
     *   **Purity**: Codecs are pure transformers; no I/O, no networking.
     *   **Validation**: Performs source-specific preflight validation (Artifact → CheckedArtifact), then invokes canonical semantic validation in `pavis-core` (RuntimeConfig → ValidatedRuntimeConfig).
 
 3.  **pavis-relay (The Distribution Layer)**:
-    *   **Responsibility**: Manages `.pvs` artifacts (versioning, checksums, cache/last-known-good) and distributes them via long polling.
+    *   **Responsibility**: Manages **PVS Artifacts** (versioning, checksums, cache/last-known-good) and distributes them via long polling.
     *   **Invariant**: Enforces the **Single Source Authority** execution-time constraint—only one approved source controls the proxy at a time.
-    *   **Constraint**: The relay MUST NOT parse DTOs or decode `RuntimeConfig`, but it MUST handle artifact bytes. This includes reading/writing the fixed 64-byte PVS header, splitting header vs payload at offset `0x40`, computing the payload checksum (header excluded), and caching/serving versioned artifacts.
+    *   **Constraint**: The relay MUST NOT parse DTOs or decode `RuntimeConfig`, but it MUST handle PVS bytes. Integrity checks should be delegated to `pavis-pvs` (header validation, checksum, archive integrity), and the relay should cache and serve the verified bytes.
     *   **HTTP API Contract**: See `crates/pavis-relay/README.md` for the endpoint-level contract and long-poll semantics.
 
 Pavis-relay exposes a small HTTP surface for distributing versioned `.pvs` artifacts to sidecars. It is a pure artifact distribution server that uses long-polling so sidecars can fetch new configs as they become available without push channels or schema knowledge. Relay operates on artifact bytes (header + payload) and never decodes the payload into `RuntimeConfig`.
@@ -499,10 +513,13 @@ Pavis employs a multi-layered strategy to ensure configuration stability, correc
 
 ### 7.3. Strategic Filtering
 
-To prevent "Config Bloat" (a major issue in Envoy), the Relay (`pavis-relay`) performs aggressive filtering after codec normalization and before `.pvs` emission.
+To prevent "Config Bloat" (a major issue in Envoy), **filtering is a control-plane responsibility**.
+It must happen **before** `.pvs` emission, in the codec/governor path, not inside the relay.
 
-- **Network Efficiency** – Only sends routes relevant to the specific Pod (based on Namespace or SidecarScope)
-- **Security** – A compromised sidecar only knows the IP addresses of services it is explicitly allowed to talk to
+- **Network Efficiency** – Only emit routes relevant to the target workload (Namespace, SidecarScope, or policy).
+- **Security** – A compromised sidecar only receives IPs it is explicitly allowed to talk to.
+
+Relay remains a byte-level distributor and MUST NOT decode `RuntimeConfig` to perform filtering.
 
 ## Future: Governor (Control Plane)
 

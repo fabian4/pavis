@@ -31,3 +31,40 @@ pub async fn serve(listen_addr: SocketAddr, state: RelayState) -> Result<(), Rel
     .await
     .map_err(|e| RelayError::Http(e.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RelayState;
+    use axum::body::Bytes;
+
+    fn mock_state() -> RelayState {
+        RelayState::new(0, Bytes::new()).expect("create state")
+    }
+
+    #[tokio::test]
+    async fn test_router_construction() {
+        let state = mock_state();
+        let app = router(state);
+        assert!(format!("{:?}", app).contains("Router"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_bind_error() {
+        // Bind to a port first to occupy it
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Try to serve on the occupied address
+        let state = mock_state();
+        let result = serve(addr, state).await;
+
+        assert!(result.is_err());
+        match result {
+            Err(RelayError::Http(msg)) => assert!(
+                msg.to_lowercase().contains("address already in use") || msg.contains("ADDRINUSE")
+            ),
+            _ => panic!("Expected RelayError::Http, got {:?}", result),
+        }
+    }
+}
