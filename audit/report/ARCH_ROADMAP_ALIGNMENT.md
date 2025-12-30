@@ -1,15 +1,57 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 1 · 🧹 Low: 1 · ✅ Resolved: 2
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 4
 
 ---
 
 ## Open Findings (Prioritized)
 
-| ID  | Severity | Area | Short Title |
-|----:|:--------:|------|-------------|
-| F-3 | Medium | Relay Migration | Relay migration capability depends on paused Phase 4 |
-| F-4 | Low | Governance | Governor component concept diverges from K8s Operator plan |
+No open findings.
+
+---
+
+## Review Entry — 2025-12-30T11:35:29Z
+
+### Scope
+- `Architecture.md` and `ROADMAP.md` alignment review.
+
+---
+
+### Method
+- Manual comparison of architectural constraints against roadmap phase sequencing and ownership.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-3 | Medium | Relay Migration | Migration work moved to deferred ingestion phase | Done |
+| F-4 | Low | Governance | Roadmap clarifies Governor/Operator alignment | Done |
+
+---
+
+### Detailed Findings
+
+#### F-3: Migration work moved to deferred ingestion phase
+- **Expectation:** `Architecture.md` notes ingest/codec orchestration is deferred while the relay remains PVS-only.
+- **Observed:** Roadmap now places migration responsibilities under Phase 4 (Modular Ingestion), removing Phase 3 dependency on paused pipeline infrastructure.
+- **Evidence:** `Architecture.md` Sec 2.2 current implementation note; `ROADMAP.md` Phase 3 vs Phase 4 updates.
+- **Assessment (Reason):** Phase sequencing now matches architecture dependencies.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No — roadmap now matches architecture.
+
+#### F-4: Roadmap clarifies Governor/Operator alignment
+- **Expectation:** Architecture defines a future Governor role; roadmap should map this to its concrete delivery vehicle.
+- **Observed:** Roadmap now explicitly states that the Phase 10 Operator can fulfill the Governor responsibilities.
+- **Evidence:** `Architecture.md` Governor description; `ROADMAP.md` Phase 10 notes.
+- **Assessment (Reason):** Terminology alignment removes ambiguity.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No — terminology clarified.
 
 ---
 

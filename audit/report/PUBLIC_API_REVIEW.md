@@ -1,12 +1,85 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 7
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 8
 
 ---
 
 ## Open Findings (Prioritized)
 
 No open findings.
+
+---
+
+## Review Entry — 2025-12-30T12:57:53Z
+
+### Scope
+- Public API surface scan across all crates (targeted fix verification).
+- Snapshot: `e434c0ba4c9250b166cb8a53c63cb13ef96bd892`
+
+---
+
+### Method
+- Manual verification that relay state types are no longer exposed via the public lib API.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Low | Relay API | Relay re-exports internal state types | Done |
+
+---
+
+### Detailed Findings
+
+#### F-1: Relay re-exports internal state types
+- **Expectation:** Binary-oriented crates avoid exposing internal state types unless required by external consumers.
+- **Observed:** Relay state and options are now crate-private; public API exposes only `serve_from_config` and config types.
+- **Evidence:** `crates/pavis-relay/src/lib.rs`; `crates/pavis-relay/src/state.rs`; `crates/pavis-relay/src/app.rs`.
+- **Assessment (Reason):** Public surface reduced while keeping binary entrypoint intact.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+---
+
+## Review Entry — 2025-12-30T11:35:29Z
+
+### Scope
+- Public API surface scan across all crates.
+
+---
+
+### Method
+- Manual scan of `pub` exports in library crates and their external usage.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Low | Relay API | Relay re-exports internal state types | Open |
+
+---
+
+### Detailed Findings
+
+#### F-1: Relay re-exports internal state types
+- **Expectation:** Binary-oriented crates avoid exposing internal state types unless required by external consumers.
+- **Observed:** `pavis-relay` re-exports `RelayState`, `RelayOptions`, `RelayError`, and `execute_plan` from its library API; only integration tests appear to rely on these types.
+- **Evidence:** `crates/pavis-relay/src/lib.rs`; `crates/pavis-relay/tests/relay_http.rs`.
+- **Assessment (Reason):** Expands the public API surface and creates stability obligations for internal types.
+- **Recommendation (Suggestion):** Consider moving tests into `src/` modules and reducing exports to `pub(crate)` where external use is not required.
+- **Doc Drift?:** No.
 
 ---
 

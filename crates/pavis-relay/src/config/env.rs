@@ -45,3 +45,44 @@ where
     out.push_str(rest);
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::expand_env;
+
+    #[test]
+    fn expand_env_walks_sequences_and_maps() {
+        let lookup = |key: &str| -> Result<String, std::env::VarError> {
+            if key == "VALUE" {
+                Ok("ok".to_string())
+            } else {
+                Err(std::env::VarError::NotPresent)
+            }
+        };
+        let mut value: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+items:
+  - "${VALUE}"
+  - { nested: "${VALUE}" }
+"#,
+        )
+        .expect("yaml");
+
+        expand_env(&mut value, &lookup).expect("expand");
+        let seq = value
+            .get("items")
+            .and_then(|items| items.as_sequence())
+            .expect("sequence");
+        assert_eq!(seq[0].as_str(), Some("ok"));
+        let map_val = seq[1].get("nested").and_then(|v| v.as_str());
+        assert_eq!(map_val, Some("ok"));
+    }
+
+    #[test]
+    fn expand_env_rejects_unterminated_reference() {
+        let lookup = |_key: &str| -> Result<String, std::env::VarError> { Ok("value".to_string()) };
+        let mut value: serde_yaml::Value = serde_yaml::from_str("\"${VALUE\"").expect("yaml");
+        let err = expand_env(&mut value, &lookup).expect_err("unterminated");
+        assert!(err.to_string().contains("unterminated"));
+    }
+}

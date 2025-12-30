@@ -1,11 +1,10 @@
-use crate::state::RelayState;
+use crate::state::{RelayMeta, RelayState};
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use pavis_pvs::{inspect, verify};
+use pavis_pvs::{VerifiedPvs, verify};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(serde::Deserialize)]
 pub(crate) struct ConfigQuery {
@@ -36,6 +35,7 @@ pub(crate) async fn get_config(
     let wait_ms = query.wait_ms.unwrap_or(1000).min(10_000);
 
     if client_version == current_version && options.long_poll_enabled {
+        state.metrics().inc_long_poll_wait();
         let notified = state.notifier().notified();
         let _ = tokio::time::timeout(std::time::Duration::from_millis(wait_ms), notified).await;
         let latest_version = state.version().await;
@@ -45,12 +45,8 @@ pub(crate) async fn get_config(
     }
 
     let snapshot = state.snapshot().await;
-    let meta = match inspect(&snapshot.pvs_bytes) {
-        Ok(meta) => meta,
-        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response(),
-    };
-    let checksum = meta.checksum_hex();
-    let algorithm = meta.algorithm_label();
+    let checksum = snapshot.meta.checksum.clone();
+    let algorithm = snapshot.meta.algorithm.clone();
 
     let mut response = snapshot.pvs_bytes.into_response();
     let headers = response.headers_mut();
@@ -83,14 +79,21 @@ pub(crate) async fn get_status(State(state): State<Arc<RelayState>>) -> Response
     let snapshot = state.snapshot().await;
     let version = snapshot.version;
     let size = snapshot.pvs_bytes.len();
-    let (checksum, algorithm) = match inspect(&snapshot.pvs_bytes) {
-        Ok(meta) => (meta.checksum_hex(), meta.algorithm_label()),
-        Err(_) => ("invalid".to_string(), "unknown".to_string()),
+    let checksum = if snapshot.meta.checksum.is_empty() {
+        "invalid".to_string()
+    } else {
+        snapshot.meta.checksum.clone()
     };
-    let updated_at = format_unix_time(snapshot.updated_at);
+    let algorithm = if snapshot.meta.algorithm.is_empty() {
+        "unknown".to_string()
+    } else {
+        snapshot.meta.algorithm.clone()
+    };
+    let uptime_seconds = uptime_seconds(state.started_at());
+    let last_update_unix_ms = unix_millis(snapshot.updated_at);
     let body = format!(
-        "name={} version={version} checksum={checksum} checksum_alg={algorithm} size={size} updated_at={updated_at}\n",
-        options.identity_name
+        "name={} version={version} checksum={checksum} checksum_alg={algorithm} size={size} uptime_seconds={uptime_seconds} last_update_unix_ms={last_update_unix_ms}\n",
+        options.identity_name,
     );
     (StatusCode::OK, body).into_response()
 }
@@ -114,6 +117,7 @@ pub(crate) async fn post_publish(
 ) -> Response {
     let options = state.options().clone();
     if body.is_empty() {
+        state.metrics().inc_publish_fail();
         return (StatusCode::BAD_REQUEST, "empty body\n").into_response();
     }
     let proposed_version = match headers
@@ -123,6 +127,7 @@ pub(crate) async fn post_publish(
     {
         Some(version) => version,
         None => {
+            state.metrics().inc_publish_fail();
             return (
                 StatusCode::BAD_REQUEST,
                 format!("missing {}\n", options.version_header.as_str()),
@@ -131,30 +136,63 @@ pub(crate) async fn post_publish(
         }
     };
 
-    if let Err(err) = verify(&body) {
-        return (StatusCode::UNPROCESSABLE_ENTITY, format!("{err}\n")).into_response();
-    }
+    let verified = match verify(&body) {
+        Ok(verified) => verified,
+        Err(err) => {
+            state.metrics().inc_publish_fail();
+            state.set_last_error(Some(err.to_string())).await;
+            return (StatusCode::UNPROCESSABLE_ENTITY, format!("{err}\n")).into_response();
+        }
+    };
 
-    let payload = body.clone();
-    if let Err(err) = state.publish(proposed_version, body).await {
+    let (payload, meta) = verified_payload(verified);
+    if let Err(err) = state
+        .publish(proposed_version, payload.clone(), meta.clone())
+        .await
+    {
+        state.metrics().inc_publish_fail();
+        state.set_last_error(Some(err.to_string())).await;
         return (StatusCode::CONFLICT, format!("{err}\n")).into_response();
     }
-
+    state.metrics().inc_publish_ok();
+    state.set_last_error(None).await;
     if let Some(path) = options.lkg_path.as_ref() {
         if let Some(parent) = path.parent() {
             match tokio::fs::create_dir_all(parent).await {
                 Ok(()) => {}
                 Err(err) => {
+                    state.metrics().inc_publish_fail();
+                    state.set_last_error(Some(err.to_string())).await;
                     return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response();
                 }
             }
         }
         if let Err(err) = tokio::fs::write(path, &payload).await {
+            state.metrics().inc_publish_fail();
+            state.set_last_error(Some(err.to_string())).await;
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response();
         }
     }
 
-    (StatusCode::OK, "ok\n").into_response()
+    let checksum = meta.checksum;
+    let algorithm = meta.algorithm;
+
+    let mut response = (StatusCode::OK, "ok\n").into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        options.version_header,
+        HeaderValue::from_str(&proposed_version.to_string())
+            .unwrap_or_else(|_| HeaderValue::from_static("0")),
+    );
+    headers.insert(
+        options.checksum_header,
+        HeaderValue::from_str(&checksum).unwrap_or_else(|_| HeaderValue::from_static("")),
+    );
+    headers.insert(
+        options.checksum_alg_header,
+        HeaderValue::from_str(&algorithm).unwrap_or_else(|_| HeaderValue::from_static("sha256")),
+    );
+    response
 }
 
 pub(crate) async fn get_artifact(
@@ -162,19 +200,14 @@ pub(crate) async fn get_artifact(
     Path(version): Path<u64>,
 ) -> Response {
     let options = state.options().clone();
-    let bytes = match state.artifact(version).await {
-        Some(bytes) => bytes,
+    let artifact = match state.artifact(version).await {
+        Some(artifact) => artifact,
         None => return (StatusCode::NOT_FOUND, "unknown version\n").into_response(),
     };
+    let checksum = artifact.meta.checksum;
+    let algorithm = artifact.meta.algorithm;
 
-    let meta = match inspect(&bytes) {
-        Ok(meta) => meta,
-        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response(),
-    };
-    let checksum = meta.checksum_hex();
-    let algorithm = meta.algorithm_label();
-
-    let mut response = bytes.into_response();
+    let mut response = artifact.bytes.into_response();
     let headers = response.headers_mut();
     headers.insert(
         axum::http::header::CONTENT_TYPE,
@@ -202,15 +235,37 @@ pub(crate) async fn get_artifact(
 
 pub(crate) async fn get_metrics(State(state): State<Arc<RelayState>>) -> Response {
     let version = state.version().await;
+    let metrics = state.metrics();
     let body = format!(
-        "# HELP pavis_relay_version Current config version\n# TYPE pavis_relay_version gauge\npavis_relay_version {version}\n"
+        "# HELP pavis_relay_version Current config version\n# TYPE pavis_relay_version gauge\npavis_relay_version {version}\n\
+# HELP pavis_relay_publish_total Successful publishes\n# TYPE pavis_relay_publish_total counter\npavis_relay_publish_total {}\n\
+# HELP pavis_relay_publish_fail_total Failed publishes\n# TYPE pavis_relay_publish_fail_total counter\npavis_relay_publish_fail_total {}\n\
+# HELP pavis_relay_longpoll_wait_total Long poll waits\n# TYPE pavis_relay_longpoll_wait_total counter\npavis_relay_longpoll_wait_total {}\n",
+        metrics.publish_ok(),
+        metrics.publish_fail(),
+        metrics.long_poll_wait()
     );
     (StatusCode::OK, body).into_response()
 }
 
-fn format_unix_time(value: SystemTime) -> u64 {
-    value
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+fn verified_payload(verified: VerifiedPvs) -> (Bytes, RelayMeta) {
+    let meta = RelayMeta {
+        checksum: verified.checksum_hex(),
+        algorithm: verified.algorithm_label(),
+        schema_version: verified.version(),
+    };
+    (Bytes::from(verified.into_bytes()), meta)
+}
+
+fn uptime_seconds(started_at: std::time::SystemTime) -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(started_at)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn unix_millis(time: std::time::SystemTime) -> u128 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
 }

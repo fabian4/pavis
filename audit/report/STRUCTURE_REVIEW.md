@@ -1,12 +1,84 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 5
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 6
 
 ---
 
 ## Open Findings (Prioritized)
 
 No open findings.
+
+---
+
+## Review Entry — 2025-12-30T13:07:30Z
+
+### Scope
+- Runtime config agent module structure.
+
+---
+
+### Method
+- File layout inspection for agent polling, backoff, and LKG helpers.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Low | Runtime config agent | Agent logic mixes polling, backoff, and LKG I/O | Done |
+
+---
+
+### Detailed Findings
+
+#### F-1: Agent logic mixes polling, backoff, and LKG I/O
+- **Expectation:** Runtime modules are split by responsibility (agent loop, backoff policy, file persistence).
+- **Observed:** Polling, backoff, and LKG persistence now live in focused modules.
+- **Evidence:** `crates/pavis/src/agent.rs`, `crates/pavis/src/agent/worker.rs`, `crates/pavis/src/agent/backoff.rs`, `crates/pavis/src/agent/lkg.rs`.
+- **Assessment (Reason):** Separation improves navigability and isolates change surfaces.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+---
+
+## Review Entry — 2025-12-30T11:35:29Z
+
+### Scope
+- Repository-wide structure and file size review.
+
+---
+
+### Method
+- Largest-file scan (`wc -l`) and manual cohesion check of runtime and test modules.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Low | Runtime config agent | Agent logic mixes polling, backoff, and LKG I/O | Open |
+
+---
+
+### Detailed Findings
+
+#### F-1: Agent logic mixes polling, backoff, and LKG I/O
+- **Expectation:** Runtime modules are split by responsibility (agent loop, backoff policy, file persistence).
+- **Observed:** `crates/pavis/src/agent.rs` contains the polling worker, backoff policy, LKG persistence helpers, and tests in a single file.
+- **Evidence:** `crates/pavis/src/agent.rs`.
+- **Assessment (Reason):** Multi-responsibility module increases cognitive load and makes targeted changes harder.
+- **Recommendation (Suggestion):** Split into `agent/worker.rs`, `agent/backoff.rs`, and `agent/lkg.rs` (tests colocated per module).
+- **Doc Drift?:** No.
 
 ---
 

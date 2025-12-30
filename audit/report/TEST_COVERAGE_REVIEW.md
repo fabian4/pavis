@@ -1,6 +1,6 @@
 ## 📌 Overall Test Confidence Summary (Latest)
 
-🚫 Critical Gaps: 0 · 🔥 High Risk: 0 · ⚠️ Medium Risk: 0 · 🧹 Low Risk: 0 · ✅ Solved: 9
+🚫 Critical Gaps: 0 · 🔥 High Risk: 0 · ⚠️ Medium Risk: 1 · 🧹 Low Risk: 1 · ✅ Solved: 9
 
 > Core validation, protocol integrity, and now critical runtime paths (AccessLog, Relay Routes) are covered.
 
@@ -8,7 +8,71 @@
 
 ## 🎯 Open Test Findings (Prioritized)
 
-No open findings.
+| ID  | Severity | Area | Short Title |
+|----:|:--------:|------|-------------|
+| T-1 | Medium | E2E | Integrated relay+pavis flows missing vs plan |
+| T-2 | Low | E2E | Relay artifact fetch success path untested in E2E |
+
+---
+
+## Review Entry — 2025-12-30T11:35:29Z
+
+### Scope
+- Unit tests: spot check for runtime config agent and relay handlers.
+- Integration tests: `crates/pavis-relay/tests/relay_http.rs`.
+- E2E tests: `crates/pavis-e2e/tests/relay` and `crates/pavis-e2e/tests/pavis`.
+- Coverage data: `audit/coverage.md`.
+
+---
+
+### Method
+- Manual comparison of E2E plan vs implemented tests plus coverage gap review.
+
+
+### Model
+- GPT-5
+
+---
+
+### Coverage Map (High-Level)
+
+| Feature / Area | Unit | Integration | E2E | Notes |
+|----------------|:----:|:-----------:|:---:|-------|
+| Relay publish + long poll | ✅ | ✅ | ✅ | E2E covers publish, long poll update + timeout. |
+| Relay artifact fetch | ✅ | ✅ | ⚠️ | E2E covers 404 only; success path is integration-tested. |
+| Runtime polling agent | ✅ | n/a | ❌ | Unit tests exist; E2E plan expects integrated flows. |
+| Integrated relay + runtime | n/a | n/a | ❌ | I1–I4 in `E2E_PLAN.md` not implemented. |
+
+Legend:
+- ✅ Covered
+- ⚠️ Partially covered
+- ❌ Not covered
+
+---
+
+### Detailed Findings
+
+#### T-1: Integrated relay+pavis flows missing vs plan
+- **Expectation:** `crates/pavis-e2e/E2E_PLAN.md` defines integrated cases I1–I4 (publish → long-poll → runtime apply, invalid publish rollback, concurrency, observability).
+- **Observed:** E2E suites are split into relay-only and pavis-only; there is no integrated test harness or cases for I1–I4.
+- **Evidence:** `crates/pavis-e2e/E2E_PLAN.md` (Integrated section); `crates/pavis-e2e/tests/relay`; `crates/pavis-e2e/tests/pavis`.
+- **Risk (Reason):** End-to-end behavior across relay and runtime is unverified, especially LKG retention and convergence under concurrent polls.
+- **Suggestion:** Add an integrated E2E harness that spins up relay + runtime and implements I1–I4 (starting with I1/I2 as smoke).
+- **CI Impact?:** Yes — likely a slower job or optional nightly run.
+
+#### T-2: Relay artifact fetch success path untested in E2E
+- **Expectation:** Relay E2E R1 includes successful `/v1/artifacts/:version` retrieval with headers and `.pvs` body.
+- **Observed:** E2E relay suite only asserts 404 for missing artifacts; the success path is covered in integration tests, not E2E.
+- **Evidence:** `crates/pavis-e2e/tests/relay/relay.rs` (missing success fetch); `crates/pavis-relay/tests/relay_http.rs` (success path).
+- **Risk (Reason):** E2E does not validate artifact serving in a full relay binary setup.
+- **Suggestion:** Add a single E2E case that publishes v1 and fetches `/v1/artifacts/1`.
+- **CI Impact?:** No.
+
+---
+
+### Test Workflow & CI Review
+- **Local workflow:** `make e2e-relay-binary` and `make e2e-pavis-binary` cover relay-only and pavis-only.
+- **CI coverage:** No integrated relay+pavis E2E job yet; recommend a separate job for integrated E2E once implemented.
 
 ---
 

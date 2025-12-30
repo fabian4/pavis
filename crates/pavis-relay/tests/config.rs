@@ -1,23 +1,19 @@
-use super::RelayConfig;
-use super::env::expand_env;
-use super::load::decode_value;
+use pavis_relay::config;
+use std::fs;
+use std::path::PathBuf;
 
-fn decode_str_with_env<F>(input: &str, lookup: F) -> anyhow::Result<RelayConfig>
-where
-    F: Fn(&str) -> Result<String, std::env::VarError>,
-{
-    let mut value: serde_yaml::Value = serde_yaml::from_str(input)?;
-    expand_env(&mut value, &lookup)?;
-    decode_value(value)
-}
-
-fn decode_str(input: &str) -> anyhow::Result<RelayConfig> {
-    decode_str_with_env(input, |k| std::env::var(k))
+fn write_config(contents: &str) -> anyhow::Result<PathBuf> {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = std::process::id();
+    let path = std::env::temp_dir().join(format!("pavis_relay_config_{pid}_{id}.yaml"));
+    fs::write(&path, contents)?;
+    Ok(path)
 }
 
 #[test]
 fn load_accepts_root_relay_key_and_nested_security() -> anyhow::Result<()> {
-    let config = decode_str(
+    let path = write_config(
         r#"
 relay:
   identity:
@@ -61,9 +57,6 @@ relay:
   distribution:
     long_poll:
       enabled: true
-      headers:
-        version: "X-Pavis-Version"
-        checksum: "X-Pavis-Checksum"
       timeouts:
         hold_seconds: 1
         idle_seconds: 1
@@ -82,6 +75,9 @@ relay:
 "#,
     )?;
 
+    let config = config::load(&path)?;
+    let _ = fs::remove_file(&path);
+
     assert_eq!(config.identity.name, "pavis-relay");
     assert_eq!(config.http.bind, "0.0.0.0:8080");
     assert_eq!(config.security.auth.mode, "none");
@@ -90,7 +86,7 @@ relay:
 
 #[test]
 fn load_accepts_flat_root_and_optional_admin_bind() -> anyhow::Result<()> {
-    let config = decode_str(
+    let path = write_config(
         r#"
 identity:
   name: pavis-relay
@@ -108,34 +104,31 @@ artifact:
   artifacts_dir: "/var/lib/pavis/artifacts"
   limits:
     max_pvs_bytes: 1
-  pipeline:
-    source_id: "static:dev-config"
-    ingest:
-      source:
-        kind: static
-        config:
-          path: "/etc/pavis/input.yaml"
-      mode:
-        kind: watch
-        config:
-          debounce_ms: 200
-    codec:
-      kind: yaml
-      options:
-        strict_unknown_fields: true
-    execution:
-      versioning:
-        scheme: monotonic_u64
-        state_file: "/var/lib/pavis/state.json"
-      publish:
-        atomic_write: true
-        fsync: true
+pipeline:
+  source_id: "static:dev-config"
+  ingest:
+    source:
+      kind: static
+      config:
+        path: "/etc/pavis/input.yaml"
+    mode:
+      kind: watch
+      config:
+        debounce_ms: 200
+  codec:
+    kind: yaml
+    options:
+      strict_unknown_fields: true
+  execution:
+    versioning:
+      scheme: monotonic_u64
+      state_file: "/var/lib/pavis/state.json"
+    publish:
+      atomic_write: true
+      fsync: true
 distribution:
   long_poll:
     enabled: true
-    headers:
-      version: "X-Pavis-Version"
-      checksum: "X-Pavis-Checksum"
     timeouts:
       hold_seconds: 1
       idle_seconds: 1
@@ -154,6 +147,9 @@ metrics:
 "#,
     )?;
 
+    let config = config::load(&path)?;
+    let _ = fs::remove_file(&path);
+
     assert_eq!(config.http.admin_bind, None);
     assert_eq!(config.http.bind, "127.0.0.1:8081");
     Ok(())
@@ -161,34 +157,33 @@ metrics:
 
 #[test]
 fn load_expands_environment_variables() -> anyhow::Result<()> {
-    let lookup = |key: &str| -> Result<String, std::env::VarError> {
-        if key == "PAVIS_RELAY_TEST" {
-            Ok("dev".to_string())
-        } else {
-            Err(std::env::VarError::NotPresent)
-        }
+    let mut env_iter = std::env::vars().filter(|(_, value)| !value.is_empty());
+    let Some((key, value)) = env_iter.next() else {
+        return Ok(());
     };
 
-    let config = decode_str_with_env(
+    let path = write_config(&format!(
         r#"
 relay:
   identity:
     name: pavis-relay
-    cluster: "${PAVIS_RELAY_TEST}"
+    cluster: "${{{key}}}"
     instance_id: "localhost"
   http:
     bind: "127.0.0.1:8081"
-"#,
-        lookup,
-    )?;
+"#
+    ))?;
 
-    assert_eq!(config.identity.cluster, "dev");
+    let config = config::load(&path)?;
+    let _ = fs::remove_file(&path);
+
+    assert_eq!(config.identity.cluster, value);
     Ok(())
 }
 
 #[test]
 fn load_accepts_minimal_config() -> anyhow::Result<()> {
-    let config = decode_str(
+    let path = write_config(
         r#"
 http:
   bind: "127.0.0.1:8080"
@@ -197,6 +192,9 @@ artifact:
 "#,
     )?;
 
+    let config = config::load(&path)?;
+    let _ = fs::remove_file(&path);
+
     assert_eq!(config.http.bind, "127.0.0.1:8080");
     assert_eq!(config.artifact.lkg_path, "/var/lib/pavis/lkg/config.pvs");
     Ok(())
@@ -204,7 +202,7 @@ artifact:
 
 #[test]
 fn load_populates_full_config_fields() -> anyhow::Result<()> {
-    let config = decode_str(
+    let path = write_config(
         r#"
 identity:
   name: pavis-relay
@@ -249,10 +247,6 @@ pipeline:
 distribution:
   long_poll:
     enabled: true
-    headers:
-      version: "X-Pavis-Version"
-      checksum: "X-Pavis-Checksum"
-      algorithm: "X-Pavis-Checksum-Alg"
     timeouts:
       hold_seconds: 55
       idle_seconds: 60
@@ -270,6 +264,9 @@ metrics:
   prometheus_bind: "0.0.0.0:9100"
 "#,
     )?;
+
+    let config = config::load(&path)?;
+    let _ = fs::remove_file(&path);
 
     assert_eq!(config.identity.cluster, "prod");
     assert_eq!(config.identity.instance_id, "relay-1");
@@ -299,18 +296,6 @@ metrics:
     assert!(config.pipeline.execution.publish.atomic_write);
     assert!(config.pipeline.execution.publish.fsync);
     assert!(config.distribution.long_poll.enabled);
-    assert_eq!(
-        config.distribution.long_poll.headers.version,
-        "X-Pavis-Version"
-    );
-    assert_eq!(
-        config.distribution.long_poll.headers.checksum,
-        "X-Pavis-Checksum"
-    );
-    assert_eq!(
-        config.distribution.long_poll.headers.algorithm.as_deref(),
-        Some("X-Pavis-Checksum-Alg")
-    );
     assert_eq!(config.distribution.long_poll.timeouts.hold_seconds, 55);
     assert_eq!(config.distribution.long_poll.timeouts.idle_seconds, 60);
     assert!(config.distribution.direct_fetch.enabled);

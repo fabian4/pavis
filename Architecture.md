@@ -123,7 +123,7 @@ Core endpoints:
     - 304 Not Modified (or 204 No Content if configured) on timeout.
 - GET /v1/status
   - Purpose: Operational status and health.
-  - Returns current active version, checksum, artifact size, uptime, and last update time.
+  - Returns plain-text fields for name, active version, checksum, checksum algorithm, artifact size, uptime seconds, and last update time (unix millis).
 
 Publish endpoint (early deployments):
 - POST /v1/publish

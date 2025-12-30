@@ -184,7 +184,10 @@ fn format_log_line(entry: LogEntry<'_>) -> String {
 mod tests {
     use super::{AccessLog, LogEntry, format_log_line};
     use pavis_core::AccessLogConfig;
+    use pingora::proxy::Session;
     use pingora::services::Service;
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
     use tokio::sync::watch;
 
     #[test]
@@ -244,5 +247,31 @@ mod tests {
         assert_eq!(content, "TEST_LOG_LINE\n");
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn access_log_emits_entry_for_request() {
+        let (access_log, mut worker) = AccessLog::new(&AccessLogConfig::Stdout);
+        let mut rx = worker.rx.take().expect("rx");
+
+        let (mut client, server) = tokio::io::duplex(1024);
+        client
+            .write_all(b"GET /api HTTP/1.1\r\nHost: example.com\r\nx-request-id: req-1\r\n\r\n")
+            .await
+            .expect("write request");
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.expect("read request");
+
+        access_log
+            .log(&mut session, Some("upstream-a"), std::time::Instant::now())
+            .await;
+
+        let line = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timeout")
+            .expect("log line");
+        assert!(line.contains("GET example.com /api"));
+        assert!(line.contains("upstream-a"));
+        assert!(line.contains("req-1"));
     }
 }

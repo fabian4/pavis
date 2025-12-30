@@ -1,6 +1,11 @@
+pub mod config;
+
+mod app;
 mod handlers;
 mod routes;
 mod state;
 
-pub use routes::{router, serve};
-pub use state::{RelayError, RelayOptions, RelayState, execute_plan};
+pub use app::serve_from_config;
+
+#[cfg(test)]
+mod http_tests;

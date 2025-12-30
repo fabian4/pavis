@@ -140,7 +140,10 @@ fn pavctl_bin() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_pavctl") {
         return PathBuf::from(path);
     }
-    let mut dir = std::env::current_dir().expect("cwd");
+    pavctl_bin_from(std::env::current_dir().expect("cwd"))
+}
+
+fn pavctl_bin_from(mut dir: PathBuf) -> PathBuf {
     loop {
         if dir.join("Cargo.lock").exists() {
             break;
@@ -166,4 +169,58 @@ fn temp_path(prefix: &str, ext: &str) -> PathBuf {
         .expect("time")
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}_{nanos}.{ext}"))
+}
+
+fn temp_dir(prefix: &str) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}_{nanos}"))
+}
+
+#[test]
+fn pavctl_bin_prefers_env_override() {
+    let temp = temp_path("pavctl_override", "bin");
+    std::fs::write(&temp, b"").expect("touch");
+    unsafe {
+        std::env::set_var("CARGO_BIN_EXE_pavctl", &temp);
+    }
+
+    let resolved = pavctl_bin();
+    assert_eq!(resolved, temp);
+
+    unsafe {
+        std::env::remove_var("CARGO_BIN_EXE_pavctl");
+    }
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn pavctl_bin_finds_release_binary() {
+    let dir = temp_dir("pavctl_workspace");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("Cargo.lock"), "").expect("lock");
+    let release_dir = dir.join("target/release");
+    std::fs::create_dir_all(&release_dir).expect("release dir");
+    let release_path = release_dir.join("pavctl");
+    std::fs::write(&release_path, b"").expect("release bin");
+
+    let resolved = pavctl_bin_from(dir.clone());
+    assert_eq!(resolved, release_path);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn pavctl_bin_panics_without_workspace_root() {
+    let dir = temp_dir("pavctl_noworkspace");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+
+    let result = std::panic::catch_unwind(|| pavctl_bin_from(dir.clone()));
+    assert!(result.is_err());
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

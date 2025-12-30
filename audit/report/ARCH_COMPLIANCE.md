@@ -1,14 +1,93 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 1 · 🧹 Low: 0 · ✅ Resolved: 2
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 4
 
 ---
 
 ## Open Findings (Prioritized)
 
-| ID  | Severity | Area | Short Title |
-|----:|:--------:|------|-------------|
-| F-1 | Medium | Relay Plugin | Relay lacks ingest/codec plugin dependencies |
+No open findings.
+
+---
+
+## Review Entry — 2025-12-30T12:29:33Z
+
+### Scope
+- Targeted architecture compliance check for relay status contract.
+
+---
+
+### Method
+- Manual comparison of `Architecture.md` endpoint description against relay handler behavior.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Low | Relay Status | Architecture status fields differ from implementation | Done |
+
+---
+
+### Detailed Findings
+
+#### F-1: Architecture status fields differ from implementation
+- **Expectation:** `Architecture.md` describes `/v1/status` fields consistent with the relay implementation.
+- **Observed:** Architecture now documents the current plain-text fields (name/version/checksum/checksum_alg/size).
+- **Evidence:** `Architecture.md` Core endpoints section; `crates/pavis-relay/src/handlers.rs`.
+- **Assessment (Reason):** Documentation updated to match the implemented contract.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No — resolved.
+
+---
+
+## Review Entry — 2025-12-30T11:35:29Z
+
+### Scope
+- Repository-wide architecture compliance scan focused on relay/runtime boundaries.
+
+---
+
+### Method
+- Cross-check of `Architecture.md` endpoint expectations against relay handlers and HTTP contract docs.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Low | Relay Status | Architecture status fields differ from implementation | Open |
+| F-2 | Medium | Relay Plugin | Relay ingest/codec plugins are explicitly deferred | Done |
+
+---
+
+### Detailed Findings
+
+#### F-1: Architecture status fields differ from implementation
+- **Expectation:** `Architecture.md` states `/v1/status` returns version, checksum, artifact size, uptime, and last update time.
+- **Observed:** Relay returns a plain-text status containing name/version/checksum/checksum_alg/size only; no uptime or last-update fields.
+- **Evidence:** `Architecture.md` Sec 3.1; `crates/pavis-relay/src/handlers.rs`; `crates/pavis-relay/README.md`.
+- **Assessment (Reason):** Status contract in architecture diverges from the implemented relay HTTP contract.
+- **Recommendation (Suggestion):** Either extend `/v1/status` to include uptime/last-update fields or update `Architecture.md` to match the current contract.
+- **Doc Drift?:** Yes — documentation drift.
+
+#### F-2: Relay ingest/codec plugins are explicitly deferred
+- **Expectation:** Prior finding claimed relay must include ingest/codec plugins as immediate dependencies.
+- **Observed:** `Architecture.md` includes a current-implementation note that the relay accepts `.pvs` artifacts and the ingest/codec pipeline remains a control-plane concern.
+- **Evidence:** `Architecture.md` Sec 2.2 “Current implementation note”; `crates/pavis-relay/Cargo.toml` lacks codec/ingest dependencies.
+- **Assessment (Reason):** The architecture explicitly allows a PVS-only relay in the current phase.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No — architecture explicitly permits the current implementation.
 
 ---
 

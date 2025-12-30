@@ -18,9 +18,12 @@ regex = "1"
 chrono = "0.4"
 thiserror = "1"
 tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
+arc-swap = "1.7.1"
+reqwest = { version = "0.12", default-features = true }
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
 
 [dev-dependencies]
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
+axum = "0.7"

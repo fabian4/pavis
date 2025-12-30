@@ -128,7 +128,7 @@ impl Drop for TestEnv {
     }
 }
 
-fn find_binary(project_root: &Path, name: &str) -> Result<PathBuf> {
+pub fn find_binary(project_root: &Path, name: &str) -> Result<PathBuf> {
     let release_bin = project_root.join("target/release").join(name);
     if release_bin.exists() {
         return Ok(release_bin);

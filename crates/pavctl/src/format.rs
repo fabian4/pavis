@@ -148,43 +148,76 @@ mod tests {
                 access_log: AccessLogConfig::Disabled,
                 tracing: None,
             },
-            upstreams: vec![Upstream {
-                name: "backend".to_string(),
-                load_balancer: LoadBalancer::RoundRobin,
-                http_version: HttpVersion::H2,
-                connection_pool: ConnectionPoolConfig {
-                    idle_timeout_secs: 60,
-                    connection_timeout_secs: 5,
-                },
-                tls: None,
-                endpoints: vec![Endpoint {
-                    ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                    port: 8081,
-                    weight: 1,
-                }],
-            }],
-            routes: vec![VirtualHost {
-                host: "example.com".to_string(),
-                paths: vec![Route {
-                    match_type: MatchType::Exact,
-                    path: "/health".to_string(),
-                    timeout_ms: None,
-                    retry_policy: None,
-                    request_headers: None,
-                    response_headers: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "backend".to_string(),
+            upstreams: vec![
+                Upstream {
+                    name: "backend".to_string(),
+                    load_balancer: LoadBalancer::RoundRobin,
+                    http_version: HttpVersion::H2,
+                    connection_pool: ConnectionPoolConfig {
+                        idle_timeout_secs: 60,
+                        connection_timeout_secs: 5,
+                    },
+                    tls: None,
+                    endpoints: vec![Endpoint {
+                        ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                        port: 8081,
                         weight: 1,
                     }],
-                }],
+                },
+                Upstream {
+                    name: "backend-h2h1".to_string(),
+                    load_balancer: LoadBalancer::Random,
+                    http_version: HttpVersion::H2H1,
+                    connection_pool: ConnectionPoolConfig {
+                        idle_timeout_secs: 30,
+                        connection_timeout_secs: 3,
+                    },
+                    tls: None,
+                    endpoints: vec![Endpoint {
+                        ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                        port: 8082,
+                        weight: 1,
+                    }],
+                },
+            ],
+            routes: vec![VirtualHost {
+                host: "example.com".to_string(),
+                paths: vec![
+                    Route {
+                        match_type: MatchType::Exact,
+                        path: "/health".to_string(),
+                        timeout_ms: None,
+                        retry_policy: None,
+                        request_headers: None,
+                        response_headers: None,
+                        destinations: vec![WeightedDestination {
+                            upstream: "backend".to_string(),
+                            weight: 1,
+                        }],
+                    },
+                    Route {
+                        match_type: MatchType::Regex,
+                        path: "^/items/[0-9]+$".to_string(),
+                        timeout_ms: None,
+                        retry_policy: None,
+                        request_headers: None,
+                        response_headers: None,
+                        destinations: vec![WeightedDestination {
+                            upstream: "backend-h2h1".to_string(),
+                            weight: 1,
+                        }],
+                    },
+                ],
             }],
         };
 
         let output = format_config(&config);
         assert!(output.contains("Listen Address: 127.0.0.1:8080"));
         assert!(output.contains("- Upstream: backend, LB: RoundRobin, HTTP: H2"));
+        assert!(output.contains("- Upstream: backend-h2h1, LB: Random, HTTP: H2H1"));
         assert!(output.contains("Host: example.com"));
         assert!(output.contains("[exact] /health"));
+        assert!(output.contains("[regex] ^/items/[0-9]+$"));
         assert!(output.contains("-> backend (weight 1)"));
     }
 

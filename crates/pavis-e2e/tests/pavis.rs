@@ -2,6 +2,8 @@
 mod basic_routing;
 #[path = "pavis/common/mod.rs"]
 mod common;
+#[path = "pavis/compaction.rs"]
+mod compaction;
 #[path = "pavis/header_manipulation.rs"]
 mod header_manipulation;
 #[path = "pavis/http_version.rs"]
@@ -10,10 +12,14 @@ mod http_version;
 mod regex_matching;
 #[path = "pavis/response_headers.rs"]
 mod response_headers;
+#[path = "pavis/restart_apply.rs"]
+mod restart_apply;
 #[path = "pavis/round_robin.rs"]
 mod round_robin;
 #[path = "pavis/route_matching.rs"]
 mod route_matching;
+#[path = "pavis/startup_failures.rs"]
+mod startup_failures;
 #[path = "pavis/tls_support.rs"]
 mod tls_support;
 #[path = "pavis/unmatched_routes.rs"]

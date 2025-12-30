@@ -318,6 +318,27 @@ mod tests {
         let verified = verify(&bytes).expect("verify");
         assert_eq!(verified.bytes(), bytes.as_slice());
         assert_eq!(verified.header().version, PAVIS_VERSION);
+        assert_eq!(verified.algorithm(), PAVIS_HASH_ALGORITHM_SHA256);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn inspect_and_verify_expose_checksum_helpers() {
+        let config = minimal_config();
+        let dir = std::env::temp_dir();
+        let path = dir.join("pavis_verify_helpers.pvs");
+        write(&path, &config).expect("write config");
+
+        let bytes = std::fs::read(&path).expect("read file");
+        let view = inspect(&bytes).expect("inspect");
+        assert_eq!(view.checksum(), view.header().checksum);
+        assert_eq!(view.algorithm_label(), "sha256");
+
+        let verified = verify(&bytes).expect("verify");
+        assert_eq!(verified.checksum(), verified.header().checksum);
+        assert_eq!(verified.algorithm_label(), "sha256");
+        assert_eq!(verified.into_bytes(), bytes);
 
         let _ = std::fs::remove_file(&path);
     }

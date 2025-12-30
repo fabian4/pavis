@@ -76,4 +76,21 @@ mod tests {
 
         let _ = std::fs::remove_file(path);
     }
+
+    #[test]
+    fn read_header_propagates_io_error() {
+        let dir = std::env::temp_dir().join(format!(
+            "pavis_read_header_dir_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create dir");
+
+        let err = read_header(&dir).expect_err("io error");
+        assert!(matches!(err, PvsError::Io(_)));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

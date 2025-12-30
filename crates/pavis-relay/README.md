@@ -1,10 +1,10 @@
 ## Pavis Relay HTTP API Contract
 
 ### Scope
-Relay serves versioned .pvs artifacts over HTTP long-poll. Runtime/sidecars are read-only. Publish is control-plane only. Relay coordinates ingest + codec and MUST NOT parse DTOs.
+Relay serves versioned .pvs artifacts over HTTP long-poll. Runtime/sidecars are read-only. Publish is control-plane only. Relay coordinates ingest + codec.
 
 ### Rules
-- Accept only .pvs bytes; no DTOs.
+- Accept only .pvs bytes on publish.
 - Validate PVS magic/version/checksum on publish.
 - Include version + checksum headers on artifact responses.
 
@@ -16,7 +16,7 @@ Relay serves versioned .pvs artifacts over HTTP long-poll. Runtime/sidecars are 
 ### GET /v1/config
 - Purpose: fetch current .pvs, long-poll if up-to-date.
 - Request: X-Pavis-Version; wait_ms query; empty body.
-- Response: 200 .pvs + headers; 304/204 timeout; 400 bad header; 500 error.
+- Response: 200 .pvs + headers; 304 timeout; 400 bad header; 500 error.
 - Notes: hold when versions match; return immediately on update; add Cache-Control: no-store.
 
 ### GET /v1/artifacts/:version
@@ -32,7 +32,7 @@ Relay serves versioned .pvs artifacts over HTTP long-poll. Runtime/sidecars are 
 
 ### GET /v1/status
 - Purpose: operational status.
-- Response: 200 version/checksum/size/last update; 500 error.
+- Response: 200 name/version/checksum/checksum_alg/size/uptime_seconds/last_update_unix_ms; 500 error.
 
 ### GET /v1/metrics
 - Purpose: Prometheus metrics.

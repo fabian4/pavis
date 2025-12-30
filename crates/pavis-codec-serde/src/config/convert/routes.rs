@@ -130,3 +130,73 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
 
     serde_routes
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{from_runtime, to_runtime};
+    use crate::config::types::{RetryPolicy, Route, VirtualHost, WeightedDestination};
+    use pavis_core::{MatchType, Route as RuntimeRoute, VirtualHost as RuntimeVhost};
+    use serde_json::json;
+    use std::time::Duration;
+
+    #[test]
+    fn to_runtime_rejects_non_string_retry_on() {
+        let routes = vec![VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                match_type: MatchType::Prefix,
+                path: "/".to_string(),
+                timeout: None,
+                retry: Some(RetryPolicy {
+                    attempts: 1,
+                    per_try_timeout: Duration::from_millis(100),
+                    retry_on: vec![json!(500)],
+                }),
+                request_headers: None,
+                response_headers: None,
+                destinations: vec![WeightedDestination {
+                    upstream: "backend".to_string(),
+                    weight: 1,
+                }],
+            }],
+        }];
+
+        let err = to_runtime(routes).expect_err("non-string retry_on");
+        assert!(
+            err.to_string()
+                .contains("retry.retry_on entries must be strings")
+        );
+    }
+
+    #[test]
+    fn from_runtime_preserves_response_headers() {
+        let routes = vec![RuntimeVhost {
+            host: "example.com".to_string(),
+            paths: vec![RuntimeRoute {
+                match_type: MatchType::Exact,
+                path: "/".to_string(),
+                timeout_ms: None,
+                retry_policy: None,
+                request_headers: None,
+                response_headers: Some(pavis_core::HeaderOperations {
+                    add: vec![("x-added".to_string(), "1".to_string())],
+                    remove: vec!["x-remove".to_string()],
+                }),
+                destinations: vec![pavis_core::WeightedDestination {
+                    upstream: "backend".to_string(),
+                    weight: 1,
+                }],
+            }],
+        }];
+
+        let serde_routes = from_runtime(routes);
+        let headers = serde_routes[0].paths[0]
+            .response_headers
+            .as_ref()
+            .expect("headers");
+        let add = headers.add.as_ref().expect("add");
+        assert_eq!(add.get("x-added").map(String::as_str), Some("1"));
+        let remove = headers.remove.as_ref().expect("remove");
+        assert_eq!(remove, &vec!["x-remove".to_string()]);
+    }
+}

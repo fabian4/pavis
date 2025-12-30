@@ -3,13 +3,15 @@ use clap::Parser;
 use pingora::prelude::*;
 use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
+use pavis::agent::{Backoff, ConfigAgent, lkg_version};
 use pavis::load::{self, RuntimeLoadError};
 use pavis::proxy::Proxy;
-use pavis::router::Router;
+use pavis::state::RuntimeStateHandle;
 use pavis::telemetry::Telemetry;
-use pavis::upstream::Manager;
 use pavis_core::{AccessLogConfig, LogLevel};
 
 #[derive(Parser, Debug)]
@@ -17,6 +19,8 @@ use pavis_core::{AccessLogConfig, LogLevel};
 struct Args {
     #[arg(short, long)]
     config: String,
+    #[arg(long)]
+    relay_url: Option<String>,
 }
 
 fn log_level_to_str(level: Option<LogLevel>) -> &'static str {
@@ -53,7 +57,7 @@ mod tests {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Load configuration
+    // Load configuration (LKG)
     let config = load::load_file(&args.config).map_err(|e| match e {
         RuntimeLoadError::Pvs(pavis_pvs::PvsError::VersionMismatch { file, expected }) => {
             anyhow::anyhow!(
@@ -64,9 +68,6 @@ fn main() -> Result<()> {
         }
         other => anyhow::anyhow!(other),
     })?;
-
-    // Initialize Router (compiles regexes)
-    let router = Arc::new(Router::new(config.routes.clone())?);
 
     let config = Arc::new(config);
 
@@ -106,7 +107,23 @@ fn main() -> Result<()> {
     let mut server = Server::new_with_opt_and_conf(None, server_conf);
     server.bootstrap();
 
-    let upstream_manager = Manager::new(&config.upstreams);
+    let runtime_state = pavis::state::RuntimeState::from_config(&config)?;
+    let state_handle = Arc::new(RuntimeStateHandle::new(runtime_state));
+
+    let lkg_version = lkg_version(Path::new(&args.config))?;
+
+    let config_agent = args.relay_url.as_ref().map(|relay| {
+        let backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 200);
+        let agent = ConfigAgent::new(
+            relay.to_string(),
+            PathBuf::from(&args.config),
+            state_handle.clone(),
+            Duration::from_secs(15),
+            backoff,
+        )?;
+        agent.set_current_version(lkg_version);
+        Ok::<_, anyhow::Error>(Arc::new(agent))
+    });
 
     let (telemetry, access_log_worker) = Telemetry::new(&config.telemetry);
     let telemetry = Arc::new(telemetry);
@@ -114,8 +131,7 @@ fn main() -> Result<()> {
     let mut proxy_service = http_proxy_service(
         &server.configuration,
         Proxy {
-            router,
-            upstream_manager,
+            state: state_handle.clone(),
             telemetry,
         },
     );
@@ -142,6 +158,10 @@ fn main() -> Result<()> {
     }
 
     server.add_service(access_log_worker);
+    if let Some(agent) = config_agent {
+        let agent = agent?;
+        server.add_service(agent.worker());
+    }
     server.add_service(proxy_service);
     server.run_forever();
 }

@@ -52,3 +52,83 @@ fn normalize_root(mut value: serde_yaml::Value) -> Result<serde_yaml::Value> {
 
     Ok(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_value, load, normalize_root};
+    use std::path::PathBuf;
+
+    #[test]
+    fn load_returns_error_on_missing_file() {
+        let path = PathBuf::from("missing-relay-config.yaml");
+        let err = load(&path).expect_err("missing file");
+        assert!(err.to_string().contains("failed to read relay config"));
+    }
+
+    #[test]
+    fn load_returns_error_on_invalid_yaml() {
+        let path = std::env::temp_dir().join("pavis_relay_invalid.yaml");
+        std::fs::write(&path, "relay: [").expect("write");
+
+        let err = load(&path).expect_err("invalid yaml");
+        assert!(err.to_string().contains("failed to parse relay config"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_returns_error_on_missing_env() {
+        let path = std::env::temp_dir().join("pavis_relay_missing_env.yaml");
+        std::fs::write(&path, "relay:\n  identity:\n    name: \"${MISSING}\"").expect("write");
+
+        let err = load(&path).expect_err("missing env");
+        assert!(
+            err.to_string()
+                .contains("failed to expand environment variables")
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn decode_value_fails_for_unmapped_root() {
+        let err = decode_value(serde_yaml::Value::String("bad".to_string())).expect_err("decode");
+        assert!(err.to_string().contains("failed to decode relay config"));
+    }
+
+    #[test]
+    fn normalize_root_handles_non_mapping() {
+        let value = serde_yaml::Value::String("plain".to_string());
+        let normalized = normalize_root(value.clone()).expect("normalize");
+        assert_eq!(normalized, value);
+    }
+
+    #[test]
+    fn normalize_root_ignores_non_mapping_distribution() {
+        let value: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+relay:
+  distribution: "string"
+"#,
+        )
+        .expect("yaml");
+        let normalized = normalize_root(value).expect("normalize");
+        let map = normalized.as_mapping().expect("map");
+        assert!(
+            map.get(&serde_yaml::Value::String("security".to_string()))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn normalize_root_allows_non_mapping_relay() {
+        let value: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+relay: "string"
+"#,
+        )
+        .expect("yaml");
+        let normalized = normalize_root(value).expect("normalize");
+        assert_eq!(normalized, serde_yaml::Value::String("string".to_string()));
+    }
+}

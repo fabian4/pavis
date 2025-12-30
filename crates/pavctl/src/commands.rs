@@ -59,6 +59,30 @@ routes:
     }
 
     #[test]
+    fn validate_rejects_unknown_extension() {
+        let bad_path = unique_path("pavctl_bad_ext", "toml");
+        write_yaml(&bad_path, minimal_yaml());
+
+        let err = validate_config(bad_path.clone()).expect_err("should fail");
+        assert!(err.to_string().contains("Unsupported config extension"));
+
+        let _ = fs::remove_file(&bad_path);
+    }
+
+    #[test]
+    fn generate_rejects_unknown_extension() {
+        let bad_path = unique_path("pavctl_bad_gen", "toml");
+        let out_path = unique_path("pavctl_bad_gen_out", "pvs");
+        write_yaml(&bad_path, minimal_yaml());
+
+        let err = compile_config(bad_path.clone(), out_path.clone()).expect_err("should fail");
+        assert!(err.to_string().contains("Unsupported config extension"));
+
+        let _ = fs::remove_file(&bad_path);
+        let _ = fs::remove_file(&out_path);
+    }
+
+    #[test]
     fn test_default_output_logic() {
         let input = PathBuf::from("config.yaml");
         assert_eq!(
@@ -90,6 +114,37 @@ routes:
         let _ = fs::remove_file(&yaml_path);
         let _ = fs::remove_file(&pvs_path);
         let _ = fs::remove_file(&out_yaml);
+    }
+
+    #[test]
+    fn convert_stdout_and_hex_view_cover_branches() {
+        let yaml_path = unique_path("pavctl_stdout", "yaml");
+        let pvs_path = unique_path("pavctl_stdout", "pvs");
+        write_yaml(&yaml_path, minimal_yaml());
+        compile_config(yaml_path.clone(), pvs_path.clone()).expect("compile");
+
+        convert_to_config(pvs_path.clone(), None, SerdeFormat::Yaml).expect("stdout convert");
+        inspect_config(pvs_path.clone(), true).expect("hex view");
+
+        let _ = fs::remove_file(&yaml_path);
+        let _ = fs::remove_file(&pvs_path);
+    }
+
+    #[test]
+    fn convert_rejects_unknown_output_extension() {
+        let yaml_path = unique_path("pavctl_convert_ext", "yaml");
+        let pvs_path = unique_path("pavctl_convert_ext", "pvs");
+        let out_path = unique_path("pavctl_convert_ext", "toml");
+        write_yaml(&yaml_path, minimal_yaml());
+        compile_config(yaml_path.clone(), pvs_path.clone()).expect("compile");
+
+        let err = convert_to_config(pvs_path.clone(), Some(out_path.clone()), SerdeFormat::Yaml)
+            .expect_err("should fail");
+        assert!(err.to_string().contains("Unsupported output extension"));
+
+        let _ = fs::remove_file(&yaml_path);
+        let _ = fs::remove_file(&pvs_path);
+        let _ = fs::remove_file(&out_path);
     }
 
     #[test]

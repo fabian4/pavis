@@ -1,12 +1,14 @@
 use super::{Proxy, apply_route_headers};
 use crate::proxy::context::RouterContext;
-use crate::router::Router;
+use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::Telemetry;
 use crate::upstream::Manager;
 use pavis_core::{
     AccessLogConfig, ConnectionPoolConfig, Endpoint, HeaderOperations, HttpVersion, LoadBalancer,
-    MatchType, Route, TelemetryConfig, Upstream, VirtualHost, WeightedDestination,
+    MatchType, Route, TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost,
+    WeightedDestination,
 };
+use pingora::http::ResponseHeader;
 use pingora::proxy::{ProxyHttp, Session};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
@@ -61,11 +63,14 @@ fn test_telemetry() -> Arc<Telemetry> {
 
 #[test]
 fn new_ctx_defaults_are_empty() {
-    let router = Arc::new(Router::new(vec![]).expect("empty routes"));
     let manager = Manager::new(&[]);
-    let proxy = Proxy {
-        router,
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: manager,
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
         telemetry: test_telemetry(),
     };
 
@@ -126,11 +131,14 @@ async fn request_filter_selects_weighted_destination() {
             ],
         }],
     }];
-    let router = Arc::new(Router::new(routes).expect("routes"));
     let manager = Manager::new(&[upstream("blue", 8081), upstream("green", 8082)]);
-    let proxy = Proxy {
-        router,
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
         telemetry: test_telemetry(),
     };
 
@@ -150,11 +158,14 @@ async fn request_filter_selects_weighted_destination() {
 
 #[tokio::test]
 async fn request_filter_returns_404_when_no_route_matches() {
-    let router = Arc::new(Router::new(vec![]).expect("empty routes"));
     let manager = Manager::new(&[]);
-    let proxy = Proxy {
-        router,
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: manager,
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
         telemetry: test_telemetry(),
     };
 
@@ -198,11 +209,14 @@ async fn request_filter_skips_selection_when_total_weight_zero() {
             ],
         }],
     }];
-    let router = Arc::new(Router::new(routes).expect("routes"));
     let manager = Manager::new(&[upstream("blue", 8081), upstream("green", 8082)]);
-    let proxy = Proxy {
-        router,
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
         telemetry: test_telemetry(),
     };
 
@@ -215,4 +229,97 @@ async fn request_filter_skips_selection_when_total_weight_zero() {
         .expect("request filter");
     assert!(!should_respond);
     assert!(ctx.upstream_name.is_none());
+}
+
+#[tokio::test]
+async fn upstream_peer_defaults_sni() {
+    let manager = Manager::new(&[Upstream {
+        name: "secure".to_string(),
+        load_balancer: LoadBalancer::RoundRobin,
+        http_version: HttpVersion::H1,
+        connection_pool: ConnectionPoolConfig {
+            idle_timeout_secs: 60,
+            connection_timeout_secs: 5,
+        },
+        tls: Some(UpstreamTlsConfig {
+            enabled: true,
+            verify_hostname: true,
+            verify_cert: true,
+            sni: None,
+        }),
+        endpoints: vec![Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 8443,
+            weight: 1,
+        }],
+    }]);
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
+        upstream_manager: manager,
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, _client) =
+        session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some("secure".to_string());
+
+    let peer = proxy
+        .upstream_peer(&mut session, &mut ctx)
+        .await
+        .expect("peer");
+    assert!(peer.is_tls());
+    assert_eq!(peer.sni, "localhost");
+}
+
+#[tokio::test]
+async fn upstream_response_filter_applies_headers() {
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
+        upstream_manager: Manager::new(&[]),
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
+        telemetry: test_telemetry(),
+    };
+
+    let mut ctx = proxy.new_ctx();
+    ctx.response_headers = Some(HeaderOperations {
+        add: vec![("x-added".to_string(), "ok".to_string())],
+        remove: vec!["x-drop".to_string()],
+    });
+
+    let (mut session, _client) =
+        session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut resp = ResponseHeader::build(200, None).expect("resp");
+    resp.insert_header("x-drop", "gone").expect("header");
+
+    proxy
+        .upstream_response_filter(&mut session, &mut resp, &mut ctx)
+        .expect("filter");
+    assert!(resp.headers.get("x-drop").is_none());
+    assert_eq!(resp.headers.get("x-added").unwrap().to_str().unwrap(), "ok");
+}
+
+#[tokio::test]
+async fn logging_handles_disabled_access_log() {
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
+        upstream_manager: Manager::new(&[]),
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, _client) =
+        session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    proxy.logging(&mut session, None, &mut ctx).await;
 }

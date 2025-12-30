@@ -10,6 +10,28 @@ No open findings.
 
 ---
 
+## Review Entry — 2025-12-30T11:35:29Z
+
+### Scope
+- Repository-wide dependency boundary review.
+
+---
+
+### Method
+- Manual scan of crate dependencies for cross-layer violations and dev-dep leakage.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+No new findings. Dependency directions remain consistent with the architecture (runtime depends only on core + pvs; relay uses core only for tests).
+
+---
+
 ## Review Entry — 2025-12-30T04:58:34Z
 
 ### Scope

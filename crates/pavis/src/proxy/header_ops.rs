@@ -110,4 +110,38 @@ mod tests {
         );
         assert!(resp.headers.get("X-Remove-Resp").is_none());
     }
+
+    #[test]
+    fn test_apply_request_headers_skips_invalid_entries() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        let ops = HeaderOperations {
+            add: vec![
+                ("bad header".to_string(), "ok".to_string()),
+                ("x-bad-value".to_string(), "bad\nvalue".to_string()),
+            ],
+            remove: vec![],
+        };
+
+        apply_request_headers(&mut req, Some(&ops)).unwrap();
+
+        assert!(req.headers.get("bad header").is_none());
+        assert!(req.headers.get("x-bad-value").is_none());
+    }
+
+    #[test]
+    fn test_apply_response_headers_skips_invalid_entries() {
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        let ops = HeaderOperations {
+            add: vec![
+                ("bad header".to_string(), "ok".to_string()),
+                ("x-bad-value".to_string(), "bad\nvalue".to_string()),
+            ],
+            remove: vec![],
+        };
+
+        apply_response_headers(&mut resp, Some(&ops)).unwrap();
+
+        assert!(resp.headers.get("bad header").is_none());
+        assert!(resp.headers.get("x-bad-value").is_none());
+    }
 }

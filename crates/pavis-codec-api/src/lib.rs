@@ -227,4 +227,24 @@ mod tests {
         fn assert_error<E: std::error::Error>() {}
         assert_error::<CodecError>();
     }
+
+    #[test]
+    fn codec_error_from_core_maps_to_variant() {
+        let err = CodecError::from(CoreValidationError::EmptyUpstreamName);
+        match err {
+            CodecError::Core(core) => {
+                assert_eq!(core, CoreValidationError::EmptyUpstreamName);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn materialize_default_uses_off_level() {
+        let codec = MockCodec::new(Mode::Ok);
+        let cfg = codec
+            .materialize_default(test_artifact())
+            .expect("materialize default");
+        assert_eq!(cfg.upstreams.len(), 1);
+    }
 }

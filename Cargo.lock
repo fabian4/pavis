@@ -1717,7 +1717,9 @@ name = "pavis"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-trait",
+ "axum",
  "chrono",
  "clap 4.5.53",
  "http",
@@ -1726,6 +1728,7 @@ dependencies = [
  "pingora",
  "rand 0.9.2",
  "regex",
+ "reqwest",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -1748,6 +1751,7 @@ name = "pavis-codec-serde"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "http",
  "humantime-serde",
  "pavis-codec-api",
@@ -1777,8 +1781,12 @@ name = "pavis-e2e"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
+ "pavis",
+ "pavis-codec-api",
  "pavis-codec-serde",
  "pavis-core",
+ "pavis-ingest-api",
  "pavis-pvs",
  "reqwest",
  "serde",

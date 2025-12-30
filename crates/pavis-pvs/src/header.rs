@@ -64,7 +64,8 @@ impl Default for PvsHeader {
 #[cfg(test)]
 mod tests {
     use super::{
-        PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader, compute_checksum,
+        PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader, algorithm_label,
+        compute_checksum,
     };
 
     #[test]
@@ -79,5 +80,14 @@ mod tests {
         assert_eq!(header.magic, *PAVIS_MAGIC);
         assert_eq!(header.version, PAVIS_VERSION);
         assert_eq!(header.algorithm, PAVIS_HASH_ALGORITHM_SHA256);
+    }
+
+    #[test]
+    fn algorithm_label_returns_numeric_for_unknown() {
+        let header = PvsHeader {
+            algorithm: 7,
+            ..PvsHeader::default()
+        };
+        assert_eq!(algorithm_label(&header), "7");
     }
 }

@@ -25,3 +25,4 @@ http = "1.4.0"
 # validator = { version = "0.16", features = ["derive"] } # Optional, can add later
 
 [dev-dependencies]
+bytes = "1"

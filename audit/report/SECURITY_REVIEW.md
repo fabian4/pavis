@@ -10,6 +10,28 @@ No open findings.
 
 ---
 
+## Review Entry — 2025-12-30T11:35:29Z
+
+### Scope
+- Repository-wide security scan (unsafe usage, secrets, dependency hints).
+
+---
+
+### Method
+- Manual scan for `unsafe` blocks, secret markers, and config tokens.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+No new findings. Unsafe usage is scoped to validated runtime config construction with explicit safety docs, and no hard-coded secrets were found.
+
+---
+
 ## Review Entry — 2025-12-30T05:10:00Z
 
 ### Scope

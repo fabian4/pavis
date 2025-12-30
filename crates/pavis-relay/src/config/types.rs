@@ -158,19 +158,7 @@ pub struct LongPollConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    pub headers: LongPollHeaders,
-    #[serde(default)]
     pub timeouts: LongPollTimeouts,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct LongPollHeaders {
-    #[serde(default)]
-    pub version: String,
-    #[serde(default)]
-    pub checksum: String,
-    #[serde(default)]
-    pub algorithm: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

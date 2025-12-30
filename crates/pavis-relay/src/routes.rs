@@ -1,13 +1,13 @@
 use crate::handlers::{
     get_artifact, get_config, get_health, get_metrics, get_ready, get_status, post_publish,
 };
-use crate::{RelayError, RelayState};
+use crate::state::{RelayError, RelayState};
 use axum::Router;
 use axum::routing::{get, post};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-pub fn router(state: RelayState) -> Router {
+pub(crate) fn router(state: RelayState) -> Router {
     let shared = Arc::new(state);
     Router::new()
         .route("/v1/config", get(get_config))
@@ -20,7 +20,7 @@ pub fn router(state: RelayState) -> Router {
         .with_state(shared)
 }
 
-pub async fn serve(listen_addr: SocketAddr, state: RelayState) -> Result<(), RelayError> {
+pub(crate) async fn serve(listen_addr: SocketAddr, state: RelayState) -> Result<(), RelayError> {
     let app = router(state);
     axum::serve(
         tokio::net::TcpListener::bind(listen_addr)
@@ -35,7 +35,7 @@ pub async fn serve(listen_addr: SocketAddr, state: RelayState) -> Result<(), Rel
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RelayState;
+    use crate::state::RelayState;
     use axum::body::Bytes;
 
     fn mock_state() -> RelayState {
@@ -52,7 +52,14 @@ mod tests {
     #[tokio::test]
     async fn test_serve_bind_error() {
         // Bind to a port first to occupy it
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping bind test: {err}");
+                return;
+            }
+            Err(err) => panic!("failed to bind: {err}"),
+        };
         let addr = listener.local_addr().unwrap();
 
         // Try to serve on the occupied address
@@ -66,5 +73,24 @@ mod tests {
             ),
             _ => panic!("Expected RelayError::Http, got {:?}", result),
         }
+    }
+
+    #[tokio::test]
+    async fn test_serve_can_start_and_abort() {
+        let probe = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping serve test: {err}");
+                return;
+            }
+            Err(err) => panic!("failed to bind: {err}"),
+        };
+        drop(probe);
+
+        let state = mock_state();
+        let addr: SocketAddr = "127.0.0.1:0".parse().expect("addr");
+        let handle = tokio::spawn(async move { serve(addr, state).await });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        handle.abort();
     }
 }

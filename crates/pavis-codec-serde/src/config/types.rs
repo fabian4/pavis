@@ -146,4 +146,24 @@ routes: []
         let err = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect_err("invalid duration");
         assert!(err.to_string().contains("idle_timeout"));
     }
+
+    #[test]
+    fn parse_bytes_accepts_json() {
+        let json = br#"
+{
+  "server": { "listen_addr": "0.0.0.0:8080" },
+  "telemetry": {},
+  "upstreams": [
+    {
+      "name": "backend",
+      "tls": {},
+      "endpoints": [{ "ip": "127.0.0.1", "port": 8081 }]
+    }
+  ],
+  "routes": []
+}
+"#;
+        let config = SerdeConfig::parse_bytes(SerdeFormat::Json, json).expect("parse bytes");
+        assert_eq!(config.server.listen_addr, "0.0.0.0:8080");
+    }
 }

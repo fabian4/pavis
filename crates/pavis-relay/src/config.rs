@@ -6,6 +6,3 @@ mod types;
 
 pub use load::load;
 pub use types::*;
-
-#[cfg(test)]
-mod tests;

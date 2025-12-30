@@ -1,8 +1,7 @@
 use crate::proxy::context::RouterContext;
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
-use crate::router::Router;
+use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
-use crate::upstream::Manager;
 use async_trait::async_trait;
 use pavis_core::HttpVersion;
 use pingora::http::RequestHeader;
@@ -14,8 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub struct Proxy {
-    pub router: Arc<Router>,
-    pub upstream_manager: Manager,
+    pub state: Arc<RuntimeStateHandle>,
     pub telemetry: Arc<Telemetry>,
 }
 
@@ -50,7 +48,8 @@ impl ProxyHttp for Proxy {
         };
 
         // O(1) lookup using Manager
-        let cluster = match self.upstream_manager.get(upstream_name) {
+        let state = self.state.load();
+        let cluster = match state.upstream_manager.get(upstream_name) {
             Some(u) => u,
             None => return Error::e_explain(InternalError, "Upstream not found in config"),
         };
@@ -115,7 +114,8 @@ impl ProxyHttp for Proxy {
             "incoming request"
         );
 
-        if let Some((vhost, route)) = self.router.match_request(host_header, uri_path) {
+        let state = self.state.load();
+        if let Some((vhost, route)) = state.router.match_request(host_header, uri_path) {
             tracing::trace!(host = %vhost.host, path = %route.path, "matched route");
 
             let total_weight: u32 = route.destinations.iter().map(|d| d.weight).sum();

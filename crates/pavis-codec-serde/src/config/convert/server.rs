@@ -30,3 +30,45 @@ pub(super) fn from_runtime(server: RuntimeServerConfig) -> ServerConfig {
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{from_runtime, to_runtime};
+    use crate::config::types::{ServerConfig, TlsConfig};
+
+    #[test]
+    fn to_runtime_maps_tls_fields() {
+        let server = ServerConfig {
+            listen_addr: "127.0.0.1:8080".to_string(),
+            worker_threads: Some(2),
+            tls: Some(TlsConfig {
+                enabled: true,
+                cert_path: Some("/tmp/cert.pem".to_string()),
+                key_path: Some("/tmp/key.pem".to_string()),
+            }),
+        };
+        let runtime = to_runtime(server).expect("runtime");
+        let tls = runtime.tls.expect("tls");
+        assert!(tls.enabled);
+        assert_eq!(tls.cert_path.as_deref(), Some("/tmp/cert.pem"));
+        assert_eq!(tls.key_path.as_deref(), Some("/tmp/key.pem"));
+    }
+
+    #[test]
+    fn from_runtime_maps_tls_fields() {
+        let runtime = pavis_core::ServerConfig {
+            listen_addr: "127.0.0.1:8080".parse().expect("addr"),
+            worker_threads: Some(1),
+            tls: Some(pavis_core::TlsConfig {
+                enabled: false,
+                cert_path: Some("/tmp/cert.pem".to_string()),
+                key_path: Some("/tmp/key.pem".to_string()),
+            }),
+        };
+        let server = from_runtime(runtime);
+        let tls = server.tls.expect("tls");
+        assert!(!tls.enabled);
+        assert_eq!(tls.cert_path.as_deref(), Some("/tmp/cert.pem"));
+        assert_eq!(tls.key_path.as_deref(), Some("/tmp/key.pem"));
+    }
+}

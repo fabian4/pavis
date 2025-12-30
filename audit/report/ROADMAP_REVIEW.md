@@ -1,12 +1,57 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 4
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 6
 
 ---
 
 ## Open Findings (Prioritized)
 
 No open findings.
+
+---
+
+## Review Entry — 2025-12-30T11:35:29Z
+
+### Scope
+- Repository-wide roadmap alignment check against `ROADMAP.md`.
+
+---
+
+### Method
+- Targeted review of Phase 3 client implementation against roadmap status checkboxes.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Low | Phase 3 client polling | Polling/backoff/jitter implemented but unchecked | Done |
+| F-2 | Low | Phase 3 hot reload | Hot reload + LKG persistence implemented but unchecked | Done |
+
+---
+
+### Detailed Findings
+
+#### F-1: Polling/backoff/jitter implemented but unchecked
+- **Expectation:** Roadmap checkboxes reflect the implemented runtime polling agent.
+- **Observed:** Runtime already runs a polling worker with exponential backoff and jitter, but the Phase 3 checklist still marked these items as incomplete.
+- **Evidence:** `crates/pavis/src/agent.rs` (`ConfigAgent`, `Backoff`, jitter logic) and `crates/pavis/src/main.rs` wiring; `ROADMAP.md` Phase 3 `pavis` (Client) section.
+- **Assessment (Reason):** Roadmap under-reported implemented client behavior.
+- **Recommendation (Suggestion):** Mark polling thread, backoff, and jitter as complete; leave configurable poll interval and multi-source failover unchecked.
+- **Doc Drift?:** Yes — roadmap status lagged implementation.
+
+#### F-2: Hot reload + LKG persistence implemented but unchecked
+- **Expectation:** Roadmap reflects in-process config swap and LKG persistence.
+- **Observed:** Runtime uses `ArcSwap` for atomic state swap, validates config before swap, and persists updated `.pvs` to disk; these were unchecked.
+- **Evidence:** `crates/pavis/src/state.rs` (`ArcSwap`), `crates/pavis/src/agent.rs` (`apply_update`, LKG write), `crates/pavis/src/main.rs` load path; `ROADMAP.md` Phase 3 client section.
+- **Assessment (Reason):** Roadmap status lagged implementation.
+- **Recommendation (Suggestion):** Mark atomic swap/validation/rollback and LKG persistence/load as complete; keep config diff logging and timestamp tracking unchecked.
+- **Doc Drift?:** Yes — roadmap status lagged implementation.
 
 ---
 

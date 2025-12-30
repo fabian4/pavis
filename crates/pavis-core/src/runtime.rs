@@ -118,4 +118,32 @@ mod tests {
         assert_eq!(config.upstreams.len(), 1);
         assert_eq!(config.routes.len(), 1);
     }
+
+    #[test]
+    fn validated_runtime_exposes_inner_config() {
+        let config = RuntimeConfig {
+            server: ServerConfig {
+                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
+                worker_threads: Some(2),
+                tls: None,
+            },
+            telemetry: TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: Some("svc".to_string()),
+                prometheus_addr: None,
+                access_log: AccessLogConfig::Disabled,
+                tracing: None,
+            },
+            upstreams: Vec::new(),
+            routes: Vec::new(),
+        };
+
+        let validated = ValidatedRuntimeConfig::new(config.clone());
+        assert_eq!(validated.as_ref().server.worker_threads, Some(2));
+        assert_eq!(validated.telemetry.service_name.as_deref(), Some("svc"));
+
+        let inner = validated.into_inner();
+        assert_eq!(inner.server.worker_threads, Some(2));
+    }
 }

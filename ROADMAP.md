@@ -9,6 +9,7 @@ The roadmap is now centered on a three-part “iron triangle” that determines 
 **A. Close the Loop – Dynamic Configuration**
 - Scope: Complete Phase 3 client-side implementation and enable live, in-memory updates in `pavis-relay`.
 - Goal: Running `pavis` instances detect and hot-reload config changes without traffic interruption.
+- Status: Client polling + hot reload implemented; remaining items include configurable polling, diff logging, and multi-source failover.
 
 **B. Enable Zero-Copy (mmap-based loading)**
 - Scope: Complete Optimization Phase P2 tasks.
@@ -70,26 +71,22 @@ The roadmap is now centered on a three-part “iron triangle” that determines 
 - [ ] Logging: logging.level, logging.access_log
 - [ ] Metrics bind: metrics.prometheus_bind
 
-**Compatibility & Migration (Control Plane)**
-- [ ] Relay accepts N-1 PVS and re-emits current version after core validation
-- [ ] Record migration audit metadata (source version, target version)
-
 **`pavctl`**
 
 **`pavis`** (Client)
-- [ ] Background config polling thread
+- [x] Background config polling thread
   - [ ] Configurable poll interval and timeout
-  - [ ] Exponential backoff on failures
-  - [ ] Jitter to prevent thundering herd
+  - [x] Exponential backoff on failures
+  - [x] Jitter to prevent thundering herd
   - [ ] Multi-source failover (primary/secondary xDS servers)
-- [ ] Config hot reload
-  - [ ] Atomic config swap (`ArcSwap`)
-  - [ ] Validate new config before swap
-  - [ ] Rollback on validation failure
+- [x] Config hot reload
+  - [x] Atomic config swap (`ArcSwap`)
+  - [x] Validate new config before swap
+  - [x] Rollback on validation failure
   - [ ] Config diff logging
 - [ ] Crash-loop protection
-  - [ ] Persist config to disk (`/etc/pavis/config.pvs`)
-  - [ ] Load from disk if control plane unavailable
+  - [x] Persist config to disk (`/etc/pavis/config.pvs`)
+  - [x] Load from disk if control plane unavailable
   - [ ] Track last successful config timestamp
   - [ ] Bootstrap config for first start
 - [ ] Metrics
@@ -213,6 +210,10 @@ The roadmap is now centered on a three-part “iron triangle” that determines 
 
 **Status:** Intentionally deprioritized to focus on the iron triangle.
 This phase is deferred (not abandoned). No active milestones or deliverables are scheduled.
+
+**Compatibility & Migration (Control Plane)**
+- [ ] Control-plane pipeline accepts N-1 PVS and re-emits current version after core validation
+- [ ] Record migration audit metadata (source version, target version)
 
 ---
 
@@ -475,6 +476,7 @@ This phase is deferred (not abandoned). No active milestones or deliverables are
 ## Phase 10: Kubernetes Integration ⏳
 
 **Goal:** Native Kubernetes deployment and management.
+**Note:** The Kubernetes Operator is intended to fulfill the Governor role (admission/policy/orchestration) described in `Architecture.md`.
 
 **Sidecar Injection**
 - [ ] Mutating webhook for automatic injection

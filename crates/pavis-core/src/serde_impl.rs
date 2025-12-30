@@ -82,4 +82,33 @@ mod tests {
         let res: Result<AccessLogConfig, _> = serde_json::from_value(json!(true));
         assert!(res.is_err());
     }
+
+    #[test]
+    fn access_log_serializes_variants() {
+        let value = serde_json::to_value(AccessLogConfig::Disabled).unwrap();
+        assert_eq!(value, json!(false));
+
+        let value = serde_json::to_value(AccessLogConfig::Stdout).unwrap();
+        assert_eq!(value, json!("stdout"));
+
+        let value =
+            serde_json::to_value(AccessLogConfig::File("/tmp/pavis.log".to_string())).unwrap();
+        assert_eq!(value, json!("/tmp/pavis.log"));
+    }
+
+    #[test]
+    fn access_log_accepts_false_bool_and_rejects_empty_string() {
+        let v: AccessLogConfig = serde_json::from_value(json!(false)).unwrap();
+        assert_eq!(v, AccessLogConfig::Disabled);
+
+        let res: Result<AccessLogConfig, _> = serde_json::from_value(json!(""));
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn access_log_reports_expected_types_on_invalid_number() {
+        let res: Result<AccessLogConfig, _> = serde_json::from_value(json!(123));
+        let msg = res.expect_err("invalid number").to_string();
+        assert!(msg.contains("false, 'stdout', or a file path string"));
+    }
 }

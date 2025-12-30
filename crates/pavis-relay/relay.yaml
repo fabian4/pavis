@@ -14,6 +14,3 @@ artifact:
 distribution:
   long_poll:
     enabled: true
-    headers:
-      version: "X-Pavis-Version"
-      checksum: "X-Pavis-Checksum"

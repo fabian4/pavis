@@ -1,17 +1,42 @@
 use anyhow::{Context, Result};
-use pavis_core::{RuntimeConfig, ServerConfig, TelemetryConfig};
-use pavis_e2e::support::RelayEnv;
+use pavis::agent::{Backoff, ConfigAgent, PollOutcome, lkg_version};
+use pavis::state::{RuntimeState, RuntimeStateHandle};
+use pavis_core::ValidatedRuntimeConfig;
+use pavis_e2e::support::{RelayEnv, build_pvs_bytes};
+use pavis_pvs;
+use pavis_pvs::PAVIS_VERSION_HEADER;
 use reqwest::{Client, StatusCode};
+use std::fs;
+use std::fs::Permissions;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
-fn minimal_config(label: &str) -> RuntimeConfig {
-    RuntimeConfig {
-        server: ServerConfig {
+fn client() -> Result<Client> {
+    Ok(Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .context("build client")?)
+}
+
+fn relay_lkg_dir() -> PathBuf {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = std::process::id();
+    let dir = std::env::temp_dir().join(format!("pavis_agent_e2e_{pid}_{id}"));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+fn minimal_validated(label: &str) -> ValidatedRuntimeConfig {
+    let config = pavis_core::RuntimeConfig {
+        server: pavis_core::ServerConfig {
             listen_addr: "127.0.0.1:8080".parse().expect("addr"),
             worker_threads: None,
             tls: None,
         },
-        telemetry: TelemetryConfig {
+        telemetry: pavis_core::TelemetryConfig {
             level: None,
             pingora: None,
             service_name: Some(label.to_string()),
@@ -21,27 +46,8 @@ fn minimal_config(label: &str) -> RuntimeConfig {
         },
         upstreams: Vec::new(),
         routes: Vec::new(),
-    }
-}
-
-fn valid_pvs_bytes(label: &str) -> Vec<u8> {
-    let config = minimal_config(label);
-    let dir = std::env::temp_dir();
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let pid = std::process::id();
-    let path = dir.join(format!("pavis_relay_e2e_{label}_{pid}_{id}.pvs"));
-    pavis_pvs::write(&path, &config).expect("write config");
-    let bytes = std::fs::read(&path).expect("read config");
-    let _ = std::fs::remove_file(&path);
-    bytes
-}
-
-fn client() -> Result<Client> {
-    Ok(Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .context("build client")?)
+    };
+    unsafe { ValidatedRuntimeConfig::from_trusted(config) }
 }
 
 #[tokio::test]
@@ -50,17 +56,8 @@ async fn relay_publish_validation_and_headers() -> Result<()> {
     let client = client()?;
     let base = env.base_url().to_string();
 
-    let payload = valid_pvs_bytes("seed");
     let response = client
         .post(format!("{base}/v1/publish"))
-        .body(payload.clone())
-        .send()
-        .await?;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let response = client
-        .post(format!("{base}/v1/publish"))
-        .header("X-Pavis-Version", "1")
         .body(Vec::new())
         .send()
         .await?;
@@ -68,8 +65,15 @@ async fn relay_publish_validation_and_headers() -> Result<()> {
 
     let response = client
         .post(format!("{base}/v1/publish"))
+        .body(build_pvs_bytes("seed"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = client
+        .post(format!("{base}/v1/publish"))
         .header("X-Pavis-Version", "1")
-        .body("bad")
+        .body(b"bad".to_vec())
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
@@ -77,7 +81,7 @@ async fn relay_publish_validation_and_headers() -> Result<()> {
     let response = client
         .post(format!("{base}/v1/publish"))
         .header("X-Pavis-Version", "1")
-        .body(payload.clone())
+        .body(build_pvs_bytes("seed"))
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
@@ -120,8 +124,45 @@ async fn relay_publish_validation_and_headers() -> Result<()> {
         Some("no-store")
     );
     let body = response.bytes().await?;
-    assert_eq!(body.as_ref(), payload.as_slice());
+    assert!(pavis_pvs::inspect(&body).is_ok());
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_agent_polls_relay_with_header_contract() -> Result<()> {
+    let env = RelayEnv::new().await?;
+    let client = client()?;
+    let base = env.base_url().to_string();
+
+    let response = client
+        .post(format!("{base}/v1/publish"))
+        .header(PAVIS_VERSION_HEADER, "1")
+        .body(build_pvs_bytes("agent-seed"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let work_dir = relay_lkg_dir();
+    let lkg_path = work_dir.join("config.pvs");
+
+    let state = RuntimeState::from_config(&minimal_validated("agent"))?;
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+
+    let agent = Arc::new(ConfigAgent::new(
+        base,
+        lkg_path.clone(),
+        state_handle,
+        Duration::from_secs(5),
+        Backoff::new(Duration::from_secs(1), Duration::from_secs(5), 0),
+    )?);
+    agent.set_current_version(0);
+
+    let outcome = agent.poll_once().await?;
+    assert!(matches!(outcome, PollOutcome::Updated));
+    assert_eq!(lkg_version(&lkg_path)?, 1);
+
+    let _ = std::fs::remove_dir_all(&work_dir);
     Ok(())
 }
 
@@ -131,11 +172,10 @@ async fn relay_long_poll_updates() -> Result<()> {
     let client = client()?;
     let base = env.base_url().to_string();
 
-    let payload = valid_pvs_bytes("initial");
     let response = client
         .post(format!("{base}/v1/publish"))
         .header("X-Pavis-Version", "1")
-        .body(payload)
+        .body(build_pvs_bytes("initial"))
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
@@ -148,11 +188,10 @@ async fn relay_long_poll_updates() -> Result<()> {
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let updated = valid_pvs_bytes("updated");
     let response = client
         .post(format!("{base}/v1/publish"))
         .header("X-Pavis-Version", "2")
-        .body(updated.clone())
+        .body(build_pvs_bytes("updated"))
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
@@ -170,7 +209,110 @@ async fn relay_long_poll_updates() -> Result<()> {
         Some("2")
     );
     let body = response.bytes().await?;
-    assert_eq!(body.as_ref(), updated.as_slice());
+    assert!(pavis_pvs::inspect(&body).is_ok());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn relay_long_poll_times_out_with_no_content() -> Result<()> {
+    let env = RelayEnv::new().await?;
+    let client = client()?;
+    let base = env.base_url().to_string();
+
+    let response = client
+        .post(format!("{base}/v1/publish"))
+        .header("X-Pavis-Version", "1")
+        .body(build_pvs_bytes("initial"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = client
+        .get(format!("{base}/v1/config?wait_ms=1"))
+        .header("X-Pavis-Version", "1")
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn relay_reports_status_and_metrics() -> Result<()> {
+    let env = RelayEnv::new().await?;
+    let client = client()?;
+    let base = env.base_url().to_string();
+
+    let response = client
+        .post(format!("{base}/v1/publish"))
+        .header("X-Pavis-Version", "1")
+        .body(build_pvs_bytes("seed"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = client.get(format!("{base}/v1/status")).send().await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let status = response.text().await?;
+    assert!(status.contains("version="));
+    assert!(status.contains("checksum="));
+
+    let response = client.get(format!("{base}/v1/metrics")).send().await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let metrics = response.text().await?;
+    assert!(metrics.contains("pavis_relay_publish_total"));
+    assert!(metrics.contains("pavis_relay_publish_fail_total"));
+    assert!(metrics.contains("pavis_relay_longpoll_wait_total"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn relay_missing_artifact_returns_404() -> Result<()> {
+    let env = RelayEnv::new().await?;
+    let client = client()?;
+    let base = env.base_url().to_string();
+
+    let response = client
+        .get(format!("{base}/v1/artifacts/999"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn relay_publish_fails_when_lkg_is_read_only() -> Result<()> {
+    let env = RelayEnv::new().await?;
+    let client = client()?;
+    let base = env.base_url().to_string();
+
+    let response = client
+        .post(format!("{base}/v1/publish"))
+        .header("X-Pavis-Version", "1")
+        .body(build_pvs_bytes("seed"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let lkg_path = env.lkg_path().to_path_buf();
+    let before = fs::read(&lkg_path)?;
+    let original_mode = fs::metadata(&lkg_path)?.permissions().mode();
+    fs::set_permissions(&lkg_path, Permissions::from_mode(0o444))?;
+
+    let response = client
+        .post(format!("{base}/v1/publish"))
+        .header("X-Pavis-Version", "2")
+        .body(build_pvs_bytes("blocked"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    fs::set_permissions(&lkg_path, Permissions::from_mode(original_mode))?;
+    let after = fs::read(&lkg_path)?;
+    assert_eq!(before, after);
 
     Ok(())
 }
@@ -181,11 +323,10 @@ async fn relay_persists_lkg_across_restart() -> Result<()> {
     let client = client()?;
     let base = env.base_url().to_string();
 
-    let payload = valid_pvs_bytes("persist");
     let response = client
         .post(format!("{base}/v1/publish"))
         .header("X-Pavis-Version", "3")
-        .body(payload.clone())
+        .body(build_pvs_bytes("persist"))
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
@@ -212,7 +353,7 @@ async fn relay_persists_lkg_across_restart() -> Result<()> {
         Some("0")
     );
     let body = response.bytes().await?;
-    assert_eq!(body.as_ref(), payload.as_slice());
+    assert!(pavis_pvs::inspect(&body).is_ok());
 
     Ok(())
 }

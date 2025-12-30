@@ -115,4 +115,28 @@ mod tests {
             assert!(idx < endpoints.len());
         }
     }
+
+    #[test]
+    fn select_index_round_robin_falls_back_when_weights_mismatch() {
+        let counter = AtomicUsize::new(2);
+        let endpoints = vec![Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: 8080,
+            weight: 1,
+        }];
+        let idx = select_index(LoadBalancer::RoundRobin, &endpoints, &counter, 3);
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn select_index_random_falls_back_when_weights_zeroed() {
+        let counter = AtomicUsize::new(0);
+        let endpoints = vec![Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: 8080,
+            weight: 0,
+        }];
+        let idx = select_index(LoadBalancer::Random, &endpoints, &counter, 1);
+        assert_eq!(idx, 0);
+    }
 }
