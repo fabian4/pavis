@@ -142,8 +142,11 @@ pub(crate) async fn post_publish(
 
     if let Some(path) = options.lkg_path.as_ref() {
         if let Some(parent) = path.parent() {
-            if let Err(err) = tokio::fs::create_dir_all(parent).await {
-                return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response();
+            match tokio::fs::create_dir_all(parent).await {
+                Ok(()) => {}
+                Err(err) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response();
+                }
             }
         }
         if let Err(err) = tokio::fs::write(path, &payload).await {

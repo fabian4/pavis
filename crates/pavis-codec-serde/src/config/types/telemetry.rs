@@ -7,12 +7,10 @@ pub struct TelemetryConfig {
     pub level: Option<String>,
     pub pingora: Option<String>,
     pub service_name: Option<String>,
-    // TODO: Implement prometheus metrics endpoint
     pub prometheus_addr: Option<String>,
     /// Access log: "stdout" (default), "off", or file path
     #[serde(default)]
     pub access_log: AccessLogConfig,
-    // TODO: Implement OpenTelemetry tracing
     pub tracing: Option<TracingConfig>,
 }
 

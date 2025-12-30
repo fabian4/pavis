@@ -54,7 +54,6 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     // Load configuration
-    // TODO: Support config file watching for hot reload
     let config = load::load_file(&args.config).map_err(|e| match e {
         RuntimeLoadError::Pvs(pavis_pvs::PvsError::VersionMismatch { file, expected }) => {
             anyhow::anyhow!(
@@ -120,7 +119,6 @@ fn main() -> Result<()> {
             telemetry,
         },
     );
-    // TODO: Support multiple listen addresses
     let listen_addr_str = config.server.listen_addr.to_string();
     if let Some(tls_config) = &config.server.tls {
         if tls_config.enabled {

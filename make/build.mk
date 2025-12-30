@@ -82,4 +82,4 @@ lint:
 # Generate coverage markdown (requires cargo-tarpaulin + grcov)
 coverage-report:
 	cargo tarpaulin -e pavis-e2e --workspace --out Lcov
-	grcov lcov.info --source-dir . --output-type markdown --output-path ./agent/coverage.md
+	grcov lcov.info --source-dir . --output-type markdown --output-path ./audit/coverage.md

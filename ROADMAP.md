@@ -4,18 +4,18 @@
 
 ## Overview
 
-| Phase | Focus                                                    | Status |
-| :---: | -------------------------------------------------------- | :----: |
-| 1     | Foundation (Pingora proxy)                               | ✅      |
-| 2     | Protocol (`.pvs` format, `pavis-core`, `pavctl`)         | 🚧      |
-| 3     | Long Polling (dynamic config updates)                    | 🚧      |
-| 4     | Modular Ingestion (ingest + codec + relay)               | ⏸️      |
-| 5     | Traffic Management (retries, timeouts, load balancing)   | ⏸️      |
-| 6     | Security (mTLS, RBAC)                                    | ⏳      |
-| 7     | Observability (metrics, tracing, logging)                | ⏳      |
-| 8     | Operations (health checks, graceful shutdown)            | ⏳      |
-| 9     | Advanced Features (rate limiting, fault injection, WASM) | ⏳      |
-| 10    | Kubernetes Integration (operator, sidecar injection)     | ⏳      |
+| Phase | Focus                                                    | Status      |
+| :---: | -------------------------------------------------------- | :---------: |
+| 1     | Foundation (Pingora proxy)                               | ✅ (18/18)  |
+| 2     | Protocol (`.pvs` format, `pavis-core`, `pavctl`)         | 🚧 (35/42)  |
+| 3     | Long Polling (dynamic config updates)                    | 🚧 (18/66)  |
+| 4     | Modular Ingestion (ingest + codec + relay)               | ⏸️          |
+| 5     | Traffic Management (retries, timeouts, load balancing)   | ⏸️ (0/3)    |
+| 6     | Security (mTLS, RBAC)                                    | 🚧 (5/42)   |
+| 7     | Observability (metrics, tracing, logging)                | ⏳ (0/34)   |
+| 8     | Operations (health checks, graceful shutdown)            | ⏳ (0/37)   |
+| 9     | Advanced Features (rate limiting, fault injection, WASM) | ⏳ (0/31)   |
+| 10    | Kubernetes Integration (operator, sidecar injection)     | ⏳ (0/22)   |
 
 **Legend:** 🚧 In Progress · ⏳ Planned · ✅ Complete · ⏸️ Deferred
 
@@ -241,6 +241,11 @@ This phase is deferred (not abandoned). No active milestones or deliverables are
 **Status:** Intentionally deprioritized to focus on the iron triangle.
 This phase is deferred (not abandoned). No active milestones or deliverables are scheduled.
 
+**Backlog**
+- [ ] Runtime enforcement for request timeout
+- [ ] Runtime enforcement for retry policy
+- [ ] Implement circuit breaker logic
+
 ---
 
 ## Phase 6: Security ⏳
@@ -462,6 +467,7 @@ This phase is deferred (not abandoned). No active milestones or deliverables are
 - [ ] Body transformation (future - requires buffering)
 
 **Protocol Support**
+- [ ] Support multiple listen addresses
 - [ ] HTTP/2 upstream connections
 - [ ] gRPC proxying
   - [ ] gRPC-specific health checks

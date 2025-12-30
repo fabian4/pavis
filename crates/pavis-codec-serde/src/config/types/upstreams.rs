@@ -16,9 +16,7 @@ pub struct Upstream {
     pub connection_pool: ConnectionPoolConfig,
     /// TLS configuration for upstream connections
     pub tls: Option<UpstreamTlsConfig>,
-    // TODO: Implement circuit breaker logic
     pub circuit_breaker: Option<CircuitBreaker>,
-    // TODO: Implement health check logic
     pub health_check: Option<HealthCheck>,
     pub endpoints: Vec<Endpoint>,
 }
@@ -71,7 +69,6 @@ pub struct CircuitBreaker {
     pub max_retries: usize,
 }
 
-// TODO: Implement health check scheduling and endpoint status tracking
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HealthCheck {
     pub path: String,

@@ -1,0 +1,326 @@
+## 📌 Overall Summary (Latest)
+
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 7
+
+---
+
+## Open Findings (Prioritized)
+
+No open findings.
+
+---
+
+## Review Entry — 2025-12-30T03:33:22Z
+
+### Scope
+- `crates/pavis-core` and `crates/pavis` public API surface.
+
+---
+
+### Method
+- Targeted scan of public constructors and validation bypass paths.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | High | Core validation | Validation bypass made explicit and unsafe | Done |
+
+---
+
+### Detailed Findings
+
+#### F-1: Validation bypass made explicit and unsafe
+- **Expectation:** Validation bypass must be tightly controlled and explicitly marked.
+- **Observed:** `ValidatedRuntimeConfig::from_trusted` is `pub unsafe fn` with safety docs; call sites require `unsafe` blocks.
+- **Evidence:** `crates/pavis-core/src/runtime.rs` exposes `pub unsafe fn from_trusted`; `crates/pavis/src/load.rs` uses an `unsafe` block.
+- **Assessment (Reason):** Makes boundary bypass explicit and opt-in for trusted callers.
+- **Recommendation (Suggestion):** Keep unsafe API documentation explicit and limit usage to trusted contexts.
+- **Doc Drift?:** No.
+
+---
+
+> Older review entries continue below this point, in reverse chronological order.
+
+## Review Entry — 2025-12-30T03:25:01Z
+
+### Scope
+- `crates/pavis-core` public API surface.
+
+---
+
+### Method
+- Targeted scan of public constructors for validation bypass risk.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | High | Core validation | `ValidatedRuntimeConfig::from_trusted` bypass is public | In Progress |
+
+---
+
+### Detailed Findings
+
+#### F-1: `ValidatedRuntimeConfig::from_trusted` bypass is public
+- **Expectation:** Validation bypass is not publicly exposed without explicit safeguards.
+- **Observed:** `ValidatedRuntimeConfig::from_trusted` is `pub fn` with no unsafe marker.
+- **Evidence:** `crates/pavis-core/src/runtime.rs` (`pub fn from_trusted`).
+- **Assessment (Reason):** External crates can bypass canonical validation, undermining boundary guarantees.
+- **Recommendation (Suggestion):** Restrict to `pub(crate)` or mark `unsafe` with clear safety docs.
+- **Doc Drift?:** No.
+
+---
+
+## Review Entry — 2025-12-30T03:18:52Z
+
+### Scope
+- `crates/pavis-core` and `crates/pavis` public API surface.
+
+---
+
+### Method
+- Targeted review of routing model exposure in core.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Medium | Core routing model | Runtime-only regex removed from core API | Done |
+
+---
+
+### Detailed Findings
+
+#### F-1: Runtime-only regex removed from core API
+- **Expectation:** Core public models avoid runtime-only state.
+- **Observed:** `Route` no longer includes `compiled_regex` in the core public API.
+- **Evidence:** `crates/pavis-core/src/runtime/routing.rs` no longer includes `compiled_regex`.
+- **Assessment (Reason):** Removes runtime-only type exposure and reduces coupling.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+---
+
+## Review Entry — 2025-12-29T17:42:57Z
+
+### Scope
+- Public API surface scan across all crates.
+
+---
+
+### Method
+- Manual scan of `pub` types and constructors for boundary leakage.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | High | Core validation | `ValidatedRuntimeConfig::from_trusted` bypass is public | Open |
+| F-2 | Medium | Core routing model | Runtime-only regex exposed in core API | Open |
+
+---
+
+### Detailed Findings
+
+#### F-1: `ValidatedRuntimeConfig::from_trusted` bypass is public
+- **Expectation:** Validation bypass is not publicly exposed without explicit safeguards.
+- **Observed:** Public constructor allows unchecked `RuntimeConfig` without validation.
+- **Evidence:** `crates/pavis-core/src/runtime.rs` (`pub fn from_trusted`).
+- **Assessment (Reason):** External callers can bypass canonical validation, weakening boundary guarantees.
+- **Recommendation (Suggestion):** Restrict to `pub(crate)` or mark `unsafe` with explicit safety docs.
+- **Doc Drift?:** No.
+
+#### F-2: Runtime-only regex exposed in core API
+- **Expectation:** Core public types avoid runtime-only implementation details.
+- **Observed:** `Route` includes `compiled_regex: Option<regex::Regex>`.
+- **Evidence:** `crates/pavis-core/src/runtime/routing.rs`.
+- **Assessment (Reason):** Couples core API to runtime-only details and externalizes `regex` dependency.
+- **Recommendation (Suggestion):** Move compiled regex to runtime wrappers or make field private with accessors.
+- **Doc Drift?:** No.
+
+---
+
+## Review Entry — 2025-12-29T12:52:30Z
+
+### Scope
+- Report format alignment only.
+
+---
+
+### Method
+- Report structure update to match the standardized template.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Nit | Report | No public API findings in this pass | Done |
+
+---
+
+### Detailed Findings
+
+#### F-1: No public API findings in this pass
+- **Expectation:** Report updates should not introduce new findings without evidence.
+- **Observed:** No new public API findings recorded in this pass.
+- **Evidence:** `audit/report/PUBLIC_API_REVIEW.md` update only.
+- **Assessment (Reason):** No changes to public API status.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+---
+
+## Review Entry — 2025-12-29T12:47:09Z
+
+### Scope
+- Public API boundary fixes in `pavis` and `pavis-pvs`.
+
+---
+
+### Method
+- Verification of visibility changes against prior findings.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Medium | PVS API surface | Semantic validation removed from `pavis-pvs` API | Done |
+| F-2 | Medium | Runtime routing | Internal routing representation no longer public | Done |
+| F-3 | Low | Runtime load balancing | Internal counter type no longer public | Done |
+| F-4 | Low | Runtime context | Request context type visibility reduced | Done |
+
+---
+
+### Detailed Findings
+
+#### F-1: Semantic validation removed from `pavis-pvs` API
+- **Expectation:** `pavis-pvs` exposes integrity validation only.
+- **Observed:** Public `load_validated` removed from `pavis-pvs` API surface.
+- **Evidence:** `crates/pavis-pvs/src/lib.rs` no longer re-exports `load_validated`.
+- **Assessment (Reason):** Restores integrity-only boundary for PVS.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+#### F-2: Internal routing representation no longer public
+- **Expectation:** Runtime internal routing details are crate-private.
+- **Observed:** `CompiledVirtualHost` visibility reduced.
+- **Evidence:** `crates/pavis/src/router.rs` visibility reduced for `CompiledVirtualHost`.
+- **Assessment (Reason):** Reduces coupling to internal routing types.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+#### F-3: Internal counter type no longer public
+- **Expectation:** Internal load-balancing state remains private.
+- **Observed:** `AlignedCounter` visibility reduced.
+- **Evidence:** `crates/pavis/src/upstream/cluster.rs` visibility reduced for `AlignedCounter`.
+- **Assessment (Reason):** Limits public API to stable types.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+#### F-4: Request context type visibility reduced
+- **Expectation:** Request context types are not exposed unless part of stable public API.
+- **Observed:** `RouterContext` visibility reduced and re-export removed.
+- **Evidence:** `crates/pavis/src/proxy/context.rs` and `crates/pavis/src/proxy.rs`.
+- **Assessment (Reason):** Removes internal runtime context from public API surface.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+---
+
+## Review Entry — 2025-12-29T12:40:26Z
+
+### Scope
+- Public API surface scan across all crates.
+
+---
+
+### Method
+- Manual scan of `pub` types and re-exports for boundary leakage.
+
+
+### Model
+- GPT-5
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-1 | Medium | PVS API surface | Semantic validation exposed in `pavis-pvs` | Open |
+| F-2 | Medium | Runtime routing | Internal routing representation public | Open |
+| F-3 | Low | Runtime load balancing | Internal counter type public | Open |
+| F-4 | Low | Runtime context | Request context type public | Open |
+
+---
+
+### Detailed Findings
+
+#### F-1: Semantic validation exposed in `pavis-pvs`
+- **Expectation:** `pavis-pvs` exposes integrity validation only.
+- **Observed:** Public API includes `load_validated` and `verify` re-exports.
+- **Evidence:** `crates/pavis-pvs/src/lib.rs` (`pub use verify::{load, load_validated, verify}`).
+- **Assessment (Reason):** Encourages callers to rely on semantic validation in the integrity layer.
+- **Recommendation (Suggestion):** Remove or restrict `load_validated` from public API.
+- **Doc Drift?:** No.
+
+#### F-2: Internal routing representation public
+- **Expectation:** Runtime routing internals remain crate-private.
+- **Observed:** `CompiledVirtualHost` is public.
+- **Evidence:** `crates/pavis/src/router.rs` (`pub struct CompiledVirtualHost`).
+- **Assessment (Reason):** Exposes runtime internals and couples external code to implementation details.
+- **Recommendation (Suggestion):** Reduce visibility to `pub(crate)` and expose stable API if needed.
+- **Doc Drift?:** No.
+
+#### F-3: Internal counter type public
+- **Expectation:** Internal load-balancing state stays private.
+- **Observed:** `AlignedCounter` is public but used internally.
+- **Evidence:** `crates/pavis/src/upstream/cluster.rs` (`pub struct AlignedCounter`).
+- **Assessment (Reason):** Public API surface includes implementation detail.
+- **Recommendation (Suggestion):** Reduce visibility to module or crate.
+- **Doc Drift?:** No.
+
+#### F-4: Request context type public
+- **Expectation:** Request context type should be private unless part of stable API.
+- **Observed:** `RouterContext` is public and re-exported.
+- **Evidence:** `crates/pavis/src/proxy/context.rs` and `crates/pavis/src/proxy.rs`.
+- **Assessment (Reason):** External coupling to runtime internals.
+- **Recommendation (Suggestion):** Make `RouterContext` crate-private unless stable external API is required.
+- **Doc Drift?:** No.
