@@ -64,7 +64,7 @@ The roadmap is now centered on a three-part “iron triangle” that determines 
 - [ ] Codec options: pipeline.codec.options.strict_unknown_fields
 - [ ] Versioning strategy: pipeline.execution.versioning.scheme, pipeline.execution.versioning.state_file
 - [ ] Publish durability: pipeline.execution.publish.atomic_write, pipeline.execution.publish.fsync
-- [x] Long-poll header override: distribution.long_poll.headers.algorithm
+- [ ] Long-poll header override: distribution.long_poll.headers.algorithm
 - [ ] Long-poll timeouts: distribution.long_poll.timeouts.hold_seconds, distribution.long_poll.timeouts.idle_seconds
 - [ ] Direct fetch enable: distribution.direct_fetch.enabled
 - [ ] Security auth: security.auth.mode, security.auth.bearer.token
