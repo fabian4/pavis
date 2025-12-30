@@ -4,9 +4,6 @@
 # This Makefile uses a modular approach. Specific task implementations are
 # located in the make/ directory.
 
-# Parallel execution support
-MAKEFLAGS += -j$(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
-
 # Default target
 .PHONY: all
 all: build
