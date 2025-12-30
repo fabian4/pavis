@@ -1,5 +1,6 @@
 use axum::body::Bytes;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::{Notify, RwLock};
@@ -62,6 +63,7 @@ pub struct RelayOptions {
     pub checksum_alg_header: axum::http::HeaderName,
     pub long_poll_enabled: bool,
     pub identity_name: String,
+    pub lkg_path: Option<PathBuf>,
 }
 
 impl Default for RelayOptions {
@@ -72,6 +74,7 @@ impl Default for RelayOptions {
             checksum_alg_header: axum::http::HeaderName::from_static("x-pavis-checksum-alg"),
             long_poll_enabled: true,
             identity_name: String::new(),
+            lkg_path: None,
         }
     }
 }

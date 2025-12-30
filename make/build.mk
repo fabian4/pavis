@@ -1,36 +1,62 @@
-.PHONY: build binary-build docker-build-local docker-build-ci run-pavis run-relay fmt fmt-check lint
+.PHONY: build binary-build docker-build run-pavis run-relay fmt fmt-check lint coverage-report
 
 BUILDER ?= builder
 ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
+IMAGE ?= pavis
+MODE ?= local
+CRATE ?= workspace
 
 # Build all crates in the workspace (debug mode)
 build:
 	cargo build --workspace
 
-# Build all crates in the workspace (release mode)
+# Build release binaries (CRATE=workspace|pavis|pavis-relay|...)
 binary-build:
-	cargo build --release --workspace
+	@set -e; \
+	if [ "$(CRATE)" = "workspace" ]; then \
+		cargo build --release --workspace; \
+	else \
+		CRATE_NAME="$(CRATE)"; \
+		if [ "$$CRATE_NAME" = "relay" ]; then \
+			CRATE_NAME="pavis-relay"; \
+		fi; \
+		cargo build --release -p $$CRATE_NAME; \
+	fi
 
-# Build Docker image with local cache
-docker-build-local:
-	DOCKER_BUILDKIT=1 docker buildx build \
-		--builder $(BUILDER) \
-		--file crates/pavis/Dockerfile \
-		--tag pavis:local \
-		--cache-from=type=local,src=.buildx-cache \
-		--cache-to=type=local,dest=.buildx-cache,mode=max \
-		--load \
-		.
-
-# Build Docker image with GitHub Actions cache
-docker-build-ci:
-	docker buildx build \
-		--file crates/pavis/Dockerfile \
-		--tag pavis:ci \
-		--cache-from=type=gha \
-		--cache-to=type=gha,mode=max \
-		--load \
-		.
+# Build Docker image (IMAGE=pavis|relay, MODE=local|ci)
+docker-build:
+	@set -e; \
+	if [ "$(IMAGE)" = "pavis" ]; then \
+		DOCKERFILE=crates/pavis/Dockerfile; \
+		TAG=pavis:$(MODE); \
+	elif [ "$(IMAGE)" = "relay" ]; then \
+		DOCKERFILE=crates/pavis-relay/Dockerfile; \
+		TAG=pavis-relay:$(MODE); \
+	else \
+		echo "Unsupported IMAGE=$(IMAGE) (use pavis or relay)"; \
+		exit 2; \
+	fi; \
+	if [ "$(MODE)" = "local" ]; then \
+		DOCKER_BUILDKIT=1 docker buildx build \
+			--builder $(BUILDER) \
+			--file $$DOCKERFILE \
+			--tag $$TAG \
+			--cache-from=type=local,src=.buildx-cache \
+			--cache-to=type=local,dest=.buildx-cache,mode=max \
+			--load \
+			.; \
+	elif [ "$(MODE)" = "ci" ]; then \
+		docker buildx build \
+			--file $$DOCKERFILE \
+			--tag $$TAG \
+			--cache-from=type=gha \
+			--cache-to=type=gha,mode=max \
+			--load \
+			.; \
+	else \
+		echo "Unsupported MODE=$(MODE) (use local or ci)"; \
+		exit 2; \
+	fi
 
 # Run the Pavis engine with debug logging
 run-pavis:
@@ -52,3 +78,8 @@ fmt-check:
 # Lint all code using Clippy
 lint:
 	cargo clippy --workspace -- -D warnings
+
+# Generate coverage markdown (requires cargo-tarpaulin + grcov)
+coverage-report:
+	cargo tarpaulin -e pavis-e2e --workspace --out Lcov
+	grcov lcov.info --source-dir . --output-type markdown --output-path ./agent/coverage.md

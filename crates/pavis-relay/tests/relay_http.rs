@@ -4,12 +4,7 @@ use axum::http::HeaderName;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use pavis_core::{RuntimeConfig, ServerConfig, TelemetryConfig};
-use pavis_pvs::{
-    HEADER_SIZE, PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, compute_checksum,
-};
 use pavis_relay::{RelayOptions, RelayState, router};
-use rkyv::ser::Serializer as _;
-use rkyv::ser::serializers::AllocSerializer;
 use tower::util::ServiceExt;
 
 fn minimal_config(label: &str) -> RuntimeConfig {
@@ -34,19 +29,14 @@ fn minimal_config(label: &str) -> RuntimeConfig {
 
 fn valid_pvs_bytes(label: &str) -> Bytes {
     let config = minimal_config(label);
-    let mut serializer = AllocSerializer::<1024>::default();
-    serializer
-        .serialize_value(&config)
-        .expect("serialize config");
-    let payload = serializer.into_serializer().into_inner();
-    let checksum = compute_checksum(&payload);
-    let mut bytes = Vec::with_capacity(HEADER_SIZE + payload.len());
-    bytes.extend_from_slice(PAVIS_MAGIC);
-    bytes.extend_from_slice(&PAVIS_VERSION.to_le_bytes());
-    bytes.extend_from_slice(&PAVIS_HASH_ALGORITHM_SHA256.to_le_bytes());
-    bytes.extend_from_slice(&checksum);
-    bytes.extend_from_slice(&[0u8; 20]);
-    bytes.extend_from_slice(&payload);
+    let dir = std::env::temp_dir();
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = std::process::id();
+    let path = dir.join(format!("pavis_relay_test_{label}_{pid}_{id}.pvs"));
+    pavis_pvs::write(&path, &config).expect("write config");
+    let bytes = std::fs::read(&path).expect("read config");
+    let _ = std::fs::remove_file(&path);
     Bytes::from(bytes)
 }
 
@@ -123,6 +113,17 @@ async fn publish_and_fetch_artifact() {
 }
 
 #[tokio::test]
+async fn config_rejects_missing_version_header() {
+    let app = router(test_state());
+
+    let response = app
+        .oneshot(Request::get("/v1/config").body(Body::empty()).unwrap())
+        .await
+        .expect("config");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn config_long_poll_returns_not_modified() {
     let app = router(test_state());
 
@@ -151,6 +152,38 @@ async fn publish_requires_version_header() {
         .await
         .expect("publish");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn publish_rejects_empty_body() {
+    let app = router(test_state());
+
+    let response = app
+        .oneshot(
+            Request::post("/v1/publish")
+                .header("x-pavis-version", "8")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("publish");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn publish_rejects_invalid_payload() {
+    let app = router(test_state());
+
+    let response = app
+        .oneshot(
+            Request::post("/v1/publish")
+                .header("x-pavis-version", "8")
+                .body(Body::from(Bytes::from_static(b"bad")))
+                .unwrap(),
+        )
+        .await
+        .expect("publish");
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
@@ -405,6 +438,7 @@ async fn config_uses_custom_header_names_and_status_identity() {
         checksum_alg_header: HeaderName::from_static("x-test-checksum-alg"),
         long_poll_enabled: false,
         identity_name: "relay-a".to_string(),
+        lkg_path: None,
     };
     let app = router(test_state_with_options(options));
 

@@ -8,16 +8,124 @@
 | :---: | -------------------------------------------------------- | :----: |
 | 1     | Foundation (Pingora proxy)                               | ✅      |
 | 2     | Protocol (`.pvs` format, `pavis-core`, `pavctl`)         | 🚧      |
-| 3     | Long Polling (dynamic config updates)                    | ⏳      |
-| 4     | Modular Ingestion (ingest + codec + relay)               | ⏳      |
-| 5     | Traffic Management (retries, timeouts, load balancing)   | ⏳      |
+| 3     | Long Polling (dynamic config updates)                    | 🚧      |
+| 4     | Modular Ingestion (ingest + codec + relay)               | ⏸️      |
+| 5     | Traffic Management (retries, timeouts, load balancing)   | ⏸️      |
 | 6     | Security (mTLS, RBAC)                                    | ⏳      |
 | 7     | Observability (metrics, tracing, logging)                | ⏳      |
 | 8     | Operations (health checks, graceful shutdown)            | ⏳      |
 | 9     | Advanced Features (rate limiting, fault injection, WASM) | ⏳      |
 | 10    | Kubernetes Integration (operator, sidecar injection)     | ⏳      |
 
-**Legend:** 🚧 In Progress · ⏳ Planned · ✅ Complete
+**Legend:** 🚧 In Progress · ⏳ Planned · ✅ Complete · ⏸️ Deferred
+
+---
+
+## Strategic Focus (Iron Triangle)
+
+The roadmap is now centered on a three-part “iron triangle” that determines system viability.
+Phase 4 and Phase 5 are intentionally deferred (not abandoned) to focus all effort here.
+
+**A. Close the Loop – Dynamic Configuration**
+- Scope: Complete Phase 3 client-side implementation and enable live, in-memory updates in `pavis-relay`.
+- Goal: Running `pavis` instances detect and hot-reload config changes without traffic interruption.
+
+**B. Enable Zero-Copy (mmap-based loading)**
+- Scope: Complete Optimization Phase P2 tasks.
+- Goal: Startup memory usage is minimal; config size primarily impacts page cache, not heap/RSS.
+
+**C. Fix Concurrency Bottlenecks**
+- Scope: Complete Optimization Phase P0 and P1 tasks.
+- Goal: Sustain 10k concurrent connections without errors and outperform Envoy latency under comparable load.
+
+---
+
+
+---
+
+## Phase 3: Long Polling (Iron Triangle) 🚧
+
+**Goal:** Dynamic configuration updates via HTTP long polling.
+
+**`pavis-relay`** (Server)
+- [x] HTTP server setup (Axum)
+  - [x] `GET /v1/config` - long-poll config fetch
+  - [x] `GET /v1/status` - relay status/health
+  - [x] `POST /v1/publish` - publish new `.pvs`
+  - [x] `GET /v1/artifacts/{version}` - fetch specific version (optional)
+  - [x] `GET /v1/metrics` - Prometheus metrics (optional)
+- [x] Long polling implementation
+  - [x] Accept `X-Pavis-Version` header
+  - [x] Hold connection when client is up-to-date (configurable timeout, default 60s)
+  - [x] Respond immediately on config change
+  - [x] Handle multiple concurrent clients
+- [ ] Response headers
+  - [x] `X-Pavis-Version` - current version number
+  - [x] `X-Pavis-Checksum` - sha256 payload checksum
+  - [x] `X-Pavis-Checksum-Alg` - checksum algorithm label
+  - [ ] `X-Pavis-Generated-At` - timestamp of config generation
+- [x] Config storage
+  - [x] In-memory config cache
+  - [ ] File watcher for local `.pvs` changes
+  - [ ] Version increment on change
+- [x] Config history (unbounded; pruning TBD)
+
+**`pavis-relay`** (Config Surface by Function)
+- [ ] Identity metadata: identity.cluster, identity.instance_id
+- [ ] HTTP/admin binding: http.admin_bind
+- [ ] Storage backend: storage.type
+- [ ] Artifact naming/paths: artifact.name, artifact.pvs_filename, artifact.artifacts_dir
+- [ ] Artifact limits: artifact.limits.max_pvs_bytes, artifact.limits.max_routes
+- [ ] Pipeline source ID: pipeline.source_id
+- [ ] Ingest selection: pipeline.ingest.source.kind, pipeline.ingest.source.config.path
+- [ ] Ingest mode tuning: pipeline.ingest.mode.kind, pipeline.ingest.mode.config.debounce_ms
+- [ ] Codec selection: pipeline.codec.kind
+- [ ] Codec options: pipeline.codec.options.strict_unknown_fields
+- [ ] Versioning strategy: pipeline.execution.versioning.scheme, pipeline.execution.versioning.state_file
+- [ ] Publish durability: pipeline.execution.publish.atomic_write, pipeline.execution.publish.fsync
+- [x] Long-poll header override: distribution.long_poll.headers.algorithm
+- [ ] Long-poll timeouts: distribution.long_poll.timeouts.hold_seconds, distribution.long_poll.timeouts.idle_seconds
+- [ ] Direct fetch enable: distribution.direct_fetch.enabled
+- [ ] Security auth: security.auth.mode, security.auth.bearer.token
+- [ ] Logging: logging.level, logging.access_log
+- [ ] Metrics bind: metrics.prometheus_bind
+
+**Compatibility & Migration (Control Plane)**
+- [ ] Relay accepts N-1 PVS and re-emits current version after core validation
+- [ ] Record migration audit metadata (source version, target version)
+
+**`pavctl`**
+
+**`pavis`** (Client)
+- [ ] Background config polling thread
+  - [ ] Configurable poll interval and timeout
+  - [ ] Exponential backoff on failures
+  - [ ] Jitter to prevent thundering herd
+  - [ ] Multi-source failover (primary/secondary xDS servers)
+- [ ] Config hot reload
+  - [ ] Atomic config swap (`ArcSwap`)
+  - [ ] Validate new config before swap
+  - [ ] Rollback on validation failure
+  - [ ] Config diff logging
+- [ ] Crash-loop protection
+  - [ ] Persist config to disk (`/etc/pavis/config.pvs`)
+  - [ ] Load from disk if control plane unavailable
+  - [ ] Track last successful config timestamp
+  - [ ] Bootstrap config for first start
+- [ ] Metrics
+  - [ ] `pavis_config_version` (gauge)
+  - [ ] `pavis_config_last_reload_timestamp` (gauge)
+  - [ ] `pavis_config_reload_total` (counter, success/failure labels)
+  - [ ] `pavis_config_size_bytes` (gauge)
+
+**E2E Tests**
+- [ ] Config update triggers route change
+- [ ] Long poll holds connection until update
+- [ ] Checksum mismatch triggers retry
+- [ ] Proxy continues serving during config reload
+- [ ] Crash recovery loads config from disk
+- [ ] Multiple proxies receive same update
+- [ ] Exponential backoff on xDS server failure
 
 ---
 
@@ -30,6 +138,8 @@
 - [ ] Compatibility fixtures (vN, vN-1) validated in CI for header/version compatibility
 
 ---
+
+## Historical Phases (Context)
 
 ## Phase 1: Foundation ✅
 
@@ -117,194 +227,19 @@
 
 ---
 
-## Phase 3: Long Polling ⏳
+## Deferred Phases (Paused / Deferred)
 
-**Goal:** Dynamic configuration updates via HTTP long polling.
+## Phase 4: Modular Ingestion ⏸️ Paused / Deferred
 
-**`pavis-relay`** (Server)
-- [x] HTTP server setup (Axum)
-  - [x] `GET /v1/config` - long-poll config fetch
-  - [x] `GET /v1/status` - relay status/health
-  - [x] `POST /v1/publish` - publish new `.pvs`
-  - [x] `GET /v1/artifacts/{version}` - fetch specific version (optional)
-  - [x] `GET /v1/metrics` - Prometheus metrics (optional)
-- [x] Long polling implementation
-  - [x] Accept `X-Pavis-Version` header
-  - [x] Hold connection when client is up-to-date (configurable timeout, default 60s)
-  - [x] Respond immediately on config change
-  - [x] Handle multiple concurrent clients
-- [ ] Response headers
-  - [x] `X-Pavis-Version` - current version number
-  - [x] `X-Pavis-Checksum` - sha256 payload checksum
-  - [x] `X-Pavis-Checksum-Alg` - checksum algorithm label
-  - [ ] `X-Pavis-Generated-At` - timestamp of config generation
-- [x] Config storage
-  - [x] In-memory config cache
-  - [ ] File watcher for local `.pvs` changes
-  - [ ] Version increment on change
-- [x] Config history (unbounded; pruning TBD)
-
-**`pavis-relay`** (Config Surface by Function)
-- [ ] Identity metadata: identity.cluster, identity.instance_id
-- [ ] HTTP/admin binding: http.admin_bind
-- [ ] Storage backend: storage.type
-- [ ] Artifact naming/paths: artifact.name, artifact.pvs_filename, artifact.artifacts_dir
-- [ ] Artifact limits: artifact.limits.max_pvs_bytes, artifact.limits.max_routes
-- [ ] Pipeline source ID: pipeline.source_id
-- [ ] Ingest selection: pipeline.ingest.source.kind, pipeline.ingest.source.config.path
-- [ ] Ingest mode tuning: pipeline.ingest.mode.kind, pipeline.ingest.mode.config.debounce_ms
-- [ ] Codec selection: pipeline.codec.kind
-- [ ] Codec options: pipeline.codec.options.strict_unknown_fields
-- [ ] Versioning strategy: pipeline.execution.versioning.scheme, pipeline.execution.versioning.state_file
-- [ ] Publish durability: pipeline.execution.publish.atomic_write, pipeline.execution.publish.fsync
-- [x] Long-poll header override: distribution.long_poll.headers.algorithm
-- [ ] Long-poll timeouts: distribution.long_poll.timeouts.hold_seconds, distribution.long_poll.timeouts.idle_seconds
-- [ ] Direct fetch enable: distribution.direct_fetch.enabled
-- [ ] Security auth: security.auth.mode, security.auth.bearer.token
-- [ ] Logging: logging.level, logging.access_log
-- [ ] Metrics bind: metrics.prometheus_bind
-
-**Compatibility & Migration (Control Plane)**
-- [ ] Relay accepts N-1 PVS and re-emits current version after core validation
-- [ ] Record migration audit metadata (source version, target version)
-
-**`pavctl`**
-
-**`pavis`** (Client)
-- [ ] Background config polling thread
-  - [ ] Configurable poll interval and timeout
-  - [ ] Exponential backoff on failures
-  - [ ] Jitter to prevent thundering herd
-  - [ ] Multi-source failover (primary/secondary xDS servers)
-- [ ] Config hot reload
-  - [ ] Atomic config swap (`ArcSwap`)
-  - [ ] Validate new config before swap
-  - [ ] Rollback on validation failure
-  - [ ] Config diff logging
-- [ ] Crash-loop protection
-  - [ ] Persist config to disk (`/etc/pavis/config.pvs`)
-  - [ ] Load from disk if control plane unavailable
-  - [ ] Track last successful config timestamp
-  - [ ] Bootstrap config for first start
-- [ ] Metrics
-  - [ ] `pavis_config_version` (gauge)
-  - [ ] `pavis_config_last_reload_timestamp` (gauge)
-  - [ ] `pavis_config_reload_total` (counter, success/failure labels)
-  - [ ] `pavis_config_size_bytes` (gauge)
-
-**E2E Tests**
-- [ ] Config update triggers route change
-- [ ] Long poll holds connection until update
-- [ ] Checksum mismatch triggers retry
-- [ ] Proxy continues serving during config reload
-- [ ] Crash recovery loads config from disk
-- [ ] Multiple proxies receive same update
-- [ ] Exponential backoff on xDS server failure
+**Status:** Intentionally deprioritized to focus on the iron triangle.
+This phase is deferred (not abandoned). No active milestones or deliverables are scheduled.
 
 ---
 
-## Phase 4: Modular Ingestion ⏳
+## Phase 5: Traffic Management ⏸️ Paused / Deferred
 
-**Goal:** Standardize the configuration pipeline with ingest sources, codecs, and relay orchestration.
-
-**`pavis-relay`** (Orchestrator)
-- [ ] Registry system for one active ingest/codec pair
-- [ ] State reconciliation engine
-- [ ] NACK feedback loop for validation failures
-- [ ] Version management and PVS emission
-
-**Ingest** (Source Connectivity)
-- [ ] `pavis-ingest-file`: Local directory/file watcher
-- [ ] `pavis-ingest-istio`: xDS gRPC client
-- [ ] `pavis-ingest-kuma`: xDS gRPC client (reusing xDS ingest)
-- [ ] `pavis-ingest-k8s`: Kubernetes API watcher
-
-**Codecs** (Protocol Translation)
-- [ ] `pavis-codec-xds`: Envoy Protobuf → `RuntimeConfig`
-- [x] `pavis-codec-serde`: Serde DTO → `RuntimeConfig` (YAML/JSON)
-- [ ] `pavis-codec-crd`: K8s Gateway API → `RuntimeConfig`
-
-**E2E Tests**
-- [ ] Source switch: Verify proxy updates when relay switches ingest sources
-- [ ] Protocol reuse: Verify same xDS codec works for both Istio and Kuma ingest
-- [ ] Conflict gate: Verify relay prevents concurrent source definitions
-
----
-
-## Phase 5: Traffic Management ⏳
-
-**Goal:** Advanced traffic control features.
-
-**Retries** (`pavis-core` + `pavis`)
-- [x] `RetryPolicy` struct in `pavis-core`
-  - [x] `attempts` - max retry count
-  - [x] `per_try_timeout` - timeout per attempt
-  - [x] `retry_on` - conditions (5xx, connect-failure, reset, etc.)
-  - [ ] `retry_back_off` - base interval and max interval
-  - [ ] `retriable_headers` - retry on specific response headers
-- [ ] Retry implementation in `pavis`
-  - [ ] Retry on configured status codes
-  - [ ] Retry on connection failures
-  - [ ] Respect retry budget (prevent retry storms)
-  - [ ] Hedged requests (speculative retries)
-  - [ ] Honor route-level `retry` config in runtime behavior
-
-**Timeouts** (`pavis-core` + `pavis`)
-- [ ] `TimeoutPolicy` struct in `pavis-core`
-  - [ ] `request_timeout` - total request timeout
-  - [ ] `idle_timeout` - connection idle timeout
-  - [ ] `connect_timeout` - upstream connect timeout
-  - [ ] `stream_idle_timeout` - for long-lived streams
-- [ ] Timeout enforcement in `pavis`
-  - [ ] Per-route timeout overrides
-  - [ ] Timeout headers (`x-envoy-upstream-rq-timeout-ms`)
-  - [ ] Honor route-level `timeout` config in runtime behavior
-
-**Circuit Breaking** (`pavis-core` + `pavis`)
-- [ ] `CircuitBreaker` struct in `pavis-core`
-  - [ ] `max_connections` - per upstream
-  - [ ] `max_pending_requests` - queue limit
-  - [ ] `max_requests` - concurrent requests limit
-  - [ ] `max_retries` - concurrent retries limit
-- [ ] Circuit breaker state machine in `pavis`
-  - [ ] Closed → Open on threshold breach
-  - [ ] Open → Half-Open after timeout
-  - [ ] Half-Open → Closed on success
-  - [ ] Circuit breaker metrics and events
-  - [ ] Honor upstream `circuit_breaker` config in runtime behavior
-
-**Load Balancing** (`pavis-core` + `pavis`)
-- [ ] Additional algorithms in `LoadBalancer` enum
-  - [ ] `LeastConnections`
-  - [ ] `WeightedRoundRobin`
-  - [ ] `ConsistentHash` (header, cookie, IP)
-  - [ ] `Maglev`
-  - [ ] `P2C` (Power of Two Choices)
-- [ ] Locality-aware routing
-  - [ ] Zone preference
-  - [ ] Failover to other zones
-  - [ ] Priority levels
-- [ ] Slow start mode
-  - [ ] Gradually increase traffic to new endpoints
-
-**Traffic Splitting** (`pavis`)
-- [x] Weighted routing (canary deployments)
-- [ ] Header-based routing
-- [ ] Cookie-based routing (sticky sessions)
-- [ ] Mirror/shadow traffic
-  - [ ] Fire-and-forget mirroring
-  - [ ] Configurable mirror percentage
-
-**E2E Tests**
-- [ ] Retry succeeds after transient 503
-- [ ] Retry exhaustion returns final error
-- [ ] Request timeout returns 504
-- [ ] Circuit breaker opens after failures
-- [ ] Circuit breaker closes after recovery
-- [ ] Round-robin distributes evenly
-- [ ] Consistent hash routes same key to same backend
-- [ ] Canary weight splits traffic correctly
-- [ ] Mirror sends copy without affecting response
+**Status:** Intentionally deprioritized to focus on the iron triangle.
+This phase is deferred (not abandoned). No active milestones or deliverables are scheduled.
 
 ---
 

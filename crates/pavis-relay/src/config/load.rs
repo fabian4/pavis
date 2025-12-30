@@ -23,23 +23,23 @@ fn normalize_root(mut value: serde_yaml::Value) -> Result<serde_yaml::Value> {
     let distribution_key = serde_yaml::Value::String("distribution".to_string());
     let security_key = serde_yaml::Value::String("security".to_string());
 
-    if let serde_yaml::Value::Mapping(map) = &mut value
-        && let Some(relay_value) = map.remove(&relay_key)
-    {
-        value = relay_value;
+    if let serde_yaml::Value::Mapping(map) = &mut value {
+        if let Some(relay_value) = map.remove(&relay_key) {
+            value = relay_value;
+        }
     }
 
-    if let serde_yaml::Value::Mapping(map) = &mut value
-        && !map.contains_key(&security_key)
-    {
-        let nested_security =
-            map.get_mut(&distribution_key)
-                .and_then(|distribution| match distribution {
-                    serde_yaml::Value::Mapping(dist_map) => dist_map.remove(&security_key),
-                    _ => None,
-                });
-        if let Some(security) = nested_security {
-            map.insert(security_key, security);
+    if let serde_yaml::Value::Mapping(map) = &mut value {
+        if !map.contains_key(&security_key) {
+            let nested_security =
+                map.get_mut(&distribution_key)
+                    .and_then(|distribution| match distribution {
+                        serde_yaml::Value::Mapping(dist_map) => dist_map.remove(&security_key),
+                        _ => None,
+                    });
+            if let Some(security) = nested_security {
+                map.insert(security_key, security);
+            }
         }
     }
 

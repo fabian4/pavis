@@ -29,7 +29,8 @@ async fn main() -> Result<()> {
         }
     };
 
-    let options = build_options(&config).context("invalid relay config options")?;
+    let mut options = build_options(&config).context("invalid relay config options")?;
+    options.lkg_path = Some(lkg_path);
     let state = RelayState::new_with_options(0, Bytes::from(bytes), options)
         .context("failed to initialize relay state")?;
 
@@ -72,6 +73,7 @@ fn build_options(config: &config::RelayConfig) -> Result<pavis_relay::RelayOptio
         checksum_alg_header: alg_name,
         long_poll_enabled: config.distribution.long_poll.enabled,
         identity_name: config.identity.name.clone(),
+        lkg_path: None,
     })
 }
 

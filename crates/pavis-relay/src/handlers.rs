@@ -135,8 +135,20 @@ pub(crate) async fn post_publish(
         return (StatusCode::UNPROCESSABLE_ENTITY, format!("{err}\n")).into_response();
     }
 
+    let payload = body.clone();
     if let Err(err) = state.publish(proposed_version, body).await {
         return (StatusCode::CONFLICT, format!("{err}\n")).into_response();
+    }
+
+    if let Some(path) = options.lkg_path.as_ref() {
+        if let Some(parent) = path.parent() {
+            if let Err(err) = tokio::fs::create_dir_all(parent).await {
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response();
+            }
+        }
+        if let Err(err) = tokio::fs::write(path, &payload).await {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response();
+        }
     }
 
     (StatusCode::OK, "ok\n").into_response()

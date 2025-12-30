@@ -6,9 +6,13 @@ publish = false
 
 [dependencies]
 anyhow = "1.0"
+pavis-codec-serde = { path = "../pavis-codec-serde" }
+pavis-core = { path = "../pavis-core" }
+pavis-pvs = { path = "../pavis-pvs" }
 reqwest = { version = "0.12", features = ["json"] }
-tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
+tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"

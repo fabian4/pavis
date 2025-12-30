@@ -1,8 +1,9 @@
-mod config;
-mod http;
-mod process;
-mod tls;
+mod pavis;
+mod relay;
 
-pub use http::{BASE_URL, get_response_json, get_upstream_name, wait_for_pavis};
-pub use process::{TestEnv, find_project_root, generate_pvs};
-pub use tls::resolve_docker_service_ip;
+pub use pavis::{
+    BASE_URL, PavisScenario, TestEnv, find_project_root, generate_pvs, get_response_json,
+    get_upstream_name, resolve_docker_service_ip, tls_support_config, upstream_tls_config,
+    wait_for_pavis, write_config,
+};
+pub use relay::RelayEnv;
