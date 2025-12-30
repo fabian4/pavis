@@ -6,6 +6,59 @@
 
 ## Historical Reviews
 
+### Review 2025-12-30T02:27:10Z
+
+Scope:
+- Commit / branch / tag reviewed: local workspace (uncommitted)
+- Directories or crates covered: `crates/pavis-relay` tests
+
+Summary:
+- Confirmed relay error-path tests were added and failing cases were exercised.
+
+Findings:
+- [DONE] `pavis-relay` publish endpoint lacks tests for empty bodies and invalid `.pvs` payloads
+  - Evidence: `crates/pavis-relay/tests/relay_http.rs` now includes empty/invalid publish coverage (422/400 paths).
+  - Resolution: Added relay publish error-path tests; verified by `make ci-local`.
+
+- [DONE] `pavis-relay` config endpoint lacks a test for missing version header handling
+  - Evidence: `crates/pavis-relay/tests/relay_http.rs` includes missing header coverage for `GET /v1/config`.
+  - Resolution: Added missing-header test; verified by `make ci-local`.
+
+Resolved:
+- `pavis-relay` publish endpoint lacks tests for empty bodies and invalid `.pvs` payloads.
+- `pavis-relay` config endpoint lacks a test for missing version header handling.
+
+Notes:
+- Timestamp (UTC): 2025-12-30T02:27:10Z
+- Limitations: Focused on relay HTTP tests only.
+
+### Review 2025-12-29T17:42:57Z
+
+Scope:
+- Commit / branch / tag reviewed: local workspace (uncommitted)
+- Directories or crates covered: full workspace (unit, integration, and e2e tests)
+
+Summary:
+- Relay endpoints are well-covered for happy paths, but two error-path cases remain untested.
+
+Findings:
+- [NEW] `pavis-relay` publish endpoint lacks tests for empty bodies and invalid `.pvs` payloads
+  - Evidence: `post_publish` returns `BAD_REQUEST` on empty body and `UNPROCESSABLE_ENTITY` for invalid payloads (`crates/pavis-relay/src/handlers.rs`); tests cover missing version and monotonicity only (`crates/pavis-relay/tests/relay_http.rs`).
+  - Impact: Regression risk for integrity enforcement and validation behavior.
+  - Recommendation: Add tests for empty publish bodies and invalid magic/checksum payloads.
+
+- [NEW] `pavis-relay` config endpoint lacks a test for missing version header handling
+  - Evidence: `get_config` returns `BAD_REQUEST` if the version header is missing (`crates/pavis-relay/src/handlers.rs`); no test asserts this behavior in `crates/pavis-relay/tests/relay_http.rs`.
+  - Impact: Header validation regressions could go unnoticed.
+  - Recommendation: Add a `GET /v1/config` test without the version header and assert a 400 response.
+
+Resolved:
+- None.
+
+Notes:
+- Timestamp (UTC): 2025-12-29T17:42:57Z
+- Limitations: Review focused on uncovered error-path cases; broader test depth may still be incomplete.
+
 ### Review 2025-12-29T14:05:12Z
 
 Scope:

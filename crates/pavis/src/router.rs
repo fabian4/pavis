@@ -12,9 +12,14 @@ use regex::Regex;
 
 pub mod matcher;
 
+pub(crate) struct CompiledRoute {
+    pub index: usize,
+    pub regex: Option<Regex>,
+}
+
 pub(crate) struct CompiledVirtualHost {
     pub config: VirtualHost,
-    pub regexes: Vec<Option<Regex>>,
+    pub routes: Vec<CompiledRoute>,
 }
 
 pub struct Router {
@@ -25,22 +30,20 @@ impl Router {
     pub fn new(routes: Vec<VirtualHost>) -> Result<Self> {
         let mut compiled_routes = Vec::new();
         for vhost in routes {
-            let mut regexes = Vec::new();
-            for route in &vhost.paths {
-                let regex = match (&route.match_type, &route.compiled_regex) {
-                    (MatchType::Regex, Some(precompiled)) => Some(precompiled.clone()),
-                    (MatchType::Regex, None) => {
-                        Some(Regex::new(&route.path).with_context(|| {
-                            format!("Failed to compile regex for path: {}", route.path)
-                        })?)
-                    }
-                    _ => None,
+            let mut compiled = Vec::new();
+            for (index, route) in vhost.paths.iter().enumerate() {
+                let regex = if route.match_type == MatchType::Regex {
+                    Some(Regex::new(&route.path).with_context(|| {
+                        format!("Failed to compile regex for path: {}", route.path)
+                    })?)
+                } else {
+                    None
                 };
-                regexes.push(regex);
+                compiled.push(CompiledRoute { index, regex });
             }
             compiled_routes.push(CompiledVirtualHost {
                 config: vhost,
-                regexes,
+                routes: compiled,
             });
         }
         Ok(Self {
@@ -78,7 +81,6 @@ mod tests {
                             upstream: "backend-1".to_string(),
                             weight: 1,
                         }],
-                        compiled_regex: None,
                     },
                     Route {
                         match_type: MatchType::Prefix,
@@ -91,7 +93,6 @@ mod tests {
                             upstream: "backend-1".to_string(),
                             weight: 1,
                         }],
-                        compiled_regex: None,
                     },
                 ],
             },
@@ -108,7 +109,6 @@ mod tests {
                         upstream: "backend-2".to_string(),
                         weight: 1,
                     }],
-                    compiled_regex: None,
                 }],
             },
         ]
@@ -126,7 +126,6 @@ mod tests {
                 request_headers: None,
                 response_headers: None,
                 destinations: vec![],
-                compiled_regex: None,
             }],
         }];
 
@@ -192,7 +191,6 @@ mod tests {
                     upstream: "backend".to_string(),
                     weight: 1,
                 }],
-                compiled_regex: None,
             }],
         }];
 
@@ -229,7 +227,6 @@ mod tests {
                         upstream: "backend-1".to_string(),
                         weight: 1,
                     }],
-                    compiled_regex: None,
                 },
                 Route {
                     match_type: MatchType::Exact,
@@ -242,7 +239,6 @@ mod tests {
                         upstream: "backend-2".to_string(),
                         weight: 1,
                     }],
-                    compiled_regex: None,
                 },
             ],
         }];

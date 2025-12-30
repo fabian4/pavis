@@ -423,7 +423,6 @@ RuntimeConfig
       ├─ destinations: Vec<WeightedDestination>
       │  ├─ upstream: String              // target upstream name
       │  └─ weight: u32                   // destination weight
-      └─ compiled_regex: Option<regex::Regex>  // precompiled regex; runtime only
 ```
 
 ## 7. Safety & Resilience

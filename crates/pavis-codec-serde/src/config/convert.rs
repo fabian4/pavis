@@ -172,7 +172,6 @@ routes:
                         upstream: "backend".to_string(),
                         weight: 2,
                     }],
-                    compiled_regex: None,
                 }],
             }],
         };

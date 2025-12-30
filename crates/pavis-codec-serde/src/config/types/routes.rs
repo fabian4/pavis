@@ -22,8 +22,6 @@ pub struct Route {
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
     pub destinations: Vec<WeightedDestination>,
-    #[serde(skip)]
-    pub compiled_regex: Option<regex::Regex>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

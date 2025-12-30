@@ -176,7 +176,6 @@ mod tests {
                         upstream: "backend".to_string(),
                         weight: 1,
                     }],
-                    compiled_regex: None,
                 }],
             }],
         };
@@ -233,7 +232,6 @@ mod tests {
                         upstream: "backend".to_string(),
                         weight: 1,
                     }],
-                    compiled_regex: None,
                 }],
             }],
         };

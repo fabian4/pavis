@@ -96,7 +96,6 @@ fn sample_config() -> SerdeConfig {
                     upstream: "backend".to_string(),
                     weight: 1,
                 }],
-                compiled_regex: None,
             }],
         }],
     }

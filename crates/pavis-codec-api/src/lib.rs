@@ -145,7 +145,6 @@ mod tests {
                         upstream: "upstream1".to_string(),
                         weight: 1,
                     }],
-                    compiled_regex: None,
                 }],
             }],
         }

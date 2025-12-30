@@ -2,11 +2,103 @@
 
 ## Active Findings (Latest)
 
-<!-- Only unresolved or still-relevant findings live here -->
+- None.
 
 ## Historical Reviews
 
 <!-- Append-only chronological log -->
+
+### Review 2025-12-30T03:33:22Z
+
+Scope:
+- Commit / branch / tag reviewed: local workspace (uncommitted)
+- Directories or crates covered: `crates/pavis-core`, `crates/pavis`
+
+Summary:
+- Made bypassing validation an explicit unsafe operation for trusted configurations.
+
+Findings:
+- [DONE] `ValidatedRuntimeConfig::from_trusted` is public and can bypass semantic validation
+  - Evidence: `crates/pavis-core/src/runtime.rs` now exposes `pub unsafe fn from_trusted` with safety docs; `crates/pavis/src/load.rs` uses an `unsafe` block.
+  - Resolution: Bypass requires explicit unsafe acknowledgment and documentation.
+
+Resolved:
+- `ValidatedRuntimeConfig::from_trusted` is public and can bypass semantic validation.
+
+Notes:
+- Timestamp (UTC): 2025-12-30T03:33:22Z
+- Limitations: This change makes bypass explicit but does not remove the capability for trusted callers.
+
+### Review 2025-12-30T03:25:01Z
+
+Scope:
+- Commit / branch / tag reviewed: local workspace (uncommitted)
+- Directories or crates covered: `crates/pavis-core`
+
+Summary:
+- Confirmed the only remaining active public API concern is `ValidatedRuntimeConfig::from_trusted`.
+
+Findings:
+- [EXISTING] `ValidatedRuntimeConfig::from_trusted` is public and can bypass semantic validation
+  - Evidence: `crates/pavis-core/src/runtime.rs` still exposes `pub fn from_trusted`.
+  - Status: No change in this pass.
+
+Resolved:
+- None.
+
+Notes:
+- Timestamp (UTC): 2025-12-30T03:25:01Z
+- Limitations: Public API scan focused on core wrapper constructors only.
+
+### Review 2025-12-30T03:18:52Z
+
+Scope:
+- Commit / branch / tag reviewed: local workspace (uncommitted)
+- Directories or crates covered: `crates/pavis-core`, `crates/pavis`
+
+Summary:
+- Removed runtime-only regex state from the core public API surface.
+
+Findings:
+- [DONE] `Route::compiled_regex` exposes runtime-only regex state in the core public API
+  - Evidence: `crates/pavis-core/src/runtime/routing.rs` no longer includes `compiled_regex`.
+  - Resolution: Core route model contains only canonical fields; runtime keeps compiled regex state.
+
+Resolved:
+- `Route::compiled_regex` exposes runtime-only regex state in the core public API.
+
+Notes:
+- Timestamp (UTC): 2025-12-30T03:18:52Z
+- Limitations: No downstream API consumer audit performed.
+
+### Review 2025-12-29T17:42:57Z
+
+Scope:
+- Commit / branch / tag reviewed: local workspace (uncommitted)
+- Directories or crates covered: all crates (public API surface scan)
+
+Summary:
+- Identified two public APIs that either bypass validation or expose runtime-only state.
+
+Findings:
+- [NEW] `ValidatedRuntimeConfig::from_trusted` is public and can bypass semantic validation
+  - Description: Public constructor allows callers to wrap unchecked `RuntimeConfig` without validation.
+  - Evidence: `crates/pavis-core/src/runtime.rs` (`pub fn from_trusted`).
+  - Impact: External crates can bypass canonical validation, undermining boundary guarantees.
+  - Recommendation: Restrict to `pub(crate)` or mark as `unsafe` with explicit docs for trusted-only usage.
+
+- [NEW] `Route::compiled_regex` exposes runtime-only regex state in the core public API
+  - Description: Core `Route` includes `compiled_regex: Option<regex::Regex>` as a public field.
+  - Evidence: `crates/pavis-core/src/runtime/routing.rs`.
+  - Impact: Couples core API to runtime details and forces `regex` into core public types.
+  - Recommendation: Move compiled regex to runtime-specific wrappers or make it private with accessor hooks.
+
+Resolved:
+- None.
+
+Notes:
+- Timestamp (UTC): 2025-12-29T17:42:57Z
+- Limitations: Downstream API consumers not audited.
 
 ### Review 2025-12-29T12:52:30Z
 

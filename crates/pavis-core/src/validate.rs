@@ -128,7 +128,6 @@ mod tests {
                         upstream: "test".to_string(),
                         weight: 1,
                     }],
-                    compiled_regex: None,
                 }],
             }],
         }

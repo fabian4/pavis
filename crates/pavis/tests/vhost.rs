@@ -70,7 +70,6 @@ fn test_routing_vhost_precedence() {
                     upstream: "wildcard-upstream".to_string(),
                     weight: 1,
                 }],
-                compiled_regex: None,
             }],
         },
         VirtualHost {
@@ -86,7 +85,6 @@ fn test_routing_vhost_precedence() {
                     upstream: "api-upstream".to_string(),
                     weight: 1,
                 }],
-                compiled_regex: None,
             }],
         },
         VirtualHost {
@@ -102,7 +100,6 @@ fn test_routing_vhost_precedence() {
                     upstream: "web-upstream".to_string(),
                     weight: 1,
                 }],
-                compiled_regex: None,
             }],
         },
     ];

@@ -22,7 +22,8 @@ pub fn load_file(path: &str) -> LoadResult<ValidatedRuntimeConfig> {
     }
 
     let config = pavis_pvs::load(path)?;
-    Ok(ValidatedRuntimeConfig::from_trusted(config))
+    let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config) };
+    Ok(validated)
 }
 
 #[cfg(test)]

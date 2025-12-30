@@ -63,7 +63,6 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 request_headers,
                 response_headers,
                 destinations,
-                compiled_regex: None,
             });
         }
 
@@ -120,7 +119,6 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 request_headers,
                 response_headers,
                 destinations,
-                compiled_regex: None,
             });
         }
 

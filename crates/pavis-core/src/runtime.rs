@@ -34,7 +34,11 @@ impl ValidatedRuntimeConfig {
         Self { runtime }
     }
 
-    pub fn from_trusted(runtime: RuntimeConfig) -> Self {
+    /// Construct a validated config without re-checking semantic invariants.
+    ///
+    /// # Safety
+    /// Caller must guarantee the runtime config has already passed canonical validation.
+    pub unsafe fn from_trusted(runtime: RuntimeConfig) -> Self {
         Self { runtime }
     }
 
@@ -106,7 +110,6 @@ mod tests {
                         upstream: "upstream1".to_string(),
                         weight: 1,
                     }],
-                    compiled_regex: None,
                 }],
             }],
         };

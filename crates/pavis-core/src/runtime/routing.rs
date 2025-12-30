@@ -1,5 +1,3 @@
-use regex::Regex;
-use rkyv::with::Skip;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
 use super::HeaderOperations;
@@ -21,8 +19,6 @@ pub struct Route {
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
     pub destinations: Vec<WeightedDestination>,
-    #[with(Skip)]
-    pub compiled_regex: Option<Regex>,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]

@@ -33,7 +33,6 @@ fn apply_route_headers_populates_router_context() {
             upstream: "backend".to_string(),
             weight: 1,
         }],
-        compiled_regex: None,
     };
     let mut ctx = RouterContext {
         upstream_name: None,
@@ -125,7 +124,6 @@ async fn request_filter_selects_weighted_destination() {
                     weight: 2,
                 },
             ],
-            compiled_regex: None,
         }],
     }];
     let router = Arc::new(Router::new(routes).expect("routes"));
@@ -198,7 +196,6 @@ async fn request_filter_skips_selection_when_total_weight_zero() {
                     weight: 0,
                 },
             ],
-            compiled_regex: None,
         }],
     }];
     let router = Arc::new(Router::new(routes).expect("routes"));

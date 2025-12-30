@@ -80,7 +80,6 @@ mod tests {
                     request_headers: None,
                     response_headers: None,
                     destinations: vec![],
-                    compiled_regex: None,
                 }],
             }],
         };
@@ -107,7 +106,6 @@ mod tests {
                     request_headers: None,
                     response_headers: None,
                     destinations: vec![],
-                    compiled_regex: None,
                 }],
             }],
         };

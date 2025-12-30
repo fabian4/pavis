@@ -39,7 +39,6 @@ fn test_routing_prefix_match() {
                 upstream: "backend-a".to_string(),
                 weight: 1,
             }],
-            compiled_regex: None,
         }],
     });
 
@@ -102,7 +101,6 @@ fn test_routing_exact_and_regex_match() {
                     upstream: "backend-exact".to_string(),
                     weight: 1,
                 }],
-                compiled_regex: None,
             },
             Route {
                 match_type: MatchType::Regex,
@@ -115,7 +113,6 @@ fn test_routing_exact_and_regex_match() {
                     upstream: "backend-regex".to_string(),
                     weight: 1,
                 }],
-                compiled_regex: None,
             },
         ],
     });

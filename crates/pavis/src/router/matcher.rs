@@ -10,11 +10,13 @@ pub(crate) fn match_request<'a>(
     let normalized_host = host_header.map(normalize_host);
     let try_match = |vhost: &'a CompiledVirtualHost| -> Option<(&'a VirtualHost, &'a Route)> {
         if vhost.config.host == "*" || Some(vhost.config.host.as_str()) == normalized_host {
-            for (i, route) in vhost.config.paths.iter().enumerate() {
+            for compiled in &vhost.routes {
+                let route = &vhost.config.paths[compiled.index];
                 let is_match = match route.match_type {
                     MatchType::Prefix => uri_path.starts_with(&route.path),
                     MatchType::Exact => uri_path == route.path,
-                    MatchType::Regex => vhost.regexes[i]
+                    MatchType::Regex => compiled
+                        .regex
                         .as_ref()
                         .map(|re| re.is_match(uri_path))
                         .unwrap_or(false),
@@ -72,17 +74,18 @@ fn normalize_host(host: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::match_request;
-    use crate::router::CompiledVirtualHost;
+    use crate::router::{CompiledRoute, CompiledVirtualHost};
     use pavis_core::{MatchType, Route, VirtualHost, WeightedDestination};
     use regex::Regex;
 
     fn compiled_vhost(host: &str, route: Route, regex: Option<Regex>) -> CompiledVirtualHost {
+        let index = 0;
         CompiledVirtualHost {
             config: VirtualHost {
                 host: host.to_string(),
                 paths: vec![route],
             },
-            regexes: vec![regex],
+            routes: vec![CompiledRoute { index, regex }],
         }
     }
 
@@ -99,7 +102,6 @@ mod tests {
                 upstream: "backend".to_string(),
                 weight: 1,
             }],
-            compiled_regex: None,
         };
         let routes = vec![compiled_vhost("example.com", route, None)];
         assert!(match_request(&routes, Some("other.com"), "/").is_none());
@@ -119,7 +121,6 @@ mod tests {
                 upstream: "backend".to_string(),
                 weight: 1,
             }],
-            compiled_regex: None,
         };
         let regex = Regex::new("^/items/[0-9]+$").unwrap();
         let routes = vec![compiled_vhost("*", route, Some(regex))];
@@ -140,7 +141,6 @@ mod tests {
                 upstream: "backend".to_string(),
                 weight: 1,
             }],
-            compiled_regex: None,
         };
         let routes = vec![compiled_vhost("example.com", route, None)];
         assert!(match_request(&routes, Some("example.com:8080"), "/").is_some());
@@ -159,7 +159,6 @@ mod tests {
                 upstream: "backend".to_string(),
                 weight: 1,
             }],
-            compiled_regex: None,
         };
         let routes = vec![compiled_vhost("::1", route, None)];
         assert!(match_request(&routes, Some("[::1]:8080"), "/").is_some());
