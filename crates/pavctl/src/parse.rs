@@ -19,3 +19,26 @@ pub fn parse_runtime_from_bytes(
         .context("Failed to decode config")?;
     Ok(validated.into_inner())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_runtime_handles_yaml() {
+        let input = b"server:\n  listen_addr: 127.0.0.1:8080";
+        let config = parse_runtime_from_bytes(SerdeFormat::Yaml, input).expect("yaml");
+        assert_eq!(config.server.listen_addr.port(), 8080);
+    }
+
+    #[test]
+    fn parse_runtime_handles_json() {
+        let input = br#"{
+            "server": {
+                "listen_addr": "127.0.0.1:9090"
+            }
+        }"#;
+        let config = parse_runtime_from_bytes(SerdeFormat::Json, input).expect("json");
+        assert_eq!(config.server.listen_addr.port(), 9090);
+    }
+}

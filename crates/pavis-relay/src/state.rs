@@ -453,7 +453,7 @@ impl RelayMetrics {
 
 #[cfg(test)]
 mod tests {
-    use super::{RelayMeta, RelayState, execute_plan};
+    use super::{RelayMeta, RelayOptions, RelayState, execute_plan};
     use axum::body::Bytes;
 
     #[test]
@@ -579,5 +579,71 @@ mod tests {
             .await
             .expect("newer version");
         assert_eq!(state.version().await, 11);
+    }
+
+    #[tokio::test]
+    async fn persistence_updates_last_error_on_failure() {
+        let dir = std::env::temp_dir().join("relay_persist_fail");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Use a directory as the LKG path to force IsADirectory error on write
+        let lkg = dir.join("config.pvs");
+        std::fs::create_dir(&lkg).unwrap();
+
+        let mut options = RelayOptions::default();
+        options.persistence.enabled = true;
+        options.persistence.flush_interval = std::time::Duration::from_millis(10);
+        options.persistence.retry_max = 1; // fast fail
+        options.persistence.retry_backoff = std::time::Duration::from_millis(1);
+        options.lkg_path = Some(lkg.clone());
+
+        // Use valid PVS bytes
+        let config = pavis_core::RuntimeConfig {
+            server: pavis_core::ServerConfig {
+                listen_addr: "127.0.0.1:8080".parse().unwrap(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: pavis_core::TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: pavis_core::AccessLogConfig::Disabled,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![],
+        };
+        let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
+
+        let state = RelayState::new_with_options(0, pvs_bytes.into(), options).expect("state");
+
+        // Trigger persistence with valid bytes
+        let update_bytes = pavis_pvs::encode(&config).expect("encode");
+        state
+            .publish_auto(update_bytes.into())
+            .await
+            .expect("publish");
+
+        // Wait for persistence loop to fail
+        let mut attempts = 0;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if state.last_error().await.is_some() {
+                break;
+            }
+            attempts += 1;
+            if attempts > 20 {
+                panic!("timed out waiting for persistence error");
+            }
+        }
+
+        let err = state.last_error().await.unwrap();
+        // Error will be "Is a directory" (Os { code: 21 })
+        assert!(err.contains("Is a directory") || err.contains("Os { code: 21"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

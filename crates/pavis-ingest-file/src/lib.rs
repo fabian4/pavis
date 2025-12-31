@@ -250,6 +250,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_file_ingest_stream_drop_stops_watcher() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        let path = file.path().to_path_buf();
+        let yaml_path = path.with_extension("yaml");
+        std::fs::rename(&path, &yaml_path)?;
+        file.as_file_mut().write_all(b"v1")?;
+
+        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(10));
+        let stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+
+        // Drop the stream immediately
+        drop(stream);
+
+        // Trigger an update that would try to send
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        std::fs::write(&yaml_path, b"v2")?;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // If we are here and didn't panic, the background task handled the closed channel gracefully.
+
+        std::fs::remove_file(yaml_path)?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_file_ingest_unsupported_format() -> Result<()> {
         let file = NamedTempFile::new()?;
         let path = file.path().to_path_buf();

@@ -19,7 +19,8 @@ use super::validation;
 use crate::SerdeFormat;
 use crate::serde_helpers::parse_with_format;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(default)]
 pub struct SerdeConfig {
     pub server: ServerConfig,
     pub telemetry: TelemetryConfig,

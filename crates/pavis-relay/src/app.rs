@@ -198,17 +198,23 @@ mod tests {
     #[test]
     fn build_options_rejects_invalid_persistence_config() {
         let mut config = minimal_config();
-        
+
         // Zero flush interval
         config.persistence.flush_interval = 0;
         let err = build_options(&config).expect_err("zero flush");
-        assert!(err.to_string().contains("flush_interval must be greater than zero"));
+        assert!(
+            err.to_string()
+                .contains("flush_interval must be greater than zero")
+        );
         config.persistence.flush_interval = 1000; // Reset
 
         // Zero retry min backoff
         config.persistence.retry.backoff.min = 0;
         let err = build_options(&config).expect_err("zero min backoff");
-        assert!(err.to_string().contains("backoff.min must be greater than zero"));
+        assert!(
+            err.to_string()
+                .contains("backoff.min must be greater than zero")
+        );
         config.persistence.retry.backoff.min = 100; // Reset
 
         // Max < Min backoff
@@ -216,5 +222,30 @@ mod tests {
         config.persistence.retry.backoff.max = 100;
         let err = build_options(&config).expect_err("max < min");
         assert!(err.to_string().contains("max must be >="));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn init_state_fails_on_lkg_read_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join("relay_lkg_fail");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let lkg = dir.join("config.pvs");
+
+        // Create unreadable file
+        std::fs::write(&lkg, b"secret").unwrap();
+        std::fs::set_permissions(&lkg, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let mut config = minimal_config();
+        config.http.bind = "127.0.0.1:0".to_string();
+        config.artifact.lkg_path = lkg.to_string_lossy().to_string();
+
+        let err = init_state(&config).err().expect("lkg error");
+        assert!(err.to_string().contains("failed to read LKG"));
+
+        // Cleanup
+        std::fs::set_permissions(&lkg, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -196,62 +196,43 @@ mod tests {
 
     use super::*;
 
-
-
     #[test]
 
     fn backoff_expands_exponentially_and_clamps() {
-
         let config = BackoffConfig {
-
             base_delay: Duration::from_millis(100),
 
             max_delay: Duration::from_millis(400),
-
         };
 
         let mut backoff = Backoff::new(config);
-
-
 
         // First call: base delay
 
         assert_eq!(backoff.next_delay(), Duration::from_millis(100));
 
-        
-
         // Second call: 2x base (200)
 
         assert_eq!(backoff.next_delay(), Duration::from_millis(200));
-
-
 
         // Third call: 4x base (400) - hits max
 
         assert_eq!(backoff.next_delay(), Duration::from_millis(400));
 
-
-
         // Fourth call: stays at max
 
         assert_eq!(backoff.next_delay(), Duration::from_millis(400));
-
-
 
         // Reset
 
         backoff.reset();
 
         assert_eq!(backoff.next_delay(), Duration::from_millis(100));
-
     }
-
-
 
     #[test]
 
     fn options_from_config_maps_correctly() {
-
         let mut config = PipelineConfig::default();
 
         config.runtime.max_in_flight = 10;
@@ -268,42 +249,45 @@ mod tests {
 
         config.runtime.publish_retry.backoff.max = 150;
 
-
-
         let options = PipelineOptions::from_config(&config);
-
-        
 
         assert_eq!(options.max_in_flight, 10);
 
         assert!(matches!(options.compaction, PipelineCompaction::Prune));
 
-        assert_eq!(options.restart_backoff.base_delay, Duration::from_millis(100));
+        assert_eq!(
+            options.restart_backoff.base_delay,
+            Duration::from_millis(100)
+        );
 
-        assert_eq!(options.restart_backoff.max_delay, Duration::from_millis(200));
+        assert_eq!(
+            options.restart_backoff.max_delay,
+            Duration::from_millis(200)
+        );
 
         assert_eq!(options.publish_retry.max_attempts, 3);
 
         assert_eq!(options.publish_retry.base_delay, Duration::from_millis(50));
 
         assert_eq!(options.publish_retry.max_delay, Duration::from_millis(150));
-
     }
-
-
 
     #[test]
 
     fn compaction_level_mapping() {
+        assert!(matches!(
+            compaction_level(PipelineCompaction::Off),
+            CompactionLevel::Off
+        ));
 
-        assert!(matches!(compaction_level(PipelineCompaction::Off), CompactionLevel::Off));
+        assert!(matches!(
+            compaction_level(PipelineCompaction::Trim),
+            CompactionLevel::Trim
+        ));
 
-        assert!(matches!(compaction_level(PipelineCompaction::Trim), CompactionLevel::Trim));
-
-        assert!(matches!(compaction_level(PipelineCompaction::Prune), CompactionLevel::Prune));
-
+        assert!(matches!(
+            compaction_level(PipelineCompaction::Prune),
+            CompactionLevel::Prune
+        ));
     }
-
 }
-
-
