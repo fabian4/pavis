@@ -193,7 +193,6 @@ impl Default for IngestSource {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
 pub struct FileSourceConfig {
     pub path: String,
 }

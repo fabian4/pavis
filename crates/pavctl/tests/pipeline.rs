@@ -82,10 +82,14 @@ fn format_ext(format: SerdeFormat) -> &'static str {
 }
 
 fn run_pavctl(bin: &Path, args: &[&str]) -> Result<()> {
+    if !bin.exists() {
+        anyhow::bail!("Binary not found at path: {:?}", bin);
+    }
+
     let output = Command::new(bin)
         .args(args)
         .output()
-        .with_context(|| format!("Failed to execute pavctl {:?}", args))?;
+        .with_context(|| format!("Failed to execute pavctl {:?} with args {:?}", bin, args))?;
 
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -179,51 +183,82 @@ fn write_config(path: &Path, format: SerdeFormat, config: &SerdeConfig) -> Resul
 }
 
 fn pavctl_bin() -> PathBuf {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_pavctl") {
-        return PathBuf::from(path);
+    pavctl_bin_helper(std::env::var("CARGO_BIN_EXE_pavctl").ok())
+}
+
+fn pavctl_bin_helper(env_val: Option<String>) -> PathBuf {
+    if let Some(path) = env_val {
+        let path = PathBuf::from(path);
+
+        if path.exists() {
+            return path;
+        }
     }
+
     pavctl_bin_from(std::env::current_dir().expect("cwd"))
 }
 
 fn pavctl_bin_from(mut dir: PathBuf) -> PathBuf {
+    // Check CARGO_TARGET_DIR override (common in CI)
+
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        let target_path = PathBuf::from(target_dir);
+
+        let release = target_path.join("release/pavctl");
+
+        if release.exists() {
+            return release;
+        }
+
+        let debug = target_path.join("debug/pavctl");
+
+        if debug.exists() {
+            return debug;
+        }
+    }
+
     loop {
         if dir.join("Cargo.lock").exists() {
             break;
         }
+
         if !dir.pop() {
             panic!("Could not find workspace root");
         }
     }
-    let debug_path = dir.join("target/debug/pavctl");
-    if debug_path.exists() {
-        return debug_path;
-    }
+
+    // Prefer release binary if it exists (common in CI after build step)
+
     let release_path = dir.join("target/release/pavctl");
+
     if release_path.exists() {
         return release_path;
     }
+
+    let debug_path = dir.join("target/debug/pavctl");
+
+    if debug_path.exists() {
+        return debug_path;
+    }
+
     panic!("Binary pavctl not found; run cargo build -p pavctl");
 }
 
 #[test]
+
 fn pavctl_bin_prefers_env_override() {
     let temp = tempfile::Builder::new()
         .suffix(".bin")
         .tempfile()
         .expect("tempfile");
+
     let path = temp.path().to_owned();
 
-    // We can't actually run this bin, but the function just returns the path
-    unsafe {
-        std::env::set_var("CARGO_BIN_EXE_pavctl", &path);
-    }
+    // Test the logic without touching the actual global environment
 
-    let resolved = pavctl_bin();
+    let resolved = pavctl_bin_helper(Some(path.to_string_lossy().to_string()));
+
     assert_eq!(resolved, path);
-
-    unsafe {
-        std::env::remove_var("CARGO_BIN_EXE_pavctl");
-    }
 }
 
 #[test]

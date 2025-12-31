@@ -388,10 +388,22 @@ async fn persist_with_retry(
 ) -> Result<(), RelayError> {
     let mut attempt = 0;
     let mut delay = options.retry_backoff;
+    let tmp_path = path.with_extension("tmp");
 
     loop {
         attempt += 1;
-        match tokio::fs::write(path, bytes.clone()).await {
+        let write_result = async {
+            use tokio::io::AsyncWriteExt;
+            let mut file = tokio::fs::File::create(&tmp_path).await?;
+            file.write_all(&bytes).await?;
+            file.sync_all().await?;
+            drop(file);
+            tokio::fs::rename(&tmp_path, path).await?;
+            Ok::<(), std::io::Error>(())
+        }
+        .await;
+
+        match write_result {
             Ok(()) => return Ok(()),
             Err(err) if attempt <= options.retry_max => {
                 warn!(

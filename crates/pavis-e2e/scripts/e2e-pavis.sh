@@ -108,7 +108,6 @@ start_infrastructure
 # 4. Run Tests
 echo "🧪 Running Pavis Tests via Rust Harness..."
 cd "$WORKSPACE_ROOT"
-# Use -j 1 to run test binaries sequentially (avoids race conditions on shared docker container)
-cargo test -j 1 -p pavis-e2e --test pavis -- --test-threads=1 --nocapture
+cargo test -p pavis-e2e --test pavis -- --test-threads=1 --nocapture
 
 echo "🎉 Pavis tests passed!"

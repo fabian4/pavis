@@ -15,7 +15,7 @@ pub async fn spawn_watcher(
     debounce: Duration,
     tx: mpsc::Sender<Result<Artifact, IngestError>>,
 ) -> Result<RecommendedWatcher, IngestError> {
-    let (event_tx, mut event_rx) = mpsc::channel(10);
+    let (event_tx, mut event_rx) = mpsc::channel(100);
 
     let mut watcher = RecommendedWatcher::new(
         move |res: notify::Result<Event>| {

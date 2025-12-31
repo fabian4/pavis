@@ -8,16 +8,9 @@ The roadmap centers on a three-part “iron triangle” determining system viabi
 
 **A. Close the Loop – Dynamic Configuration**
 - **Goal**: Enable live, hitless configuration updates in running `pavis` instances.
-- **Status**: Client polling and hot reload implemented. Remaining: configurable polling, diff logging, and failover.
+- **Status**: Complete end-to-end flow: Ingest -> Codec -> Long-Poll -> Hot Reload. Remaining: multi-source failover and observability.
 
 **B. Enable Zero-Copy (mmap-based loading)**
-- **Goal**: Minimize startup memory and heap usage by serving config directly from page cache.
-- **Status**: P2 optimization task (pending).
-
-**C. Fix Concurrency Bottlenecks**
-- **Goal**: Sustain 10k concurrent connections with Envoy-comparable latency.
-- **Status**: P0/P1 optimization tasks (pending).
-
 ---
 
 
@@ -35,17 +28,17 @@ The roadmap centers on a three-part “iron triangle” determining system viabi
   - [ ] **Traceability**: Add `X-Pavis-Generated-At` header.
 - [x] **State & Storage**
   - [x] **In-Memory Cache**: fast access to current config and history.
-  - [ ] **File Watcher**: Trigger updates on local `.pvs` file changes and auto-increment versions.
-- [ ] **Configuration Surface Coverage**
-  - [ ] **Identity & Bindings**: `identity.*`, `http.admin_bind`, `metrics.prometheus_bind`.
-  - [ ] **Artifacts**: Naming, paths, limits (`max_pvs_bytes`, `max_routes`), storage backend.
-  - [ ] **Pipeline**: Source ID, ingest settings, codec selection, and strictness options.
-  - [ ] **Execution**: Versioning scheme, atomic write/fsync durability.
-  - [ ] **Distribution**: Long-poll tuning (headers, timeouts) and direct fetch toggles.
-  - [ ] **Security & Logs**: Auth tokens/modes, logging levels, access log settings.
+  - [x] **Pipeline Ingestion**: Support for `pavis-ingest-file` with debounced watching and automatic versioning.
+  - [x] **Durability**: Atomic Last-Known-Good (LKG) persistence with `fsync` safety.
+- [x] **Configuration Surface Coverage**
+  - [x] **Identity & Bindings**: `identity.*`, `http.admin_bind`, `metrics.prometheus_bind`.
+  - [x] **Artifacts**: Naming, paths, limits (`max_pvs_bytes`, `max_routes`), storage backend.
+  - [x] **Pipeline**: Source ID, ingest settings, codec selection, and strictness options.
+  - [x] **Execution**: Versioning scheme, atomic write/fsync durability.
+  - [x] **Distribution**: Long-poll tuning (headers, timeouts) and direct fetch toggles.
+  - [x] **Security & Logs**: Auth tokens/modes, logging levels, access log settings.
 
 **`pavctl`**
-*(No active tasks for Phase 3)*
 
 **`pavis`** (Data Plane)
 - [x] **Polling & Updates**
