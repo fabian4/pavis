@@ -196,10 +196,25 @@ mod tests {
     }
 
     #[test]
-    fn init_state_rejects_invalid_listen_addr() {
+    fn build_options_rejects_invalid_persistence_config() {
         let mut config = minimal_config();
-        config.http.bind = "bad-addr".to_string();
-        let err = init_state(&config).err().expect("invalid listen addr");
-        assert!(err.to_string().contains("invalid listen address"));
+        
+        // Zero flush interval
+        config.persistence.flush_interval = 0;
+        let err = build_options(&config).expect_err("zero flush");
+        assert!(err.to_string().contains("flush_interval must be greater than zero"));
+        config.persistence.flush_interval = 1000; // Reset
+
+        // Zero retry min backoff
+        config.persistence.retry.backoff.min = 0;
+        let err = build_options(&config).expect_err("zero min backoff");
+        assert!(err.to_string().contains("backoff.min must be greater than zero"));
+        config.persistence.retry.backoff.min = 100; // Reset
+
+        // Max < Min backoff
+        config.persistence.retry.backoff.min = 200;
+        config.persistence.retry.backoff.max = 100;
+        let err = build_options(&config).expect_err("max < min");
+        assert!(err.to_string().contains("max must be >="));
     }
 }

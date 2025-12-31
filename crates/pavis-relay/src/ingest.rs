@@ -17,3 +17,15 @@ pub fn create_ingest(config: &PipelineConfig) -> anyhow::Result<Option<IngestImp
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_ingest_creates_file_ingest() {
+        let config = PipelineConfig::default();
+        let ingest = create_ingest(&config).expect("create ingest");
+        assert!(matches!(ingest, Some(IngestImpl::File(_))));
+    }
+}
