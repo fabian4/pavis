@@ -1,12 +1,66 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 4
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 7
 
 ---
 
 ## Open Findings (Prioritized)
 
 No open findings.
+
+---
+
+## Review Entry — 2025-12-31T00:05:00Z
+
+### Scope
+- Codebase compliance check against new architecture constraints (Single Listener, IP-only, TLS paths).
+
+---
+
+### Method
+- Inspection of `pavis-core` definitions against `Architecture.md` Sec 5.3.
+
+
+### Model
+- gemini-2.0-flash-exp
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-2 | Low | Constraints | ServerConfig enforces single listener | Done |
+| F-3 | Low | Constraints | Endpoint enforces IP-only definition | Done |
+| F-4 | Low | Constraints | TlsConfig enforces file paths | Done |
+
+---
+
+### Detailed Findings
+
+#### F-2: ServerConfig enforces single listener
+- **Expectation:** Architecture states `server` block supports a single listening address.
+- **Observed:** `crates/pavis-core/src/runtime/server.rs` defines `ServerConfig` with a single field `listen_addr: SocketAddr`.
+- **Evidence:** `ServerConfig` struct definition.
+- **Assessment (Reason):** Code strictly enforces the architectural constraint.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+#### F-3: Endpoint enforces IP-only definition
+- **Expectation:** Architecture states Upstreams support only IP-based endpoints (no DNS).
+- **Observed:** `crates/pavis-core/src/runtime/upstream.rs` defines `Endpoint` with `ip: IpAddr`, allowing no hostname storage.
+- **Evidence:** `Endpoint` struct definition.
+- **Assessment (Reason):** Code strictly enforces the architectural constraint.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+#### F-4: TlsConfig enforces file paths
+- **Expectation:** Architecture states TLS must use file paths (no inline certs).
+- **Observed:** `crates/pavis-core/src/runtime/server.rs` defines `TlsConfig` with `cert_path: Option<String>` and `key_path: Option<String>`.
+- **Evidence:** `TlsConfig` struct definition.
+- **Assessment (Reason):** Code strictly enforces the architectural constraint.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
 
 ---
 

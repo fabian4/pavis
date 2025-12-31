@@ -53,7 +53,7 @@ async fn integrated_observability_headers_and_metrics() -> Result<()> {
         .await?
         .text()
         .await?;
-    assert!(metrics.contains("pavis_relay_publish_total"));
+    assert!(metrics.contains("pavis_relay_publish_ok_total"));
     assert!(metrics.contains("pavis_relay_longpoll_wait_total"));
 
     Ok(())

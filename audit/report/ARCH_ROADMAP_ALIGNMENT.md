@@ -1,12 +1,57 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 4
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 6
 
 ---
 
 ## Open Findings (Prioritized)
 
 No open findings.
+
+---
+
+## Review Entry — 2025-12-31T00:00:00Z
+
+### Scope
+- `Architecture.md` constraints and `ROADMAP.md` expansion.
+
+---
+
+### Method
+- Implemented specific constraints and future expansion plans across both documents to ensure consistency.
+
+
+### Model
+- gemini-2.0-flash-exp
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-5 | Medium | Constraints | Explicit constraints added to Architecture and Roadmap | Done |
+| F-6 | Low | Future Expansion | Extensibility plans aligned with roadmap milestones | Done |
+
+---
+
+### Detailed Findings
+
+#### F-5: Explicit constraints added to Architecture and Roadmap
+- **Expectation:** Both documents should clearly state current limitations (Single Listener, IP-only, etc.) to manage user expectations.
+- **Observed:** `Architecture.md` Sec 5.3 now lists constraints; `ROADMAP.md` Phase 1 implementation checklist updated to match.
+- **Evidence:** `Architecture.md` Sec 5.3; `ROADMAP.md` Phase 1.
+- **Assessment (Reason):** Documents are fully aligned on the "what is built today" status.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+#### F-6: Extensibility plans aligned with roadmap milestones
+- **Expectation:** Architecture should explain *how* future features (DNS, Multi-listener) will be built; Roadmap should state *when*.
+- **Observed:** `Architecture.md` Sec 5.4 details the technical approach (Plugins, Async Resolver); `ROADMAP.md` "Planned Enhancements" section lists the milestones.
+- **Evidence:** `Architecture.md` Sec 5.4; `ROADMAP.md` "Planned Enhancements".
+- **Assessment (Reason):** Technical vision and project planning are consistent.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
 
 ---
 

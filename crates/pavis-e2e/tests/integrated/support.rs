@@ -3,6 +3,7 @@ use pavis_core::{
     ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType, Route, RuntimeConfig,
     ServerConfig, TelemetryConfig, Upstream, VirtualHost, WeightedDestination,
 };
+use pavis_e2e::support::relay::RelayOptions;
 use pavis_e2e::support::{RelayEnv, find_binary, find_project_root, resolve_docker_service_ip};
 use pavis_pvs;
 use reqwest::Client;
@@ -472,7 +473,7 @@ pub fn pavis_target() -> Result<PavisTarget> {
 }
 
 pub async fn relay_env() -> Result<RelayEnv> {
-    RelayEnv::new().await
+    RelayEnv::new(RelayOptions::default()).await
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

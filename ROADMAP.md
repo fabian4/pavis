@@ -92,6 +92,66 @@ The roadmap centers on a three-part “iron triangle” determining system viabi
 
 ---
 
+## Planned Enhancements: Core Expansion 🚀
+
+These features address current architectural constraints and are prioritized for the next major development cycle.
+
+### 1. Multi-Listener Support
+*   **Goal**: Support multiple bind addresses and protocols (e.g., separate HTTP and HTTPS ports, Admin interfaces) in a single runtime.
+*   **Status**: Planned (Currently Single Listener).
+*   **Architectural Considerations**:
+    *   Refactor `pavis::Proxy` to a Supervisor pattern that spawns and supervises multiple `Pingora` service instances.
+    *   Update `ServerConfig` schema to support a list of listeners.
+    *   **Extensibility**: Allow listeners to be added/removed dynamically via config reload.
+
+### 2. DNS-Based Upstreams (`LOGICAL_DNS`)
+*   **Goal**: Allow routing to dynamic backends defined by hostname, not just static IPs.
+*   **Status**: Planned (Currently IP-Only).
+*   **Architectural Considerations**:
+    *   Integrate an asynchronous DNS resolver (e.g., `trust-dns` or Pingora's resolver) within `UpstreamManager`.
+    *   Implement background refresh loops respecting TTL.
+    *   Ensure non-blocking resolution during request path.
+
+### 3. Advanced Route Actions
+*   **Goal**: Support `DirectResponse`, `Redirect`, `HostRewrite`, and `PathRewrite`.
+*   **Status**: Planned (Currently Forwarding Only).
+*   **Architectural Considerations**:
+    *   **Extensibility**: Introduce a "Route Action" trait or enum in `pavis-core` to decouple action logic from matching logic.
+    *   Consider a lightweight plugin system (WASM or Native) for complex transformations to avoid bloating the core.
+
+### 4. TLS Enhancements
+*   **Goal**: Support inline certificates (SDS-style) and multiple certs per listener (SNI).
+*   **Status**: Planned (Currently File-Path Only).
+*   **Architectural Considerations**:
+    *   Secure memory handling for inline secrets (zeroing memory).
+    *   Integration with Secret Discovery Service (SDS) in the Ingest layer.
+
+---
+
+## Testing & Validation Strategy 🛡️
+
+To ensure smooth expansion and stability as new features are added, the following testing strategy is enforced:
+
+### 1. Unit Testing (Granular)
+*   **Scope**: Individual modules (`router`, `header_ops`, `upstream`).
+*   **Requirement**: 100% coverage of logic branches for new features (e.g., DNS resolution logic, Rewrite rules).
+*   **Tooling**: Standard `cargo test`.
+
+### 2. Integration Testing (Component)
+*   **Scope**: Interaction between Core and Runtime components (e.g., Config reload -> Listener update).
+*   **Requirement**: Verify that `RuntimeConfig` changes correctly propagate to internal state without restarts.
+*   **Mocking**: Use mock DNS resolvers and Upstreams to simulate network variability.
+
+### 3. End-to-End (E2E) Testing (System)
+*   **Scope**: Full `pavis` binary against real network targets (Docker/Kind).
+*   **Scenarios**:
+    *   **Multi-Listener**: Verify traffic on disparate ports.
+    *   **DNS**: Verify traffic routing to dynamic IPs (using `dnsmasq` in CI).
+    *   **Resilience**: Test behavior when DNS resolution fails or certificates are invalid.
+*   **Tooling**: `pavis-e2e` crate (Rust-based test harness).
+
+---
+
 ## Historical Phases (Context)
 
 ### Phase 1: Foundation ✅
@@ -99,10 +159,12 @@ The roadmap centers on a three-part “iron triangle” determining system viabi
 **Goal:** Functional HTTP proxy with static configuration.
 
 **Implementation**
-- [x] Cloudflare Pingora integration (`ProxyHttp` trait)
-- [x] Static upstream selection and basic routing (prefix, exact, regex, wildcard).
-- [x] Weighted traffic splitting and load balancing (Round-robin).
-- [x] Request/Response header manipulation.
+- [x] Cloudflare Pingora integration (`ProxyHttp` trait).
+- [x] **Upstreams**: Static IP-based selection (DNS unsupported).
+- [x] **Routing**: Basic routing (prefix, exact, regex, wildcard); Forwarding only (no Redirect/Rewrite).
+- [x] **Traffic**: Weighted splitting and Round-robin load balancing.
+- [x] **Headers**: Request/Response manipulation (Insert/Overwrite behavior).
+- [x] **Listener**: Single-listener support with file-based TLS.
 - [x] CLI (`--config`) and Docker support.
 
 **E2E Tests**

@@ -259,6 +259,44 @@ Request -> Proxy -> Router (Match) -> Upstream Manager (Select Endpoint) -> Clus
         Telemetry (Log)
 ```
 
+### 5.3. Constraints & Limitations
+
+The current runtime implementation enforces specific constraints to maintain simplicity and determinism. These constraints may be relaxed in future versions.
+
+1.  **Single Listener**:
+    *   The `server` block supports a single listening address.
+    *   If multiple configurations are provided or merged, the runtime processes only the *first valid listener*.
+    *   **Future**: Multi-listener support is planned for complex gateway scenarios.
+
+2.  **TLS Configuration**:
+    *   **File Paths Only**: TLS certificates and keys must be referenced via file system paths (`cert_path`, `key_path`).
+    *   **No Inline Certificates**: Inline PEM strings are not supported to prevent memory bloat and configuration size issues.
+
+3.  **Upstream Resolution**:
+    *   **IP-Only Endpoints**: Upstream clusters currently support only explicit IP-based `Endpoint` definitions.
+    *   **No DNS Support**: Logical DNS (`LOGICAL_DNS`) and Strict DNS (`STRICT_DNS`) cluster types are **not currently supported**. Resolution must happen at the Ingest/Control Plane layer before reaching the runtime.
+
+4.  **Header Operations**:
+    *   **Insert/Overwrite Behavior**: The `add` operation in `HeaderOperations` (for both request and response headers) functions as an **insert/overwrite**.
+    *   **Append Ignored**: The "append" flag is currently ignored; headers are replaced if they already exist.
+
+5.  **Unsupported Route Actions**:
+    *   The following advanced route actions are currently **unsupported**:
+        *   `DirectResponse` (returning fixed body/status).
+        *   `Redirect` (HTTP 3xx redirects).
+        *   `HostRewrite` / `PathRewrite`.
+    *   Routes currently support only traffic forwarding to defined upstreams.
+
+### 5.4. Future Extensibility
+
+To address the limitations above without compromising the core architecture, Pavis is designed for extensibility:
+
+*   **Plugin Mechanism**: A WASM or native plugin interface is planned to allow custom route actions (like rewrites or redirects) and complex header manipulations without altering the core `pavis-core` crates.
+*   **Configuration Flags**: Future versions of `RuntimeConfig` may introduce feature flags to opt-in to expensive behaviors like DNS resolution or multi-listener polling.
+*   **Layered Expansion**:
+    *   **DNS Support**: Will be implemented as an asynchronous background resolver within `UpstreamManager`, updating IP endpoints dynamically without full config reloads.
+    *   **Multi-Listener**: Will require refactoring the `Proxy` service to spawn independent accept loops, likely managed by a supervisor pattern.
+
 ## 6. The PVS Protocol
 
 The core innovation of Pavis is the **PVS Protocol**, a zero-copy binary configuration format.
