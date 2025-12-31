@@ -1,0 +1,18 @@
+[package]
+name = "pavis-ingest-file"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bytes = "1"
+futures-util = "0.3"
+notify = "6.1"
+pavis-ingest-api = { path = "../pavis-ingest-api" }
+tokio = { workspace = true, features = ["fs", "io-util", "sync", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

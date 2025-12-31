@@ -1,7 +1,10 @@
 pub mod config;
 
 mod app;
+mod codec;
 mod handlers;
+mod ingest;
+mod pipeline;
 mod routes;
 mod state;
 

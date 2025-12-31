@@ -1,11 +1,14 @@
+use crate::config::PersistenceOptions;
 use axum::body::Bytes;
+use pavis_core::RuntimeConfig;
 use pavis_pvs::PvsHeaderView;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Notify, RwLock, watch};
+use tracing::warn;
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
@@ -99,6 +102,7 @@ pub(crate) struct RelayState {
     metrics: Arc<RelayMetrics>,
     last_error: Arc<RwLock<Option<String>>>,
     started_at: SystemTime,
+    persistence: Option<PersistenceHandle>,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +113,7 @@ pub(crate) struct RelayOptions {
     pub long_poll_enabled: bool,
     pub identity_name: String,
     pub lkg_path: Option<PathBuf>,
+    pub persistence: PersistenceOptions,
 }
 
 impl Default for RelayOptions {
@@ -122,7 +127,20 @@ impl Default for RelayOptions {
             long_poll_enabled: true,
             identity_name: String::new(),
             lkg_path: None,
+            persistence: PersistenceOptions::default(),
         }
+    }
+}
+
+#[derive(Clone)]
+struct PersistenceHandle {
+    tx: watch::Sender<Bytes>,
+    shutdown: watch::Sender<bool>,
+}
+
+impl Drop for PersistenceHandle {
+    fn drop(&mut self) {
+        let _ = self.shutdown.send(true);
     }
 }
 
@@ -137,6 +155,7 @@ impl RelayState {
         pvs_bytes: Bytes,
         options: RelayOptions,
     ) -> Result<Self, RelayError> {
+        let last_error = Arc::new(RwLock::new(None));
         let meta = if pvs_bytes.is_empty() {
             RelayMeta::empty()
         } else {
@@ -150,6 +169,21 @@ impl RelayState {
         };
         let mut history = HashMap::new();
         history.insert(version, artifact.clone());
+        let persistence =
+            if let (Some(path), true) = (options.lkg_path.clone(), options.persistence.enabled) {
+                if tokio::runtime::Handle::try_current().is_ok() {
+                    Some(start_persistence(
+                        path,
+                        options.persistence,
+                        last_error.clone(),
+                    ))
+                } else {
+                    warn!("Persistence disabled (no Tokio runtime available)");
+                    None
+                }
+            } else {
+                None
+            };
         Ok(Self {
             inner: Arc::new(RwLock::new(RelaySnapshot {
                 version,
@@ -160,8 +194,9 @@ impl RelayState {
             notify: Arc::new(Notify::new()),
             options,
             metrics: Arc::new(RelayMetrics::default()),
-            last_error: Arc::new(RwLock::new(None)),
+            last_error,
             started_at: SystemTime::now(),
+            persistence,
         })
     }
 
@@ -177,6 +212,41 @@ impl RelayState {
             meta: snapshot.artifact.meta.clone(),
             updated_at: snapshot.updated_at,
         }
+    }
+
+    pub(crate) async fn publish_config(&self, config: &RuntimeConfig) -> Result<u64, RelayError> {
+        let bytes = pavis_pvs::encode(config).map_err(|e| RelayError::Config(e.to_string()))?;
+        self.publish_auto(bytes.into()).await
+    }
+
+    pub(crate) async fn publish_auto(&self, bytes: Bytes) -> Result<u64, RelayError> {
+        let header =
+            pavis_pvs::inspect(&bytes).map_err(|err| RelayError::Config(err.to_string()))?;
+        let meta = RelayMeta::from_header(&header);
+
+        let mut inner = self.inner.write().await;
+        let proposed_version = inner.version + 1;
+
+        inner.version = proposed_version;
+        inner.artifact = RelayArtifact {
+            bytes: bytes.clone(),
+            meta: meta.clone(),
+        };
+        inner.updated_at = SystemTime::now();
+        drop(inner);
+
+        let bytes_for_persist = bytes.clone();
+        let mut history = self.history.write().await;
+        history.insert(proposed_version, RelayArtifact { bytes, meta });
+        drop(history);
+        self.notify.notify_waiters();
+        self.metrics.inc_publish_ok();
+
+        if let Some(persistence) = self.persistence.as_ref() {
+            let _ = persistence.tx.send_replace(bytes_for_persist);
+        }
+
+        Ok(proposed_version)
     }
 
     pub(crate) async fn publish(
@@ -196,10 +266,15 @@ impl RelayState {
         inner.updated_at = SystemTime::now();
         drop(inner);
 
+        let bytes_for_persist = bytes.clone();
         let mut history = self.history.write().await;
         history.insert(proposed_version, RelayArtifact { bytes, meta });
         drop(history);
         self.notify.notify_waiters();
+
+        if let Some(persistence) = self.persistence.as_ref() {
+            let _ = persistence.tx.send_replace(bytes_for_persist);
+        }
 
         Ok(())
     }
@@ -236,6 +311,98 @@ impl RelayState {
 
     pub(crate) fn started_at(&self) -> SystemTime {
         self.started_at
+    }
+}
+
+fn start_persistence(
+    path: PathBuf,
+    options: PersistenceOptions,
+    last_error: Arc<RwLock<Option<String>>>,
+) -> PersistenceHandle {
+    let (tx, mut rx) = watch::channel(Bytes::new());
+    let (shutdown, mut shutdown_rx) = watch::channel(false);
+
+    tokio::spawn(async move {
+        let mut pending: Option<Bytes> = None;
+        let mut interval = tokio::time::interval(options.flush_interval);
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if rx.has_changed().unwrap_or(false) {
+                        let latest = rx.borrow_and_update().clone();
+                        pending = Some(latest);
+                    }
+                }
+                _ = rx.changed() => {
+                    let latest = rx.borrow_and_update().clone();
+                    pending = Some(latest);
+                }
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        let bytes = pending.take().or_else(|| {
+                            let current = rx.borrow().clone();
+                            if current.is_empty() {
+                                None
+                            } else {
+                                Some(current)
+                            }
+                        });
+
+                        if let Some(bytes) = bytes {
+                            if let Err(err) = persist_with_retry(&path, bytes, options).await {
+                                warn!("Persist to disk failed during shutdown: {}", err);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            let Some(bytes) = pending.clone() else {
+                continue;
+            };
+
+            match persist_with_retry(&path, bytes.clone(), options).await {
+                Ok(()) => {
+                    let mut guard = last_error.write().await;
+                    *guard = None;
+                    pending = None;
+                }
+                Err(err) => {
+                    warn!("Persist to disk failed: {}", err);
+                    let mut guard = last_error.write().await;
+                    *guard = Some(err.to_string());
+                }
+            }
+        }
+    });
+
+    PersistenceHandle { tx, shutdown }
+}
+
+async fn persist_with_retry(
+    path: &std::path::Path,
+    bytes: Bytes,
+    options: PersistenceOptions,
+) -> Result<(), RelayError> {
+    let mut attempt = 0;
+    let mut delay = options.retry_backoff;
+
+    loop {
+        attempt += 1;
+        match tokio::fs::write(path, bytes.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(err) if attempt <= options.retry_max => {
+                warn!(
+                    "Persist attempt {} of {} failed: {}",
+                    attempt, options.retry_max, err
+                );
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay.saturating_mul(2), options.retry_backoff_max);
+            }
+            Err(err) => return Err(RelayError::Storage(err)),
+        }
     }
 }
 
@@ -312,10 +479,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn state_publish_auto_increments_version() {
+        // Use a valid PVS for publish_auto as it inspects the header
+        let config = pavis_core::RuntimeConfig {
+            server: pavis_core::ServerConfig {
+                listen_addr: "127.0.0.1:8080".parse().unwrap(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: pavis_core::TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: pavis_core::AccessLogConfig::Disabled,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![],
+        };
+        let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
+
+        let state = RelayState::new(10, Bytes::new()).expect("state");
+        assert_eq!(state.version().await, 10);
+
+        let v11 = state.publish_auto(pvs_bytes.into()).await.expect("publish");
+        assert_eq!(v11, 11);
+        assert_eq!(state.version().await, 11);
+    }
+
+    #[tokio::test]
     async fn state_tracks_last_error() {
         let state = RelayState::new(0, Bytes::new()).expect("state");
         assert!(state.last_error().await.is_none());
         state.set_last_error(Some("test error".to_string())).await;
         assert_eq!(state.last_error().await, Some("test error".to_string()));
+    }
+
+    #[test]
+    fn relay_meta_empty_has_defaults() {
+        let meta = RelayMeta::empty();
+        assert!(meta.checksum.is_empty());
+        assert!(meta.algorithm.is_empty());
+        assert_eq!(meta.schema_version, 0);
+    }
+
+    #[tokio::test]
+    async fn state_returns_none_for_missing_artifact() {
+        let state = RelayState::new(0, Bytes::new()).expect("state");
+        assert!(state.artifact(999).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn state_publish_enforces_monotonicity() {
+        let state = RelayState::new(10, Bytes::new()).expect("state");
+        let meta = RelayMeta::empty();
+
+        // Same version
+        let err = state
+            .publish(10, Bytes::from_static(b"data"), meta.clone())
+            .await
+            .expect_err("same version");
+        assert!(matches!(
+            err,
+            super::RelayError::VersionMonotonicity {
+                current: 10,
+                proposed: 10
+            }
+        ));
+
+        // Older version
+        let err = state
+            .publish(5, Bytes::from_static(b"data"), meta.clone())
+            .await
+            .expect_err("older version");
+        assert!(matches!(
+            err,
+            super::RelayError::VersionMonotonicity {
+                current: 10,
+                proposed: 5
+            }
+        ));
+
+        // Newer version (ok)
+        state
+            .publish(11, Bytes::from_static(b"data"), meta)
+            .await
+            .expect("newer version");
+        assert_eq!(state.version().await, 11);
     }
 }

@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use pavis_codec_serde::SerdeFormat;
 use pavis_codec_serde::config::{
     ConnectionPoolConfig, Route, SerdeConfig, ServerConfig, Upstream, VirtualHost,
@@ -5,59 +6,98 @@ use pavis_codec_serde::config::{
 };
 use pavis_core::{HttpVersion, LoadBalancer, MatchType};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[test]
-fn pipeline_handles_generated_fixtures() -> anyhow::Result<()> {
+fn pipeline_yaml_to_yaml() -> Result<()> {
+    run_pipeline_test(SerdeFormat::Yaml, SerdeFormat::Yaml)
+}
+
+#[test]
+fn pipeline_yaml_to_json() -> Result<()> {
+    run_pipeline_test(SerdeFormat::Yaml, SerdeFormat::Json)
+}
+
+#[test]
+fn pipeline_json_to_yaml() -> Result<()> {
+    run_pipeline_test(SerdeFormat::Json, SerdeFormat::Yaml)
+}
+
+#[test]
+fn pipeline_json_to_json() -> Result<()> {
+    run_pipeline_test(SerdeFormat::Json, SerdeFormat::Json)
+}
+
+fn run_pipeline_test(input_format: SerdeFormat, output_format: SerdeFormat) -> Result<()> {
     let pavctl_bin = pavctl_bin();
-    assert!(
-        pavctl_bin.exists(),
-        "pavctl binary not found at {:?}",
-        pavctl_bin
-    );
-
     let config = sample_config();
-    for input_format in [SerdeFormat::Yaml, SerdeFormat::Json] {
-        let input_ext = match input_format {
-            SerdeFormat::Yaml => "yaml",
-            SerdeFormat::Json => "json",
-        };
-        let input_path = temp_path("pavctl_input", input_ext);
-        write_config(&input_path, input_format, &config)?;
 
-        let pvs_path = temp_path("pavctl_gen", "pvs");
-        let status = Command::new(&pavctl_bin)
-            .arg("gen")
-            .arg(&input_path)
-            .arg(&pvs_path)
-            .status()
-            .expect("run pavctl gen");
-        assert!(status.success(), "gen failed for {:?}", input_path);
+    // 1. Write Input
+    let input_ext = format_ext(input_format);
+    let input_file = tempfile::Builder::new()
+        .suffix(&format!(".{}", input_ext))
+        .tempfile()?;
+    write_config(input_file.path(), input_format, &config)?;
 
-        for output_format in [SerdeFormat::Yaml, SerdeFormat::Json] {
-            let output_ext = match output_format {
-                SerdeFormat::Yaml => "yaml",
-                SerdeFormat::Json => "json",
-            };
-            let out_path = temp_path("pavctl_out", output_ext);
-            let status = Command::new(&pavctl_bin)
-                .arg("convert")
-                .arg(&pvs_path)
-                .arg(&out_path)
-                .status()
-                .expect("run pavctl convert");
-            assert!(status.success(), "convert failed for {:?}", pvs_path);
+    // 2. Gen PVS
+    let pvs_file = tempfile::Builder::new().suffix(".pvs").tempfile()?;
+    // We pass paths as strings. Note: NamedTempFile deletes on drop, so we keep the objects alive.
+    // The CLI takes paths.
+    run_pavctl(
+        &pavctl_bin,
+        &[
+            "gen",
+            input_file.path().to_str().unwrap(),
+            pvs_file.path().to_str().unwrap(),
+        ],
+    )?;
 
-            let converted = fs::read_to_string(&out_path).expect("read converted");
-            assert_converted_matches_canonical(&converted, output_format, &config)?;
-            let _ = fs::remove_file(&out_path);
-        }
+    // 3. Convert PVS -> Output
+    let output_ext = format_ext(output_format);
+    let out_file = tempfile::Builder::new()
+        .suffix(&format!(".{}", output_ext))
+        .tempfile()?;
+    run_pavctl(
+        &pavctl_bin,
+        &[
+            "convert",
+            pvs_file.path().to_str().unwrap(),
+            out_file.path().to_str().unwrap(),
+        ],
+    )?;
 
-        let _ = fs::remove_file(&pvs_path);
-        let _ = fs::remove_file(&input_path);
+    // 4. Validate
+    let converted = fs::read_to_string(out_file.path())?;
+    assert_converted_matches_canonical(&converted, output_format, &config)?;
+
+    Ok(())
+}
+
+fn format_ext(format: SerdeFormat) -> &'static str {
+    match format {
+        SerdeFormat::Yaml => "yaml",
+        SerdeFormat::Json => "json",
     }
+}
 
+fn run_pavctl(bin: &Path, args: &[&str]) -> Result<()> {
+    let output = Command::new(bin)
+        .args(args)
+        .output()
+        .with_context(|| format!("Failed to execute pavctl {:?}", args))?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "pavctl {:?} failed with status: {}\nSTDOUT:\n{}\nSTDERR:\n{}",
+            args,
+            output.status,
+            stdout,
+            stderr
+        );
+    }
     Ok(())
 }
 
@@ -105,21 +145,23 @@ fn assert_converted_matches_canonical(
     converted: &str,
     format: SerdeFormat,
     config: &SerdeConfig,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     let runtime = config.clone().build()?;
     let canonical: SerdeConfig = runtime.into();
 
     match format {
         SerdeFormat::Yaml => {
             let converted_value: serde_yaml::Value =
-                serde_yaml::from_str(converted).expect("parse converted yaml");
-            let expected_value = serde_yaml::to_value(canonical).expect("serialize canonical yaml");
+                serde_yaml::from_str(converted).context("parse converted yaml")?;
+            let expected_value =
+                serde_yaml::to_value(canonical).context("serialize canonical yaml")?;
             assert_eq!(converted_value, expected_value);
         }
         SerdeFormat::Json => {
             let converted_value: serde_json::Value =
-                serde_json::from_str(converted).expect("parse converted json");
-            let expected_value = serde_json::to_value(canonical).expect("serialize canonical json");
+                serde_json::from_str(converted).context("parse converted json")?;
+            let expected_value =
+                serde_json::to_value(canonical).context("serialize canonical json")?;
             assert_eq!(converted_value, expected_value);
         }
     }
@@ -127,12 +169,12 @@ fn assert_converted_matches_canonical(
     Ok(())
 }
 
-fn write_config(path: &PathBuf, format: SerdeFormat, config: &SerdeConfig) -> anyhow::Result<()> {
+fn write_config(path: &Path, format: SerdeFormat, config: &SerdeConfig) -> Result<()> {
     let out = match format {
         SerdeFormat::Yaml => serde_yaml::to_string(config)?,
         SerdeFormat::Json => serde_json::to_string_pretty(config)?,
     };
-    fs::write(path, out).expect("write config");
+    fs::write(path, out).context("write config")?;
     Ok(())
 }
 
@@ -163,64 +205,44 @@ fn pavctl_bin_from(mut dir: PathBuf) -> PathBuf {
     panic!("Binary pavctl not found; run cargo build -p pavctl");
 }
 
-fn temp_path(prefix: &str, ext: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    std::env::temp_dir().join(format!("{prefix}_{nanos}.{ext}"))
-}
-
-fn temp_dir(prefix: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    std::env::temp_dir().join(format!("{prefix}_{nanos}"))
-}
-
 #[test]
 fn pavctl_bin_prefers_env_override() {
-    let temp = temp_path("pavctl_override", "bin");
-    std::fs::write(&temp, b"").expect("touch");
+    let temp = tempfile::Builder::new()
+        .suffix(".bin")
+        .tempfile()
+        .expect("tempfile");
+    let path = temp.path().to_owned();
+
+    // We can't actually run this bin, but the function just returns the path
     unsafe {
-        std::env::set_var("CARGO_BIN_EXE_pavctl", &temp);
+        std::env::set_var("CARGO_BIN_EXE_pavctl", &path);
     }
 
     let resolved = pavctl_bin();
-    assert_eq!(resolved, temp);
+    assert_eq!(resolved, path);
 
     unsafe {
         std::env::remove_var("CARGO_BIN_EXE_pavctl");
     }
-    let _ = std::fs::remove_file(temp);
 }
 
 #[test]
 fn pavctl_bin_finds_release_binary() {
-    let dir = temp_dir("pavctl_workspace");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("dir");
-    std::fs::write(dir.join("Cargo.lock"), "").expect("lock");
-    let release_dir = dir.join("target/release");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("Cargo.lock"), "").expect("lock");
+    let release_dir = dir.path().join("target/release");
     std::fs::create_dir_all(&release_dir).expect("release dir");
     let release_path = release_dir.join("pavctl");
     std::fs::write(&release_path, b"").expect("release bin");
 
-    let resolved = pavctl_bin_from(dir.clone());
+    let resolved = pavctl_bin_from(dir.path().to_owned());
     assert_eq!(resolved, release_path);
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn pavctl_bin_panics_without_workspace_root() {
-    let dir = temp_dir("pavctl_noworkspace");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("dir");
-
-    let result = std::panic::catch_unwind(|| pavctl_bin_from(dir.clone()));
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().to_owned();
+    let result = std::panic::catch_unwind(|| pavctl_bin_from(path));
     assert!(result.is_err());
-
-    let _ = std::fs::remove_dir_all(&dir);
 }

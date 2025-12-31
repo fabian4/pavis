@@ -3,6 +3,7 @@ identity:
 
 http:
   bind: "0.0.0.0:8080"
+  admin_bind: "127.0.0.1:9090"
 
 storage:
   root_dir: "/var/lib/pavis"
@@ -11,6 +12,38 @@ artifact:
   # Last-known-good artifact path (used at startup and for crash recovery)
   lkg_path: "/var/lib/pavis/lkg/config.pvs"
 
+pipeline:
+  ingest:
+    source:
+      kind: file
+      path: "/etc/pavis/input.yaml"
+    mode:
+      kind: watch
+      debounce: 200
+  codec:
+    kind: serde
+    mode:
+      compaction: off
+  runtime:
+    max_in_flight: 8
+    restart_backoff:
+      min: 500
+      max: 30000
+    publish_retry:
+      max: 5
+      backoff:
+        min: 250
+        max: 5000
+
 distribution:
   long_poll:
     enabled: true
+
+persistence:
+  enabled: true
+  flush_interval: 1000
+  retry:
+    max: 5
+    backoff:
+      min: 250
+      max: 5000

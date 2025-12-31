@@ -9,6 +9,7 @@ members = [
     "crates/pavis-codec-serde",
     "crates/pavis-relay",
     "crates/pavis-e2e",
+    "crates/pavis-ingest-file",
 ]
 resolver = "2"
 

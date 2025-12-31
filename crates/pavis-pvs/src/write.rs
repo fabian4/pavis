@@ -9,7 +9,7 @@ use rkyv::ser::serializers::AllocSerializer;
 use std::fs;
 use std::path::Path;
 
-pub fn write(path: impl AsRef<Path>, config: &RuntimeConfig) -> PvsResult<()> {
+pub fn encode(config: &RuntimeConfig) -> PvsResult<Vec<u8>> {
     let mut serializer = AllocSerializer::<1024>::default();
     serializer
         .serialize_value(config)
@@ -34,6 +34,11 @@ pub fn write(path: impl AsRef<Path>, config: &RuntimeConfig) -> PvsResult<()> {
     final_bytes.extend_from_slice(&header._reserved);
     final_bytes.extend_from_slice(&rkyv_bytes);
 
+    Ok(final_bytes)
+}
+
+pub fn write(path: impl AsRef<Path>, config: &RuntimeConfig) -> PvsResult<()> {
+    let final_bytes = encode(config)?;
     fs::write(path, final_bytes).map_err(PvsError::Io)?;
     Ok(())
 }

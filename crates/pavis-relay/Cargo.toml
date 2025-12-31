@@ -7,16 +7,24 @@ description = "Relay layer for Pavis"
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 thiserror = "1"
 axum = "0.7"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 clap = { version = "4.5", features = ["derive"] }
 serde_yaml = "0.9"
+futures-util = "0.3"
 pavis-pvs = { path = "../pavis-pvs" }
+pavis-ingest-api = { path = "../pavis-ingest-api" }
+pavis-ingest-file = { path = "../pavis-ingest-file" }
+pavis-codec-api = { path = "../pavis-codec-api" }
+pavis-codec-serde = { path = "../pavis-codec-serde" }
+pavis-core = { path = "../pavis-core" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
-pavis-core = { path = "../pavis-core" }
 rkyv = { version = "0.7", features = ["validation"] }

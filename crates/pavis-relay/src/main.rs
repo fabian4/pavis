@@ -12,6 +12,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let args = Args::parse();
     let config = config::load(Path::new(&args.config)).context("failed to load relay config")?;
     serve_from_config(&config).await

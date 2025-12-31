@@ -33,20 +33,18 @@ relay:
     limits:
       max_pvs_bytes: 1
   pipeline:
-    source_id: "static:dev-config"
+    source_id: "file:dev-config"
     ingest:
       source:
-        kind: static
-        config:
-          path: "/etc/pavis/input.yaml"
+        kind: file
+        path: "/etc/pavis/input.yaml"
       mode:
         kind: watch
-        config:
-          debounce_ms: 200
+        debounce: 200
     codec:
-      kind: yaml
-      options:
-        strict_unknown_fields: true
+      kind: serde
+      mode:
+        compaction: off
     execution:
       versioning:
         scheme: monotonic_u64
@@ -105,20 +103,18 @@ artifact:
   limits:
     max_pvs_bytes: 1
 pipeline:
-  source_id: "static:dev-config"
+  source_id: "file:dev-config"
   ingest:
     source:
-      kind: static
-      config:
-        path: "/etc/pavis/input.yaml"
+      kind: file
+      path: "/etc/pavis/input.yaml"
     mode:
       kind: watch
-      config:
-        debounce_ms: 200
+      debounce: 200
   codec:
-    kind: yaml
-    options:
-      strict_unknown_fields: true
+    kind: serde
+    mode:
+      compaction: off
   execution:
     versioning:
       scheme: monotonic_u64
@@ -223,20 +219,18 @@ artifact:
     max_pvs_bytes: 1024
     max_routes: 200
 pipeline:
-  source_id: "static:dev"
+  source_id: "file:dev"
   ingest:
     source:
-      kind: static
-      config:
-        path: "/etc/pavis/input.yaml"
+      kind: file
+      path: "/etc/pavis/input.yaml"
     mode:
       kind: watch
-      config:
-        debounce_ms: 200
+      debounce: 200
   codec:
-    kind: yaml
-    options:
-      strict_unknown_fields: true
+    kind: serde
+    mode:
+      compaction: off
   execution:
     versioning:
       scheme: monotonic_u64
@@ -278,16 +272,19 @@ metrics:
     assert_eq!(config.artifact.artifacts_dir, "/var/lib/pavis/artifacts");
     assert_eq!(config.artifact.limits.max_pvs_bytes, 1024);
     assert_eq!(config.artifact.limits.max_routes, Some(200));
-    assert_eq!(config.pipeline.source_id, "static:dev");
-    assert_eq!(config.pipeline.ingest.source.kind, "static");
-    assert_eq!(
-        config.pipeline.ingest.source.config["path"],
-        "/etc/pavis/input.yaml"
-    );
+    assert_eq!(config.pipeline.source_id, "file:dev");
+
+    let config::IngestSource::File(file_cfg) = config.pipeline.ingest.source;
+    assert_eq!(file_cfg.path, "/etc/pavis/input.yaml");
+
     assert_eq!(config.pipeline.ingest.mode.kind, "watch");
-    assert_eq!(config.pipeline.ingest.mode.config["debounce_ms"], 200);
-    assert_eq!(config.pipeline.codec.kind, "yaml");
-    assert!(config.pipeline.codec.options.strict_unknown_fields);
+    assert_eq!(config.pipeline.ingest.mode.debounce, 200);
+
+    assert!(matches!(
+        config.pipeline.codec.kind,
+        config::CodecKind::Serde
+    ));
+
     assert_eq!(config.pipeline.execution.versioning.scheme, "monotonic_u64");
     assert_eq!(
         config.pipeline.execution.versioning.state_file,

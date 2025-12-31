@@ -1,13 +1,16 @@
 use crate::config;
+use crate::config::PersistenceOptions;
 use crate::routes::serve;
 use crate::state::{RelayOptions, RelayState};
 use anyhow::{Context, Result};
 use axum::body::Bytes;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub async fn serve_from_config(config: &config::RelayConfig) -> Result<()> {
     let (listen_addr, state) = init_state(config)?;
+    crate::pipeline::start_pipeline(&config.pipeline, state.clone()).await?;
     serve(listen_addr, state)
         .await
         .context("relay server failed")
@@ -41,6 +44,16 @@ fn resolve_lkg_path(config: &config::RelayConfig) -> PathBuf {
 }
 
 fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
+    if config.persistence.flush_interval == 0 {
+        anyhow::bail!("persistence.flush_interval must be greater than zero");
+    }
+    if config.persistence.retry.backoff.min == 0 {
+        anyhow::bail!("persistence.retry.backoff.min must be greater than zero");
+    }
+    if config.persistence.retry.backoff.max < config.persistence.retry.backoff.min {
+        anyhow::bail!("persistence.retry.backoff.max must be >= persistence.retry.backoff.min");
+    }
+
     Ok(RelayOptions {
         version_header: axum::http::HeaderName::from_static(pavis_pvs::PAVIS_VERSION_HEADER),
         checksum_header: axum::http::HeaderName::from_static(pavis_pvs::PAVIS_CHECKSUM_HEADER),
@@ -50,6 +63,13 @@ fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
         long_poll_enabled: config.distribution.long_poll.enabled,
         identity_name: config.identity.name.clone(),
         lkg_path: None,
+        persistence: PersistenceOptions {
+            enabled: config.persistence.enabled,
+            flush_interval: Duration::from_millis(config.persistence.flush_interval),
+            retry_max: config.persistence.retry.max,
+            retry_backoff: Duration::from_millis(config.persistence.retry.backoff.min),
+            retry_backoff_max: Duration::from_millis(config.persistence.retry.backoff.max),
+        },
     })
 }
 
