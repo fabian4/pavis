@@ -233,7 +233,6 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         // Use a directory as the LKG path to force a read error (EISDIR on Unix, Access Denied on Windows)
-        // This is more reliable than file permissions which can be overridden by root/containers.
         let lkg = dir.join("config.pvs");
         std::fs::create_dir(&lkg).unwrap();
 
@@ -242,6 +241,10 @@ mod tests {
         config.artifact.lkg_path = lkg.to_string_lossy().to_string();
 
         let err = init_state(&config).err().expect("lkg error");
+
+        // Debug the actual error content
+        dbg!(&err); // Print the actual error
+
         assert!(err.to_string().contains("failed to read LKG"));
 
         // Cleanup

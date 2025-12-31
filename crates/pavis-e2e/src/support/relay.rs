@@ -123,7 +123,11 @@ impl RelayClient {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(anyhow::anyhow!("Metrics request failed {}: {}", status, text));
+            return Err(anyhow::anyhow!(
+                "Metrics request failed {}: {}",
+                status,
+                text
+            ));
         }
         Ok(text)
     }
@@ -139,18 +143,21 @@ impl RelayClient {
             .inner
             .post(format!("{}/v1/publish", self.base_url))
             .body(bytes)
-            .header(pavis_pvs::PAVIS_VERSION_HEADER, proposed_version.to_string())
+            .header(
+                pavis_pvs::PAVIS_VERSION_HEADER,
+                proposed_version.to_string(),
+            )
             .send()
             .await?;
-            
+
         let status = resp.status();
         let headers = resp.headers().clone();
         let text = resp.text().await?;
-        
+
         if !status.is_success() {
-             return Err(anyhow::anyhow!("Publish failed {}: {}", status, text));
+            return Err(anyhow::anyhow!("Publish failed {}: {}", status, text));
         }
-        
+
         parse_publish_response(&headers, &text)
             .with_context(|| format!("Failed to parse publish response: {text}"))
     }
@@ -238,7 +245,10 @@ fn parse_relay_status(text: &str) -> Result<RelayStatus> {
     Ok(RelayStatus { version, checksum })
 }
 
-fn parse_publish_response(headers: &reqwest::header::HeaderMap, text: &str) -> Result<PublishResponse> {
+fn parse_publish_response(
+    headers: &reqwest::header::HeaderMap,
+    text: &str,
+) -> Result<PublishResponse> {
     if text.trim_start().starts_with('{') {
         return serde_json::from_str(text).map_err(|err| err.into());
     }
