@@ -297,6 +297,11 @@ async fn relay_publish_fails_when_lkg_is_read_only() -> Result<()> {
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
+    if env.is_docker() {
+        println!("Skipping LKG write failure test in Docker mode due to permission constraints");
+        return Ok(());
+    }
+
     let lkg_path = env.lkg_path().to_path_buf();
     let before = fs::read(&lkg_path)?;
     let original_mode = fs::metadata(&lkg_path)?.permissions().mode();

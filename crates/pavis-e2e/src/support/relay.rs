@@ -142,6 +142,10 @@ impl RelayEnv {
         &self.lkg_path
     }
 
+    pub fn is_docker(&self) -> bool {
+        matches!(self.mode, TestMode::Docker)
+    }
+
     fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
