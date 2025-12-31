@@ -152,7 +152,12 @@ pub(crate) async fn post_publish(
     {
         state.metrics().inc_publish_fail();
         state.set_last_error(Some(err.to_string())).await;
-        return (StatusCode::CONFLICT, format!("{err}\n")).into_response();
+        let status = match err {
+            crate::state::RelayError::Policy(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            crate::state::RelayError::VersionMonotonicity { .. } => StatusCode::CONFLICT,
+            _ => StatusCode::CONFLICT,
+        };
+        return (status, format!("{err}\n")).into_response();
     }
     state.metrics().inc_publish_ok();
     state.set_last_error(None).await;
@@ -238,7 +243,7 @@ pub(crate) async fn get_metrics(State(state): State<Arc<RelayState>>) -> Respons
     let metrics = state.metrics();
     let body = format!(
         "# HELP pavis_relay_version Current config version\n# TYPE pavis_relay_version gauge\npavis_relay_version {version}\n\
-# HELP pavis_relay_publish_total Successful publishes\n# TYPE pavis_relay_publish_total counter\npavis_relay_publish_total {}\n\
+# HELP pavis_relay_publish_ok_total Successful publishes\n# TYPE pavis_relay_publish_ok_total counter\npavis_relay_publish_ok_total {}\n\
 # HELP pavis_relay_publish_fail_total Failed publishes\n# TYPE pavis_relay_publish_fail_total counter\npavis_relay_publish_fail_total {}\n\
 # HELP pavis_relay_longpoll_wait_total Long poll waits\n# TYPE pavis_relay_longpoll_wait_total counter\npavis_relay_longpoll_wait_total {}\n",
         metrics.publish_ok(),

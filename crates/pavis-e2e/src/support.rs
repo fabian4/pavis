@@ -1,6 +1,6 @@
 mod pavis;
 mod pvs;
-mod relay;
+pub mod relay;
 
 pub use pavis::{
     BASE_URL, PavisScenario, TestEnv, find_binary, find_project_root, generate_pvs,

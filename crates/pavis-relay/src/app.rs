@@ -30,7 +30,8 @@ fn init_state(config: &config::RelayConfig) -> Result<(SocketAddr, RelayState)> 
 
     let mut options = build_options(config).context("invalid relay config options")?;
     options.lkg_path = Some(lkg_path);
-    let state = RelayState::new_with_options(0, Bytes::from(bytes), options)
+    let initial_version = if bytes.is_empty() { 0 } else { 1 };
+    let state = RelayState::new_with_options(initial_version, Bytes::from(bytes), options)
         .context("failed to initialize relay state")?;
     Ok((listen_addr, state))
 }
@@ -70,6 +71,7 @@ fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
             retry_backoff: Duration::from_millis(config.persistence.retry.backoff.min),
             retry_backoff_max: Duration::from_millis(config.persistence.retry.backoff.max),
         },
+        max_pvs_bytes: config.artifact.limits.max_pvs_bytes,
     })
 }
 
@@ -225,17 +227,15 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn init_state_fails_on_lkg_read_error() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join("relay_lkg_fail");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let lkg = dir.join("config.pvs");
 
-        // Create unreadable file
-        std::fs::write(&lkg, b"secret").unwrap();
-        std::fs::set_permissions(&lkg, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Use a directory as the LKG path to force a read error (EISDIR on Unix, Access Denied on Windows)
+        // This is more reliable than file permissions which can be overridden by root/containers.
+        let lkg = dir.join("config.pvs");
+        std::fs::create_dir(&lkg).unwrap();
 
         let mut config = minimal_config();
         config.http.bind = "127.0.0.1:0".to_string();
@@ -245,7 +245,6 @@ mod tests {
         assert!(err.to_string().contains("failed to read LKG"));
 
         // Cleanup
-        std::fs::set_permissions(&lkg, std::fs::Permissions::from_mode(0o644)).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

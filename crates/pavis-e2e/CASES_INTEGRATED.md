@@ -33,3 +33,42 @@
   - Relay `/metrics` increments publish count.
   - Runtime `/metrics` increments apply count or config reload count.
   - Headers `X-Pavis-Version` and `X-Pavis-Checksum` present in relay responses.
+
+### I5: File Ingest -> Relay -> Runtime (Pipeline)
+- Setup: Relay configured with `file` ingest source watching `input.yaml`.
+- Action: Write valid YAML config (v1) to `input.yaml`.
+- Expect:
+  - Relay logs ingest and successful publish.
+  - Runtime picks up v1 via long-poll.
+- Action: Update `input.yaml` (v2).
+- Expect:
+  - Relay version increments automatically.
+  - Runtime applies v2.
+- Rationale: Verifies the full GitOps-style pipeline from disk to live traffic.
+
+### I6: Data Plane Recovery
+- Setup: Relay running with current version v2. Runtime connected.
+- Action: Kill Runtime (`pavis`). Restart Runtime.
+- Expect:
+  - Runtime connects to Relay on boot.
+  - Runtime applies v2 immediately (via direct fetch or long-poll).
+  - Traffic flow restores successfully.
+
+### I7: Network Partition
+- Setup: Stable state.
+- Action: Block network between Runtime and Relay (e.g., iptables or disconnect interface).
+- Action: Update Relay to v3 (via file ingest or API).
+- Action: Restore network.
+- Expect:
+  - Runtime eventually reconnects/long-polls.
+  - Runtime detects v3 and updates.
+  - No stale config persists indefinitely.
+
+### I8: Stale Control Plane Rejection (Safety)
+- Setup: Runtime running on v10. Relay crashes and loses state (starts fresh at v0/v1).
+- Action: Runtime polls fresh Relay (v1).
+- Expect:
+  - Runtime compares v1 < v10.
+  - Runtime **rejects** the update (logs warning about non-monotonic version).
+  - Runtime continues serving v10.
+- Rationale: Prevents accidental rollbacks or data loss if control plane is reset without restoration.

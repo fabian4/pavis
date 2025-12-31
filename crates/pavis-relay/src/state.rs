@@ -114,6 +114,7 @@ pub(crate) struct RelayOptions {
     pub identity_name: String,
     pub lkg_path: Option<PathBuf>,
     pub persistence: PersistenceOptions,
+    pub max_pvs_bytes: u64,
 }
 
 impl Default for RelayOptions {
@@ -128,6 +129,7 @@ impl Default for RelayOptions {
             identity_name: String::new(),
             lkg_path: None,
             persistence: PersistenceOptions::default(),
+            max_pvs_bytes: 0,
         }
     }
 }
@@ -220,6 +222,7 @@ impl RelayState {
     }
 
     pub(crate) async fn publish_auto(&self, bytes: Bytes) -> Result<u64, RelayError> {
+        self.enforce_limits(bytes.len())?;
         let header =
             pavis_pvs::inspect(&bytes).map_err(|err| RelayError::Config(err.to_string()))?;
         let meta = RelayMeta::from_header(&header);
@@ -255,6 +258,7 @@ impl RelayState {
         bytes: Bytes,
         meta: RelayMeta,
     ) -> Result<(), RelayError> {
+        self.enforce_limits(bytes.len())?;
         let mut inner = self.inner.write().await;
         execute_plan(inner.version, proposed_version)?;
 
@@ -311,6 +315,17 @@ impl RelayState {
 
     pub(crate) fn started_at(&self) -> SystemTime {
         self.started_at
+    }
+
+    fn enforce_limits(&self, size: usize) -> Result<(), RelayError> {
+        let limit = self.options.max_pvs_bytes;
+        if limit > 0 && (size as u64) > limit {
+            return Err(RelayError::Policy(format!(
+                "pvs size {} exceeds max_pvs_bytes {}",
+                size, limit
+            )));
+        }
+        Ok(())
     }
 }
 

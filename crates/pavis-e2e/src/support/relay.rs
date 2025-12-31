@@ -14,6 +14,247 @@ use super::pavis::find_project_root;
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 const RELAY_CONTAINER_PORT: u16 = 8080;
 
+#[derive(Debug, Clone)]
+pub struct RelayOptions {
+    pub enable_file_ingest: bool,
+    pub ingest_debounce_ms: u64,
+    pub ingest_path: Option<PathBuf>,
+    pub lkg_path: Option<PathBuf>,
+    pub max_pvs_bytes: Option<u64>,
+}
+
+impl Default for RelayOptions {
+    fn default() -> Self {
+        Self {
+            enable_file_ingest: false,
+            ingest_debounce_ms: 100,
+            ingest_path: None,
+            lkg_path: None,
+            max_pvs_bytes: None,
+        }
+    }
+}
+
+pub struct RelayInstance {
+    pub env: RelayEnv,
+    pub lkg_path: PathBuf,
+    pub ingest_path: Option<PathBuf>,
+}
+
+impl RelayInstance {
+    pub async fn new(options: RelayOptions) -> Result<Self> {
+        let env = RelayEnv::new(options).await?;
+        let lkg_path = env.lkg_path.clone();
+
+        let ingest_path = if env.options.enable_file_ingest {
+            Some(
+                env.work_dir.join(
+                    env.options
+                        .ingest_path
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from("input.yaml")),
+                ),
+            )
+        } else {
+            None
+        };
+
+        if let Some(path) = ingest_path.as_ref() {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            if !path.exists() {
+                fs::write(path, "")?;
+            }
+        }
+
+        Ok(Self {
+            env,
+            lkg_path,
+            ingest_path,
+        })
+    }
+
+    pub async fn restart(mut self) -> Result<Self> {
+        self.env.restart().await?;
+        Ok(self)
+    }
+
+    pub fn client(&self) -> RelayClient {
+        RelayClient::new(self.env.base_url.clone())
+    }
+}
+
+pub struct RelayClient {
+    base_url: String,
+    inner: Client,
+}
+
+impl RelayClient {
+    pub fn new(base_url: String) -> Self {
+        Self {
+            base_url,
+            inner: Client::new(),
+        }
+    }
+
+    pub async fn status(&self) -> Result<RelayStatus> {
+        let resp = self
+            .inner
+            .get(format!("{}/v1/status", self.base_url))
+            .send()
+            .await?
+            .error_for_status()?;
+        let text = resp.text().await?;
+        parse_relay_status(&text)
+            .with_context(|| format!("Failed to parse status response: {text}"))
+    }
+
+    pub async fn metrics(&self) -> Result<String> {
+        let preferred = format!("{}/v1/metrics", self.base_url);
+        let fallback = format!("{}/metrics", self.base_url);
+        let resp = self.inner.get(&preferred).send().await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if status.is_success() {
+            return Ok(text);
+        }
+        let resp = self.inner.get(&fallback).send().await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            return Err(anyhow::anyhow!("Metrics request failed {}: {}", status, text));
+        }
+        Ok(text)
+    }
+
+    pub async fn publish(&self, config: &pavis_core::RuntimeConfig) -> Result<PublishResponse> {
+        let bytes = pavis_pvs::encode(config)?;
+        self.publish_raw(bytes).await
+    }
+
+    pub async fn publish_raw(&self, bytes: Vec<u8>) -> Result<PublishResponse> {
+        let proposed_version = self.next_version().await?;
+        let resp = self
+            .inner
+            .post(format!("{}/v1/publish", self.base_url))
+            .body(bytes)
+            .header(pavis_pvs::PAVIS_VERSION_HEADER, proposed_version.to_string())
+            .send()
+            .await?;
+            
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let text = resp.text().await?;
+        
+        if !status.is_success() {
+             return Err(anyhow::anyhow!("Publish failed {}: {}", status, text));
+        }
+        
+        parse_publish_response(&headers, &text)
+            .with_context(|| format!("Failed to parse publish response: {text}"))
+    }
+
+    pub async fn get_artifact(&self, version: u64) -> Result<Vec<u8>> {
+        let resp = self
+            .inner
+            .get(format!("{}/v1/artifacts/{}", self.base_url, version))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(resp.bytes().await?.to_vec())
+    }
+
+    pub async fn long_poll(
+        &self,
+        current_version: u64,
+        wait_ms: u64,
+    ) -> Result<Option<(u64, Vec<u8>)>> {
+        let resp = self
+            .inner
+            .get(format!("{}/v1/config", self.base_url))
+            .query(&[("wait_ms", wait_ms)])
+            .header(pavis_pvs::PAVIS_VERSION_HEADER, current_version.to_string())
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+            return Ok(None);
+        }
+
+        let resp = resp.error_for_status()?;
+
+        let version_header = resp
+            .headers()
+            .get(pavis_pvs::PAVIS_VERSION_HEADER)
+            .context("missing version header")?;
+        let version_str = version_header.to_str()?;
+        let version: u64 = version_str.parse()?;
+
+        let bytes = resp.bytes().await?.to_vec();
+        Ok(Some((version, bytes)))
+    }
+
+    async fn next_version(&self) -> Result<u64> {
+        let status = self.status().await?;
+        Ok(status.version.saturating_add(1))
+    }
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct RelayStatus {
+    pub version: u64,
+    pub checksum: String,
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct PublishResponse {
+    pub version: u64,
+    pub checksum: String,
+}
+
+fn parse_relay_status(text: &str) -> Result<RelayStatus> {
+    if text.trim_start().starts_with('{') {
+        return serde_json::from_str(text).map_err(|err| err.into());
+    }
+    let mut version: Option<u64> = None;
+    let mut checksum: Option<String> = None;
+    for token in text.split_whitespace() {
+        let Some((key, value)) = token.split_once('=') else {
+            continue;
+        };
+        match key {
+            "version" => {
+                if let Ok(parsed) = value.parse::<u64>() {
+                    version = Some(parsed);
+                }
+            }
+            "checksum" => checksum = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    let version = version.context("status missing version")?;
+    let checksum = checksum.context("status missing checksum")?;
+    Ok(RelayStatus { version, checksum })
+}
+
+fn parse_publish_response(headers: &reqwest::header::HeaderMap, text: &str) -> Result<PublishResponse> {
+    if text.trim_start().starts_with('{') {
+        return serde_json::from_str(text).map_err(|err| err.into());
+    }
+    let version = headers
+        .get(pavis_pvs::PAVIS_VERSION_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .context("publish response missing version header")?;
+    let checksum = headers
+        .get(pavis_pvs::PAVIS_CHECKSUM_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .context("publish response missing checksum header")?;
+    Ok(PublishResponse { version, checksum })
+}
+
 pub struct RelayEnv {
     child: Option<Child>,
     compose_project: Option<String>,
@@ -21,18 +262,25 @@ pub struct RelayEnv {
     compose_shared: bool,
     base_url: String,
     config_path: PathBuf,
-    work_dir: PathBuf,
+    pub work_dir: PathBuf,
     lkg_path: PathBuf,
     mode: TestMode,
+    options: RelayOptions,
 }
 
 impl RelayEnv {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(options: RelayOptions) -> Result<Self> {
         let mode = test_mode();
         let work_dir = unique_work_dir(&mode)?;
         let port = pick_port()?;
         let base_url = format!("http://127.0.0.1:{port}");
-        let lkg_path = work_dir.join("lkg").join("config.pvs");
+
+        let lkg_path = if let Some(path) = &options.lkg_path {
+            path.clone()
+        } else {
+            work_dir.join("lkg").join("config.pvs")
+        };
+
         let config_path = work_dir.join("relay.yaml");
         let container_port = RELAY_CONTAINER_PORT;
         let project_root = if matches!(mode, TestMode::Docker) {
@@ -54,6 +302,9 @@ impl RelayEnv {
                 let bind = format!("127.0.0.1:{port}");
                 let storage_root = work_dir.join("storage");
                 fs::create_dir_all(&storage_root)?;
+                if let Some(parent) = lkg_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
                 (bind, storage_root, lkg_path.clone())
             }
             TestMode::Docker => {
@@ -61,8 +312,6 @@ impl RelayEnv {
                 let storage_root_host = work_dir.join("storage");
                 let lkg_dir_host = work_dir.join("lkg");
 
-                // Pre-create directories with wide permissions so host runner can delete/modify
-                // files even if they are created by root inside the container.
                 create_dir_all_open(&storage_root_host)?;
                 create_dir_all_open(&lkg_dir_host)?;
 
@@ -72,7 +321,13 @@ impl RelayEnv {
             }
         };
 
-        write_config(&config_path, &bind, &storage_root, &config_lkg_path)?;
+        write_config(
+            &config_path,
+            &bind,
+            &storage_root,
+            &config_lkg_path,
+            &options,
+        )?;
 
         let mut compose_shared = false;
         let (child, compose_project) = match mode {
@@ -91,7 +346,7 @@ impl RelayEnv {
             }
         };
 
-        let env = Self {
+        let mut env = Self {
             child,
             compose_project,
             compose_file,
@@ -101,6 +356,7 @@ impl RelayEnv {
             work_dir,
             lkg_path,
             mode,
+            options,
         };
         env.wait_for_ready().await?;
         Ok(env)
@@ -174,11 +430,9 @@ impl RelayEnv {
         }
     }
 
-    async fn wait_for_ready(&self) -> Result<()> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(1))
-            .build()
-            .context("build relay client")?;
+    async fn wait_for_ready(&mut self) -> Result<()> {
+        let client = Client::builder().timeout(Duration::from_secs(1)).build()?;
+
         let url = format!("{}/health", self.base_url);
 
         for _ in 0..50 {
@@ -191,7 +445,19 @@ impl RelayEnv {
             {
                 return Ok(());
             }
+
             sleep(Duration::from_millis(100)).await;
+        }
+
+        if let Some(status) = self
+            .child
+            .as_mut()
+            .and_then(|c| c.try_wait().ok().flatten())
+        {
+            return Err(anyhow::anyhow!(
+                "Relay process exited early with status: {}",
+                status
+            ));
         }
 
         Err(anyhow::anyhow!("relay did not become ready"))
@@ -236,12 +502,32 @@ fn write_config(
     bind: &str,
     storage_root: &Path,
     lkg_path: &Path,
+    options: &RelayOptions,
 ) -> Result<()> {
-    let content = format!(
-        "identity:\n  name: relay-e2e\nhttp:\n  bind: \"{bind}\"\nstorage:\n  root_dir: \"{}\"\nartifact:\n  lkg_path: \"{}\"\ndistribution:\n  long_poll:\n    enabled: true\n    headers:\n      version: \"X-Pavis-Version\"\n      checksum: \"X-Pavis-Checksum\"\n      algorithm: \"X-Pavis-Checksum-Alg\"\n",
+    let max_bytes = options.max_pvs_bytes.unwrap_or(10485760);
+    let mut content = format!(
+        "identity:\n  name: relay-e2e\nhttp:\n  bind: \"{}\"\nstorage:\n  root_dir: \"{}\"\nartifact:\n  lkg_path: \"{}\"\n  limits:\n    max_pvs_bytes: {}
+distribution:\n  long_poll:\n    enabled: true\n    headers:\n      version: \"X-Pavis-Version\"\n      checksum: \"X-Pavis-Checksum\"\n      algorithm: \"X-Pavis-Checksum-Alg\"\npersistence:\n  enabled: true\n  flush_interval: 100\n  retry:\n    max: 5\n    backoff:\n      min: 10\n      max: 100\n",
+        bind,
         storage_root.display(),
-        lkg_path.display()
+        lkg_path.display(),
+        max_bytes
     );
+
+    if options.enable_file_ingest {
+        let ingest_file_path = if let Some(p) = &options.ingest_path {
+            p.display().to_string()
+        } else {
+            "input.yaml".to_string()
+        };
+
+        let pipeline_config = format!(
+            "pipeline:\n  source_id: file:e2e\n  ingest:\n    source:\n      kind: file\n      path: \"{}\"\n    mode:\n      kind: watch\n      debounce: {}\n  codec:\n    kind: serde\n    mode:\n      compaction: off\n  runtime:\n    max_in_flight: 8\n    restart_backoff:\n      min: 100\n      max: 1000\n    publish_retry:\n      max: 3\n      backoff:\n        min: 10\n        max: 100\n",
+            ingest_file_path, options.ingest_debounce_ms
+        );
+        content.push_str(&pipeline_config);
+    }
+
     fs::write(config_path, content)?;
     Ok(())
 }
@@ -249,15 +535,18 @@ fn write_config(
 fn spawn_relay(config_path: &Path) -> Result<Child> {
     let project_root = find_project_root()?;
     let relay_bin = find_binary(&project_root, "pavis-relay")?;
+
+    let cwd = config_path.parent().unwrap();
+
     Command::new(&relay_bin)
         .arg("--config")
         .arg(config_path)
+        .current_dir(cwd)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
         .context("spawn relay")
 }
-
 fn find_binary(project_root: &Path, name: &str) -> Result<PathBuf> {
     let release_bin = project_root.join("target/release").join(name);
     if release_bin.exists() {
@@ -303,8 +592,7 @@ fn spawn_relay_docker(
             "-d",
             "relay",
         ])
-        .status()
-        .context("spawn relay container")?;
+        .status()?;
 
     if !status.success() {
         return Err(anyhow::anyhow!("Failed to start relay container"));

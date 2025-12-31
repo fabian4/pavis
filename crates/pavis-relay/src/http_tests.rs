@@ -344,7 +344,7 @@ async fn publish_updates_metrics() {
         .expect("metrics body")
         .to_bytes();
     let body_str = std::str::from_utf8(&body).expect("metrics utf8");
-    assert!(body_str.contains("pavis_relay_publish_total"));
+    assert!(body_str.contains("pavis_relay_publish_ok_total"));
     assert!(body_str.contains("pavis_relay_publish_fail_total"));
     assert!(body_str.contains("pavis_relay_longpoll_wait_total"));
 }
