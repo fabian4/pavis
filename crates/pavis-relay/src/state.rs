@@ -350,9 +350,9 @@ fn start_persistence(
                         });
 
                         if let Some(bytes) = bytes {
-                            if let Err(err) = persist_with_retry(&path, bytes, options).await {
-                                warn!("Persist to disk failed during shutdown: {}", err);
-                            }
+                            let _ = persist_with_retry(&path, bytes, options)
+                                .await
+                                .inspect_err(|err| warn!("Persist to disk failed during shutdown: {}", err));
                         }
                         break;
                     }

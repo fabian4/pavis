@@ -83,8 +83,12 @@ pub struct PersistenceConfig {
 }
 
 impl PersistenceConfig {
-    pub fn default_enabled() -> bool { true }
-    pub fn default_flush_interval() -> u64 { 1_000 }
+    pub fn default_enabled() -> bool {
+        true
+    }
+    pub fn default_flush_interval() -> u64 {
+        1_000
+    }
 }
 
 impl Default for PersistenceConfig {
@@ -128,7 +132,9 @@ pub struct RetryConfig {
 }
 
 impl RetryConfig {
-    pub fn default_max() -> u32 { 5 }
+    pub fn default_max() -> u32 {
+        5
+    }
 }
 
 impl Default for RetryConfig {
@@ -202,7 +208,9 @@ pub struct IngestMode {
 }
 
 impl IngestMode {
-    pub fn default_debounce() -> u64 { 100 }
+    pub fn default_debounce() -> u64 {
+        100
+    }
 }
 
 impl Default for IngestMode {
@@ -267,7 +275,9 @@ pub struct PipelineRuntimeConfig {
 }
 
 impl PipelineRuntimeConfig {
-    pub fn default_max_in_flight() -> usize { 8 }
+    pub fn default_max_in_flight() -> usize {
+        8
+    }
 }
 
 impl Default for PipelineRuntimeConfig {
@@ -299,8 +309,12 @@ pub struct RestartBackoffConfig {
 }
 
 impl RestartBackoffConfig {
-    pub fn default_min() -> u64 { 500 }
-    pub fn default_max() -> u64 { 30_000 }
+    pub fn default_min() -> u64 {
+        500
+    }
+    pub fn default_max() -> u64 {
+        30_000
+    }
 }
 
 impl Default for RestartBackoffConfig {
@@ -322,8 +336,12 @@ pub struct RetryBackoffConfig {
 }
 
 impl RetryBackoffConfig {
-    pub fn default_min() -> u64 { 250 }
-    pub fn default_max() -> u64 { 5_000 }
+    pub fn default_min() -> u64 {
+        250
+    }
+    pub fn default_max() -> u64 {
+        5_000
+    }
 }
 
 impl Default for RetryBackoffConfig {
@@ -345,7 +363,9 @@ pub struct PublishRetryConfig {
 }
 
 impl PublishRetryConfig {
-    pub fn default_max() -> u32 { 5 }
+    pub fn default_max() -> u32 {
+        5
+    }
 }
 
 impl Default for PublishRetryConfig {
