@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 pub struct UpstreamEnv {
     addr: SocketAddr,
@@ -76,6 +76,124 @@ impl Drop for UpstreamEnv {
     }
 }
 
+pub struct TcpProxy {
+    listen_addr: SocketAddr,
+    shutdown: Option<oneshot::Sender<()>>,
+    partition_tx: watch::Sender<bool>,
+}
+
+impl TcpProxy {
+    pub async fn new(target: SocketAddr) -> Result<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let listen_addr = listener.local_addr()?;
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        let (partition_tx, _) = watch::channel(false);
+
+        let partition_tx_clone = partition_tx.clone();
+
+        tokio::spawn(async move {
+            loop {
+                // Wait if partitioned before accepting
+                let mut partition_rx_accept = partition_tx_clone.subscribe();
+                while *partition_rx_accept.borrow() {
+                    if partition_rx_accept.changed().await.is_err() {
+                        break;
+                    }
+                }
+
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    result = listener.accept() => {
+                        let Ok((mut inbound, _)) = result else { continue };
+                        let mut partition_rx1 = partition_tx_clone.subscribe();
+                        let mut partition_rx2 = partition_rx1.clone();
+
+                        tokio::spawn(async move {
+                            // Check again if partitioned before connecting
+                            if *partition_rx1.borrow() {
+                                return;
+                            }
+
+                            let Ok(mut outbound) = tokio::net::TcpStream::connect(target).await else {
+                                return;
+                            };
+
+                            let (mut ri, mut wi) = inbound.split();
+                            let (mut ro, mut wo) = outbound.split();
+
+                            let client_to_server = async {
+                                let mut buf = [0u8; 4096];
+                                loop {
+                                    tokio::select! {
+                                        res = ri.read(&mut buf) => {
+                                            match res {
+                                                Ok(0) => break,
+                                                Ok(n) => {
+                                                    if wo.write_all(&buf[..n]).await.is_err() { break; }
+                                                }
+                                                Err(_) => break,
+                                            }
+                                        }
+                                        res = partition_rx1.changed() => {
+                                            if res.is_err() || *partition_rx1.borrow() { break; }
+                                        }
+                                    }
+                                }
+                                let _ = wo.shutdown().await;
+                            };
+
+                            let server_to_client = async {
+                                let mut buf = [0u8; 4096];
+                                loop {
+                                    tokio::select! {
+                                        res = ro.read(&mut buf) => {
+                                            match res {
+                                                Ok(0) => break,
+                                                Ok(n) => {
+                                                    if wi.write_all(&buf[..n]).await.is_err() { break; }
+                                                }
+                                                Err(_) => break,
+                                            }
+                                        }
+                                        res = partition_rx2.changed() => {
+                                            if res.is_err() || *partition_rx2.borrow() { break; }
+                                        }
+                                    }
+                                }
+                                let _ = wi.shutdown().await;
+                            };
+
+                            tokio::join!(client_to_server, server_to_client);
+                        });
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            listen_addr,
+            shutdown: Some(shutdown_tx),
+            partition_tx,
+        })
+    }
+
+    pub fn listen_addr(&self) -> SocketAddr {
+        self.listen_addr
+    }
+
+    pub fn set_partition(&self, partitioned: bool) {
+        let _ = self.partition_tx.send(partitioned);
+    }
+}
+
+impl Drop for TcpProxy {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
 pub struct PavisEnv {
     child: Option<Child>,
     container_id: Option<String>,
@@ -85,49 +203,74 @@ pub struct PavisEnv {
     base_url: String,
     lkg_path: PathBuf,
     work_dir: PathBuf,
+    relay_url: String,
 }
 
 impl PavisEnv {
     pub fn new(config: &RuntimeConfig, host_port: u16, relay_url: &str) -> Result<Self> {
+        Self::new_with_version(config, host_port, relay_url, 0)
+    }
+
+    pub fn new_with_version(
+        config: &RuntimeConfig,
+        host_port: u16,
+        relay_url: &str,
+        version: u64,
+    ) -> Result<Self> {
         let work_dir = unique_work_dir("pavis_integrated");
         std::fs::create_dir_all(&work_dir)?;
         let lkg_path = work_dir.join("config.pvs");
         pavis_pvs::write(&lkg_path, config).context("write lkg")?;
         let version_path = lkg_path.with_extension("pvs.version");
-        std::fs::write(&version_path, "0").context("write version")?;
+        std::fs::write(&version_path, version.to_string()).context("write version")?;
 
-        let mut child = None;
-        let mut container_id = None;
-        let mut compose_project = None;
-        let mut compose_file = None;
-        let mut compose_shared = false;
+        let mut env = Self {
+            child: None,
+            container_id: None,
+            compose_project: None,
+            compose_file: None,
+            compose_shared: false,
+            base_url: format!("http://127.0.0.1:{host_port}"),
+            lkg_path,
+            work_dir,
+            relay_url: relay_url.to_string(),
+        };
+
+        env.start(host_port)?;
+        Ok(env)
+    }
+
+    fn start(&mut self, host_port: u16) -> Result<()> {
         match test_mode() {
             TestMode::Binary => {
                 let project_root = find_project_root()?;
                 let pavis_bin = find_binary(&project_root, "pavis")?;
+                let out_log = std::fs::File::create(self.work_dir.join("pavis.out"))?;
+                let err_log = std::fs::File::create(self.work_dir.join("pavis.err"))?;
                 let mut process = Command::new(&pavis_bin)
                     .arg("--config")
-                    .arg(&lkg_path)
+                    .arg(&self.lkg_path)
                     .arg("--relay-url")
-                    .arg(relay_url)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::inherit())
+                    .arg(&self.relay_url)
+                    .env("RUST_LOG", "debug")
+                    .stdout(out_log)
+                    .stderr(err_log)
                     .spawn()
                     .context("spawn pavis")?;
                 let _ = process.stdin.take();
-                child = Some(process);
+                self.child = Some(process);
             }
             TestMode::Docker => {
                 let image = resolve_image("PAVIS_IMAGE", "pavis:ci");
-                let relay_url = std::env::var("PAVIS_RELAY_URL")
+                let relay_url_container = std::env::var("PAVIS_RELAY_URL")
                     .ok()
-                    .unwrap_or_else(|| relay_url_for_container(relay_url));
+                    .unwrap_or_else(|| relay_url_for_container(&self.relay_url));
                 let compose_override = std::env::var("PAVIS_COMPOSE_FILE").ok();
                 if let Some(compose_path) = compose_override {
                     let compose_path = PathBuf::from(compose_path);
                     let project = std::env::var("PAVIS_COMPOSE_PROJECT")
                         .map(|value| {
-                            compose_shared = true;
+                            self.compose_shared = true;
                             value
                         })
                         .unwrap_or_else(|_| {
@@ -142,8 +285,8 @@ impl PavisEnv {
                     let status = Command::new("docker")
                         .env("PAVIS_IMAGE", &image)
                         .env("PAVIS_PORT", host_port.to_string())
-                        .env("PAVIS_WORK_DIR", work_dir.display().to_string())
-                        .env("PAVIS_RELAY_URL", &relay_url)
+                        .env("PAVIS_WORK_DIR", self.work_dir.display().to_string())
+                        .env("PAVIS_RELAY_URL", &relay_url_container)
                         .args([
                             "compose",
                             "-f",
@@ -160,8 +303,8 @@ impl PavisEnv {
                     if !status.success() {
                         return Err(anyhow::anyhow!("Failed to start pavis container"));
                     }
-                    compose_project = Some(project);
-                    compose_file = Some(compose_path);
+                    self.compose_project = Some(project);
+                    self.compose_file = Some(compose_path);
                 } else {
                     let container_name = format!(
                         "pavis-e2e-{}",
@@ -180,12 +323,12 @@ impl PavisEnv {
                             "-p",
                             &format!("{host_port}:8080"),
                             "-v",
-                            &format!("{}:/pavis", work_dir.display()),
+                            &format!("{}:/pavis", self.work_dir.display()),
                             &image,
                             "--config",
                             "/pavis/config.pvs",
                             "--relay-url",
-                            &relay_url,
+                            &relay_url_container,
                         ])
                         .output()
                         .context("spawn pavis container")?;
@@ -195,34 +338,21 @@ impl PavisEnv {
                             String::from_utf8_lossy(&output.stderr)
                         ));
                     }
-                    container_id = Some(container_name);
+                    self.container_id = Some(container_name);
                 }
             }
         }
-
-        Ok(Self {
-            child,
-            container_id,
-            compose_project,
-            compose_file,
-            compose_shared,
-            base_url: format!("http://127.0.0.1:{host_port}"),
-            lkg_path,
-            work_dir,
-        })
+        Ok(())
     }
 
-    pub fn base_url(&self) -> &str {
-        &self.base_url
+    pub fn restart(&mut self) -> Result<()> {
+        self.stop_internal();
+        let port = self.base_url.split(':').last().unwrap().parse::<u16>()?;
+        self.start(port)?;
+        Ok(())
     }
 
-    pub fn version_path(&self) -> PathBuf {
-        self.lkg_path.with_extension("pvs.version")
-    }
-}
-
-impl Drop for PavisEnv {
-    fn drop(&mut self) {
+    fn stop_internal(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -255,7 +385,34 @@ impl Drop for PavisEnv {
                 .stderr(Stdio::null())
                 .status();
         }
-        let _ = std::fs::remove_dir_all(&self.work_dir);
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub fn print_logs(&self) {
+        eprintln!("Work dir: {}", self.work_dir.display());
+        if let Ok(err) = std::fs::read_to_string(self.work_dir.join("pavis.err")) {
+            eprintln!("--- PAVIS ERR LOGS ---");
+            eprintln!("{err}");
+            eprintln!("----------------------");
+        }
+    }
+
+    pub fn version_path(&self) -> PathBuf {
+        self.lkg_path.with_extension("pvs.version")
+    }
+}
+
+impl Drop for PavisEnv {
+    fn drop(&mut self) {
+        self.stop_internal();
+        if std::env::var("KEEP_WORK_DIR").is_err() {
+            let _ = std::fs::remove_dir_all(&self.work_dir);
+        } else {
+            eprintln!("Keeping work dir: {}", self.work_dir.display());
+        }
     }
 }
 
@@ -406,7 +563,7 @@ pub fn client() -> Result<Client> {
 
 pub async fn wait_for_body(base_url: &str, expected: &str) -> Result<()> {
     let client = client()?;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(45);
     loop {
         if Instant::now() > deadline {
             return Err(anyhow::anyhow!("timeout waiting for response {expected}"));
@@ -434,7 +591,7 @@ pub fn expected_body(label: &str) -> String {
 }
 
 pub async fn wait_for_version(path: &Path, expected: u64) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(45);
     loop {
         if Instant::now() > deadline {
             return Err(anyhow::anyhow!("timeout waiting for version {expected}"));

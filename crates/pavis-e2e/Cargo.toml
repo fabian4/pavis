@@ -11,7 +11,7 @@ axum = "0.7"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client", "http1", "client-legacy"] }
 http-body-util = "0.1"
-pavis-core = { path = "../pavis-core" }
+pavis-core = { path = "../pavis-core", features = ["serde"] }
 pavis-codec-api = { path = "../pavis-codec-api" }
 pavis-codec-serde = { path = "../pavis-codec-serde" }
 pavis-ingest-api = { path = "../pavis-ingest-api" }

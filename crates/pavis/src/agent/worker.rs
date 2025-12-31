@@ -71,7 +71,10 @@ impl ConfigAgent {
         backoff: Backoff,
     ) -> anyhow::Result<Self> {
         let version_path = version_path_for(&lkg_path);
-        let client = Client::builder().timeout(timeout).build()?;
+        let client = Client::builder()
+            .timeout(timeout)
+            .connect_timeout(Duration::from_secs(5))
+            .build()?;
         Ok(Self {
             relay_base,
             lkg_path,
@@ -111,6 +114,16 @@ impl ConfigAgent {
                     .ok_or_else(|| {
                         anyhow::anyhow!("missing {PAVIS_VERSION_HEADER} response header")
                     })?;
+
+                if header_version <= version {
+                    tracing::warn!(
+                        current = version,
+                        received = header_version,
+                        "received stale config version, ignoring"
+                    );
+                    return Ok(PollOutcome::NoChange);
+                }
+
                 let bytes = response.bytes().await?;
                 self.apply_update(bytes.to_vec(), header_version).await?;
                 Ok(PollOutcome::Updated)

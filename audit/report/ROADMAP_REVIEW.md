@@ -1,12 +1,57 @@
 ## 📌 Overall Summary (Latest)
 
-🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 6
+🚫 Blocker: 0 · 🔥 High: 0 · ⚠️ Medium: 0 · 🧹 Low: 0 · ✅ Resolved: 8
 
 ---
 
 ## Open Findings (Prioritized)
 
 No open findings.
+
+---
+
+## Review Entry — 2025-12-31T00:10:00Z
+
+### Scope
+- Roadmap alignment check against recent constraint updates.
+
+---
+
+### Method
+- Comparison of `ROADMAP.md` Phase 1 and Planned Enhancements against implementation status.
+
+
+### Model
+- gemini-2.0-flash-exp
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| F-3 | Low | Phase 1 Constraints | Phase 1 implementation list updated to reflect constraints | Done |
+| F-4 | Low | Planned Enhancements | New roadmap section details missing features vs implementation | Done |
+
+---
+
+### Detailed Findings
+
+#### F-3: Phase 1 implementation list updated to reflect constraints
+- **Expectation:** Roadmap should explicitly list constraints (e.g., Single Listener, IP-only) where implementation is limited.
+- **Observed:** `ROADMAP.md` Phase 1 now lists "Static IP-based selection", "Single-listener support", etc.
+- **Evidence:** `ROADMAP.md` Phase 1 updates.
+- **Assessment (Reason):** Roadmap accurately reflects current implementation boundaries.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
+
+#### F-4: New roadmap section details missing features vs implementation
+- **Expectation:** Missing features (Multi-listener, DNS) should be tracked as future work.
+- **Observed:** `ROADMAP.md` now has a "Planned Enhancements: Core Expansion" section with specific milestones for these features.
+- **Evidence:** `ROADMAP.md` Planned Enhancements section.
+- **Assessment (Reason):** Roadmap provides a clear path forward for known gaps.
+- **Recommendation (Suggestion):** None.
+- **Doc Drift?:** No.
 
 ---
 
