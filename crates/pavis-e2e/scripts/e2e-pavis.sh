@@ -15,6 +15,20 @@ COMPOSE_FILE="$CONFIG_DIR/docker-compose-pavis.yaml"
 
 # Cleanup function
 cleanup() {
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -ne 0 ]; then
+    echo "❌ Tests failed with exit code $EXIT_CODE"
+    if [ "$TEST_MODE" == "docker" ]; then
+      echo "📋 Dumping Docker logs for diagnostics..."
+      docker compose -f "$COMPOSE_FILE" logs --tail=500 || true
+      # Also check for dynamic projects if any
+      for project in $(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | grep pavis-e2e- | sort -u); do
+        echo "--- Logs for dynamic project: $project ---"
+        docker compose -p "$project" logs --tail=500 || true
+      done
+    fi
+  fi
+
   echo "🧹 Cleaning up..."
   # Stop backends
   docker compose -f "$COMPOSE_FILE" down > /dev/null 2>&1 || true

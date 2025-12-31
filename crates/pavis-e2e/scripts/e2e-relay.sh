@@ -10,6 +10,23 @@ echo "🚀 Starting Relay E2E Test Suite in [$TEST_MODE] mode..."
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WORKSPACE_ROOT="$SCRIPT_DIR/../../.."
 
+cleanup() {
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -ne 0 ]; then
+        echo "❌ Tests failed with exit code $EXIT_CODE"
+        if [ "$TEST_MODE" == "docker" ]; then
+            echo "📋 Dumping Docker logs for diagnostics..."
+            # Relay tests use dynamic project names, we need to find them or use a pattern
+            # For relay.rs, it uses pavis-relay-e2e-*
+            for project in $(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | grep pavis-relay-e2e- | sort -u); do
+                echo "--- Logs for project: $project ---"
+                docker compose -p "$project" logs --tail=500 || true
+            done
+        fi
+    fi
+}
+trap cleanup EXIT
+
 ensure_binary() {
     if [ -f "$WORKSPACE_ROOT/target/release/pavis-relay" ]; then
         echo "✅ pavis-relay binary found at target/release/pavis-relay, skipping build."

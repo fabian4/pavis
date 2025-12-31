@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 use tokio::sync::{Notify, RwLock, watch};
-use tracing::warn;
+use tracing::{debug, warn};
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
@@ -218,7 +218,9 @@ impl RelayState {
 
     pub(crate) async fn publish_config(&self, config: &RuntimeConfig) -> Result<u64, RelayError> {
         let bytes = pavis_pvs::encode(config).map_err(|e| RelayError::Config(e.to_string()))?;
-        self.publish_auto(bytes.into()).await
+        let version = self.publish_auto(bytes.into()).await?;
+        debug!("Published config from struct: version={}", version);
+        Ok(version)
     }
 
     pub(crate) async fn publish_auto(&self, bytes: Bytes) -> Result<u64, RelayError> {
@@ -229,6 +231,11 @@ impl RelayState {
 
         let mut inner = self.inner.write().await;
         let proposed_version = inner.version + 1;
+
+        debug!(
+            "Publishing auto-increment version: {} -> {}, checksum={}",
+            inner.version, proposed_version, meta.checksum
+        );
 
         inner.version = proposed_version;
         inner.artifact = RelayArtifact {

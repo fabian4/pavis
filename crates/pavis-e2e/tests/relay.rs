@@ -224,7 +224,7 @@ async fn r6_ingest_debouncing() -> Result<()> {
     let relay: RelayInstance = RelayInstance::new(options).await?;
     let client = relay.client();
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1000)).await;
     let status = client.status().await?;
     let initial_version = status.version;
 
@@ -232,10 +232,10 @@ async fn r6_ingest_debouncing() -> Result<()> {
     for i in 0..5 {
         let content = format!("server:\n  listen_addr: \"127.0.0.1:808{i}\"\n");
         fs::write(config_path, content)?;
-        sleep(Duration::from_millis(20)).await;
+        sleep(Duration::from_millis(50)).await;
     }
 
-    sleep(Duration::from_millis(1000)).await;
+    sleep(Duration::from_millis(2500)).await;
 
     let status = client.status().await?;
     assert_eq!(status.version, initial_version + 1);
@@ -269,19 +269,19 @@ async fn r8_codec_validation() -> Result<()> {
     let client = relay.client();
     let config_path = relay.ingest_path.as_ref().unwrap();
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
     let v_start = client.status().await?.version;
 
     // Write invalid YAML
     fs::write(config_path, "server: { invalid_syntax: [")?;
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
 
     let status = client.status().await?;
     assert_eq!(status.version, v_start);
 
     // Write valid YAML
     fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8080\"")?;
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
 
     let status = client.status().await?;
     assert_eq!(status.version, v_start + 1);
@@ -299,14 +299,14 @@ async fn r9_file_replacement() -> Result<()> {
     let client = relay.client();
     let config_path = relay.ingest_path.as_ref().unwrap();
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
     let v_start = client.status().await?.version;
 
     let tmp_path = config_path.with_extension("tmp");
     fs::write(&tmp_path, "server:\n  listen_addr: \"127.0.0.1:8081\"")?;
     fs::rename(&tmp_path, config_path)?;
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
     let status = client.status().await?;
     assert_eq!(status.version, v_start + 1);
 
@@ -340,20 +340,20 @@ async fn r11_rapid_toggle() -> Result<()> {
     let client = relay.client();
     let config_path = relay.ingest_path.as_ref().unwrap();
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
     let v_start = client.status().await?.version;
 
     // Valid
     fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8081\"")?;
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(1000)).await;
 
     // Invalid
     fs::write(config_path, "server: [")?;
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(1000)).await;
 
     // Valid
     fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8082\"")?;
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(1000)).await;
 
     let status = client.status().await?;
     // v_start -> v_valid1 (inc) -> v_invalid (no inc) -> v_valid2 (inc)
@@ -372,14 +372,14 @@ async fn r13_transient_permission_failure() -> Result<()> {
     let client = relay.client();
     let config_path = relay.ingest_path.as_ref().unwrap();
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
     let v_start = client.status().await?.version;
 
     let mut perms = fs::metadata(config_path)?.permissions();
     perms.set_mode(0o000);
     fs::set_permissions(config_path, perms)?;
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
 
     let mut perms = fs::metadata(config_path)?.permissions();
     perms.set_mode(0o644);
@@ -387,7 +387,7 @@ async fn r13_transient_permission_failure() -> Result<()> {
 
     fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8081\"")?;
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
 
     let status = client.status().await?;
     assert_eq!(status.version, v_start + 1);
@@ -405,18 +405,18 @@ async fn r14_transient_empty_file() -> Result<()> {
     let client = relay.client();
     let config_path = relay.ingest_path.as_ref().unwrap();
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
     let v_start = client.status().await?.version;
 
     fs::write(config_path, "")?;
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
 
     let status = client.status().await?;
     // Assuming empty file doesn't increment or fails.
     assert_eq!(status.version, v_start);
 
     fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8081\"")?;
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
 
     let status_final = client.status().await?;
     assert!(status_final.version > status.version);
@@ -436,12 +436,12 @@ async fn r15_artifact_size_limits() -> Result<()> {
     let client = relay.client();
     let config_path = relay.ingest_path.as_ref().unwrap();
 
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
     let v_start = client.status().await?.version;
 
     // Write valid but large config
     fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8081\"")?;
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(1500)).await;
 
     // Should NOT update because it exceeds 10 bytes
     let status = client.status().await?;

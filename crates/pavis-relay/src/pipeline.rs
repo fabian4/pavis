@@ -99,8 +99,11 @@ async fn handle_artifact(
     let source = artifact.source.name.clone();
 
     debug!(
-        "[{}] Received artifact: format={:?} source={}",
-        label, artifact.format, source
+        "[{}] Received artifact: format={:?} source={} bytes={}",
+        label,
+        artifact.format,
+        source,
+        artifact.bytes.len()
     );
 
     let validated_config = match codec {
@@ -109,7 +112,12 @@ async fn handle_artifact(
             .with_context(|| format!("materialize config for source {}", source))?,
     };
 
-    debug!("[{}] Materialized and validated config", label);
+    debug!(
+        "[{}] Materialized and validated config: routes={}, upstreams={}",
+        label,
+        validated_config.routes.len(),
+        validated_config.upstreams.len()
+    );
 
     let version = publish_with_retry(
         state,

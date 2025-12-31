@@ -35,13 +35,40 @@ pub async fn spawn_watcher(
 
     tokio::spawn(async move {
         let mut debounce_timer: Option<Pin<Box<tokio::time::Sleep>>> = None;
+        let mut last_mtime = tokio::fs::metadata(&ingest_path)
+            .await
+            .and_then(|m| m.modified())
+            .ok();
+
+        debug!(
+            "Watcher starting for: {:?}, initial mtime: {:?}",
+            ingest_path, last_mtime
+        );
+
+        let mut poll_interval = tokio::time::interval(Duration::from_secs(2));
 
         loop {
             tokio::select! {
+                _ = poll_interval.tick() => {
+                    let mtime = tokio::fs::metadata(&ingest_path)
+                        .await
+                        .and_then(|m| m.modified())
+                        .ok();
+                    if mtime != last_mtime {
+                        debug!("File change detected via polling: {:?}, old_mtime={:?}, new_mtime={:?}", ingest_path, last_mtime, mtime);
+                        last_mtime = mtime;
+                        debounce_timer = Some(Box::pin(tokio::time::sleep(debounce)));
+                    }
+                }
                 Some(event) = event_rx.recv() => {
                     match event.kind {
                         EventKind::Modify(_) | EventKind::Create(_) | EventKind::Any => {
-                            debug!("File event detected: {:?}", event.kind);
+                            let mtime = tokio::fs::metadata(&ingest_path)
+                                .await
+                                .and_then(|m| m.modified())
+                                .ok();
+                            debug!("File event detected: {:?}, mtime={:?}", event.kind, mtime);
+                            last_mtime = mtime;
                             debounce_timer = Some(Box::pin(tokio::time::sleep(debounce)));
                         }
                         _ => {}
@@ -56,7 +83,7 @@ pub async fn spawn_watcher(
                     }
                 }, if debounce_timer.is_some() => {
                     debounce_timer = None;
-                    debug!("Debounce expired, reading file");
+                    debug!("Debounce expired, reading file: {:?}", ingest_path);
 
                     let format = infer_format(&ingest_path);
                     if !is_supported(format) {
@@ -66,6 +93,7 @@ pub async fn spawn_watcher(
 
                     match tokio::fs::read(&ingest_path).await {
                         Ok(bytes) => {
+                            debug!("Read {} bytes from: {:?}", bytes.len(), ingest_path);
                             let source = SourceInfo::new(ingest_path.to_string_lossy());
                             let art = Artifact::new(Bytes::from(bytes), format, source);
                             if let Err(e) = tx.send(Ok(art)).await {

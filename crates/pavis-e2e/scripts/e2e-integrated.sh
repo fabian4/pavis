@@ -20,6 +20,15 @@ export PAVIS_COMPOSE_PROJECT="$PROJECT_NAME"
 export PAVIS_RELAY_URL="http://relay:8080"
 
 cleanup() {
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -ne 0 ]; then
+    echo "❌ Tests failed with exit code $EXIT_CODE"
+    if [ "$TEST_MODE" == "docker" ]; then
+      echo "📋 Dumping Docker logs for diagnostics..."
+      docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" logs --tail=500 || true
+    fi
+  fi
+
   echo "🧹 Cleaning up..."
   if [ "$TEST_MODE" == "docker" ]; then
     docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" down > /dev/null 2>&1 || true
