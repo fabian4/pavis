@@ -58,6 +58,14 @@ impl RelayEnv {
             }
             TestMode::Docker => {
                 let bind = format!("0.0.0.0:{container_port}");
+                let storage_root_host = work_dir.join("storage");
+                let lkg_dir_host = work_dir.join("lkg");
+                
+                // Pre-create directories with wide permissions so host runner can delete/modify 
+                // files even if they are created by root inside the container.
+                create_dir_all_open(&storage_root_host)?;
+                create_dir_all_open(&lkg_dir_host)?;
+
                 let storage_root = PathBuf::from("/relay/storage");
                 let lkg_path = PathBuf::from("/relay/lkg/config.pvs");
                 (bind, storage_root, lkg_path)
@@ -315,4 +323,14 @@ fn test_mode() -> TestMode {
 enum TestMode {
     Binary,
     Docker,
+}
+
+fn create_dir_all_open(path: &Path) -> Result<()> {
+    fs::create_dir_all(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o777))?;
+    }
+    Ok(())
 }

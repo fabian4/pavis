@@ -59,7 +59,7 @@
 
 ## 🧪 Coverage Health (From `audit/coverage.md`)
 
-- **Line Coverage:** 95.68%
+- **Line Coverage:** 97.06%
 - **Branch Coverage:** Unavailable
 
 ### 🚨 Notable Coverage Gaps (High Risk Paths)
@@ -68,8 +68,8 @@
 |------|:--------:|------|
 | `crates/pavis-relay/src/main.rs` | 0.00% | Startup path |
 | `crates/pavis/src/main.rs` | 73.61% | Runtime startup path |
-| `crates/pavis-relay/src/app.rs` | 76.67% | Startup orchestration |
-| `crates/pavis-relay/src/handlers.rs` | 93.41% | HTTP handler logic |
+| `crates/pavis-relay/src/app.rs` | 80.00% | Startup orchestration |
+| `crates/pavis-relay/src/handlers.rs` | 95.81% | HTTP handler logic |
 | `crates/pavis-core/src/serde_impl.rs` | 95.24% | Serde adapters |
 
 > Coverage percentage is **not** a gate, but missing coverage on startup paths and E2E infrastructure represents elevated regression risk.

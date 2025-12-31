@@ -10,4 +10,4 @@ coverage:
 
 # Generate HTML code coverage report
 coverage-html:
-	cargo llvm-cov --workspace --exclude pavis-e2e --html
+	cargo llvm-cov --workspace --exclude pavis-e2e --exclude-files 'crates/pavis-e2e/*' --exclude-files 'crates/*/tests/*' --html

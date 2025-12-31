@@ -20,6 +20,15 @@ impl RuntimeState {
     }
 }
 
+impl Default for RuntimeState {
+    fn default() -> Self {
+        Self {
+            router: Arc::new(Router::new(vec![]).expect("empty router")),
+            upstream_manager: Manager::new(&[]),
+        }
+    }
+}
+
 pub struct RuntimeStateHandle {
     inner: ArcSwap<RuntimeState>,
 }

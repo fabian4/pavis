@@ -7,6 +7,8 @@ use pavis_pvs;
 use pavis_pvs::PAVIS_VERSION_HEADER;
 use reqwest::{Client, StatusCode};
 use std::fs;
+use std::fs::Permissions;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -297,11 +299,8 @@ async fn relay_publish_fails_when_lkg_is_read_only() -> Result<()> {
 
     let lkg_path = env.lkg_path().to_path_buf();
     let before = fs::read(&lkg_path)?;
-
-    // Replace file with directory to block writing
-    // This works regardless of file ownership as long as we own the parent directory
-    fs::remove_file(&lkg_path)?;
-    fs::create_dir(&lkg_path)?;
+    let original_mode = fs::metadata(&lkg_path)?.permissions().mode();
+    fs::set_permissions(&lkg_path, Permissions::from_mode(0o444))?;
 
     let response = client
         .post(format!("{base}/v1/publish"))
@@ -311,10 +310,7 @@ async fn relay_publish_fails_when_lkg_is_read_only() -> Result<()> {
         .await?;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
-    // Restore original file
-    fs::remove_dir(&lkg_path)?;
-    fs::write(&lkg_path, &before)?;
-
+    fs::set_permissions(&lkg_path, Permissions::from_mode(original_mode))?;
     let after = fs::read(&lkg_path)?;
     assert_eq!(before, after);
 

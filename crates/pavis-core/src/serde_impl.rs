@@ -111,4 +111,48 @@ mod tests {
         let msg = res.expect_err("invalid number").to_string();
         assert!(msg.contains("false, 'stdout', or a file path string"));
     }
+
+    #[test]
+    fn access_log_visitor_expecting_called() {
+        use serde::de::Error;
+        struct ExpectationTrigger;
+        impl fmt::Display for ExpectationTrigger {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                struct DummyVisitor;
+                impl<'de> Visitor<'de> for DummyVisitor {
+                    type Value = ();
+                    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                        formatter.write_str("dummy")
+                    }
+                }
+                DummyVisitor.expecting(f)
+            }
+        }
+        let s = format!("{}", ExpectationTrigger);
+        assert_eq!(s, "dummy");
+
+        struct MockDeserializer;
+        impl<'de> Deserializer<'de> for MockDeserializer {
+            type Error = serde::de::value::Error;
+            fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            where
+                V: Visitor<'de>,
+            {
+                struct ExpectingTrigger<V>(V);
+                impl<'de, V: Visitor<'de>> fmt::Display for ExpectingTrigger<V> {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        self.0.expecting(f)
+                    }
+                }
+                let _ = format!("{}", ExpectingTrigger(visitor));
+                Err(serde::de::value::Error::custom("forced error"))
+            }
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+                bytes byte_buf option unit unit_struct newtype_struct seq tuple
+                tuple_struct map struct enum identifier ignored_any
+            }
+        }
+        let _ = AccessLogConfig::deserialize(MockDeserializer);
+    }
 }

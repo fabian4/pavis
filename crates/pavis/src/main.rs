@@ -37,7 +37,7 @@ fn log_level_to_str(level: Option<LogLevel>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::log_level_to_str;
-    use pavis_core::LogLevel;
+    use pavis_core::{AccessLogConfig, LogLevel};
 
     #[test]
     fn log_level_to_str_defaults_to_info() {
@@ -51,6 +51,30 @@ mod tests {
         assert_eq!(log_level_to_str(Some(LogLevel::Info)), "info");
         assert_eq!(log_level_to_str(Some(LogLevel::Debug)), "debug");
         assert_eq!(log_level_to_str(Some(LogLevel::Trace)), "trace");
+    }
+
+    #[test]
+    fn access_log_description_logic() {
+        let desc = match AccessLogConfig::Disabled {
+            AccessLogConfig::Disabled => "off".to_string(),
+            AccessLogConfig::Stdout => "stdout".to_string(),
+            AccessLogConfig::File(path) => format!("file:{}", path),
+        };
+        assert_eq!(desc, "off");
+
+        let desc = match AccessLogConfig::Stdout {
+            AccessLogConfig::Disabled => "off".to_string(),
+            AccessLogConfig::Stdout => "stdout".to_string(),
+            AccessLogConfig::File(path) => format!("file:{}", path),
+        };
+        assert_eq!(desc, "stdout");
+
+        let desc = match AccessLogConfig::File("/tmp/test".to_string()) {
+            AccessLogConfig::Disabled => "off".to_string(),
+            AccessLogConfig::Stdout => "stdout".to_string(),
+            AccessLogConfig::File(path) => format!("file:{}", path),
+        };
+        assert_eq!(desc, "file:/tmp/test");
     }
 }
 

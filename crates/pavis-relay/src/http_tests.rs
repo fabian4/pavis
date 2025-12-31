@@ -372,3 +372,35 @@ async fn custom_headers_override_defaults() {
     assert!(headers.contains_key("x-test-checksum"));
     assert!(headers.contains_key("x-test-checksum-alg"));
 }
+
+#[tokio::test]
+async fn test_publish_updates_lkg_on_disk() {
+    let dir = std::env::temp_dir().join("relay_publish_lkg");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let lkg_path = dir.join("config.pvs");
+
+    let mut options = RelayOptions::default();
+    options.lkg_path = Some(lkg_path.clone());
+    let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
+    let app = router(state);
+
+    let pvs_bytes = valid_pvs_bytes("v2");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/publish")
+                .header("x-pavis-version", "1")
+                .body(Body::from(pvs_bytes.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(lkg_path.exists());
+    let saved_bytes = std::fs::read(&lkg_path).unwrap();
+    assert_eq!(saved_bytes, pvs_bytes.to_vec());
+    let _ = std::fs::remove_dir_all(&dir);
+}

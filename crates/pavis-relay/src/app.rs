@@ -118,6 +118,64 @@ mod tests {
     }
 
     #[test]
+
+    fn init_state_reads_existing_lkg() {
+        let dir = std::env::temp_dir().join("relay_lkg_test");
+
+        let _ = std::fs::remove_dir_all(&dir);
+
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let lkg = dir.join("config.pvs");
+
+        let runtime_config = pavis_core::RuntimeConfig {
+            server: pavis_core::ServerConfig {
+                listen_addr: "127.0.0.1:8080".parse().unwrap(),
+
+                worker_threads: None,
+
+                tls: None,
+            },
+
+            telemetry: pavis_core::TelemetryConfig {
+                level: None,
+
+                pingora: None,
+
+                service_name: None,
+
+                prometheus_addr: None,
+
+                access_log: pavis_core::AccessLogConfig::Disabled,
+
+                tracing: None,
+            },
+
+            upstreams: vec![],
+
+            routes: vec![],
+        };
+
+        pavis_pvs::write(&lkg, &runtime_config).unwrap();
+
+        let mut config = minimal_config();
+
+        config.http.bind = "127.0.0.1:0".to_string();
+
+        config.artifact.lkg_path = lkg.to_string_lossy().to_string();
+
+        let (_addr, state) = init_state(&config).expect("state");
+
+        let snapshot = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(state.snapshot());
+
+        assert!(!snapshot.pvs_bytes.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn init_state_rejects_invalid_listen_addr() {
         let mut config = minimal_config();
         config.http.bind = "bad-addr".to_string();

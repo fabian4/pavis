@@ -310,4 +310,12 @@ mod tests {
         assert_eq!(snapshot.version, 4);
         assert_eq!(snapshot.meta.checksum, "sum");
     }
+
+    #[tokio::test]
+    async fn state_tracks_last_error() {
+        let state = RelayState::new(0, Bytes::new()).expect("state");
+        assert!(state.last_error().await.is_none());
+        state.set_last_error(Some("test error".to_string())).await;
+        assert_eq!(state.last_error().await, Some("test error".to_string()));
+    }
 }
