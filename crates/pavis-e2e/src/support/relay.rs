@@ -60,8 +60,8 @@ impl RelayEnv {
                 let bind = format!("0.0.0.0:{container_port}");
                 let storage_root_host = work_dir.join("storage");
                 let lkg_dir_host = work_dir.join("lkg");
-                
-                // Pre-create directories with wide permissions so host runner can delete/modify 
+
+                // Pre-create directories with wide permissions so host runner can delete/modify
                 // files even if they are created by root inside the container.
                 create_dir_all_open(&storage_root_host)?;
                 create_dir_all_open(&lkg_dir_host)?;
