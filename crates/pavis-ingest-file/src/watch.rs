@@ -35,6 +35,7 @@ pub async fn spawn_watcher(
 
     tokio::spawn(async move {
         let mut debounce_timer: Option<Pin<Box<tokio::time::Sleep>>> = None;
+
         let mut last_mtime = tokio::fs::metadata(&ingest_path)
             .await
             .and_then(|m| m.modified())
@@ -48,6 +49,16 @@ pub async fn spawn_watcher(
         let mut poll_interval = tokio::time::interval(Duration::from_secs(2));
 
         loop {
+            let timer_fired = async {
+                if let Some(timer) = debounce_timer.as_mut() {
+                    timer.await;
+
+                    true
+                } else {
+                    futures_util::future::pending().await
+                }
+            };
+
             tokio::select! {
                 _ = poll_interval.tick() => {
                     let mtime = tokio::fs::metadata(&ingest_path)
@@ -74,14 +85,7 @@ pub async fn spawn_watcher(
                         _ => {}
                     }
                 }
-                Some(_) = async {
-                    if let Some(timer) = debounce_timer.as_mut() {
-                        timer.await;
-                        Some(())
-                    } else {
-                        None
-                    }
-                }, if debounce_timer.is_some() => {
+                _ = timer_fired => {
                     debounce_timer = None;
                     debug!("Debounce expired, reading file: {:?}", ingest_path);
 
@@ -110,7 +114,6 @@ pub async fn spawn_watcher(
                         }
                     }
                 }
-                else => break,
             }
         }
     });

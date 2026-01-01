@@ -1,11 +1,11 @@
 use crate::common;
 
 use anyhow::Result;
-use pavis_e2e::support::PavisScenario;
+use pavis_e2e::support::PavisConfigScenario;
 
 #[tokio::test]
 async fn test_response_header_manipulation() -> Result<()> {
-    let (client, _env) = common::setup(PavisScenario::ResponseHeaders).await;
+    let (client, _env) = common::setup(PavisConfigScenario::ResponseHeaders).await;
 
     // Send a request
     let response = client

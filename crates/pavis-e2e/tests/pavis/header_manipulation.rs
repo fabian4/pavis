@@ -1,13 +1,13 @@
 use crate::common;
 
 use anyhow::Result;
-use pavis_e2e::support::PavisScenario;
+use pavis_e2e::support::PavisConfigScenario;
 use pavis_e2e::support::get_response_json;
 use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_header_manipulation() -> Result<()> {
-    let (client, _env) = common::setup(PavisScenario::HeaderManipulation).await;
+    let (client, _env) = common::setup(PavisConfigScenario::HeaderManipulation).await;
 
     let mut send_headers = HashMap::new();
     send_headers.insert(

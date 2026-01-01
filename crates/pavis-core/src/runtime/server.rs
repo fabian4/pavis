@@ -1,7 +1,10 @@
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct ServerConfig {
     pub listen_addr: SocketAddr,
@@ -10,6 +13,7 @@ pub struct ServerConfig {
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct TlsConfig {
     pub enabled: bool,

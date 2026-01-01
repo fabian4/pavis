@@ -1,8 +1,8 @@
-use pavis_e2e::support::{PavisScenario, TestEnv};
+use pavis_e2e::support::{PavisConfigScenario, TestEnv};
 use reqwest::Client;
 use std::time::Duration;
 
-pub async fn setup(scenario: PavisScenario) -> (Client, TestEnv) {
+pub async fn setup(scenario: PavisConfigScenario) -> (Client, TestEnv) {
     let env = TestEnv::new(scenario)
         .await
         .expect("Failed to setup test env");

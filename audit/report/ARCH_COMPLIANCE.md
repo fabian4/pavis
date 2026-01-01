@@ -10,6 +10,64 @@ No open findings.
 
 ---
 
+## Review Entry — 2026-01-01T03:11:42Z
+
+### Scope
+- Full repository scan against `Architecture.md` for structural, layering, and boundary compliance.
+
+---
+
+### Method
+- Cross-check of crate dependencies, responsibility boundaries, and module structure against architecture specifications.
+
+### Model
+- claude-sonnet-4-20250514
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| — | — | All boundaries | Full compliance verified | Done |
+
+---
+
+### Detailed Findings
+
+#### Architecture Compliance Verified
+
+**Dependency Direction (Sec 2.2):**
+- ✅ `pavis-core`: No I/O dependencies, defines canonical types only
+- ✅ `pavis-pvs`: Depends only on `pavis-core` and rkyv/sha2 for integrity
+- ✅ `pavis` runtime: Depends only on `pavis-core` and `pavis-pvs` (no codec/relay/ingest)
+- ✅ `pavis-relay`: Uses codecs for pipeline but remains DTO-agnostic in distribution path
+- ✅ `pavctl`: Reuses codecs as documented
+
+**Layer Responsibilities (Sec 2.3):**
+- ✅ `pavis-core`: Semantic validation via `validate_runtime`, no I/O
+- ✅ `pavis-pvs`: Binary integrity only (magic/version/checksum), no semantic validation
+- ✅ `pavis-codec-serde`: DTO → RuntimeConfig transform with core validation
+- ✅ `pavis-ingest-file`: Connectivity only, emits SourceArtifacts
+- ✅ `pavis-relay`: Artifact distribution, versioning, LKG management
+
+**Runtime Contract (Sec 6.3):**
+- ✅ Runtime accepts current-version PVS only (hard error on mismatch)
+- ✅ `ValidatedRuntimeConfig::from_trusted` properly marked `unsafe` with safety docs
+
+**PVS Protocol (Sec 6.1):**
+- ✅ Header format matches: magic PAVS, 4-byte version, SHA-256 checksum
+- ✅ `pavis-pvs` is the only place reading/writing `.pvs` internals
+
+**Validation Strategy (Sec 7.1):**
+- ✅ Artifact-level validation in codecs produces `CheckedArtifact`
+- ✅ Canonical semantic validation in `pavis-core::validate_runtime`
+- ✅ Binary integrity in `pavis-pvs::verify`
+
+No architectural violations found.
+
+---
+
 ## Review Entry — 2025-12-31T00:05:00Z
 
 ### Scope

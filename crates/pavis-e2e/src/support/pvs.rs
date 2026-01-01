@@ -1,4 +1,14 @@
+use pavis_codec_api::Codec;
+use pavis_codec_serde::{SerdeCodec, SerdeFormat};
 use pavis_core::{RuntimeConfig, ServerConfig, TelemetryConfig};
+
+pub fn to_yaml(config: &RuntimeConfig) -> String {
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
+    let artifact = codec.pack(config).expect("pack config to yaml");
+    String::from_utf8(artifact.bytes.to_vec()).expect("utf8 config")
+}
 
 pub fn build_pvs_bytes(label: &str) -> Vec<u8> {
     let config = RuntimeConfig {

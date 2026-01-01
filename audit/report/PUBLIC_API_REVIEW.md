@@ -10,6 +10,66 @@ No open findings.
 
 ---
 
+## Review Entry — 2026-01-01T03:11:42Z
+
+### Scope
+- Public API surface scan across all crates.
+
+---
+
+### Method
+- Analysis of `pub` exports, visibility modifiers, and boundary types.
+
+### Model
+- claude-sonnet-4-20250514
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| — | — | All crates | Public API boundaries healthy | Done |
+
+---
+
+### Detailed Findings
+
+#### Public API Analysis
+
+**pavis-core (Library API — intentional public surface):**
+- ✅ `RuntimeConfig`, `ValidatedRuntimeConfig`: Core domain types
+- ✅ `ServerConfig`, `TlsConfig`: Server configuration
+- ✅ `VirtualHost`, `Route`, `MatchType`, `WeightedDestination`: Routing
+- ✅ `Upstream`, `Endpoint`, `LoadBalancer`, `HttpVersion`: Upstream
+- ✅ `TelemetryConfig`, `AccessLogConfig`, `LogLevel`: Telemetry
+- ✅ `validate_runtime`, `CoreValidationError`: Validation entry point
+- ✅ `ValidatedRuntimeConfig::from_trusted`: Properly `unsafe` with safety docs
+
+**pavis-pvs (Library API — integrity boundary):**
+- ✅ `PvsHeader`, `PvsHeaderView`, `VerifiedPvs`: Header types
+- ✅ `load`, `verify`, `inspect`, `encode`, `write`: Operations
+- ✅ `PvsError`, `PvsResult`: Error types
+- ✅ Constants: `PAVIS_MAGIC`, `PAVIS_VERSION`, header names
+
+**pavis-relay (Binary — minimal lib surface):**
+- ✅ `serve_from_config`: Single public entry point
+- ✅ `config` module: Config types for YAML parsing
+- ✅ Internal state/handlers correctly `pub(crate)`
+
+**pavis (Binary — minimal lib surface):**
+- ✅ Module re-exports for internal use
+- ✅ No unintended public API leakage
+
+**Codec/Ingest APIs:**
+- ✅ `pavis-codec-api`: `Codec` trait, `CheckedArtifact`, `CodecError`
+- ✅ `pavis-ingest-api`: `Artifact`, `SourceInfo`, `IngestError`
+- ✅ `pavis-codec-serde`: `SerdeCodec`, `PavisConfig`
+
+No public API boundary violations found.
+
+---
+
 ## Review Entry — 2025-12-30T12:57:53Z
 
 ### Scope

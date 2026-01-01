@@ -1,12 +1,12 @@
 use crate::common;
 
 use anyhow::Result;
-use pavis_e2e::support::PavisScenario;
+use pavis_e2e::support::PavisConfigScenario;
 use pavis_e2e::support::get_upstream_name;
 
 #[tokio::test]
 async fn test_round_robin() -> Result<()> {
-    let (client, _env) = common::setup(PavisScenario::RoundRobin).await;
+    let (client, _env) = common::setup(PavisConfigScenario::RoundRobin).await;
 
     let mut prev_upstream = String::new();
 

@@ -10,6 +10,54 @@ No open findings.
 
 ---
 
+## Review Entry — 2026-01-01T03:11:42Z
+
+### Scope
+- Repository-wide duplication scan across code, tests, and docs.
+
+---
+
+### Method
+- Pattern matching for repeated logic, test fixtures, and helper routines.
+
+### Model
+- claude-sonnet-4-20250514
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| — | — | All areas | No significant duplication found | Done |
+
+---
+
+### Detailed Findings
+
+#### Duplication Analysis
+
+**Test Helpers:**
+- ✅ PVS byte builders: Shared via `pavis-e2e/src/support/pvs.rs`
+- ✅ Config builders: Centralized in `pavis-e2e/src/support/pavis/config.rs`
+- ✅ Relay fixtures: Shared via `pavis-e2e/src/support/relay.rs`
+
+**Code Patterns:**
+- ✅ Validation logic: Centralized in `pavis-core/src/validate/`
+- ✅ Header handling: Single implementation in `pavis/src/proxy/header_ops.rs`
+- ✅ Config loading: Unified in respective crate entry points
+
+**Documentation:**
+- ✅ Architecture concepts not duplicated between docs
+- ✅ README files reference Architecture.md rather than duplicating
+
+**CI Workflows:**
+- ✅ Test/lint/build steps are not duplicated across workflow files
+
+No duplication issues requiring consolidation.
+
+---
+
 ## Review Entry — 2025-12-30T12:50:28Z
 
 ### Scope

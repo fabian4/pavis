@@ -58,8 +58,8 @@ jobs:
 
       - name: Log Image Size
         run: |
-          echo "Final Image Size: $(docker images --format '{{.Size}}' pavis:local)"
-          echo "Final Image Size: $(docker images --format '{{.Size}}' pavis-relay:local)"
+          echo "Pavis Image Size: $(docker images --format '{{.Size}}' pavis:local)"
+          echo "Relay Image Size: $(docker images --format '{{.Size}}' pavis-relay:local)"
 
       - name: Run E2E Tests for pavis in Docker
         run: make e2e-pavis-docker

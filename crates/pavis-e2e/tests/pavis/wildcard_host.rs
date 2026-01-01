@@ -1,7 +1,7 @@
 use crate::common;
 
 use anyhow::Result;
-use pavis_e2e::support::PavisScenario;
+use pavis_e2e::support::PavisConfigScenario;
 use pavis_e2e::support::get_response_json;
 use std::collections::HashMap;
 
@@ -39,7 +39,7 @@ async fn get_upstream_with_host(
 
 #[tokio::test]
 async fn test_wildcard_host_matching() -> Result<()> {
-    let (client, _env) = common::setup(PavisScenario::WildcardHost).await;
+    let (client, _env) = common::setup(PavisConfigScenario::WildcardHost).await;
 
     // 1. Specific host "api.example.com" should go to backend-v1
     let upstream = get_upstream_with_host(&client, "/test", "api.example.com").await?;

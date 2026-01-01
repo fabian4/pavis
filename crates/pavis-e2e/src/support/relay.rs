@@ -26,8 +26,8 @@ pub struct RelayOptions {
 impl Default for RelayOptions {
     fn default() -> Self {
         Self {
-            enable_file_ingest: false,
-            ingest_debounce_ms: 100,
+            enable_file_ingest: true,
+            ingest_debounce_ms: 500,
             ingest_path: None,
             lkg_path: None,
             max_pvs_bytes: None,
@@ -42,8 +42,9 @@ pub struct RelayInstance {
 }
 
 impl RelayInstance {
+    #[allow(clippy::collapsible_if)]
     pub async fn new(options: RelayOptions) -> Result<Self> {
-        let env = RelayEnv::new(options).await?;
+        let env = RelayEnv::new(options.clone()).await?;
         let lkg_path = env.lkg_path.clone();
 
         let ingest_path = if env.options.enable_file_ingest {
@@ -64,17 +65,31 @@ impl RelayInstance {
                 fs::create_dir_all(parent)?;
             }
             if !path.exists() {
-                fs::write(path, "")?;
+                fs::write(path, "server:\n  listen_addr: \"127.0.0.1:0\"")?;
             }
         }
 
-        Ok(Self {
+        let instance = Self {
             env,
             lkg_path,
             ingest_path,
-        })
-    }
+        };
 
+        if options.enable_file_ingest {
+            let client = instance.client();
+            for _ in 0..50 {
+                if let Ok(status) = client.status().await {
+                    if status.version >= 1 {
+                        return Ok(instance);
+                    }
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+            println!("WARN: Timeout waiting for initial version 1");
+        }
+
+        Ok(instance)
+    }
     pub async fn restart(mut self) -> Result<Self> {
         self.env.restart().await?;
         Ok(self)
@@ -275,7 +290,7 @@ pub struct RelayEnv {
     pub work_dir: PathBuf,
     lkg_path: PathBuf,
     mode: TestMode,
-    options: RelayOptions,
+    pub options: RelayOptions,
 }
 
 impl RelayEnv {
@@ -500,7 +515,7 @@ fn unique_work_dir(mode: &TestMode) -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn pick_port() -> Result<u16> {
+pub fn pick_port() -> Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0").context("bind relay port")?;
     let port = listener.local_addr().context("read relay port")?.port();
     drop(listener);
@@ -549,6 +564,7 @@ fn spawn_relay(config_path: &Path) -> Result<Child> {
     let cwd = config_path.parent().unwrap();
 
     Command::new(&relay_bin)
+        .env("RUST_LOG", "debug")
         .arg("--config")
         .arg(config_path)
         .current_dir(cwd)

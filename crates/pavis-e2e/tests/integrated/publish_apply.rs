@@ -1,41 +1,39 @@
 use anyhow::Result;
-
-use super::support::{
-    PavisEnv, expected_body, pavis_target, publish, relay_env, runtime_config, upstreams,
-    wait_for_body,
-};
+use pavis_e2e::support::PavisScenario;
+use pavis_e2e::support::expected_body;
+use pavis_e2e::support::relay::RelayOptions;
+use pavis_e2e::support::runtime_config;
 
 #[tokio::test]
 async fn integrated_publish_and_apply_updates() -> Result<()> {
-    let relay = relay_env().await?;
-    let Some(upstreams) = upstreams().await? else {
-        return Ok(());
-    };
-    let target = pavis_target()?;
+    let mut options = RelayOptions::default();
+    options.enable_file_ingest = true;
+    options.ingest_debounce_ms = 500;
 
-    let config_v1 = runtime_config(
-        target.listen_addr,
-        ("upstream-a", upstreams.a),
-        ("upstream-b", upstreams.b),
-        "upstream-a",
-    );
-    let response = publish(relay.base_url(), 1, &config_v1).await?;
-    assert!(response.status().is_success());
+    let scenario = PavisScenario::new(options, true).await?;
+    let pavis = scenario.pavis.as_ref().unwrap();
+    let upstreams = &scenario.upstreams;
 
-    let pavis = PavisEnv::new(&config_v1, target.host_port, relay.base_url())?;
-    let expected_a = expected_body("A");
-    wait_for_body(pavis.base_url(), &expected_a).await?;
+    // Initial state (A)
+    scenario.expect_body(&expected_body("A")).await?;
+
+    // Update to B
+    let target_addr = pavis
+        .base_url()
+        .trim_start_matches("http://")
+        .parse()
+        .expect("valid addr");
 
     let config_v2 = runtime_config(
-        target.listen_addr,
+        target_addr,
         ("upstream-a", upstreams.a),
         ("upstream-b", upstreams.b),
         "upstream-b",
     );
-    let response = publish(relay.base_url(), 2, &config_v2).await?;
-    assert!(response.status().is_success());
-    let expected_b = expected_body("B");
-    wait_for_body(pavis.base_url(), &expected_b).await?;
+
+    scenario.apply_config(&config_v2).await?;
+
+    scenario.expect_body(&expected_body("B")).await?;
 
     Ok(())
 }

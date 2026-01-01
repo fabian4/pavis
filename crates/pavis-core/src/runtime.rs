@@ -14,8 +14,12 @@ pub use upstream::{
 
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// The Root Configuration Object.
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct RuntimeConfig {
     pub server: ServerConfig,

@@ -1,7 +1,10 @@
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct Upstream {
     pub name: String,
@@ -13,7 +16,7 @@ pub struct Upstream {
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
 pub enum LoadBalancer {
@@ -24,7 +27,7 @@ pub enum LoadBalancer {
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[archive(check_bytes)]
 pub enum HttpVersion {
@@ -38,6 +41,7 @@ pub enum HttpVersion {
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct ConnectionPoolConfig {
     pub idle_timeout_secs: u64,
@@ -45,6 +49,7 @@ pub struct ConnectionPoolConfig {
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct UpstreamTlsConfig {
     pub enabled: bool,
@@ -54,6 +59,7 @@ pub struct UpstreamTlsConfig {
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct Endpoint {
     pub ip: IpAddr,

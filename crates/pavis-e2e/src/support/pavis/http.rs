@@ -11,12 +11,12 @@ pub const BASE_URL: &str = "http://localhost:8080";
 ///
 /// # Errors
 /// Returns an error if the proxy does not respond within the timeout.
-pub async fn wait_for_pavis(client: &Client) -> Result<()> {
+pub async fn wait_for_pavis(client: &Client, base_url: &str) -> Result<()> {
     println!("🚀 Starting E2E Tests...");
-    println!("Waiting for Pavis to be ready at {BASE_URL}...");
+    println!("Waiting for Pavis to be ready at {base_url}...");
 
     for _ in 0..30 {
-        if client.get(BASE_URL).send().await.is_ok() {
+        if client.get(base_url).send().await.is_ok() {
             println!("✅ Pavis is up!");
             return Ok(());
         }

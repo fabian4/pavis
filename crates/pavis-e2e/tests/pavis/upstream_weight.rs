@@ -1,12 +1,12 @@
 use crate::common;
 
 use anyhow::Result;
-use pavis_e2e::support::PavisScenario;
+use pavis_e2e::support::PavisConfigScenario;
 use pavis_e2e::support::get_upstream_name;
 
 #[tokio::test]
 async fn test_upstream_weight() -> Result<()> {
-    let (client, _env) = common::setup(PavisScenario::UpstreamWeight).await;
+    let (client, _env) = common::setup(PavisConfigScenario::UpstreamWeight).await;
 
     let mut v1_count = 0;
     let mut v2_count = 0;

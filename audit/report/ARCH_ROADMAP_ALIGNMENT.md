@@ -10,6 +10,54 @@ No open findings.
 
 ---
 
+## Review Entry — 2026-01-01T03:11:42Z
+
+### Scope
+- Cross-check of `Architecture.md` and `ROADMAP.md` for alignment.
+
+---
+
+### Method
+- Comparison of architectural constraints, component responsibilities, and roadmap phase sequencing.
+
+### Model
+- claude-sonnet-4-20250514
+
+---
+
+### Summary (Index)
+
+| ID  | Severity | Area | Short Title | Status |
+|----:|:--------:|------|-------------|:------:|
+| — | — | All areas | Full alignment verified | Done |
+
+---
+
+### Detailed Findings
+
+#### Alignment Verified
+
+**Phase Sequencing vs Architecture:**
+- ✅ Foundation phase items align with architectural core requirements
+- ✅ Protocol phase matches PVS specification in Architecture Sec 6
+- ✅ Operations phase matches relay/distribution architecture in Sec 3
+- ✅ Phase 4 (Modular Ingestion) correctly deferred, matches current implementation note in Sec 2.2
+- ✅ Governor deferred appropriately per Architecture "Future: Governor" section
+
+**Component Responsibility Mapping:**
+- ✅ Roadmap assigns validation to correct layers per Architecture Sec 7.1
+- ✅ Roadmap checksum headers (SHA-256, X-Pavis-Checksum-Alg) match Architecture Sec 6.1
+- ✅ Version mismatch behavior (hard error) matches Architecture Sec 6.3
+
+**Constraint Consistency:**
+- ✅ Single Listener constraint documented in both Architecture Sec 5.3 and Roadmap Phase 1
+- ✅ IP-only Endpoints constraint consistent between docs
+- ✅ TLS file paths requirement aligned
+
+No conflicts found between Architecture and Roadmap.
+
+---
+
 ## Review Entry — 2025-12-31T00:00:00Z
 
 ### Scope

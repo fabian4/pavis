@@ -1,12 +1,12 @@
 use crate::common;
 
 use anyhow::Result;
-use pavis_e2e::support::PavisScenario;
+use pavis_e2e::support::PavisConfigScenario;
 use pavis_e2e::support::get_upstream_name;
 
 #[tokio::test]
 async fn test_regex_matching() -> Result<()> {
-    let (client, _env) = common::setup(PavisScenario::RegexMatching).await;
+    let (client, _env) = common::setup(PavisConfigScenario::RegexMatching).await;
 
     // 1. Regex Match: /api/v1/users/123 should go to backend-v1
     let upstream = get_upstream_name(&client, "/api/v1/users/123").await?;

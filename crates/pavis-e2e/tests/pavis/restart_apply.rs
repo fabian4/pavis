@@ -135,7 +135,7 @@ async fn spawn_pavis(pvs_path: &Path) -> Result<PavisProcess> {
         .timeout(Duration::from_secs(1))
         .build()
         .context("build client")?;
-    wait_for_pavis(&client).await?;
+    wait_for_pavis(&client, "http://localhost:8080").await?;
 
     Ok(PavisProcess { child })
 }

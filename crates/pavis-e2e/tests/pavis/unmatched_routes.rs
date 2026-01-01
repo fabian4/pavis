@@ -1,13 +1,13 @@
 use crate::common;
 
 use anyhow::Result;
-use pavis_e2e::support::PavisScenario;
+use pavis_e2e::support::PavisConfigScenario;
 
 const BASE_URL: &str = "http://localhost:8080";
 
 #[tokio::test]
 async fn test_unmatched_routes_return_404() -> Result<()> {
-    let (client, _env) = common::setup(PavisScenario::UnmatchedRoutes).await;
+    let (client, _env) = common::setup(PavisConfigScenario::UnmatchedRoutes).await;
 
     // 1. Request to unmatched path should return 404
     let resp = client

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use super::tls::resolve_docker_service_ip;
 
 #[derive(Clone, Copy, Debug)]
-pub enum PavisScenario {
+pub enum PavisConfigScenario {
     BasicRouting,
     HeaderManipulation,
     HttpVersion,
@@ -28,7 +28,7 @@ pub enum PavisScenario {
     WildcardHost,
 }
 
-impl PavisScenario {
+impl PavisConfigScenario {
     fn name(self) -> &'static str {
         match self {
             Self::BasicRouting => "basic_routing",
@@ -48,7 +48,7 @@ impl PavisScenario {
 
 pub(super) fn generate_config(
     project_root: &Path,
-    scenario: PavisScenario,
+    scenario: PavisConfigScenario,
     mode: &str,
 ) -> Result<PathBuf> {
     let config_dest = project_root
@@ -173,9 +173,13 @@ fn resolve_docker_host_if_needed(mode: &str, project_root: &Path, host: String) 
     }
 }
 
-fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String) -> SerdeConfig {
+fn build_config(
+    scenario: PavisConfigScenario,
+    backend_v1: String,
+    backend_v2: String,
+) -> SerdeConfig {
     match scenario {
-        PavisScenario::BasicRouting => {
+        PavisConfigScenario::BasicRouting => {
             let telemetry = telemetry_with_tracing("pavis-e2e-basic-routing");
             let upstreams = vec![
                 upstream(
@@ -219,7 +223,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
                 routes,
             )
         }
-        PavisScenario::HeaderManipulation => {
+        PavisConfigScenario::HeaderManipulation => {
             let telemetry = telemetry_with_tracing("pavis-e2e-header-manipulation");
             let upstreams = vec![upstream(
                 "backend-v1",
@@ -254,7 +258,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
                 routes,
             )
         }
-        PavisScenario::HttpVersion => {
+        PavisConfigScenario::HttpVersion => {
             let telemetry = telemetry_with_tracing("pavis-e2e-http-version");
             let upstreams = vec![
                 upstream(
@@ -300,7 +304,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
                 routes,
             )
         }
-        PavisScenario::RegexMatching => {
+        PavisConfigScenario::RegexMatching => {
             let telemetry = telemetry_with_tracing("pavis-e2e-regex-matching");
             let upstreams = vec![
                 upstream(
@@ -353,7 +357,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
                 routes,
             )
         }
-        PavisScenario::ResponseHeaders => {
+        PavisConfigScenario::ResponseHeaders => {
             let telemetry = TelemetryConfig {
                 level: Some("info".to_string()),
                 pingora: Some("warn".to_string()),
@@ -389,7 +393,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
             }];
             base_config("0.0.0.0:8080", None, None, telemetry, upstreams, routes)
         }
-        PavisScenario::RoundRobin => {
+        PavisConfigScenario::RoundRobin => {
             let telemetry = telemetry_with_tracing("pavis-e2e-round-robin");
             let upstreams = vec![upstream(
                 "backend-mixed",
@@ -420,7 +424,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
                 routes,
             )
         }
-        PavisScenario::RouteMatching => {
+        PavisConfigScenario::RouteMatching => {
             let telemetry = telemetry_with_tracing("pavis-e2e-route-matching");
             let upstreams = vec![
                 upstream(
@@ -473,7 +477,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
                 routes,
             )
         }
-        PavisScenario::UnmatchedRoutes => {
+        PavisConfigScenario::UnmatchedRoutes => {
             let telemetry = telemetry_with_tracing("pavis-e2e-unmatched-routes");
             let upstreams = vec![upstream(
                 "backend-v1",
@@ -501,7 +505,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
                 routes,
             )
         }
-        PavisScenario::UpstreamWeight => {
+        PavisConfigScenario::UpstreamWeight => {
             let telemetry = telemetry_with_tracing("pavis-e2e-upstream-weight");
             let upstreams = vec![upstream(
                 "backend-weighted",
@@ -532,7 +536,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
                 routes,
             )
         }
-        PavisScenario::WeightedSplitting => {
+        PavisConfigScenario::WeightedSplitting => {
             let telemetry = telemetry_with_tracing("pavis-e2e-weighted-splitting");
             let upstreams = vec![
                 upstream(
@@ -569,7 +573,7 @@ fn build_config(scenario: PavisScenario, backend_v1: String, backend_v2: String)
                 routes,
             )
         }
-        PavisScenario::WildcardHost => {
+        PavisConfigScenario::WildcardHost => {
             let telemetry = telemetry_with_tracing("pavis-e2e-wildcard-host");
             let upstreams = vec![
                 upstream(
