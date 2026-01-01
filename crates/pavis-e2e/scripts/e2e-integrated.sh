@@ -18,6 +18,13 @@ export PAVIS_COMPOSE_FILE="$COMPOSE_FILE"
 export RELAY_COMPOSE_PROJECT="$PROJECT_NAME"
 export PAVIS_COMPOSE_PROJECT="$PROJECT_NAME"
 export PAVIS_RELAY_URL="http://relay:8080"
+export RELAY_PORT=8083
+export PAVIS_PORT=8084
+export RELAY_WORK_DIR="$CONFIG_DIR/relay_tmp"
+export PAVIS_WORK_DIR="$CONFIG_DIR/pavis_tmp"
+
+# Create work directories
+mkdir -p "$RELAY_WORK_DIR" "$PAVIS_WORK_DIR"
 
 cleanup() {
   EXIT_CODE=$?

@@ -14,6 +14,9 @@ use tokio::time::sleep;
 /// Test environment for E2E tests.
 pub struct TestEnv {
     pavis_process: Option<Child>,
+    compose_project: Option<String>,
+    compose_file: Option<PathBuf>,
+    compose_shared: bool,
     config_path: PathBuf,
     pvs_path: Option<PathBuf>,
     base_url: String,
@@ -85,20 +88,32 @@ impl TestEnv {
                 shared_config.clone()
             };
 
-            let compose_file =
-                project_root.join("crates/pavis-e2e/config/docker-compose-pavis.yaml");
+            // Use PAVIS_COMPOSE_FILE and PAVIS_COMPOSE_PROJECT if set (for integrated tests)
+            let compose_file = env::var("PAVIS_COMPOSE_FILE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    project_root.join("crates/pavis-e2e/config/docker-compose-pavis.yaml")
+                });
 
-            let status = Command::new("docker")
-                .args([
-                    "compose",
-                    "-f",
-                    compose_file.to_str().expect("valid path"),
-                    "up",
-                    "-d",
-                    "--force-recreate",
-                    "pavis",
-                ])
-                .status()?;
+            let mut compose_args = vec![
+                "compose".to_string(),
+                "-f".to_string(),
+                compose_file.to_str().expect("valid path").to_string(),
+            ];
+
+            if let Ok(project) = env::var("PAVIS_COMPOSE_PROJECT") {
+                compose_args.push("-p".to_string());
+                compose_args.push(project);
+            }
+
+            compose_args.extend([
+                "up".to_string(),
+                "-d".to_string(),
+                "--force-recreate".to_string(),
+                "pavis".to_string(),
+            ]);
+
+            let status = Command::new("docker").args(&compose_args).status()?;
 
             if !status.success() {
                 return Err(anyhow::anyhow!("Failed to restart docker container"));
@@ -113,6 +128,9 @@ impl TestEnv {
 
         Ok(Self {
             pavis_process: process,
+            compose_project: None,
+            compose_file: None,
+            compose_shared: false,
             config_path: config_dest,
             pvs_path,
             base_url,
@@ -127,7 +145,14 @@ impl TestEnv {
         // Create a minimal bootstrap config pointing to relay
         let temp_dir = tempfile::tempdir()?;
         let config_path = temp_dir.keep().join("bootstrap.pvs");
-        let mut base_url = "http://127.0.0.1:8080".to_string();
+
+        // In docker mode, use PAVIS_PORT env var if set (for integrated tests)
+        let docker_port: u16 = env::var("PAVIS_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(8080);
+
+        let mut base_url = format!("http://127.0.0.1:{docker_port}");
         let mut admin_port = 9091;
 
         let mut process = None;
@@ -192,28 +217,72 @@ impl TestEnv {
             pavis_pvs::write(&config_path, &config)?;
 
             println!("🐳 Starting Pavis Container with relay bootstrap...");
-            let shared_config = project_root.join("crates/pavis-e2e/config/generated_config.pvs");
+
+            // Determine where to copy the config
+            // If PAVIS_WORK_DIR is set (integrated tests), copy to $PAVIS_WORK_DIR/config.pvs
+            // Otherwise use the default generated_config.pvs location
+            let shared_config = if let Ok(work_dir) = env::var("PAVIS_WORK_DIR") {
+                let work_path = PathBuf::from(&work_dir);
+                fs::create_dir_all(&work_path)?;
+                // Clean up stale version file from previous tests
+                let version_file = work_path.join("config.pvs.version");
+                if version_file.exists() {
+                    let _ = fs::remove_file(&version_file);
+                }
+                work_path.join("config.pvs")
+            } else {
+                project_root.join("crates/pavis-e2e/config/generated_config.pvs")
+            };
             fs::copy(&config_path, &shared_config)?;
 
-            let compose_file =
-                project_root.join("crates/pavis-e2e/config/docker-compose-pavis.yaml");
+            // Use PAVIS_COMPOSE_FILE and PAVIS_COMPOSE_PROJECT if set (for integrated tests)
+            let compose_file_path = env::var("PAVIS_COMPOSE_FILE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    project_root.join("crates/pavis-e2e/config/docker-compose-pavis.yaml")
+                });
 
-            let status = Command::new("docker")
-                .args([
-                    "compose",
-                    "-f",
-                    compose_file.to_str().expect("valid path"),
-                    "up",
-                    "-d",
-                    "--force-recreate",
-                    "pavis",
-                ])
-                .status()?;
+            let mut compose_args = vec![
+                "compose".to_string(),
+                "-f".to_string(),
+                compose_file_path.to_str().expect("valid path").to_string(),
+            ];
+
+            let compose_project_name = env::var("PAVIS_COMPOSE_PROJECT").ok();
+            let compose_shared = compose_project_name.is_some();
+
+            if let Some(ref project) = compose_project_name {
+                compose_args.push("-p".to_string());
+                compose_args.push(project.clone());
+            }
+
+            compose_args.extend([
+                "up".to_string(),
+                "-d".to_string(),
+                "--force-recreate".to_string(),
+                "pavis".to_string(),
+            ]);
+
+            let status = Command::new("docker").args(&compose_args).status()?;
 
             if !status.success() {
                 return Err(anyhow::anyhow!("Failed to restart docker container"));
             }
             sleep(Duration::from_secs(2)).await;
+
+            let client = Client::builder().timeout(Duration::from_secs(1)).build()?;
+            wait_for_pavis(&client, &base_url).await?;
+
+            return Ok(Self {
+                pavis_process: None,
+                compose_project: compose_project_name,
+                compose_file: Some(compose_file_path),
+                compose_shared,
+                config_path,
+                pvs_path: None,
+                base_url,
+                admin_port,
+            });
         }
 
         let client = Client::builder().timeout(Duration::from_secs(1)).build()?;
@@ -221,6 +290,9 @@ impl TestEnv {
 
         Ok(Self {
             pavis_process: process,
+            compose_project: None,
+            compose_file: None,
+            compose_shared: false,
             config_path,
             pvs_path: None,
             base_url,
@@ -261,6 +333,29 @@ impl Drop for TestEnv {
             println!("🧹 Killing Pavis process...");
             let _ = child.kill();
             let _ = child.wait();
+        }
+
+        // Stop docker container if using compose
+        if let (Some(project), Some(compose_file)) =
+            (self.compose_project.take(), self.compose_file.as_ref())
+        {
+            let action = if self.compose_shared { "stop" } else { "down" };
+            let mut args = vec![
+                "compose",
+                "-f",
+                compose_file.to_str().expect("valid path"),
+                "-p",
+                &project,
+                action,
+            ];
+            if self.compose_shared {
+                args.push("pavis");
+            }
+            let _ = Command::new("docker")
+                .args(&args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
 
         let _ = fs::remove_file(&self.config_path);

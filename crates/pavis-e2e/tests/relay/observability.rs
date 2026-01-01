@@ -29,10 +29,14 @@ async fn r5_observability() -> Result<()> {
     let client = scenario.relay.client();
 
     let metrics_before = client.metrics().await?;
+    let status_before = client.status().await?;
 
     // Perform actions that should affect metrics
     scenario.apply_config(&default_runtime_config()).await?;
-    scenario.wait_for_relay_version(1).await?;
+    // Wait for version to increment (initial version is 1 from dummy config)
+    scenario
+        .wait_for_relay_version(status_before.version + 1)
+        .await?;
 
     let _ = client.publish_raw(b"invalid pvs".to_vec()).await; // Fail
     let current_version = client.status().await?.version;

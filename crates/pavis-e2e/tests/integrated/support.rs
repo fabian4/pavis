@@ -295,6 +295,7 @@ impl PavisEnv {
                             &project,
                             "up",
                             "-d",
+                            "--force-recreate",
                             "--no-deps",
                             "pavis",
                         ])

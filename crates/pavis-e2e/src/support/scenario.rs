@@ -3,6 +3,7 @@ use crate::support::pick_port;
 use anyhow::Result;
 use pavis_core::RuntimeConfig;
 use reqwest::Client;
+use std::env;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
@@ -11,6 +12,12 @@ use tokio::time::sleep;
 use super::pavis::TestEnv;
 use super::relay::{RelayInstance, RelayOptions};
 use super::upstream::UpstreamSet;
+
+fn is_docker_mode() -> bool {
+    env::var("TEST_MODE")
+        .map(|v| v == "docker")
+        .unwrap_or(false)
+}
 
 pub struct PavisScenario {
     pub relay: RelayInstance,
@@ -39,7 +46,13 @@ impl PavisScenario {
             let pavis_port = pick_port()?;
 
             if relay.env.options.enable_file_ingest {
-                let listen_addr = format!("127.0.0.1:{pavis_port}").parse()?;
+                // In Docker mode, Pavis listens on 0.0.0.0:8080 inside container
+                // In binary mode, use the random port
+                let listen_addr: SocketAddr = if is_docker_mode() {
+                    "0.0.0.0:8080".parse()?
+                } else {
+                    format!("127.0.0.1:{pavis_port}").parse()?
+                };
 
                 // Use actual upstreams if available, else dummy values
                 let (ua, ub) = if let Some(u) = &upstreams {

@@ -297,7 +297,17 @@ impl RelayEnv {
     pub async fn new(options: RelayOptions) -> Result<Self> {
         let mode = test_mode();
         let work_dir = unique_work_dir(&mode)?;
-        let port = pick_port()?;
+
+        // In docker mode with RELAY_PORT set, use that port; otherwise pick a random one
+        let port = if matches!(mode, TestMode::Docker) {
+            env::var("RELAY_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or_else(|| pick_port().unwrap_or(8083))
+        } else {
+            pick_port()?
+        };
+
         let base_url = format!("http://127.0.0.1:{port}");
 
         let lkg_path = if let Some(path) = &options.lkg_path {
@@ -498,11 +508,34 @@ impl RelayEnv {
 impl Drop for RelayEnv {
     fn drop(&mut self) {
         self.stop();
-        let _ = fs::remove_dir_all(&self.work_dir);
+        // Only clean up work_dir if not using a shared directory
+        if !self.compose_shared {
+            let _ = fs::remove_dir_all(&self.work_dir);
+        }
     }
 }
 
 fn unique_work_dir(mode: &TestMode) -> Result<PathBuf> {
+    // If RELAY_WORK_DIR is set (for integrated tests), use it directly
+    if let Ok(work_dir) = env::var("RELAY_WORK_DIR") {
+        let path = PathBuf::from(&work_dir);
+        fs::create_dir_all(&path)?;
+        // Clean up stale state from previous tests
+        let storage_path = path.join("storage");
+        let lkg_path = path.join("lkg");
+        let input_path = path.join("input.yaml");
+        if storage_path.exists() {
+            let _ = fs::remove_dir_all(&storage_path);
+        }
+        if lkg_path.exists() {
+            let _ = fs::remove_dir_all(&lkg_path);
+        }
+        if input_path.exists() {
+            let _ = fs::remove_file(&input_path);
+        }
+        return Ok(path);
+    }
+
     let base_dir = match mode {
         TestMode::Binary => env::temp_dir(),
         TestMode::Docker => {
@@ -613,9 +646,13 @@ fn spawn_relay_docker(
                 )
             })
         });
+
+    // Only set RELAY_PORT if not already in env (integrated tests pre-set it)
+    let relay_port = env::var("RELAY_PORT").unwrap_or_else(|_| host_port.to_string());
+
     let status = Command::new("docker")
         .env("RELAY_IMAGE", image)
-        .env("RELAY_PORT", host_port.to_string())
+        .env("RELAY_PORT", relay_port)
         .env("RELAY_WORK_DIR", work_dir.display().to_string())
         .args([
             "compose",
@@ -625,6 +662,7 @@ fn spawn_relay_docker(
             &project,
             "up",
             "-d",
+            "--force-recreate",
             "relay",
         ])
         .status()?;
