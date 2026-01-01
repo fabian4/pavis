@@ -10,9 +10,9 @@ async fn integrated_publish_and_apply_updates() -> Result<()> {
     options.enable_file_ingest = true;
     options.ingest_debounce_ms = 500;
 
-    let scenario = PavisScenario::new(options, true).await?;
+    let scenario = PavisScenario::new(options, true, true).await?;
     let pavis = scenario.pavis.as_ref().unwrap();
-    let upstreams = &scenario.upstreams;
+    let upstreams = scenario.upstreams.as_ref().unwrap();
 
     // Initial state (A)
     scenario.expect_body(&expected_body("A")).await?;

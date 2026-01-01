@@ -27,7 +27,7 @@ fn default_runtime_config() -> RuntimeConfig {
 
 #[tokio::test]
 async fn r7_persistence_recovery() -> Result<()> {
-    let scenario = PavisScenario::new(RelayOptions::default(), false).await?;
+    let scenario = PavisScenario::new(RelayOptions::default(), false, false).await?;
     let v_start = scenario.relay.client().status().await?.version;
 
     scenario.apply_config(&default_runtime_config()).await?;
@@ -45,7 +45,7 @@ async fn r7_persistence_recovery() -> Result<()> {
 
 #[tokio::test]
 async fn r4_partial_write_protection() -> Result<()> {
-    let scenario = PavisScenario::new(RelayOptions::default(), false).await?;
+    let scenario = PavisScenario::new(RelayOptions::default(), false, false).await?;
     let v_start = scenario.relay.client().status().await?.version;
 
     // Publish v1

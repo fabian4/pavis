@@ -10,7 +10,7 @@ async fn r6_ingest_debouncing() -> Result<()> {
     let mut options = RelayOptions::default();
     options.ingest_debounce_ms = 200;
 
-    let scenario = PavisScenario::new(options, false).await?;
+    let scenario = PavisScenario::new(options, false, false).await?;
     let client = scenario.relay.client();
 
     let initial_version = client.status().await?.version;
@@ -37,7 +37,7 @@ async fn r11_rapid_toggle() -> Result<()> {
     let mut options = RelayOptions::default();
     options.ingest_debounce_ms = 100;
 
-    let scenario = PavisScenario::new(options, false).await?;
+    let scenario = PavisScenario::new(options, false, false).await?;
     let client = scenario.relay.client();
     let config_path = scenario.relay.ingest_path.as_ref().unwrap();
 

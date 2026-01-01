@@ -4,6 +4,7 @@ use anyhow::Result;
 use pavis_core::RuntimeConfig;
 use reqwest::Client;
 use std::fs;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
@@ -14,12 +15,21 @@ use super::upstream::UpstreamSet;
 pub struct PavisScenario {
     pub relay: RelayInstance,
     pub pavis: Option<TestEnv>,
-    pub upstreams: UpstreamSet,
+    pub upstreams: Option<UpstreamSet>,
 }
 
 impl PavisScenario {
-    pub async fn new(options: RelayOptions, with_pavis: bool) -> Result<Self> {
-        let upstreams = UpstreamSet::new().await?;
+    pub async fn new(
+        options: RelayOptions,
+        with_pavis: bool,
+        with_upstreams: bool,
+    ) -> Result<Self> {
+        let upstreams = if with_upstreams {
+            Some(UpstreamSet::new().await?)
+        } else {
+            None
+        };
+
         let relay = RelayInstance::new(options).await?;
         let status = relay.client().status().await?;
         println!("DEBUG: Relay started at version {}", status.version);
@@ -30,10 +40,19 @@ impl PavisScenario {
 
             if relay.env.options.enable_file_ingest {
                 let listen_addr = format!("127.0.0.1:{pavis_port}").parse()?;
+
+                // Use actual upstreams if available, else dummy values
+                let (ua, ub) = if let Some(u) = &upstreams {
+                    (u.a, u.b)
+                } else {
+                    let dummy = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
+                    (dummy, dummy)
+                };
+
                 let config = runtime_config(
                     listen_addr,
-                    ("upstream-a", upstreams.a),
-                    ("upstream-b", upstreams.b),
+                    ("upstream-a", ua),
+                    ("upstream-b", ub),
                     "upstream-a",
                 );
                 let yaml = crate::support::pvs::to_yaml(&config);

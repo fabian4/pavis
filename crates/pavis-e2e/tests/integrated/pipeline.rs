@@ -11,10 +11,10 @@ async fn integrated_file_ingest_pipeline() -> Result<()> {
     options.ingest_debounce_ms = 500;
 
     // Start everything (Relay + Pavis + Upstreams + Initial Config)
-    let scenario = PavisScenario::new(options, true).await?;
+    let scenario = PavisScenario::new(options, true, true).await?;
 
     let pavis = scenario.pavis.as_ref().unwrap();
-    let upstreams = &scenario.upstreams;
+    let upstreams = scenario.upstreams.as_ref().unwrap();
 
     // Initial verification (A)
     scenario.expect_body(&expected_body("A")).await?;

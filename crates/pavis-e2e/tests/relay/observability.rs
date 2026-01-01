@@ -25,7 +25,7 @@ fn default_runtime_config() -> RuntimeConfig {
 
 #[tokio::test]
 async fn r5_observability() -> Result<()> {
-    let scenario = PavisScenario::new(RelayOptions::default(), false).await?;
+    let scenario = PavisScenario::new(RelayOptions::default(), false, false).await?;
     let client = scenario.relay.client();
 
     let metrics_before = client.metrics().await?;

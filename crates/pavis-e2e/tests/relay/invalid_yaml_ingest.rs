@@ -5,7 +5,7 @@ use std::fs;
 
 #[tokio::test]
 async fn r2_reject_invalid_pvs_api() -> Result<()> {
-    let scenario = PavisScenario::new(RelayOptions::default(), false).await?;
+    let scenario = PavisScenario::new(RelayOptions::default(), false, false).await?;
     let client = scenario.relay.client();
 
     let start_status = client.status().await?;
@@ -24,7 +24,7 @@ async fn r2_reject_invalid_pvs_api() -> Result<()> {
 
 #[tokio::test]
 async fn r8_codec_validation_file() -> Result<()> {
-    let scenario = PavisScenario::new(RelayOptions::default(), false).await?;
+    let scenario = PavisScenario::new(RelayOptions::default(), false, false).await?;
     let client = scenario.relay.client();
     let config_path = scenario.relay.ingest_path.as_ref().unwrap();
 

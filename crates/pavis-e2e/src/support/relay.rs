@@ -346,12 +346,18 @@ impl RelayEnv {
             }
         };
 
+        let container_ingest_path = match mode {
+            TestMode::Docker => Some("/relay/input.yaml"),
+            TestMode::Binary => None,
+        };
+
         write_config(
             &config_path,
             &bind,
             &storage_root,
             &config_lkg_path,
             &options,
+            container_ingest_path,
         )?;
 
         let mut compose_shared = false;
@@ -528,6 +534,7 @@ fn write_config(
     storage_root: &Path,
     lkg_path: &Path,
     options: &RelayOptions,
+    container_ingest_path: Option<&str>,
 ) -> Result<()> {
     let max_bytes = options.max_pvs_bytes.unwrap_or(10485760);
     let mut content = format!(
@@ -540,7 +547,9 @@ distribution:\n  long_poll:\n    enabled: true\n    headers:\n      version: \"X
     );
 
     if options.enable_file_ingest {
-        let ingest_file_path = if let Some(p) = &options.ingest_path {
+        let ingest_file_path = if let Some(container_path) = container_ingest_path {
+            container_path.to_string()
+        } else if let Some(p) = &options.ingest_path {
             p.display().to_string()
         } else {
             "input.yaml".to_string()

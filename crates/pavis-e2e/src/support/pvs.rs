@@ -2,6 +2,7 @@ use pavis_codec_api::Codec;
 use pavis_codec_serde::{SerdeCodec, SerdeFormat};
 use pavis_core::{RuntimeConfig, ServerConfig, TelemetryConfig};
 
+#[allow(dead_code)]
 pub fn to_yaml(config: &RuntimeConfig) -> String {
     let codec = SerdeCodec {
         format: SerdeFormat::Yaml,

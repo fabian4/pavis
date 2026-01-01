@@ -17,8 +17,8 @@ async fn integrated_multiple_runtimes_converge() -> Result<()> {
     options.ingest_debounce_ms = 500;
 
     // Start Relay + Upstreams only (no initial Pavis)
-    let scenario = PavisScenario::new(options, false).await?;
-    let upstreams = &scenario.upstreams;
+    let scenario = PavisScenario::new(options, false, true).await?;
+    let upstreams = &scenario.upstreams.as_ref().unwrap();
 
     // Apply v1 (with dummy listen addr, shared by all but overwritten by bootstrap locally?
     // Actually runtime config from relay overwrites local LKG.

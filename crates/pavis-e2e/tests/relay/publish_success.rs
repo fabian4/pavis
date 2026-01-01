@@ -29,7 +29,7 @@ fn default_runtime_config() -> RuntimeConfig {
 async fn r1_publish_success() -> Result<()> {
     let mut options = RelayOptions::default();
     options.ingest_debounce_ms = 500;
-    let scenario = PavisScenario::new(options, false).await?;
+    let scenario = PavisScenario::new(options, false, false).await?;
     let client = scenario.relay.client();
 
     // Initial state

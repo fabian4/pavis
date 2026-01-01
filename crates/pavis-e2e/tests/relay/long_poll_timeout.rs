@@ -27,7 +27,7 @@ fn default_runtime_config() -> RuntimeConfig {
 
 #[tokio::test]
 async fn r3_long_poll_semantics() -> Result<()> {
-    let scenario = PavisScenario::new(RelayOptions::default(), false).await?;
+    let scenario = PavisScenario::new(RelayOptions::default(), false, false).await?;
     let client = scenario.relay.client();
     let v_start = client.status().await?.version;
 
