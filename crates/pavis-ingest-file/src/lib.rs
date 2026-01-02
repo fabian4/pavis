@@ -276,7 +276,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_ingest_unsupported_format() -> Result<()> {
-        let file = NamedTempFile::new()?;
+        let mut file = NamedTempFile::new()?;
         let path = file.path().to_path_buf();
         let txt_path = path.with_extension("txt");
         std::fs::rename(&path, &txt_path)?;
@@ -284,13 +284,78 @@ mod tests {
         let mut ingest = FileIngest::new(txt_path.clone(), Duration::from_millis(10));
         let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
 
-        // Should not emit anything for unsupported format
+        // Should not emit anything for unsupported format initially
         tokio::select! {
             _ = stream.next() => panic!("Unexpected artifact for unsupported format"),
             _ = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
 
+        // Trigger an update
+        std::fs::write(&txt_path, b"updated content")?;
+
+        // Should still not emit anything
+        tokio::select! {
+            _ = stream.next() => panic!("Unexpected artifact for unsupported format update"),
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
+
         std::fs::remove_file(txt_path)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_file_ingest_read_failure() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        file.as_file_mut().write_all(b"v1")?;
+        let path = file.path().to_path_buf();
+        let yaml_path = path.with_extension("yaml");
+        std::fs::rename(&path, &yaml_path)?;
+
+        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(50));
+        let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+
+        // Expect initial artifact
+        if let Some(Ok(artifact)) = stream.next().await {
+            assert_eq!(artifact.bytes, Bytes::from_static(b"v1"));
+        } else {
+            panic!("Expected initial artifact");
+        }
+
+        // Change permissions to unreadable to cause read failure
+        // This should trigger a Metadata/Any event in notify, or at least we hope so.
+        // If notify doesn't trigger on chmod, we might need to rely on something else or accept this test is platform dependent.
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(&yaml_path)?;
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o000); // No read permission
+            std::fs::set_permissions(&yaml_path, perms)?;
+
+            // Wait for debounce and error
+            if let Some(res) = stream.next().await {
+                assert!(res.is_err());
+                let err = res.unwrap_err();
+                assert!(matches!(err, IngestError::Io(_)));
+                // Verify it's permission denied
+                assert!(
+                    err.to_string().contains("Permission denied")
+                        || err.to_string().contains("os error 13")
+                );
+            } else {
+                panic!("Expected error from stream");
+            }
+
+            // Restore permissions so we can clean up
+            let metadata = std::fs::metadata(&yaml_path)?;
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o644);
+            std::fs::set_permissions(&yaml_path, perms)?;
+        }
+
+        std::fs::remove_file(&yaml_path).ok();
+
         Ok(())
     }
 }

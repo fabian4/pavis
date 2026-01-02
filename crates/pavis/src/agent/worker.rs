@@ -181,6 +181,7 @@ mod tests {
         ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, Route, ServerConfig,
         TelemetryConfig, Upstream, VirtualHost, WeightedDestination,
     };
+    use pavis_pvs::PAVIS_VERSION_HEADER;
     use pingora::services::Service;
     use reqwest::Client;
     use std::net::{IpAddr, Ipv4Addr};
@@ -413,6 +414,101 @@ mod tests {
         };
         let bytes = std::fs::read(&lkg).expect("read");
         agent.apply_update(bytes, 2).await.expect("apply");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    async fn start_header_stub(
+        status: StatusCode,
+        headers: Option<Vec<(String, String)>>,
+    ) -> Option<String> {
+        use axum::http::HeaderMap;
+        async fn handler(
+            status: StatusCode,
+            headers: Option<Vec<(String, String)>>,
+        ) -> impl IntoResponse {
+            let mut map = HeaderMap::new();
+            if let Some(h) = headers {
+                for (k, v) in h {
+                    if let Ok(name) = axum::http::HeaderName::from_bytes(k.as_bytes()) {
+                        if let Ok(val) = axum::http::HeaderValue::from_str(&v) {
+                            map.insert(name, val);
+                        }
+                    }
+                }
+            }
+            (status, map)
+        }
+
+        let app = Router::new().route("/v1/config", get(move || handler(status, headers.clone())));
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping stub bind: {err}");
+                return None;
+            }
+            Err(err) => panic!("bind failed: {err}"),
+        };
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        Some(format!("http://{}", addr))
+    }
+
+    #[tokio::test]
+    async fn poll_once_missing_version_header() {
+        let Some(base) = start_header_stub(StatusCode::OK, None).await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join("pavis_poll_missing_header");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let lkg = dir.join("config.pvs");
+        write_pvs(&lkg, "v1");
+
+        let state = RuntimeState::from_config(
+            &crate::load::load_file(lkg.to_str().unwrap()).expect("load"),
+        )
+        .expect("state");
+        let state_handle = Arc::new(RuntimeStateHandle::new(state));
+        let agent = make_agent(base, lkg.clone(), state_handle);
+
+        let err = agent.poll_once().await.expect_err("should fail");
+        let msg = err.to_string();
+        eprintln!("Actual error: {}", msg);
+        assert!(
+            msg.contains("missing x-pavis-version response header"),
+            "Error '{}' did not contain expected string",
+            msg
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn poll_once_stale_version() {
+        let headers = vec![(PAVIS_VERSION_HEADER.to_string(), "1".to_string())];
+        let Some(base) = start_header_stub(StatusCode::OK, Some(headers)).await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join("pavis_poll_stale");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let lkg = dir.join("config.pvs");
+        write_pvs(&lkg, "v1");
+
+        let state = RuntimeState::from_config(
+            &crate::load::load_file(lkg.to_str().unwrap()).expect("load"),
+        )
+        .expect("state");
+        let state_handle = Arc::new(RuntimeStateHandle::new(state));
+        let agent = make_agent(base, lkg.clone(), state_handle);
+
+        // Set current version to 1
+        agent.set_current_version(1);
+
+        // Server returns version 1, which is stale (<= current)
+        let outcome = agent.poll_once().await.expect("poll");
+        assert!(matches!(outcome, super::PollOutcome::NoChange));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

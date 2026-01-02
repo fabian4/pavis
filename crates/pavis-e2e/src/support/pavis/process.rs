@@ -224,20 +224,36 @@ impl TestEnv {
             let shared_config = if let Ok(work_dir) = env::var("PAVIS_WORK_DIR") {
                 let work_path = PathBuf::from(&work_dir);
                 fs::create_dir_all(&work_path)?;
-                // Clean up stale version file from previous tests
+                // Clean up stale files from previous tests
                 // Use docker to remove files that may have been created by docker (as root)
+                let config_file = work_path.join("config.pvs");
                 let version_file = work_path.join("config.pvs.version");
+
+                let mut need_docker_cleanup = false;
+                if config_file.exists() && fs::remove_file(&config_file).is_err() {
+                    need_docker_cleanup = true;
+                }
                 if version_file.exists() && fs::remove_file(&version_file).is_err() {
+                    need_docker_cleanup = true;
+                }
+
+                if need_docker_cleanup {
                     // Try with docker if direct removal fails (permission issues in CI)
                     let _ = Command::new("docker")
                         .args(["run", "--rm", "-v"])
                         .arg(format!("{}:/work", work_path.display()))
-                        .args(["alpine", "rm", "-f", "/work/config.pvs.version"])
+                        .args([
+                            "alpine",
+                            "rm",
+                            "-f",
+                            "/work/config.pvs",
+                            "/work/config.pvs.version",
+                        ])
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .status();
                 }
-                work_path.join("config.pvs")
+                config_file
             } else {
                 project_root.join("crates/pavis-e2e/config/generated_config.pvs")
             };

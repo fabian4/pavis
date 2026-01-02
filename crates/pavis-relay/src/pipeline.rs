@@ -281,7 +281,6 @@ mod tests {
     }
 
     #[test]
-
     fn compaction_level_mapping() {
         assert!(matches!(
             compaction_level(PipelineCompaction::Off),
@@ -297,5 +296,211 @@ mod tests {
             compaction_level(PipelineCompaction::Prune),
             CompactionLevel::Prune
         ));
+    }
+
+    #[tokio::test]
+    async fn handle_artifact_processes_valid_artifact() {
+        use axum::body::Bytes;
+        let state = RelayState::new(0, Bytes::new()).expect("state");
+        let codec = CodecImpl::Serde(pavis_codec_serde::SerdeCodec {
+            format: pavis_codec_serde::SerdeFormat::Yaml,
+        });
+
+        let valid_yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  access_log: disabled
+upstreams: []
+routes: []
+"#;
+        let artifact = Artifact::new(
+            Bytes::from(valid_yaml),
+            pavis_ingest_api::Format::Yaml,
+            pavis_ingest_api::SourceInfo::new("test-source"),
+        );
+
+        let result = handle_artifact(
+            "test-pipeline",
+            Ok(artifact),
+            &codec,
+            &state,
+            PipelineCompaction::Off,
+            RetryPolicy {
+                max_attempts: 1,
+                base_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(1),
+            },
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(state.version().await, 1);
+    }
+
+    #[tokio::test]
+    async fn handle_artifact_handles_invalid_artifact() {
+        use axum::body::Bytes;
+        let state = RelayState::new(0, Bytes::new()).expect("state");
+        let codec = CodecImpl::Serde(pavis_codec_serde::SerdeCodec {
+            format: pavis_codec_serde::SerdeFormat::Yaml,
+        });
+
+        let invalid_yaml = "not a valid yaml";
+        let artifact = Artifact::new(
+            Bytes::from(invalid_yaml),
+            pavis_ingest_api::Format::Yaml,
+            pavis_ingest_api::SourceInfo::new("test-source"),
+        );
+
+        let result = handle_artifact(
+            "test-pipeline",
+            Ok(artifact),
+            &codec,
+            &state,
+            PipelineCompaction::Off,
+            RetryPolicy {
+                max_attempts: 1,
+                base_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(1),
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(state.version().await, 0);
+    }
+
+    #[tokio::test]
+    async fn publish_with_retry_fails_eventually() {
+        use axum::body::Bytes;
+        // Create state with a very small size limit to force failure
+        let mut options = crate::state::RelayOptions::default();
+        options.max_pvs_bytes = 10; // Very small limit
+        let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
+
+        let config = pavis_core::RuntimeConfig {
+            server: pavis_core::ServerConfig {
+                listen_addr: "0.0.0.0:8080".parse().unwrap(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: pavis_core::TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: pavis_core::AccessLogConfig::Disabled,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![],
+        };
+
+        // This config will exceed 10 bytes when serialized
+        let policy = RetryPolicy {
+            max_attempts: 2,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(1),
+        };
+
+        let result =
+            publish_with_retry(&state, &config, policy, "test-pipeline", "test-source").await;
+
+        assert!(result.is_err());
+        let err = format!("{:?}", result.unwrap_err());
+        eprintln!("Actual error: {}", err);
+        // Error should be about policy violation
+        assert!(
+            err.contains("pvs size"),
+            "Error message '{}' did not contain 'pvs size'",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_integration() {
+        use crate::config::{CodecKind, IngestMode, IngestSource};
+        use std::time::Duration;
+
+        let dir = std::env::temp_dir().join("relay_pipeline_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("config.yaml");
+
+        // Write initial valid config
+        let initial_yaml = r#"
+server:
+  listen_addr: "0.0.0.0:8080"
+telemetry:
+  access_log: disabled
+upstreams: []
+routes: []
+"#;
+        std::fs::write(&config_path, initial_yaml).unwrap();
+
+        let mut config = PipelineConfig::default();
+        config.ingest.source = IngestSource::File(crate::config::FileSourceConfig {
+            path: config_path.to_string_lossy().to_string(),
+        });
+        config.ingest.mode = IngestMode {
+            kind: "".to_string(),
+            debounce: 10,
+        };
+        config.codec.kind = CodecKind::Serde;
+
+        let mut options = crate::state::RelayOptions::default();
+        // Disable persistence to simplify
+        options.persistence.enabled = false;
+
+        let state =
+            RelayState::new_with_options(0, axum::body::Bytes::new(), options).expect("state");
+
+        start_pipeline(&config, state.clone())
+            .await
+            .expect("start pipeline");
+
+        // Wait for initial load
+        let mut attempts = 0;
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            if state.version().await > 0 {
+                break;
+            }
+            attempts += 1;
+            if attempts > 20 {
+                panic!("timed out waiting for initial version");
+            }
+        }
+
+        assert_eq!(state.version().await, 1);
+
+        // Update file
+        let update_yaml = r#"
+server:
+  listen_addr: "0.0.0.0:9090"
+telemetry:
+  access_log: disabled
+upstreams: []
+routes: []
+"#;
+        std::fs::write(&config_path, update_yaml).unwrap();
+
+        // Wait for update
+        let mut attempts = 0;
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            if state.version().await > 1 {
+                break;
+            }
+            attempts += 1;
+            if attempts > 20 {
+                panic!("timed out waiting for updated version");
+            }
+        }
+
+        assert_eq!(state.version().await, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

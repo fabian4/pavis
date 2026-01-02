@@ -274,3 +274,92 @@ fn unix_millis(time: std::time::SystemTime) -> u128 {
         .map(|duration| duration.as_millis())
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::RelayOptions;
+    use axum::body::Bytes;
+    use axum::http::HeaderMap;
+
+    #[tokio::test]
+    async fn test_post_publish_failures() {
+        let dir = std::env::temp_dir().join("relay_handlers_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let lkg = dir.join("config.pvs");
+
+        let mut options = RelayOptions::default();
+        options.lkg_path = Some(lkg.clone());
+        options.max_pvs_bytes = 1000; // ample limit initially
+
+        let state = Arc::new(
+            RelayState::new_with_options(10, Bytes::new(), options.clone()).expect("state"),
+        );
+
+        // 1. Verification Failure
+        let mut headers = HeaderMap::new();
+        headers.insert(options.version_header.clone(), "11".parse().unwrap());
+        let body = Bytes::from_static(b"invalid pvs data");
+
+        let response = post_publish(State(state.clone()), headers.clone(), body).await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        // Prepare valid PVS
+        let config = pavis_core::RuntimeConfig {
+            server: pavis_core::ServerConfig {
+                listen_addr: "127.0.0.1:8080".parse().unwrap(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: pavis_core::TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: pavis_core::AccessLogConfig::Disabled,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![],
+        };
+        let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
+        let valid_body = Bytes::from(pvs_bytes);
+
+        // 2. Policy Failure (max_pvs_bytes)
+        // Create new state with small limit
+        let mut small_opts = options.clone();
+        small_opts.max_pvs_bytes = 10;
+        let small_state =
+            Arc::new(RelayState::new_with_options(10, Bytes::new(), small_opts).expect("state"));
+        let response = post_publish(State(small_state), headers.clone(), valid_body.clone()).await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        // 3. Monotonicity Failure
+        // Try to publish version 10 when current is 10
+        let mut bad_ver_headers = HeaderMap::new();
+        bad_ver_headers.insert(options.version_header.clone(), "10".parse().unwrap());
+        let response =
+            post_publish(State(state.clone()), bad_ver_headers, valid_body.clone()).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        // 4. LKG Write Failure
+        // Use a directory as LKG path
+        let fail_lkg = dir.join("fail_lkg_dir");
+        std::fs::create_dir(&fail_lkg).unwrap();
+        let mut fail_opts = options.clone();
+        fail_opts.lkg_path = Some(fail_lkg);
+        let fail_state =
+            Arc::new(RelayState::new_with_options(10, Bytes::new(), fail_opts).expect("state"));
+
+        let mut good_headers = HeaderMap::new();
+        good_headers.insert(options.version_header.clone(), "11".parse().unwrap());
+
+        let response = post_publish(State(fail_state), good_headers, valid_body.clone()).await;
+        // On Unix, writing to directory is IsADirectory (OS error 21). On Windows, AccessDenied.
+        // It returns INTERNAL_SERVER_ERROR
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

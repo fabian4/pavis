@@ -668,4 +668,143 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_metrics_counters() {
+        let metrics = super::RelayMetrics::default();
+        assert_eq!(metrics.publish_ok(), 0);
+        assert_eq!(metrics.publish_fail(), 0);
+        assert_eq!(metrics.long_poll_wait(), 0);
+
+        metrics.inc_publish_ok();
+        metrics.inc_publish_fail();
+        metrics.inc_publish_fail();
+        metrics.inc_long_poll_wait();
+
+        assert_eq!(metrics.publish_ok(), 1);
+        assert_eq!(metrics.publish_fail(), 2);
+        assert_eq!(metrics.long_poll_wait(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_enforce_limits() {
+        let mut options = RelayOptions::default();
+        options.max_pvs_bytes = 10;
+        let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
+
+        let big_bytes = Bytes::from(vec![0u8; 20]);
+        let err = state
+            .publish_auto(big_bytes)
+            .await
+            .expect_err("should fail");
+        assert!(matches!(err, super::RelayError::Policy(_)));
+        assert!(err.to_string().contains("exceeds max_pvs_bytes"));
+    }
+
+    #[tokio::test]
+    async fn test_persistence_success() {
+        let dir = std::env::temp_dir().join("relay_persist_ok");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let lkg = dir.join("config.pvs");
+
+        let mut options = RelayOptions::default();
+        options.persistence.enabled = true;
+        options.persistence.flush_interval = std::time::Duration::from_millis(10);
+        options.lkg_path = Some(lkg.clone());
+
+        let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
+
+        // Publish something
+        let config = pavis_core::RuntimeConfig {
+            server: pavis_core::ServerConfig {
+                listen_addr: "127.0.0.1:8080".parse().unwrap(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: pavis_core::TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: Some("persist_test".to_string()),
+                prometheus_addr: None,
+                access_log: pavis_core::AccessLogConfig::Disabled,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![],
+        };
+        let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
+        state
+            .publish_auto(pvs_bytes.clone().into())
+            .await
+            .expect("publish");
+
+        // Wait for file
+        let mut attempts = 0;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if lkg.exists() {
+                let read = std::fs::read(&lkg).unwrap();
+                if read == pvs_bytes {
+                    break;
+                }
+            }
+            attempts += 1;
+            if attempts > 20 {
+                panic!("timed out waiting for persistence");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_persistence_shutdown() {
+        let dir = std::env::temp_dir().join("relay_persist_shutdown");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let lkg = dir.join("config.pvs");
+
+        let mut options = RelayOptions::default();
+        options.persistence.enabled = true;
+        // Long interval so it doesn't flush by timer
+        options.persistence.flush_interval = std::time::Duration::from_secs(10);
+        options.lkg_path = Some(lkg.clone());
+
+        let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
+
+        let config = pavis_core::RuntimeConfig {
+            server: pavis_core::ServerConfig {
+                listen_addr: "127.0.0.1:8080".parse().unwrap(),
+                worker_threads: None,
+                tls: None,
+            },
+            telemetry: pavis_core::TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                prometheus_addr: None,
+                access_log: pavis_core::AccessLogConfig::Disabled,
+                tracing: None,
+            },
+            upstreams: vec![],
+            routes: vec![],
+        };
+        let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
+        state
+            .publish_auto(pvs_bytes.clone().into())
+            .await
+            .expect("publish");
+
+        // Drop state to trigger shutdown flush
+        drop(state);
+
+        // Give a little time for the background task to run its shutdown block
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        assert!(lkg.exists(), "File should exist after shutdown");
+        let read = std::fs::read(&lkg).unwrap();
+        assert_eq!(read, pvs_bytes);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
