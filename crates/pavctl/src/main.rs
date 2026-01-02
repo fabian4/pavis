@@ -161,6 +161,39 @@ routes:
     }
 
     #[test]
+    fn run_dispatches_gen_and_convert() {
+        let yaml_path = unique_path("pavctl_gen", "yaml");
+        let pvs_path = unique_path("pavctl_gen", "pvs");
+        let conv_path = unique_path("pavctl_gen_conv", "yaml");
+        write_yaml(&yaml_path);
+
+        // Test Generate
+        run(Cli {
+            command: Commands::Generate {
+                input: yaml_path.clone(),
+                output: Some(pvs_path.clone()),
+            },
+        })
+        .expect("generate");
+        assert!(pvs_path.exists());
+
+        // Test Convert
+        run(Cli {
+            command: Commands::Convert {
+                input: pvs_path.clone(),
+                output: Some(conv_path.clone()),
+                format: "yaml".to_string(),
+            },
+        })
+        .expect("convert");
+        assert!(conv_path.exists());
+
+        let _ = fs::remove_file(&yaml_path);
+        let _ = fs::remove_file(&pvs_path);
+        let _ = fs::remove_file(&conv_path);
+    }
+
+    #[test]
     fn parse_format_from_args_rejects_unknowns() {
         let output = PathBuf::from("config.toml");
         let err = parse_format_from_args(Some(&output), "yaml").expect_err("bad ext");

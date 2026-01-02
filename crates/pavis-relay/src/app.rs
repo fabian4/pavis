@@ -250,4 +250,15 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn test_serve_from_config_abort() {
+        let mut config = minimal_config();
+        config.http.bind = "127.0.0.1:0".to_string(); // Random port
+
+        let handle = tokio::spawn(async move { super::serve_from_config(&config).await });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        handle.abort();
+    }
 }

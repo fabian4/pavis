@@ -168,6 +168,34 @@ async fn config_long_poll_times_out() {
 }
 
 #[tokio::test]
+async fn config_long_poll_success() {
+    let state = test_state();
+    let app = router(state.clone());
+
+    let waiter = tokio::spawn({
+        let app = app.clone();
+        async move {
+            app.oneshot(
+                Request::get("/v1/config?wait_ms=5000")
+                    .header("x-pavis-version", "7")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+        }
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Publish update
+    state.publish_auto(valid_pvs_bytes("update")).await.unwrap();
+
+    let response = waiter.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get("x-pavis-version").unwrap(), "8");
+}
+
+#[tokio::test]
 async fn publish_rejects_empty_body() {
     let app = router(test_state());
 

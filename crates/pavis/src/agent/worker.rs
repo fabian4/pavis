@@ -187,6 +187,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
@@ -417,6 +418,34 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[tokio::test]
+    async fn test_apply_update_success() {
+        let dir = std::env::temp_dir().join("pavis_apply_success");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let lkg = dir.join("config.pvs");
+
+        let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = make_agent(
+            "http://127.0.0.1:1".to_string(),
+            lkg.clone(),
+            state_handle.clone(),
+        );
+
+        let config = minimal_config("v1");
+        let pvs = pavis_pvs::encode(&config).expect("encode");
+
+        agent
+            .apply_update(pvs, 1)
+            .await
+            .expect("apply update should succeed");
+
+        assert_eq!(agent.current_version.load(Ordering::SeqCst), 1);
+        assert!(lkg.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     async fn start_header_stub(
         status: StatusCode,
         headers: Option<Vec<(String, String)>>,
@@ -509,6 +538,52 @@ mod tests {
         // Server returns version 1, which is stale (<= current)
         let outcome = agent.poll_once().await.expect("poll");
         assert!(matches!(outcome, super::PollOutcome::NoChange));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_poll_once_success() {
+        let config = minimal_config("v1");
+        let pvs = pavis_pvs::encode(&config).expect("encode");
+
+        // We need a way to return bytes.
+        use axum::response::Response;
+
+        let pvs_clone = pvs.clone();
+        let app = Router::new().route(
+            "/v1/config",
+            get(move || {
+                let pvs_inner = pvs_clone.clone();
+                async move {
+                    let mut res = Response::new(axum::body::Body::from(pvs_inner));
+                    res.headers_mut().insert(
+                        axum::http::HeaderName::from_static("x-pavis-version"),
+                        axum::http::HeaderValue::from_static("1"),
+                    );
+                    res
+                }
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let base = format!("http://{}", addr);
+        let dir = std::env::temp_dir().join("pavis_poll_success");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let lkg = dir.join("config.pvs");
+
+        let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = make_agent(base, lkg.clone(), state_handle);
+
+        let outcome = agent.poll_once().await.expect("poll");
+        assert!(matches!(outcome, super::PollOutcome::Updated));
+        assert_eq!(agent.current_version.load(Ordering::SeqCst), 1);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
