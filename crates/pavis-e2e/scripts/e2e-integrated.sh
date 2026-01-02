@@ -39,8 +39,10 @@ cleanup() {
   echo "🧹 Cleaning up..."
   if [ "$TEST_MODE" == "docker" ]; then
     docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" down > /dev/null 2>&1 || true
+    # Clean up temp files (use docker to handle root-owned files)
+    docker run --rm -v "$CONFIG_DIR:/work" alpine rm -rf /work/relay_tmp /work/pavis_tmp 2>/dev/null || true
   fi
-  rm -rf "$CONFIG_DIR"/relay_tmp
+  rm -rf "$CONFIG_DIR"/relay_tmp "$CONFIG_DIR"/pavis_tmp 2>/dev/null || true
 }
 trap cleanup EXIT
 

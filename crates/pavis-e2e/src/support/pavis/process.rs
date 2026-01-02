@@ -225,9 +225,17 @@ impl TestEnv {
                 let work_path = PathBuf::from(&work_dir);
                 fs::create_dir_all(&work_path)?;
                 // Clean up stale version file from previous tests
+                // Use docker to remove files that may have been created by docker (as root)
                 let version_file = work_path.join("config.pvs.version");
-                if version_file.exists() {
-                    let _ = fs::remove_file(&version_file);
+                if version_file.exists() && fs::remove_file(&version_file).is_err() {
+                    // Try with docker if direct removal fails (permission issues in CI)
+                    let _ = Command::new("docker")
+                        .args(["run", "--rm", "-v"])
+                        .arg(format!("{}:/work", work_path.display()))
+                        .args(["alpine", "rm", "-f", "/work/config.pvs.version"])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
                 }
                 work_path.join("config.pvs")
             } else {

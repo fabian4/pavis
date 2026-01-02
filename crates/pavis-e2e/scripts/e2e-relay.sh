@@ -24,6 +24,14 @@ cleanup() {
             done
         fi
     fi
+    
+    echo "🧹 Cleaning up..."
+    CONFIG_DIR="$WORKSPACE_ROOT/crates/pavis-e2e/config"
+    if [ "$TEST_MODE" == "docker" ]; then
+        # Clean up temp files (use docker to handle root-owned files)
+        docker run --rm -v "$CONFIG_DIR:/work" alpine rm -rf /work/relay_tmp 2>/dev/null || true
+    fi
+    rm -rf "$CONFIG_DIR"/relay_tmp 2>/dev/null || true
 }
 trap cleanup EXIT
 

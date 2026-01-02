@@ -521,17 +521,38 @@ fn unique_work_dir(mode: &TestMode) -> Result<PathBuf> {
         let path = PathBuf::from(&work_dir);
         fs::create_dir_all(&path)?;
         // Clean up stale state from previous tests
+        // Use docker to remove files that may have been created by docker (as root)
         let storage_path = path.join("storage");
         let lkg_path = path.join("lkg");
         let input_path = path.join("input.yaml");
-        if storage_path.exists() {
-            let _ = fs::remove_dir_all(&storage_path);
+
+        let mut need_docker_cleanup = false;
+        if storage_path.exists() && fs::remove_dir_all(&storage_path).is_err() {
+            need_docker_cleanup = true;
         }
-        if lkg_path.exists() {
-            let _ = fs::remove_dir_all(&lkg_path);
+        if lkg_path.exists() && fs::remove_dir_all(&lkg_path).is_err() {
+            need_docker_cleanup = true;
         }
-        if input_path.exists() {
-            let _ = fs::remove_file(&input_path);
+        if input_path.exists() && fs::remove_file(&input_path).is_err() {
+            need_docker_cleanup = true;
+        }
+
+        // Fallback to docker cleanup if direct removal failed (permission issues in CI)
+        if need_docker_cleanup {
+            let _ = Command::new("docker")
+                .args(["run", "--rm", "-v"])
+                .arg(format!("{}:/work", path.display()))
+                .args([
+                    "alpine",
+                    "rm",
+                    "-rf",
+                    "/work/storage",
+                    "/work/lkg",
+                    "/work/input.yaml",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
         return Ok(path);
     }
