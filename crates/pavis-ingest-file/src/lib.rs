@@ -305,6 +305,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_ingest_read_failure() -> Result<()> {
+        // Skip test if running as root (root can read files regardless of permissions)
+        #[cfg(unix)]
+        {
+            if nix::unistd::geteuid().is_root() {
+                eprintln!("Skipping test_file_ingest_read_failure: running as root");
+                return Ok(());
+            }
+        }
+
         let mut file = NamedTempFile::new()?;
         file.as_file_mut().write_all(b"v1")?;
         let path = file.path().to_path_buf();
