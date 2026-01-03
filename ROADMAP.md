@@ -102,12 +102,12 @@
 - [x] [MUST] **Persistence**: Save last-known-good config to disk (`/etc/pavis/config.pvs`).
 - [x] [MUST] **Recovery**: Boot from disk if control plane is unreachable.
 - [ ] [SHOULD] **Safety**: Track last successful reload timestamp for heuristic checks.
-- [ ] [MUST] Config update triggers route change.
-- [ ] [MUST] Long poll holds connection until update.
-- [ ] [MUST] Checksum mismatch triggers retry.
-- [ ] [MUST] Proxy continues serving during config reload.
-- [ ] [MUST] Crash recovery loads config from disk.
-- [ ] [MUST] Multiple proxies receive same update.
+- [x] [MUST] Config update triggers route change.
+- [x] [MUST] Long poll holds connection until update.
+- [x] [MUST] Checksum mismatch triggers retry.
+- [x] [MUST] Proxy continues serving during config reload.
+- [x] [MUST] Crash recovery loads config from disk.
+- [x] [MUST] Multiple proxies receive same update.
 - [ ] [SHOULD] Exponential backoff on xDS server failure.
 
 ### Phase 4 & 8: Operational Lifecycle
