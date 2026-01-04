@@ -3,7 +3,8 @@ use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
 use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
 use async_trait::async_trait;
-use pavis_core::HttpVersion;
+use http::Uri;
+use pavis_core::{HttpVersion, MatchType};
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
@@ -24,6 +25,72 @@ fn apply_route_headers(ctx: &mut RouterContext, route: &pavis_core::Route) {
     ctx.response_headers = route.response_headers.clone();
 }
 
+fn apply_rewrite(
+    session: &mut Session,
+    ctx: &mut RouterContext,
+    route: &pavis_core::Route,
+    uri_path: &str,
+    uri_query: Option<&str>,
+) {
+    let Some(rewrite) = route.rewrite.as_ref() else {
+        return;
+    };
+
+    let req_header = session.as_downstream_mut().req_header_mut();
+
+    if let Some(host) = rewrite.host_rewrite_literal.as_ref() {
+        if let Err(err) = req_header.insert_header("Host", host.as_str()) {
+            tracing::warn!(error = %err, host = %host, "Failed to apply host rewrite");
+        } else {
+            ctx.sni_override = Some(host.clone());
+        }
+    }
+
+    if let Some(path_prefix) = rewrite.path_prefix_rewrite.as_ref() {
+        let new_path = match route.match_type {
+            MatchType::Prefix => uri_path
+                .strip_prefix(route.path.as_str())
+                .map(|suffix| format!("{path_prefix}{suffix}")),
+            MatchType::Exact => (uri_path == route.path).then(|| path_prefix.to_string()),
+            MatchType::Regex => None,
+        };
+
+        match new_path {
+            Some(mut path) => {
+                if let Some(query) = uri_query {
+                    path.push('?');
+                    path.push_str(query);
+                }
+
+                match Uri::builder().path_and_query(path.as_str()).build() {
+                    Ok(uri) => req_header.set_uri(uri),
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            rewrite = %path_prefix,
+                            "Failed to apply path rewrite"
+                        );
+                    }
+                }
+            }
+            None => {
+                if route.match_type == MatchType::Regex {
+                    tracing::warn!(
+                        route = %route.path,
+                        "Skipping path rewrite for regex match"
+                    );
+                } else {
+                    tracing::warn!(
+                        route = %route.path,
+                        path = %uri_path,
+                        "Skipping path rewrite due to unmatched prefix"
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl ProxyHttp for Proxy {
     type CTX = RouterContext;
@@ -33,6 +100,7 @@ impl ProxyHttp for Proxy {
             upstream_name: None,
             request_headers: None,
             response_headers: None,
+            sni_override: None,
             start_time: std::time::Instant::now(),
         }
     }
@@ -61,7 +129,15 @@ impl ProxyHttp for Proxy {
 
         let upstream = &cluster.config;
 
-        let addr = std::net::SocketAddr::new(endpoint.ip, endpoint.port);
+        let addr = match &endpoint.address {
+            pavis_core::EndpointAddress::Ip(addr) => *addr,
+            pavis_core::EndpointAddress::Dns(host, port) => {
+                return Error::e_explain(
+                    InternalError,
+                    format!("DNS upstream {}:{} not supported yet", host, port),
+                );
+            }
+        };
 
         tracing::debug!(
             upstream = %upstream_name,
@@ -75,6 +151,7 @@ impl ProxyHttp for Proxy {
         let use_tls = tls_config.map(|c| c.enabled).unwrap_or(false);
         let sni = tls_config
             .and_then(|c| c.sni.clone())
+            .or_else(|| ctx.sni_override.clone())
             .unwrap_or_else(|| "localhost".to_string());
 
         let mut peer = HttpPeer::new(addr, use_tls, sni);
@@ -105,7 +182,8 @@ impl ProxyHttp for Proxy {
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
         let req_header = session.req_header();
         let host_header = req_header.headers.get("Host").and_then(|h| h.to_str().ok());
-        let uri_path = req_header.uri.path();
+        let uri_path = req_header.uri.path().to_string();
+        let uri_query = req_header.uri.query().map(str::to_string);
 
         tracing::debug!(
             method = %req_header.method,
@@ -115,8 +193,11 @@ impl ProxyHttp for Proxy {
         );
 
         let state = self.state.load();
-        if let Some((vhost, route)) = state.router.match_request(host_header, uri_path) {
+        if let Some((vhost, route)) = state.router.match_request(host_header, &uri_path) {
             tracing::trace!(host = %vhost.host, path = %route.path, "matched route");
+
+            apply_route_headers(ctx, route);
+            apply_rewrite(session, ctx, route, &uri_path, uri_query.as_deref());
 
             let total_weight: u32 = route.destinations.iter().map(|d| d.weight).sum();
             if total_weight == 0 {
@@ -133,8 +214,6 @@ impl ProxyHttp for Proxy {
                 }
                 pick -= dest.weight;
             }
-
-            apply_route_headers(ctx, route);
 
             return Ok(false);
         }

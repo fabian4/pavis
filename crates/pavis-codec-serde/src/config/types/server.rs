@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct ServerConfig {
+pub struct Listener {
+    pub name: String,
     pub listen_addr: String,
     pub worker_threads: Option<usize>,
     pub tls: Option<TlsConfig>,

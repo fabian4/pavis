@@ -46,6 +46,8 @@ pub trait Codec {
     ) -> Result<ValidatedRuntimeConfig, Self::Error> {
         let checked = self.check(art)?;
         let mut cfg = self.compile(&checked)?;
+        // Codec is responsible for population of defaults before validation.
+        // self.compact(&mut cfg, level); // Compaction happens here if needed.
         self.compact(&mut cfg, level);
         pavis_core::validate_runtime(cfg).map_err(Self::Error::from)
     }
@@ -60,8 +62,9 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use pavis_core::runtime::{
-        AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
-        Route, ServerConfig, TelemetryConfig, Upstream, VirtualHost, WeightedDestination,
+        AccessLogConfig, ConnectionPoolConfig, Endpoint, EndpointAddress, HttpVersion, Listener,
+        LoadBalancer, MatchType, Route, TelemetryConfig, Upstream, VirtualHost,
+        WeightedDestination,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -125,11 +128,12 @@ mod tests {
 
     fn valid_config() -> pavis_core::RuntimeConfig {
         pavis_core::RuntimeConfig {
-            server: ServerConfig {
+            listeners: vec![Listener {
+                name: "default".to_string(),
                 listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: TelemetryConfig {
                 level: None,
                 pingora: None,
@@ -140,6 +144,7 @@ mod tests {
             },
             upstreams: vec![Upstream {
                 name: "upstream1".to_string(),
+                discovery_type: pavis_core::DiscoveryType::Static,
                 load_balancer: LoadBalancer::RoundRobin,
                 http_version: HttpVersion::H1,
                 connection_pool: ConnectionPoolConfig {
@@ -148,8 +153,10 @@ mod tests {
                 },
                 tls: None,
                 endpoints: vec![Endpoint {
-                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    port: 8080,
+                    address: EndpointAddress::Ip(SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        8080,
+                    )),
                     weight: 1,
                 }],
             }],
@@ -162,6 +169,7 @@ mod tests {
                     retry_policy: None,
                     request_headers: None,
                     response_headers: None,
+                    rewrite: None,
                     destinations: vec![WeightedDestination {
                         upstream: "upstream1".to_string(),
                         weight: 1,

@@ -13,7 +13,7 @@ No open findings.
 ## Review Entry — 2026-01-01T03:11:42Z
 
 ### Scope
-- Full repository scan against `Architecture.md` for structural, layering, and boundary compliance.
+- Full repository scan against `ARCHITECTURE.md` for structural, layering, and boundary compliance.
 
 ---
 
@@ -76,7 +76,7 @@ No architectural violations found.
 ---
 
 ### Method
-- Inspection of `pavis-core` definitions against `Architecture.md` Sec 5.3.
+- Inspection of `pavis-core` definitions against `ARCHITECTURE.md` Sec 5.3.
 
 
 ### Model
@@ -130,7 +130,7 @@ No architectural violations found.
 ---
 
 ### Method
-- Manual comparison of `Architecture.md` endpoint description against relay handler behavior.
+- Manual comparison of `ARCHITECTURE.md` endpoint description against relay handler behavior.
 
 
 ### Model
@@ -149,9 +149,9 @@ No architectural violations found.
 ### Detailed Findings
 
 #### F-1: Architecture status fields differ from implementation
-- **Expectation:** `Architecture.md` describes `/v1/status` fields consistent with the relay implementation.
+- **Expectation:** `ARCHITECTURE.md` describes `/v1/status` fields consistent with the relay implementation.
 - **Observed:** Architecture now documents the current plain-text fields (name/version/checksum/checksum_alg/size).
-- **Evidence:** `Architecture.md` Core endpoints section; `crates/pavis-relay/src/handlers.rs`.
+- **Evidence:** `ARCHITECTURE.md` Core endpoints section; `crates/pavis-relay/src/handlers.rs`.
 - **Assessment (Reason):** Documentation updated to match the implemented contract.
 - **Recommendation (Suggestion):** None.
 - **Doc Drift?:** No — resolved.
@@ -166,7 +166,7 @@ No architectural violations found.
 ---
 
 ### Method
-- Cross-check of `Architecture.md` endpoint expectations against relay handlers and HTTP contract docs.
+- Cross-check of `ARCHITECTURE.md` endpoint expectations against relay handlers and HTTP contract docs.
 
 
 ### Model
@@ -186,17 +186,17 @@ No architectural violations found.
 ### Detailed Findings
 
 #### F-1: Architecture status fields differ from implementation
-- **Expectation:** `Architecture.md` states `/v1/status` returns version, checksum, artifact size, uptime, and last update time.
+- **Expectation:** `ARCHITECTURE.md` states `/v1/status` returns version, checksum, artifact size, uptime, and last update time.
 - **Observed:** Relay returns a plain-text status containing name/version/checksum/checksum_alg/size only; no uptime or last-update fields.
-- **Evidence:** `Architecture.md` Sec 3.1; `crates/pavis-relay/src/handlers.rs`; `crates/pavis-relay/README.md`.
+- **Evidence:** `ARCHITECTURE.md` Sec 3.1; `crates/pavis-relay/src/handlers.rs`; `crates/pavis-relay/README.md`.
 - **Assessment (Reason):** Status contract in architecture diverges from the implemented relay HTTP contract.
-- **Recommendation (Suggestion):** Either extend `/v1/status` to include uptime/last-update fields or update `Architecture.md` to match the current contract.
+- **Recommendation (Suggestion):** Either extend `/v1/status` to include uptime/last-update fields or update `ARCHITECTURE.md` to match the current contract.
 - **Doc Drift?:** Yes — documentation drift.
 
 #### F-2: Relay ingest/codec plugins are explicitly deferred
 - **Expectation:** Prior finding claimed relay must include ingest/codec plugins as immediate dependencies.
-- **Observed:** `Architecture.md` includes a current-implementation note that the relay accepts `.pvs` artifacts and the ingest/codec pipeline remains a control-plane concern.
-- **Evidence:** `Architecture.md` Sec 2.2 “Current implementation note”; `crates/pavis-relay/Cargo.toml` lacks codec/ingest dependencies.
+- **Observed:** `ARCHITECTURE.md` includes a current-implementation note that the relay accepts `.pvs` artifacts and the ingest/codec pipeline remains a control-plane concern.
+- **Evidence:** `ARCHITECTURE.md` Sec 2.2 “Current implementation note”; `crates/pavis-relay/Cargo.toml` lacks codec/ingest dependencies.
 - **Assessment (Reason):** The architecture explicitly allows a PVS-only relay in the current phase.
 - **Recommendation (Suggestion):** None.
 - **Doc Drift?:** No — architecture explicitly permits the current implementation.
@@ -211,7 +211,7 @@ No architectural violations found.
 ---
 
 ### Method
-- Cross-check of `Architecture.md` boundaries against code structure and responsibilities.
+- Cross-check of `ARCHITECTURE.md` boundaries against code structure and responsibilities.
 
 
 ### Model
@@ -230,7 +230,7 @@ No architectural violations found.
 ### Detailed Findings
 
 #### F-1: Relay lacks ingest/codec plugin dependencies
-- **Expectation:** `Architecture.md` (Sec 3.x) requires `pavis-relay` to support compile-time inclusion of ingest/codec pipelines via Cargo features.
+- **Expectation:** `ARCHITECTURE.md` (Sec 3.x) requires `pavis-relay` to support compile-time inclusion of ingest/codec pipelines via Cargo features.
 - **Observed:** `crates/pavis-relay/Cargo.toml` has no dependencies on `pavis-codec-*` or `pavis-ingest-*`.
 - **Evidence:** `crates/pavis-relay/Cargo.toml` dependencies list.
 - **Assessment (Reason):** Relay cannot function as the control plane orchestrator as defined in the architecture without these plugins.
@@ -321,7 +321,7 @@ No architectural violations found.
 ---
 
 ### Method
-- Cross-check of `Architecture.md` boundaries against code structure and responsibilities.
+- Cross-check of `ARCHITECTURE.md` boundaries against code structure and responsibilities.
 
 
 ### Model

@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use pavis_core::{HttpVersion, LoadBalancer};
+use pavis_core::{DiscoveryType, HttpVersion, LoadBalancer};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Upstream {
     pub name: String,
+    #[serde(default)]
+    pub discovery_type: DiscoveryType,
     #[serde(default)]
     pub load_balancer: LoadBalancer,
     /// HTTP version for upstream connections (h1, h2, h2h1). Default: h1
@@ -82,7 +84,8 @@ pub struct HealthCheck {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Endpoint {
-    pub ip: String,
+    #[serde(alias = "ip")]
+    pub address: String,
     pub port: u16,
     pub weight: Option<u32>,
 }

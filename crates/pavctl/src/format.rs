@@ -15,12 +15,13 @@ pub fn format_header(header: &pavis_pvs::PvsHeader) -> String {
 
 pub fn format_config(config: &binary::RuntimeConfig) -> String {
     let mut out = String::new();
-    writeln!(
-        &mut out,
-        "--- Config Tree ---\nListen Address: {}",
-        config.server.listen_addr
-    )
-    .ok();
+    writeln!(&mut out, "--- Config Tree ---").ok();
+    writeln!(&mut out, "Listeners ({}):", config.listeners.len()).ok();
+    for listener in &config.listeners {
+        writeln!(&mut out, "- Name: {}", listener.name).ok();
+        writeln!(&mut out, "  Address: {}", listener.listen_addr).ok();
+    }
+
     writeln!(&mut out, "Upstreams ({}):", config.upstreams.len()).ok();
     for upstream in &config.upstreams {
         let lb_str = match upstream.load_balancer {
@@ -42,12 +43,11 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
         )
         .ok();
         for endpoint in &upstream.endpoints {
-            writeln!(
-                &mut out,
-                "  - {}:{} weight={}",
-                endpoint.ip, endpoint.port, endpoint.weight
-            )
-            .ok();
+            let addr_str = match &endpoint.address {
+                binary::EndpointAddress::Ip(addr) => addr.to_string(),
+                binary::EndpointAddress::Dns(host, port) => format!("{}:{}", host, port),
+            };
+            writeln!(&mut out, "  - {} weight={}", addr_str, endpoint.weight).ok();
         }
     }
 
@@ -95,6 +95,7 @@ pub fn format_stats(config: &binary::RuntimeConfig, total_bytes: u64) -> String 
     writeln!(&mut out).ok();
 
     writeln!(&mut out, "--- Structure Stats ---").ok();
+    writeln!(&mut out, "Listeners: {}", config.listeners.len()).ok();
     writeln!(&mut out, "Upstreams: {}", config.upstreams.len()).ok();
     writeln!(&mut out, "Endpoints: {endpoints}").ok();
     writeln!(&mut out, "Virtual Hosts: {}", config.routes.len()).ok();
@@ -108,9 +109,9 @@ pub fn format_stats(config: &binary::RuntimeConfig, total_bytes: u64) -> String 
 mod tests {
     use super::{format_config, format_header, format_stats};
     use pavis_core::{
-        AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType,
-        Route, RuntimeConfig, ServerConfig, TelemetryConfig, Upstream, VirtualHost,
-        WeightedDestination,
+        AccessLogConfig, ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress,
+        HttpVersion, Listener, LoadBalancer, MatchType, Route, RuntimeConfig, TelemetryConfig,
+        Upstream, VirtualHost, WeightedDestination,
     };
     use pavis_pvs::{PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -135,11 +136,12 @@ mod tests {
     #[test]
     fn format_config_emits_routes_and_upstreams() {
         let config = RuntimeConfig {
-            server: ServerConfig {
+            listeners: vec![Listener {
+                name: "default".to_string(),
                 listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: TelemetryConfig {
                 level: None,
                 pingora: None,
@@ -151,6 +153,7 @@ mod tests {
             upstreams: vec![
                 Upstream {
                     name: "backend".to_string(),
+                    discovery_type: DiscoveryType::Static,
                     load_balancer: LoadBalancer::RoundRobin,
                     http_version: HttpVersion::H2,
                     connection_pool: ConnectionPoolConfig {
@@ -159,13 +162,16 @@ mod tests {
                     },
                     tls: None,
                     endpoints: vec![Endpoint {
-                        ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                        port: 8081,
+                        address: EndpointAddress::Ip(SocketAddr::new(
+                            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                            8081,
+                        )),
                         weight: 1,
                     }],
                 },
                 Upstream {
                     name: "backend-h2h1".to_string(),
+                    discovery_type: DiscoveryType::Static,
                     load_balancer: LoadBalancer::Random,
                     http_version: HttpVersion::H2H1,
                     connection_pool: ConnectionPoolConfig {
@@ -174,8 +180,10 @@ mod tests {
                     },
                     tls: None,
                     endpoints: vec![Endpoint {
-                        ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
-                        port: 8082,
+                        address: EndpointAddress::Ip(SocketAddr::new(
+                            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                            8082,
+                        )),
                         weight: 1,
                     }],
                 },
@@ -186,6 +194,7 @@ mod tests {
                     Route {
                         match_type: MatchType::Exact,
                         path: "/health".to_string(),
+                        rewrite: None,
                         timeout_ms: None,
                         retry_policy: None,
                         request_headers: None,
@@ -198,6 +207,7 @@ mod tests {
                     Route {
                         match_type: MatchType::Regex,
                         path: "^/items/[0-9]+$".to_string(),
+                        rewrite: None,
                         timeout_ms: None,
                         retry_policy: None,
                         request_headers: None,
@@ -212,7 +222,9 @@ mod tests {
         };
 
         let output = format_config(&config);
-        assert!(output.contains("Listen Address: 127.0.0.1:8080"));
+        assert!(output.contains("Listeners (1):"));
+        assert!(output.contains("- Name: default"));
+        assert!(output.contains("Address: 127.0.0.1:8080"));
         assert!(output.contains("- Upstream: backend, LB: RoundRobin, HTTP: H2"));
         assert!(output.contains("- Upstream: backend-h2h1, LB: Random, HTTP: H2H1"));
         assert!(output.contains("Host: example.com"));
@@ -224,11 +236,12 @@ mod tests {
     #[test]
     fn format_stats_emits_sizes_and_counts() {
         let config = RuntimeConfig {
-            server: ServerConfig {
+            listeners: vec![Listener {
+                name: "default".to_string(),
                 listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: TelemetryConfig {
                 level: None,
                 pingora: None,
@@ -239,6 +252,7 @@ mod tests {
             },
             upstreams: vec![Upstream {
                 name: "backend".to_string(),
+                discovery_type: DiscoveryType::Static,
                 load_balancer: LoadBalancer::RoundRobin,
                 http_version: HttpVersion::H2,
                 connection_pool: ConnectionPoolConfig {
@@ -247,8 +261,10 @@ mod tests {
                 },
                 tls: None,
                 endpoints: vec![Endpoint {
-                    ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                    port: 8081,
+                    address: EndpointAddress::Ip(SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                        8081,
+                    )),
                     weight: 1,
                 }],
             }],
@@ -257,6 +273,7 @@ mod tests {
                 paths: vec![Route {
                     match_type: MatchType::Exact,
                     path: "/health".to_string(),
+                    rewrite: None,
                     timeout_ms: None,
                     retry_policy: None,
                     request_headers: None,
@@ -274,6 +291,7 @@ mod tests {
         assert!(output.contains("Total Size: 1024 bytes"));
         assert!(output.contains("Header Size: 64 bytes"));
         assert!(output.contains("--- Structure Stats ---"));
+        assert!(output.contains("Listeners: 1"));
         assert!(output.contains("Upstreams: 1"));
         assert!(output.contains("Endpoints: 1"));
         assert!(output.contains("Virtual Hosts: 1"));

@@ -10,7 +10,7 @@
 - **Advanced Features**: 0/14
 - **Kubernetes Integration**: 0/2
 
-> **Reference:** [Architecture.md](./Architecture.md) for technical details on components and protocols.
+> **Reference:** [ARCHITECTURE.md](./ARCHITECTURE.md) for technical details on components and protocols.
 
 ---
 

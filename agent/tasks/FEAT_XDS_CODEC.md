@@ -17,14 +17,14 @@
 **Constraints**:
 - **Purity**: No I/O, no network, no filesystem access.
 - **Strictness**: Rejects inline certificates (must be file-based).
-- **Single Source**: Maps exactly one Listener to `ServerConfig`.
+- **Structure**: Maps Envoy Listeners to `pavis-core::Listener` (supports LDS).
 - **Stateless**: Does not maintain state between `compile` calls.
 
 ---
 
 ## 2. Guidelines
 
-- **Standards**: Adhere to `Architecture.md` (Split Data Plane).
+- **Standards**: Adhere to `ARCHITECTURE.md` (Split Data Plane).
 - **Architecture**:
   - Implement the `Codec` trait from `pavis-codec-api`.
   - Use `pavis-core` as the source of truth for all types and validation logic.
@@ -47,7 +47,7 @@ The codec follows the "Intermediate Type" pattern.
 
 ### Data Models
 The primary mapping target is `pavis_core::RuntimeConfig`:
-- **LDS/HCM** -> `ServerConfig` + `TelemetryConfig`.
+- **LDS/HCM** -> `Vec<Listener>` + `TelemetryConfig`.
 - **RDS** -> `Vec<VirtualHost>`.
 - **CDS + EDS** -> `Vec<Upstream>` (Joined by cluster name).
 
@@ -95,3 +95,11 @@ Use `pavis_codec_api::CodecError`:
 | **Regression** | Health Status Filtering | `UNHEALTHY` endpoints are excluded from the `Upstream` list. |
 | **Regression** | Regex Path Match | `MatchType::Regex` correctly assigned with raw pattern. |
 | **Regression** | Binary Mode E2E | Run with `TEST_MODE=binary make e2e-relay`. |
+
+## 7. Progress Log
+
+- **2026-01-04**:
+  - Refactored `pavis-core` to replace `ServerConfig` with `Vec<Listener>` to support multiple listeners (LDS alignment).
+  - Updated `pavis` runtime to bootstrap multiple listeners from configuration.
+  - Updated `pavis-relay` and `pavctl` to support the new `RuntimeConfig` schema.
+  - `pavis-e2e` helpers updated for new config structure.

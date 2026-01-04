@@ -4,12 +4,13 @@ use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::Telemetry;
 use crate::upstream::Manager;
 use pavis_core::{
-    AccessLogConfig, ConnectionPoolConfig, Endpoint, HeaderOperations, HttpVersion, LoadBalancer,
-    MatchType, Route, TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost,
-    WeightedDestination,
+    AccessLogConfig, ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress, HeaderAction,
+    HeaderActionType, HeaderOperations, HttpVersion, LoadBalancer, MatchType, Route,
+    TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost, WeightedDestination,
 };
 use pingora::http::ResponseHeader;
-use pingora::proxy::{ProxyHttp, Session};
+use pingora::proxy::ProxyHttp;
+use pingora::proxy::Session;
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
@@ -24,13 +25,27 @@ fn apply_route_headers_populates_router_context() {
         timeout_ms: None,
         retry_policy: None,
         request_headers: Some(HeaderOperations {
-            add: vec![("x-req".to_string(), "1".to_string())],
-            remove: vec!["x-remove".to_string()],
+            actions: vec![
+                HeaderAction {
+                    key: "x-req".to_string(),
+                    value: Some("1".to_string()),
+                    action: HeaderActionType::Set,
+                },
+                HeaderAction {
+                    key: "x-remove".to_string(),
+                    value: None,
+                    action: HeaderActionType::Remove,
+                },
+            ],
         }),
         response_headers: Some(HeaderOperations {
-            add: vec![("x-resp".to_string(), "ok".to_string())],
-            remove: vec![],
+            actions: vec![HeaderAction {
+                key: "x-resp".to_string(),
+                value: Some("ok".to_string()),
+                action: HeaderActionType::Set,
+            }],
         }),
+        rewrite: None,
         destinations: vec![WeightedDestination {
             upstream: "backend".to_string(),
             weight: 1,
@@ -40,6 +55,7 @@ fn apply_route_headers_populates_router_context() {
         upstream_name: None,
         request_headers: None,
         response_headers: None,
+        sni_override: None,
         start_time: std::time::Instant::now(),
     };
 
@@ -79,6 +95,7 @@ fn new_ctx_defaults_are_empty() {
     assert!(ctx.upstream_name.is_none());
     assert!(ctx.request_headers.is_none());
     assert!(ctx.response_headers.is_none());
+    assert!(ctx.sni_override.is_none());
     assert!(ctx.start_time >= before);
 }
 
@@ -93,6 +110,7 @@ async fn session_for_request(request: &[u8]) -> (Session, tokio::io::DuplexStrea
 fn upstream(name: &str, port: u16) -> Upstream {
     Upstream {
         name: name.to_string(),
+        discovery_type: DiscoveryType::Static,
         load_balancer: LoadBalancer::Random,
         http_version: HttpVersion::H1,
         connection_pool: ConnectionPoolConfig {
@@ -101,8 +119,10 @@ fn upstream(name: &str, port: u16) -> Upstream {
         },
         tls: None,
         endpoints: vec![Endpoint {
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port,
+            address: EndpointAddress::Ip(std::net::SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port,
+            )),
             weight: 1,
         }],
     }
@@ -119,6 +139,7 @@ async fn request_filter_selects_weighted_destination() {
             retry_policy: None,
             request_headers: None,
             response_headers: None,
+            rewrite: None,
             destinations: vec![
                 WeightedDestination {
                     upstream: "blue".to_string(),
@@ -187,6 +208,57 @@ async fn request_filter_returns_404_when_no_route_matches() {
 }
 
 #[tokio::test]
+async fn request_filter_applies_rewrite_policy() {
+    let routes = vec![VirtualHost {
+        host: "*".to_string(),
+        paths: vec![Route {
+            match_type: MatchType::Prefix,
+            path: "/api".to_string(),
+            timeout_ms: None,
+            retry_policy: None,
+            request_headers: None,
+            response_headers: None,
+            rewrite: Some(pavis_core::RewritePolicy {
+                path_prefix_rewrite: Some("/v2".to_string()),
+                host_rewrite_literal: Some("rewrite.example.com".to_string()),
+            }),
+            destinations: vec![WeightedDestination {
+                upstream: "backend".to_string(),
+                weight: 1,
+            }],
+        }],
+    }];
+    let manager = Manager::new(&[upstream("backend", 8081)]);
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).expect("routes")),
+        upstream_manager: manager,
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, _client) =
+        session_for_request(b"GET /api/widgets?id=1 HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    let should_respond = proxy
+        .request_filter(&mut session, &mut ctx)
+        .await
+        .expect("request filter");
+    assert!(!should_respond);
+
+    let header = session.as_downstream().req_header();
+    assert_eq!(header.uri.path(), "/v2/widgets");
+    assert_eq!(header.uri.query(), Some("id=1"));
+    assert_eq!(
+        header.headers.get("Host").unwrap().to_str().unwrap(),
+        "rewrite.example.com"
+    );
+    assert_eq!(ctx.sni_override.as_deref(), Some("rewrite.example.com"));
+}
+
+#[tokio::test]
 async fn request_filter_skips_selection_when_total_weight_zero() {
     let routes = vec![VirtualHost {
         host: "*".to_string(),
@@ -197,6 +269,7 @@ async fn request_filter_skips_selection_when_total_weight_zero() {
             retry_policy: None,
             request_headers: None,
             response_headers: None,
+            rewrite: None,
             destinations: vec![
                 WeightedDestination {
                     upstream: "blue".to_string(),
@@ -235,6 +308,7 @@ async fn request_filter_skips_selection_when_total_weight_zero() {
 async fn upstream_peer_defaults_sni() {
     let manager = Manager::new(&[Upstream {
         name: "secure".to_string(),
+        discovery_type: DiscoveryType::Static,
         load_balancer: LoadBalancer::RoundRobin,
         http_version: HttpVersion::H1,
         connection_pool: ConnectionPoolConfig {
@@ -248,8 +322,10 @@ async fn upstream_peer_defaults_sni() {
             sni: None,
         }),
         endpoints: vec![Endpoint {
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port: 8443,
+            address: EndpointAddress::Ip(std::net::SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                8443,
+            )),
             weight: 1,
         }],
     }]);
@@ -290,8 +366,18 @@ async fn upstream_response_filter_applies_headers() {
 
     let mut ctx = proxy.new_ctx();
     ctx.response_headers = Some(HeaderOperations {
-        add: vec![("x-added".to_string(), "ok".to_string())],
-        remove: vec!["x-drop".to_string()],
+        actions: vec![
+            HeaderAction {
+                key: "x-added".to_string(),
+                value: Some("ok".to_string()),
+                action: HeaderActionType::Set,
+            },
+            HeaderAction {
+                key: "x-drop".to_string(),
+                value: None,
+                action: HeaderActionType::Remove,
+            },
+        ],
     });
 
     let (mut session, _client) =

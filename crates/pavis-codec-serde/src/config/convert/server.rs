@@ -1,17 +1,21 @@
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 
-use pavis_core::ServerConfig as RuntimeServerConfig;
+use pavis_core::Listener as RuntimeListener;
 
-use crate::config::types::{ServerConfig, TlsConfig};
+use crate::config::types::{Listener, TlsConfig};
 
-pub(super) fn to_runtime(server: ServerConfig) -> Result<RuntimeServerConfig> {
-    let listen_addr: SocketAddr = server.listen_addr.parse().context("Invalid listen_addr")?;
+pub(super) fn to_runtime(listener: Listener) -> Result<RuntimeListener> {
+    let listen_addr: SocketAddr = listener
+        .listen_addr
+        .parse()
+        .context("Invalid listen_addr")?;
 
-    Ok(RuntimeServerConfig {
+    Ok(RuntimeListener {
+        name: listener.name,
         listen_addr,
-        worker_threads: server.worker_threads.map(|w| w as u64),
-        tls: server.tls.map(|t| pavis_core::TlsConfig {
+        worker_threads: listener.worker_threads.map(|w| w as u64),
+        tls: listener.tls.map(|t| pavis_core::TlsConfig {
             enabled: t.enabled,
             cert_path: t.cert_path,
             key_path: t.key_path,
@@ -19,11 +23,12 @@ pub(super) fn to_runtime(server: ServerConfig) -> Result<RuntimeServerConfig> {
     })
 }
 
-pub(super) fn from_runtime(server: RuntimeServerConfig) -> ServerConfig {
-    ServerConfig {
-        listen_addr: server.listen_addr.to_string(),
-        worker_threads: server.worker_threads.map(|w| w as usize),
-        tls: server.tls.map(|t| TlsConfig {
+pub(super) fn from_runtime(listener: RuntimeListener) -> Listener {
+    Listener {
+        name: listener.name,
+        listen_addr: listener.listen_addr.to_string(),
+        worker_threads: listener.worker_threads.map(|w| w as usize),
+        tls: listener.tls.map(|t| TlsConfig {
             enabled: t.enabled,
             cert_path: t.cert_path,
             key_path: t.key_path,
@@ -34,11 +39,12 @@ pub(super) fn from_runtime(server: RuntimeServerConfig) -> ServerConfig {
 #[cfg(test)]
 mod tests {
     use super::{from_runtime, to_runtime};
-    use crate::config::types::{ServerConfig, TlsConfig};
+    use crate::config::types::{Listener, TlsConfig};
 
     #[test]
     fn to_runtime_maps_tls_fields() {
-        let server = ServerConfig {
+        let listener = Listener {
+            name: "default".to_string(),
             listen_addr: "127.0.0.1:8080".to_string(),
             worker_threads: Some(2),
             tls: Some(TlsConfig {
@@ -47,7 +53,7 @@ mod tests {
                 key_path: Some("/tmp/key.pem".to_string()),
             }),
         };
-        let runtime = to_runtime(server).expect("runtime");
+        let runtime = to_runtime(listener).expect("runtime");
         let tls = runtime.tls.expect("tls");
         assert!(tls.enabled);
         assert_eq!(tls.cert_path.as_deref(), Some("/tmp/cert.pem"));
@@ -56,7 +62,8 @@ mod tests {
 
     #[test]
     fn from_runtime_maps_tls_fields() {
-        let runtime = pavis_core::ServerConfig {
+        let runtime = pavis_core::Listener {
+            name: "default".to_string(),
             listen_addr: "127.0.0.1:8080".parse().expect("addr"),
             worker_threads: Some(1),
             tls: Some(pavis_core::TlsConfig {
@@ -65,8 +72,8 @@ mod tests {
                 key_path: Some("/tmp/key.pem".to_string()),
             }),
         };
-        let server = from_runtime(runtime);
-        let tls = server.tls.expect("tls");
+        let listener = from_runtime(runtime);
+        let tls = listener.tls.expect("tls");
         assert!(!tls.enabled);
         assert_eq!(tls.cert_path.as_deref(), Some("/tmp/cert.pem"));
         assert_eq!(tls.key_path.as_deref(), Some("/tmp/key.pem"));

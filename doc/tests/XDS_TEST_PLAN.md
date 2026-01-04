@@ -40,17 +40,16 @@ The testing strategy strictly follows the layered architecture of Pavis. We vali
 | **X-06** | `map_host_rewrite` | Route with `host_rewrite_literal` | `Route.rewrite.host_rewrite_literal` set | Correct field mapping. |
 | **X-07** | `map_header_append` | `request_headers_to_add` with `append: true` | `HeaderActionType::Append` | Correct enum mapping. |
 | **X-08** | `deterministic_output` | Two identical xDS snapshots | Identical `pavis-core` bytes | Transformation must be deterministic. |
+| **X-09** | `default_timeouts` | Route without timeouts | `timeout_ms` populated with default | Codec must apply defaults. |
+| **X-10** | `default_retry_policy` | Route with partial retry config | Full `RetryPolicy` populated | Codec ensures completeness. |
 
 ### C. pavis runtime (Behavioral Tests)
 
 | ID | Test Case Name | Input Description | Expected Outcome | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **R-01** | `select_single_listener` | Config with 1 listener, no `--listener` flag | Boot succeeds, listener selected | Backward compatibility / simple case. |
-| **R-02** | `fail_multiple_listeners_no_flag` | Config with 2 listeners, no `--listener` flag | Boot fails (Error) | Prevents ambiguity. |
-| **R-03** | `select_named_listener` | Config with 3 listeners, `--listener "B"` | Boot succeeds, listener "B" active | Correct selection logic. |
-| **R-04** | `fail_missing_named_listener` | Config with 3 listeners, `--listener "D"` | Boot fails (Error) | Selection validation. |
-| **R-05** | `header_append_comma` | `HeaderActionType::Append` on "User-Agent" | Values joined by `, ` | RFC 7230 semantics. |
-| **R-06** | `header_append_cookie` | `HeaderActionType::Append` on "Set-Cookie" | Multiple header lines emitted | Special case for cookies. |
+| **R-01** | `boot_multiple_listeners` | Config with 2 listeners | Both ports bound and accepting traffic | Multi-listener support. |
+| **R-05** | `header_append_comma` | Existing `User-Agent` lines + `Append` | Collapsed into single `, `-joined line | Joinable headers are merged. |
+| **R-06** | `header_append_cookie` | Existing `Set-Cookie` + `Append` (mixed case) | Multiple header lines emitted | Non-joinable, case-insensitive. |
 | **R-07** | `rewrite_prefix_root` | Route `/api` -> `/v1`, Request `/api/foo` | Path becomes `/v1/foo` | Standard prefix replacement. |
 | **R-08** | `rewrite_prefix_exact` | Route `/api` -> `/v1`, Request `/api` | Path becomes `/v1` | Exact match replacement. |
 | **R-09** | `rewrite_host_header` | `host_rewrite_literal` = "backend" | `Host` header sent upstream is "backend" | Host modification check. |
@@ -60,7 +59,7 @@ The testing strategy strictly follows the layered architecture of Pavis. We vali
 | ID | Test Case Name | Input Description | Expected Outcome | Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | **D-01** | `dns_resolve_initial` | `StrictDns` upstream, hostname resolves to 2 IPs | LB has 2 healthy endpoints | Basic resolution success. |
-| **D-02** | `dns_resolve_empty` | Hostname resolves to 0 IPs | LB has 0 endpoints, logs warning | Empty set handling. |
+| **D-02** | `dns_resolve_empty` | Hostname resolves to 0 IPs | LB retains LKG endpoints, logs warning | Empty set must not clobber. |
 | **D-03** | `dns_failure_lkg` | Initial success (2 IPs) -> DNS failure | LB retains previous 2 IPs | LKG safety net. |
 | **D-04** | `dns_recovery` | Initial success -> Failure (LKG) -> Success (new IPs) | LB updates to new IPs | Recovery from transient failure. |
 | **D-05** | `logical_dns_cardinality` | `LogicalDns` upstream, hostname resolves to 5 IPs | LB uses exactly 1 IP (best effort) | Distinction from StrictDns. |
@@ -85,7 +84,7 @@ The following invariants MUST hold true across all tests. Any violation is a cri
 
 1.  **Rewrite Ordering**: Rewrite actions MUST ONLY apply to the request *after* a route match has effectively "locked in". The routing decision is based on the *original* request path/host.
 2.  **LKG Safety**: A running proxy MUST NEVER discard a valid upstream endpoint set for an empty/failed set due to transient DNS errors.
-3.  **Listener Uniqueness**: The runtime MUST NEVER active more than one listener configuration simultaneously (until multi-port support is explicitly added).
+3.  **Listener Multiplicity**: The runtime MUST attempt to start every configured listener. Any bind failure must surface as an error.
 4.  **No Silent Failure**: If a configured listener cannot be found, or a DNS name is malformed, the runtime MUST log an error and/or fail startup.
 
 ---
@@ -93,7 +92,7 @@ The following invariants MUST hold true across all tests. Any violation is a cri
 ## 4. Failure-Oriented Tests (Negative Cases)
 
 *   **F-01: Empty Listener List**. Provide a config with `listeners: []`. Expect immediate startup failure.
-*   **F-02: Ambiguous Listeners**. Provide a config with 2 listeners and no CLI flag. Expect immediate startup failure.
+*   **F-02: Duplicate Listener Ports**. Provide a config with 2 listeners binding to the same port. Expect bind failure.
 *   **F-03: Malformed DNS**. Provide an upstream with `address: Dns("invalid...host", 80)`. Expect runtime error logs + empty endpoint set (safe failure).
 *   **F-04: Rewrite Root to Empty**. Prefix rewrite `/` to `` (empty string). Expect valid behavior (likely `/`) or defined error, not panic.
 *   **F-05: Header Remove Non-Existent**. Action `Remove` on a missing header. Expect no-op, no error.
@@ -105,10 +104,10 @@ The following invariants MUST hold true across all tests. Any violation is a cri
 Tests should assert that the following observability signals are emitted:
 
 *   **Logs**:
-    *   `INFO`: "Selected listener: {name}" at startup.
-    *   `INFO`: "DNS resolution updated for {upstream}: {count} IPs".
-    *   `WARN`: "DNS resolution failed for {upstream}, retaining LKG set".
-    *   `ERROR`: "No matching listener found for name: {name}".
+    *   `INFO`: "Listener registered" with `{name}` at startup.
+    *   `INFO`: "DNS resolution updated upstream" with `{upstream}` and `{count}`.
+    *   `WARN`: "DNS resolution failed" with `{upstream}` and LKG retained.
+    *   `ERROR`: Listener bind failures surface to startup error.
 *   **Metrics** (if available):
     *   `pavis_upstream_dns_resolve_total`: Counter.
     *   `pavis_upstream_dns_resolve_failures`: Counter.

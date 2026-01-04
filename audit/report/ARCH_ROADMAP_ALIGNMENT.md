@@ -13,7 +13,7 @@ No open findings.
 ## Review Entry — 2026-01-01T03:11:42Z
 
 ### Scope
-- Cross-check of `Architecture.md` and `ROADMAP.md` for alignment.
+- Cross-check of `ARCHITECTURE.md` and `ROADMAP.md` for alignment.
 
 ---
 
@@ -61,7 +61,7 @@ No conflicts found between Architecture and Roadmap.
 ## Review Entry — 2025-12-31T00:00:00Z
 
 ### Scope
-- `Architecture.md` constraints and `ROADMAP.md` expansion.
+- `ARCHITECTURE.md` constraints and `ROADMAP.md` expansion.
 
 ---
 
@@ -87,16 +87,16 @@ No conflicts found between Architecture and Roadmap.
 
 #### F-5: Explicit constraints added to Architecture and Roadmap
 - **Expectation:** Both documents should clearly state current limitations (Single Listener, IP-only, etc.) to manage user expectations.
-- **Observed:** `Architecture.md` Sec 5.3 now lists constraints; `ROADMAP.md` Phase 1 implementation checklist updated to match.
-- **Evidence:** `Architecture.md` Sec 5.3; `ROADMAP.md` Phase 1.
+- **Observed:** `ARCHITECTURE.md` Sec 5.3 now lists constraints; `ROADMAP.md` Phase 1 implementation checklist updated to match.
+- **Evidence:** `ARCHITECTURE.md` Sec 5.3; `ROADMAP.md` Phase 1.
 - **Assessment (Reason):** Documents are fully aligned on the "what is built today" status.
 - **Recommendation (Suggestion):** None.
 - **Doc Drift?:** No.
 
 #### F-6: Extensibility plans aligned with roadmap milestones
 - **Expectation:** Architecture should explain *how* future features (DNS, Multi-listener) will be built; Roadmap should state *when*.
-- **Observed:** `Architecture.md` Sec 5.4 details the technical approach (Plugins, Async Resolver); `ROADMAP.md` "Planned Enhancements" section lists the milestones.
-- **Evidence:** `Architecture.md` Sec 5.4; `ROADMAP.md` "Planned Enhancements".
+- **Observed:** `ARCHITECTURE.md` Sec 5.4 details the technical approach (Plugins, Async Resolver); `ROADMAP.md` "Planned Enhancements" section lists the milestones.
+- **Evidence:** `ARCHITECTURE.md` Sec 5.4; `ROADMAP.md` "Planned Enhancements".
 - **Assessment (Reason):** Technical vision and project planning are consistent.
 - **Recommendation (Suggestion):** None.
 - **Doc Drift?:** No.
@@ -106,7 +106,7 @@ No conflicts found between Architecture and Roadmap.
 ## Review Entry — 2025-12-30T11:35:29Z
 
 ### Scope
-- `Architecture.md` and `ROADMAP.md` alignment review.
+- `ARCHITECTURE.md` and `ROADMAP.md` alignment review.
 
 ---
 
@@ -131,9 +131,9 @@ No conflicts found between Architecture and Roadmap.
 ### Detailed Findings
 
 #### F-3: Migration work moved to deferred ingestion phase
-- **Expectation:** `Architecture.md` notes ingest/codec orchestration is deferred while the relay remains PVS-only.
+- **Expectation:** `ARCHITECTURE.md` notes ingest/codec orchestration is deferred while the relay remains PVS-only.
 - **Observed:** Roadmap now places migration responsibilities under Phase 4 (Modular Ingestion), removing Phase 3 dependency on paused pipeline infrastructure.
-- **Evidence:** `Architecture.md` Sec 2.2 current implementation note; `ROADMAP.md` Phase 3 vs Phase 4 updates.
+- **Evidence:** `ARCHITECTURE.md` Sec 2.2 current implementation note; `ROADMAP.md` Phase 3 vs Phase 4 updates.
 - **Assessment (Reason):** Phase sequencing now matches architecture dependencies.
 - **Recommendation (Suggestion):** None.
 - **Doc Drift?:** No — roadmap now matches architecture.
@@ -141,7 +141,7 @@ No conflicts found between Architecture and Roadmap.
 #### F-4: Roadmap clarifies Governor/Operator alignment
 - **Expectation:** Architecture defines a future Governor role; roadmap should map this to its concrete delivery vehicle.
 - **Observed:** Roadmap now explicitly states that the Phase 10 Operator can fulfill the Governor responsibilities.
-- **Evidence:** `Architecture.md` Governor description; `ROADMAP.md` Phase 10 notes.
+- **Evidence:** `ARCHITECTURE.md` Governor description; `ROADMAP.md` Phase 10 notes.
 - **Assessment (Reason):** Terminology alignment removes ambiguity.
 - **Recommendation (Suggestion):** None.
 - **Doc Drift?:** No — terminology clarified.
@@ -151,7 +151,7 @@ No conflicts found between Architecture and Roadmap.
 ## Review Entry — 2025-12-30T04:20:10Z
 
 ### Scope
-- `Architecture.md` and `ROADMAP.md` alignment review.
+- `ARCHITECTURE.md` and `ROADMAP.md` alignment review.
 
 ---
 
@@ -176,19 +176,19 @@ No conflicts found between Architecture and Roadmap.
 ### Detailed Findings
 
 #### F-3: Relay migration capability depends on paused Phase 4
-- **Expectation:** `Architecture.md` states Relay validates older artifacts and coordinates re-emission via ingest/codec path.
+- **Expectation:** `ARCHITECTURE.md` states Relay validates older artifacts and coordinates re-emission via ingest/codec path.
 - **Observed:** `ROADMAP.md` Phase 3 includes "Relay accepts N-1 PVS...", but Phase 4 "Modular Ingestion" (which provides the ingest/codec plugins) is paused.
-- **Evidence:** `Architecture.md` Sec 3.x vs `ROADMAP.md` Phase 3 & 4 status.
+- **Evidence:** `ARCHITECTURE.md` Sec 3.x vs `ROADMAP.md` Phase 3 & 4 status.
 - **Assessment (Reason):** Implementing migration in Phase 3 is blocked or requires violating architecture because the necessary plugin infrastructure is in the paused Phase 4.
 - **Recommendation (Suggestion):** Move "Compatibility & Migration" from Phase 3 to Phase 4, or un-pause Phase 4 to support this feature.
 - **Doc Drift?:** Yes — roadmap schedule conflicts with architectural dependencies.
 
 #### F-4: Governor component concept diverges from K8s Operator plan
-- **Expectation:** `Architecture.md` describes a "Governor" component sitting above Relay.
+- **Expectation:** `ARCHITECTURE.md` describes a "Governor" component sitting above Relay.
 - **Observed:** `ROADMAP.md` plans for a "Pavis Operator" in Phase 10 but does not explicitly mention a standalone Governor service.
-- **Evidence:** `Architecture.md` "Future: Governor" section vs `ROADMAP.md` Phase 10.
+- **Evidence:** `ARCHITECTURE.md` "Future: Governor" section vs `ROADMAP.md` Phase 10.
 - **Assessment (Reason):** The abstract "Governor" role seems to be fulfilled by the concrete "Operator", but the terminology differs.
-- **Recommendation (Suggestion):** Clarify in `Architecture.md` that the Governor role may be fulfilled by the Kubernetes Operator.
+- **Recommendation (Suggestion):** Clarify in `ARCHITECTURE.md` that the Governor role may be fulfilled by the Kubernetes Operator.
 - **Doc Drift?:** No — acceptable conceptual divergence, but worth noting for clarity.
 
 ---
@@ -198,7 +198,7 @@ No conflicts found between Architecture and Roadmap.
 ## Review Entry — 2025-12-29T17:55:29Z
 
 ### Scope
-- `Architecture.md` and `ROADMAP.md` alignment review.
+- `ARCHITECTURE.md` and `ROADMAP.md` alignment review.
 
 ---
 
@@ -243,7 +243,7 @@ No conflicts found between Architecture and Roadmap.
 ## Review Entry — 2025-12-29T17:42:57Z
 
 ### Scope
-- `Architecture.md` and `ROADMAP.md` alignment review.
+- `ARCHITECTURE.md` and `ROADMAP.md` alignment review.
 
 ---
 
@@ -270,7 +270,7 @@ No conflicts found between Architecture and Roadmap.
 #### F-1: Roadmap checksum algorithm conflicts with architecture
 - **Expectation:** PVS checksum uses SHA-256 and advertises the algorithm.
 - **Observed:** Roadmap lists `X-Pavis-Checksum` as xxhash and omits algorithm metadata.
-- **Evidence:** `Architecture.md` defines algorithm id 1 = SHA-256; `ROADMAP.md` Phase 3 response headers list xxhash.
+- **Evidence:** `ARCHITECTURE.md` defines algorithm id 1 = SHA-256; `ROADMAP.md` Phase 3 response headers list xxhash.
 - **Assessment (Reason):** Roadmap conflicts with protocol checksum contract.
 - **Recommendation (Suggestion):** Update `ROADMAP.md` to specify SHA-256 and add `X-Pavis-Checksum-Alg`.
 - **Doc Drift?:** Yes — roadmap item conflicts with the architecture protocol.
@@ -278,7 +278,7 @@ No conflicts found between Architecture and Roadmap.
 #### F-2: Roadmap mismatch handling conflicts with architecture
 - **Expectation:** Runtime rejects version mismatch as a hard error.
 - **Observed:** Roadmap lists "Version mismatch handling (reject vs warn)".
-- **Evidence:** `Architecture.md` runtime contract; `ROADMAP.md` Phase 2 item wording.
+- **Evidence:** `ARCHITECTURE.md` runtime contract; `ROADMAP.md` Phase 2 item wording.
 - **Assessment (Reason):** Roadmap implies permissive behavior that is incompatible with the architecture.
 - **Recommendation (Suggestion):** Update the roadmap item to "Version mismatch handling (reject)".
 - **Doc Drift?:** Yes — roadmap item conflicts with the architecture contract.

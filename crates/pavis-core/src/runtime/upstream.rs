@@ -1,18 +1,30 @@
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
+use std::net::SocketAddr;
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct Upstream {
     pub name: String,
+    pub discovery_type: DiscoveryType,
     pub load_balancer: LoadBalancer,
     pub http_version: HttpVersion,
     pub connection_pool: ConnectionPoolConfig,
     pub tls: Option<UpstreamTlsConfig>,
     pub endpoints: Vec<Endpoint>,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+#[archive(check_bytes)]
+pub enum DiscoveryType {
+    #[default]
+    Static,
+    LogicalDns,
+    StrictDns,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,7 +74,15 @@ pub struct UpstreamTlsConfig {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct Endpoint {
-    pub ip: IpAddr,
-    pub port: u16,
+    pub address: EndpointAddress,
     pub weight: u32,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[archive(check_bytes)]
+pub enum EndpointAddress {
+    Ip(SocketAddr),
+    Dns(String, u16),
 }

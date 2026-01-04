@@ -1,6 +1,6 @@
 use pavis_codec_api::Codec;
 use pavis_codec_serde::{SerdeCodec, SerdeFormat};
-use pavis_core::{RuntimeConfig, ServerConfig, TelemetryConfig};
+use pavis_core::{Listener, RuntimeConfig, TelemetryConfig};
 
 #[allow(dead_code)]
 pub fn to_yaml(config: &RuntimeConfig) -> String {
@@ -13,11 +13,12 @@ pub fn to_yaml(config: &RuntimeConfig) -> String {
 
 pub fn build_pvs_bytes(label: &str) -> Vec<u8> {
     let config = RuntimeConfig {
-        server: ServerConfig {
+        listeners: vec![Listener {
+            name: "default".to_string(),
             listen_addr: "127.0.0.1:8080".parse().expect("addr"),
             worker_threads: None,
             tls: None,
-        },
+        }],
         telemetry: TelemetryConfig {
             level: None,
             pingora: None,

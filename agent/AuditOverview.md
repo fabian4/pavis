@@ -65,11 +65,13 @@
   - `../audit/report/DEPENDENCY_BOUNDARY_REVIEW.md`
   - `../audit/report/PERFORMANCE_REVIEW.md`
 
-## Task Summary (1–11)
+## Audit Tasks (1-11)
 
-1. Architecture compliance vs `Architecture.md`.
-2. Architecture vs roadmap alignment (`Architecture.md` + `ROADMAP.md`).
-3. Roadmap vs implementation alignment (`ROADMAP.md` vs code).
+These tasks are executed sequentially or in parallel by agents. See [Tasks.md](./Tasks.md) for details.
+
+1. Architecture compliance vs `ARCHITECTURE.md`.
+2. Architecture vs roadmap alignment (`ARCHITECTURE.md` + `ROADMAP.md`).
+3. Roadmap vs implementation check.
 4. Rust structure and file size organization review.
 5. Test coverage and quality review (unit, integration, E2E).
 6. Public API and boundary stability review.

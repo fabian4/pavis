@@ -8,32 +8,28 @@ pub(super) fn validate_headers(
     headers: &HeaderOperations,
     context: &str,
 ) -> CoreValidationResult<()> {
-    for (name, value) in &headers.add {
-        if name.is_empty() {
+    for action in &headers.actions {
+        if action.key.is_empty() {
             return Err(CoreValidationError::EmptyHeaderName {
                 context: context.to_string(),
             });
         }
-        HeaderName::from_str(name).map_err(|_| CoreValidationError::InvalidHeaderName {
+        HeaderName::from_str(&action.key).map_err(|_| CoreValidationError::InvalidHeaderName {
             context: context.to_string(),
-            name: name.clone(),
+            name: action.key.clone(),
         })?;
-        HeaderValue::from_str(value).map_err(|_| CoreValidationError::InvalidHeaderValue {
-            context: context.to_string(),
-            name: name.clone(),
-        })?;
-    }
 
-    for name in &headers.remove {
-        if name.is_empty() {
-            return Err(CoreValidationError::EmptyHeaderName {
+        if let Some(value) = &action.value {
+            HeaderValue::from_str(value).map_err(|_| CoreValidationError::InvalidHeaderValue {
                 context: context.to_string(),
-            });
+                name: action.key.clone(),
+            })?;
         }
-        HeaderName::from_str(name).map_err(|_| CoreValidationError::InvalidHeaderName {
-            context: context.to_string(),
-            name: name.clone(),
-        })?;
+
+        // For Remove action, value is ignored, so we don't strictly need to check it if it's present,
+        // but checking it is safer/cleaner.
+        // If strict validation is required:
+        // if action.action == HeaderActionType::Remove && action.value.is_some() { ... }
     }
 
     Ok(())

@@ -21,7 +21,7 @@
 - **Architecture**:
   - Implement pipeline logic in `crates/pavis-relay/src/pipeline/`.
   - Use `tokio::spawn` to run the pipeline background loop.
-- **Feature Flags**: Use Cargo features (`plugin-file-yaml`, etc.) as defined in `Architecture.md` to enable specific pipelines.
+- **Feature Flags**: Use Cargo features (`plugin-file-yaml`, etc.) as defined in `ARCHITECTURE.md` to enable specific pipelines.
 - **Validation**: Every configuration produced by the codec MUST be validated via `pavis_core::validate_runtime` before being encoded to `.pvs`.
 
 ---

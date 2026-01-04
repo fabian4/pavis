@@ -3,8 +3,11 @@ mod server;
 mod telemetry;
 mod upstreams;
 
-pub use routes::{HeaderOperations, RetryPolicy, Route, VirtualHost, WeightedDestination};
-pub use server::{ServerConfig, TlsConfig};
+pub use routes::{
+    HeaderAction, HeaderOperations, RetryPolicy, RewritePolicy, Route, VirtualHost,
+    WeightedDestination,
+};
+pub use server::{Listener, TlsConfig};
 pub use telemetry::{TelemetryConfig, TracingConfig};
 pub use upstreams::{
     CircuitBreaker, ConnectionPoolConfig, Endpoint, HealthCheck, Upstream, UpstreamTlsConfig,
@@ -22,7 +25,7 @@ use crate::serde_helpers::parse_with_format;
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(default)]
 pub struct SerdeConfig {
-    pub server: ServerConfig,
+    pub listeners: Vec<Listener>,
     pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
@@ -75,8 +78,9 @@ mod tests {
     #[test]
     fn parse_applies_defaults_for_upstream_and_telemetry() {
         let yaml = r#"
-server:
-  listen_addr: "0.0.0.0:8080"
+listeners:
+  - name: "default"
+    listen_addr: "0.0.0.0:8080"
 telemetry: {}
 upstreams:
   - name: "backend"
@@ -101,7 +105,7 @@ routes:
     fn parse_applies_defaults_for_upstream_and_telemetry_json() {
         let json = r#"
 {
-  "server": { "listen_addr": "0.0.0.0:8080" },
+  "listeners": [{ "name": "default", "listen_addr": "0.0.0.0:8080" }],
   "telemetry": {},
   "upstreams": [
     {
@@ -131,8 +135,9 @@ routes:
     #[test]
     fn parse_rejects_invalid_duration() {
         let yaml = r#"
-server:
-  listen_addr: "127.0.0.1:8080"
+listeners:
+  - name: "default"
+    listen_addr: "127.0.0.1:8080"
 telemetry: {}
 upstreams:
   - name: "backend"
@@ -152,7 +157,7 @@ routes: []
     fn parse_bytes_accepts_json() {
         let json = br#"
 {
-  "server": { "listen_addr": "0.0.0.0:8080" },
+  "listeners": [{ "name": "default", "listen_addr": "0.0.0.0:8080" }],
   "telemetry": {},
   "upstreams": [
     {
@@ -165,6 +170,6 @@ routes: []
 }
 "#;
         let config = SerdeConfig::parse_bytes(SerdeFormat::Json, json).expect("parse bytes");
-        assert_eq!(config.server.listen_addr, "0.0.0.0:8080");
+        assert_eq!(config.listeners[0].listen_addr, "0.0.0.0:8080");
     }
 }

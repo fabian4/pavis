@@ -49,7 +49,10 @@ No open findings.
 
 **Documentation:**
 - ✅ Architecture concepts not duplicated between docs
-- ✅ README files reference Architecture.md rather than duplicating
+### 2. Documentation Duplication
+- ✅ README files reference ARCHITECTURE.md rather than duplicating content
+- ✅ API docs in code link to central concepts
+- ⚠️ `CASES_*.md` files overlap slightly with integration test comments (acceptable for clarity)
 
 **CI Workflows:**
 - ✅ Test/lint/build steps are not duplicated across workflow files

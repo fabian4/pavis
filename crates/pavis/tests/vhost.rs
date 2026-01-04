@@ -13,6 +13,7 @@ fn test_routing_vhost_precedence() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
         name: "api-upstream".to_string(),
+        discovery_type: pavis_core::DiscoveryType::Static,
         load_balancer: LoadBalancer::Random,
         http_version: HttpVersion::H1,
         connection_pool: ConnectionPoolConfig {
@@ -21,13 +22,16 @@ fn test_routing_vhost_precedence() {
         },
         tls: None,
         endpoints: vec![Endpoint {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            port: 8084,
+            address: pavis_core::EndpointAddress::Ip(std::net::SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                8084,
+            )),
             weight: 1,
         }],
     });
     config.upstreams.push(Upstream {
         name: "web-upstream".to_string(),
+        discovery_type: pavis_core::DiscoveryType::Static,
         load_balancer: LoadBalancer::Random,
         http_version: HttpVersion::H1,
         connection_pool: ConnectionPoolConfig {
@@ -36,13 +40,16 @@ fn test_routing_vhost_precedence() {
         },
         tls: None,
         endpoints: vec![Endpoint {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            port: 8085,
+            address: pavis_core::EndpointAddress::Ip(std::net::SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                8085,
+            )),
             weight: 1,
         }],
     });
     config.upstreams.push(Upstream {
         name: "wildcard-upstream".to_string(),
+        discovery_type: pavis_core::DiscoveryType::Static,
         load_balancer: LoadBalancer::Random,
         http_version: HttpVersion::H1,
         connection_pool: ConnectionPoolConfig {
@@ -51,8 +58,10 @@ fn test_routing_vhost_precedence() {
         },
         tls: None,
         endpoints: vec![Endpoint {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            port: 8086,
+            address: pavis_core::EndpointAddress::Ip(std::net::SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                8086,
+            )),
             weight: 1,
         }],
     });
@@ -66,6 +75,7 @@ fn test_routing_vhost_precedence() {
                 retry_policy: None,
                 request_headers: None,
                 response_headers: None,
+                rewrite: None,
                 destinations: vec![WeightedDestination {
                     upstream: "wildcard-upstream".to_string(),
                     weight: 1,
@@ -81,6 +91,7 @@ fn test_routing_vhost_precedence() {
                 retry_policy: None,
                 request_headers: None,
                 response_headers: None,
+                rewrite: None,
                 destinations: vec![WeightedDestination {
                     upstream: "api-upstream".to_string(),
                     weight: 1,
@@ -96,6 +107,7 @@ fn test_routing_vhost_precedence() {
                 retry_policy: None,
                 request_headers: None,
                 response_headers: None,
+                rewrite: None,
                 destinations: vec![WeightedDestination {
                     upstream: "web-upstream".to_string(),
                     weight: 1,

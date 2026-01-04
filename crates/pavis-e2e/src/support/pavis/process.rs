@@ -2,7 +2,7 @@ use super::config::{PavisConfigScenario, generate_config};
 use super::http::wait_for_pavis;
 use crate::support::pick_port;
 use anyhow::{Context, Result};
-use pavis_core::{AccessLogConfig, RuntimeConfig, ServerConfig, TelemetryConfig};
+use pavis_core::{AccessLogConfig, Listener, RuntimeConfig, TelemetryConfig};
 use reqwest::Client;
 use std::env;
 use std::fs;
@@ -163,11 +163,12 @@ impl TestEnv {
             base_url = format!("http://127.0.0.1:{port}");
 
             let config = RuntimeConfig {
-                server: ServerConfig {
+                listeners: vec![Listener {
+                    name: "default".to_string(),
                     listen_addr: format!("127.0.0.1:{port}").parse()?,
                     worker_threads: None,
                     tls: None,
-                },
+                }],
                 telemetry: TelemetryConfig {
                     level: None,
                     pingora: None,
@@ -198,11 +199,12 @@ impl TestEnv {
         } else if mode == "docker" {
             // Docker uses default port 8080 and 9091
             let config = RuntimeConfig {
-                server: ServerConfig {
+                listeners: vec![Listener {
+                    name: "default".to_string(),
                     listen_addr: "0.0.0.0:8080".parse()?,
                     worker_threads: None,
                     tls: None,
-                },
+                }],
                 telemetry: TelemetryConfig {
                     level: None,
                     pingora: None,

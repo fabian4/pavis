@@ -22,7 +22,7 @@
 
 ## 2. Guidelines
 
-- **Standards**: Adhere to `Architecture.md` (Modular Ingest Pipeline).
+- **Standards**: Adhere to `ARCHITECTURE.md` (Modular Ingest Pipeline).
 - **Architecture**:
   - Implement the `Ingest` trait from `pavis-ingest-api`.
   - Use the `notify` crate for cross-platform file system watching.

@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::{Router, routing::get};
 use pavis::agent::{Backoff, ConfigAgent, PollOutcome, lkg_version, load_lkg_config};
 use pavis::state::{RuntimeState, RuntimeStateHandle};
-use pavis_core::{RuntimeConfig, ServerConfig, TelemetryConfig};
+use pavis_core::{RuntimeConfig, TelemetryConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,11 +38,12 @@ async fn relay_config(State(state): State<RelayStub>, headers: HeaderMap) -> imp
 
 fn minimal_config(label: &str) -> RuntimeConfig {
     RuntimeConfig {
-        server: ServerConfig {
+        listeners: vec![pavis_core::Listener {
+            name: "default".to_string(),
             listen_addr: "127.0.0.1:8080".parse().expect("addr"),
             worker_threads: None,
             tls: None,
-        },
+        }],
         telemetry: TelemetryConfig {
             level: None,
             pingora: None,

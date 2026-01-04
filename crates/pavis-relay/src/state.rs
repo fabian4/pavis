@@ -516,11 +516,12 @@ mod tests {
     async fn state_publish_auto_increments_version() {
         // Use a valid PVS for publish_auto as it inspects the header
         let config = pavis_core::RuntimeConfig {
-            server: pavis_core::ServerConfig {
+            listeners: vec![pavis_core::Listener {
+                name: "default".to_string(),
                 listen_addr: "127.0.0.1:8080".parse().unwrap(),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: pavis_core::TelemetryConfig {
                 level: None,
                 pingora: None,
@@ -622,11 +623,12 @@ mod tests {
 
         // Use valid PVS bytes
         let config = pavis_core::RuntimeConfig {
-            server: pavis_core::ServerConfig {
+            listeners: vec![pavis_core::Listener {
+                name: "default".to_string(),
                 listen_addr: "127.0.0.1:8080".parse().unwrap(),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: pavis_core::TelemetryConfig {
                 level: None,
                 pingora: None,
@@ -717,11 +719,12 @@ mod tests {
 
         // Publish something
         let config = pavis_core::RuntimeConfig {
-            server: pavis_core::ServerConfig {
+            listeners: vec![pavis_core::Listener {
+                name: "default".to_string(),
                 listen_addr: "127.0.0.1:8080".parse().unwrap(),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: pavis_core::TelemetryConfig {
                 level: None,
                 pingora: None,
@@ -773,11 +776,12 @@ mod tests {
         let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
 
         let config = pavis_core::RuntimeConfig {
-            server: pavis_core::ServerConfig {
+            listeners: vec![pavis_core::Listener {
+                name: "default".to_string(),
                 listen_addr: "127.0.0.1:8080".parse().unwrap(),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: pavis_core::TelemetryConfig {
                 level: None,
                 pingora: None,

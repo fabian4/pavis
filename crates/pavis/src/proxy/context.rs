@@ -4,23 +4,28 @@ pub struct RouterContext {
     pub upstream_name: Option<String>,
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
+    pub sni_override: Option<String>,
     pub start_time: std::time::Instant,
 }
 
 #[cfg(test)]
 mod tests {
     use super::RouterContext;
-    use pavis_core::HeaderOperations;
+    use pavis_core::{HeaderAction, HeaderActionType, HeaderOperations};
 
     #[test]
     fn router_context_holds_fields() {
         let ctx = RouterContext {
             upstream_name: Some("backend".to_string()),
             request_headers: Some(HeaderOperations {
-                add: vec![("x-test".to_string(), "1".to_string())],
-                remove: vec![],
+                actions: vec![HeaderAction {
+                    key: "x-test".to_string(),
+                    value: Some("1".to_string()),
+                    action: HeaderActionType::Set,
+                }],
             }),
             response_headers: None,
+            sni_override: None,
             start_time: std::time::Instant::now(),
         };
 

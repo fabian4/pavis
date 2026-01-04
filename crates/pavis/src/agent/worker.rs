@@ -178,13 +178,14 @@ mod tests {
     use axum::routing::get;
     use pavis_core::ValidatedRuntimeConfig;
     use pavis_core::{
-        ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, Route, ServerConfig,
-        TelemetryConfig, Upstream, VirtualHost, WeightedDestination,
+        ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress, HttpVersion, Listener,
+        LoadBalancer, MatchType, Route, TelemetryConfig, Upstream, VirtualHost,
+        WeightedDestination,
     };
     use pavis_pvs::PAVIS_VERSION_HEADER;
     use pingora::services::Service;
     use reqwest::Client;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
@@ -192,11 +193,12 @@ mod tests {
 
     fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
         pavis_core::RuntimeConfig {
-            server: ServerConfig {
-                listen_addr: "127.0.0.1:8080".parse().expect("addr"),
+            listeners: vec![Listener {
+                name: "default".to_string(),
+                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: TelemetryConfig {
                 level: None,
                 pingora: None,
@@ -207,6 +209,7 @@ mod tests {
             },
             upstreams: vec![Upstream {
                 name: "backend".to_string(),
+                discovery_type: DiscoveryType::Static,
                 load_balancer: LoadBalancer::RoundRobin,
                 http_version: HttpVersion::H1,
                 connection_pool: ConnectionPoolConfig {
@@ -215,20 +218,23 @@ mod tests {
                 },
                 tls: None,
                 endpoints: vec![Endpoint {
-                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    port: 8080,
+                    address: EndpointAddress::Ip(SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        8080,
+                    )),
                     weight: 1,
                 }],
             }],
             routes: vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![Route {
-                    match_type: pavis_core::MatchType::Prefix,
+                    match_type: MatchType::Prefix,
                     path: "/".to_string(),
                     timeout_ms: None,
                     retry_policy: None,
                     request_headers: None,
                     response_headers: None,
+                    rewrite: None,
                     destinations: vec![WeightedDestination {
                         upstream: "backend".to_string(),
                         weight: 1,

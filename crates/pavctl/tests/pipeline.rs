@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use pavis_codec_serde::SerdeFormat;
 use pavis_codec_serde::config::{
-    ConnectionPoolConfig, Route, SerdeConfig, ServerConfig, Upstream, VirtualHost,
-    WeightedDestination,
+    ConnectionPoolConfig, Listener, Route, SerdeConfig, Upstream, VirtualHost, WeightedDestination,
 };
 use pavis_core::{HttpVersion, LoadBalancer, MatchType};
 use std::fs;
@@ -107,14 +106,16 @@ fn run_pavctl(bin: &Path, args: &[&str]) -> Result<()> {
 
 fn sample_config() -> SerdeConfig {
     SerdeConfig {
-        server: ServerConfig {
+        listeners: vec![Listener {
+            name: "default".to_string(),
             listen_addr: "127.0.0.1:8080".to_string(),
             worker_threads: None,
             tls: None,
-        },
+        }],
         telemetry: Default::default(),
         upstreams: vec![Upstream {
             name: "backend".to_string(),
+            discovery_type: pavis_core::DiscoveryType::Static,
             load_balancer: LoadBalancer::Random,
             http_version: HttpVersion::H1,
             connection_pool: ConnectionPoolConfig::default(),
@@ -122,7 +123,7 @@ fn sample_config() -> SerdeConfig {
             circuit_breaker: None,
             health_check: None,
             endpoints: vec![pavis_codec_serde::config::Endpoint {
-                ip: "127.0.0.1".to_string(),
+                address: "127.0.0.1".to_string(),
                 port: 8081,
                 weight: Some(1),
             }],
@@ -136,6 +137,7 @@ fn sample_config() -> SerdeConfig {
                 retry: None,
                 request_headers: None,
                 response_headers: None,
+                rewrite: None,
                 destinations: vec![WeightedDestination {
                     upstream: "backend".to_string(),
                     weight: 1,

@@ -77,6 +77,7 @@ mod tests {
                         retry_policy: None,
                         request_headers: None,
                         response_headers: None,
+                        rewrite: None,
                         destinations: vec![WeightedDestination {
                             upstream: "backend-1".to_string(),
                             weight: 1,
@@ -89,6 +90,7 @@ mod tests {
                         retry_policy: None,
                         request_headers: None,
                         response_headers: None,
+                        rewrite: None,
                         destinations: vec![WeightedDestination {
                             upstream: "backend-1".to_string(),
                             weight: 1,
@@ -105,6 +107,7 @@ mod tests {
                     retry_policy: None,
                     request_headers: None,
                     response_headers: None,
+                    rewrite: None,
                     destinations: vec![WeightedDestination {
                         upstream: "backend-2".to_string(),
                         weight: 1,
@@ -125,6 +128,7 @@ mod tests {
                 retry_policy: None,
                 request_headers: None,
                 response_headers: None,
+                rewrite: None,
                 destinations: vec![],
             }],
         }];
@@ -187,6 +191,7 @@ mod tests {
                 retry_policy: None,
                 request_headers: None,
                 response_headers: None,
+                rewrite: None,
                 destinations: vec![WeightedDestination {
                     upstream: "backend".to_string(),
                     weight: 1,
@@ -223,6 +228,7 @@ mod tests {
                     retry_policy: None,
                     request_headers: None,
                     response_headers: None,
+                    rewrite: None,
                     destinations: vec![WeightedDestination {
                         upstream: "backend-1".to_string(),
                         weight: 1,
@@ -235,6 +241,7 @@ mod tests {
                     retry_policy: None,
                     request_headers: None,
                     response_headers: None,
+                    rewrite: None,
                     destinations: vec![WeightedDestination {
                         upstream: "backend-2".to_string(),
                         weight: 1,

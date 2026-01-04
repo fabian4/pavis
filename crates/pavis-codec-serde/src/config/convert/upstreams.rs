@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use std::net::IpAddr;
 
+use pavis_core::{DiscoveryType, EndpointAddress};
+
 use crate::config::types::{Endpoint, Upstream, UpstreamTlsConfig};
 
 pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Upstream>> {
@@ -9,12 +11,23 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
     for u in upstreams {
         let mut endpoints = Vec::new();
         for e in u.endpoints {
-            let ip: IpAddr = e.ip.parse().with_context(|| {
-                format!("Invalid endpoint IP '{}' for upstream '{}'", e.ip, u.name)
-            })?;
+            let address = match u.discovery_type {
+                DiscoveryType::Static => {
+                    let ip: IpAddr = e.address.parse().with_context(|| {
+                        format!(
+                            "Invalid endpoint IP '{}' for upstream '{}'",
+                            e.address, u.name
+                        )
+                    })?;
+                    EndpointAddress::Ip(std::net::SocketAddr::new(ip, e.port))
+                }
+                DiscoveryType::LogicalDns | DiscoveryType::StrictDns => {
+                    EndpointAddress::Dns(e.address, e.port)
+                }
+            };
+
             endpoints.push(pavis_core::Endpoint {
-                ip,
-                port: e.port,
+                address,
                 weight: e.weight.unwrap_or(1),
             });
         }
@@ -33,6 +46,7 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
 
         runtime_upstreams.push(pavis_core::Upstream {
             name: u.name,
+            discovery_type: u.discovery_type,
             load_balancer: u.load_balancer,
             http_version: u.http_version,
             connection_pool,
@@ -50,9 +64,13 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
     for u in upstreams {
         let mut endpoints = Vec::new();
         for e in u.endpoints {
+            let (address, port) = match e.address {
+                EndpointAddress::Ip(addr) => (addr.ip().to_string(), addr.port()),
+                EndpointAddress::Dns(host, port) => (host, port),
+            };
             endpoints.push(Endpoint {
-                ip: e.ip.to_string(),
-                port: e.port,
+                address,
+                port,
                 weight: Some(e.weight),
             });
         }
@@ -73,6 +91,7 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
 
         serde_upstreams.push(Upstream {
             name: u.name,
+            discovery_type: u.discovery_type,
             load_balancer: u.load_balancer,
             http_version: u.http_version,
             connection_pool,

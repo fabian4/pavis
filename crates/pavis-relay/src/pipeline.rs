@@ -106,6 +106,8 @@ async fn handle_artifact(
         artifact.bytes.len()
     );
 
+    // Delegate validation, default population, and compaction to the Codec layer.
+    // The codec returns a fully validated configuration ready for runtime execution.
     let validated_config = match codec {
         CodecImpl::Serde(c) => c
             .materialize(artifact, compaction_level(compaction))
@@ -119,6 +121,8 @@ async fn handle_artifact(
         validated_config.upstreams.len()
     );
 
+    // Relay responsibility: Pure distribution.
+    // We forward the validated configuration to the PVS publisher without further modification.
     let version = publish_with_retry(
         state,
         validated_config.as_ref(),
@@ -307,8 +311,9 @@ mod tests {
         });
 
         let valid_yaml = r#"
-server:
-  listen_addr: "0.0.0.0:8080"
+listeners:
+  - name: "default"
+    listen_addr: "0.0.0.0:8080"
 telemetry:
   access_log: disabled
 upstreams: []
@@ -380,11 +385,12 @@ routes: []
         let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
 
         let config = pavis_core::RuntimeConfig {
-            server: pavis_core::ServerConfig {
+            listeners: vec![pavis_core::Listener {
+                name: "default".to_string(),
                 listen_addr: "0.0.0.0:8080".parse().unwrap(),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: pavis_core::TelemetryConfig {
                 level: None,
                 pingora: None,
@@ -430,8 +436,9 @@ routes: []
 
         // Write initial valid config
         let initial_yaml = r#"
-server:
-  listen_addr: "0.0.0.0:8080"
+listeners:
+  - name: "default"
+    listen_addr: "0.0.0.0:8080"
 telemetry:
   access_log: disabled
 upstreams: []
@@ -477,8 +484,9 @@ routes: []
 
         // Update file
         let update_yaml = r#"
-server:
-  listen_addr: "0.0.0.0:9090"
+listeners:
+  - name: "default"
+    listen_addr: "0.0.0.0:9090"
 telemetry:
   access_log: disabled
 upstreams: []

@@ -53,7 +53,9 @@ pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
 /// # Errors
 /// Returns `CoreValidationError` if any semantic invariants are violated.
 pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<ValidatedRuntimeConfig> {
-    server::validate_server(config.server.listen_addr, config.server.tls.as_ref())?;
+    for listener in &config.listeners {
+        server::validate_server(listener.listen_addr, listener.tls.as_ref())?;
+    }
     upstreams::validate_upstreams(&config.upstreams)?;
     routes::validate_routes(&config.routes, &config.upstreams)?;
     Ok(ValidatedRuntimeConfig::new(config))
@@ -63,19 +65,21 @@ pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<Validated
 mod tests {
     use super::*;
     use crate::runtime::{
-        AccessLogConfig, ConnectionPoolConfig, Endpoint, HeaderOperations, HttpVersion,
-        LoadBalancer, MatchType, RetryPolicy, Route, ServerConfig, TelemetryConfig, TlsConfig,
-        TracingConfig, Upstream, UpstreamTlsConfig, VirtualHost, WeightedDestination,
+        AccessLogConfig, ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress,
+        HeaderAction, HeaderActionType, HeaderOperations, HttpVersion, Listener, LoadBalancer,
+        MatchType, RetryPolicy, Route, TelemetryConfig, TlsConfig, TracingConfig, Upstream,
+        UpstreamTlsConfig, VirtualHost, WeightedDestination,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     fn base_config() -> RuntimeConfig {
         RuntimeConfig {
-            server: ServerConfig {
+            listeners: vec![Listener {
+                name: "default".to_string(),
                 listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: TelemetryConfig {
                 level: None,
                 pingora: None,
@@ -90,6 +94,7 @@ mod tests {
             },
             upstreams: vec![Upstream {
                 name: "test".to_string(),
+                discovery_type: DiscoveryType::Static,
                 load_balancer: LoadBalancer::RoundRobin,
                 http_version: HttpVersion::H1,
                 connection_pool: ConnectionPoolConfig {
@@ -103,8 +108,10 @@ mod tests {
                     sni: Some("example.com".to_string()),
                 }),
                 endpoints: vec![Endpoint {
-                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    port: 80,
+                    address: EndpointAddress::Ip(SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        80,
+                    )),
                     weight: 1,
                 }],
             }],
@@ -120,10 +127,21 @@ mod tests {
                         retry_on: vec!["5xx".to_string()],
                     }),
                     request_headers: Some(HeaderOperations {
-                        add: vec![("x-foo".to_string(), "bar".to_string())],
-                        remove: vec!["x-remove".to_string()],
+                        actions: vec![
+                            HeaderAction {
+                                key: "x-foo".to_string(),
+                                value: Some("bar".to_string()),
+                                action: HeaderActionType::Set,
+                            },
+                            HeaderAction {
+                                key: "x-remove".to_string(),
+                                value: None,
+                                action: HeaderActionType::Remove,
+                            },
+                        ],
                     }),
                     response_headers: None,
+                    rewrite: None,
                     destinations: vec![WeightedDestination {
                         upstream: "test".to_string(),
                         weight: 1,
@@ -142,7 +160,7 @@ mod tests {
     #[test]
     fn missing_tls_files_fails() {
         let mut cfg = base_config();
-        cfg.server.tls = Some(TlsConfig {
+        cfg.listeners[0].tls = Some(TlsConfig {
             enabled: true,
             cert_path: None,
             key_path: Some("key.pem".to_string()),
@@ -154,7 +172,7 @@ mod tests {
     #[test]
     fn missing_tls_key_fails() {
         let mut cfg = base_config();
-        cfg.server.tls = Some(TlsConfig {
+        cfg.listeners[0].tls = Some(TlsConfig {
             enabled: true,
             cert_path: Some("cert.pem".to_string()),
             key_path: None,
@@ -183,8 +201,15 @@ mod tests {
     #[test]
     fn invalid_header_name_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
-            vec![(String::new(), "v".to_string())];
+        cfg.routes[0].paths[0]
+            .request_headers
+            .as_mut()
+            .unwrap()
+            .actions = vec![HeaderAction {
+            key: String::new(),
+            value: Some("v".to_string()),
+            action: HeaderActionType::Set,
+        }];
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
@@ -192,8 +217,15 @@ mod tests {
     #[test]
     fn invalid_header_name_non_empty_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
-            vec![("bad header".to_string(), "v".to_string())];
+        cfg.routes[0].paths[0]
+            .request_headers
+            .as_mut()
+            .unwrap()
+            .actions = vec![HeaderAction {
+            key: "bad header".to_string(),
+            value: Some("v".to_string()),
+            action: HeaderActionType::Set,
+        }];
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
@@ -205,7 +237,11 @@ mod tests {
             .request_headers
             .as_mut()
             .unwrap()
-            .remove = vec![String::new()];
+            .actions = vec![HeaderAction {
+            key: String::new(),
+            value: None,
+            action: HeaderActionType::Remove,
+        }];
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
@@ -217,7 +253,11 @@ mod tests {
             .request_headers
             .as_mut()
             .unwrap()
-            .remove = vec![("bad header".to_string())];
+            .actions = vec![HeaderAction {
+            key: "bad header".to_string(),
+            value: None,
+            action: HeaderActionType::Remove,
+        }];
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
@@ -225,8 +265,15 @@ mod tests {
     #[test]
     fn invalid_header_value_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].request_headers.as_mut().unwrap().add =
-            vec![("x".to_string(), "\u{7f}".to_string())];
+        cfg.routes[0].paths[0]
+            .request_headers
+            .as_mut()
+            .unwrap()
+            .actions = vec![HeaderAction {
+            key: "x".to_string(),
+            value: Some("\u{7f}".to_string()),
+            action: HeaderActionType::Set,
+        }];
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(
             err,
@@ -238,8 +285,11 @@ mod tests {
     fn invalid_response_header_name_fails() {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].response_headers = Some(HeaderOperations {
-            add: vec![("bad header".to_string(), "v".to_string())],
-            remove: Vec::new(),
+            actions: vec![HeaderAction {
+                key: "bad header".to_string(),
+                value: Some("v".to_string()),
+                action: HeaderActionType::Set,
+            }],
         });
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
@@ -257,7 +307,7 @@ mod tests {
     fn duplicate_upstream_name_fails() {
         let mut cfg = base_config();
         let mut duplicate = cfg.upstreams[0].clone();
-        duplicate.endpoints[0].port = 81;
+        duplicate.endpoints[0].weight = 10;
         cfg.upstreams.push(duplicate);
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::DuplicateUpstream(_)));

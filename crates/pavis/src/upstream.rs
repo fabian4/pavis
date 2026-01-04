@@ -12,8 +12,10 @@ use pavis_core::Upstream;
 
 pub mod cluster;
 pub mod load_balance;
+pub mod resolver;
 
 pub use cluster::Cluster;
+pub use resolver::UpstreamResolver;
 
 pub struct Manager {
     clusters: HashMap<String, Cluster>,
@@ -31,18 +33,25 @@ impl Manager {
     pub fn get(&self, name: &str) -> Option<&Cluster> {
         self.clusters.get(name)
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Cluster)> {
+        self.clusters.iter()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Manager;
-    use pavis_core::{ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, Upstream};
-    use std::net::{IpAddr, Ipv4Addr};
+    use pavis_core::{
+        ConnectionPoolConfig, Endpoint, EndpointAddress, HttpVersion, LoadBalancer, Upstream,
+    };
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     #[test]
     fn manager_returns_configured_cluster() {
         let upstreams = vec![Upstream {
             name: "backend".to_string(),
+            discovery_type: pavis_core::DiscoveryType::Static,
             load_balancer: LoadBalancer::RoundRobin,
             http_version: HttpVersion::H1,
             connection_pool: ConnectionPoolConfig {
@@ -51,8 +60,10 @@ mod tests {
             },
             tls: None,
             endpoints: vec![Endpoint {
-                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                port: 8080,
+                address: EndpointAddress::Ip(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    8080,
+                )),
                 weight: 1,
             }],
         }];

@@ -13,7 +13,7 @@
 | Document                                                                                  | Description                                   |
 | ----------------------------------------------------------------------------------------- | --------------------------------------------- |
 | [README.md](../README.md)                                                                 | Project overview and quick start              |
-| [Architecture.md](../Architecture.md)                                                     | System design and protocol details            |
+| [ARCHITECTURE.md](../ARCHITECTURE.md)                                                     | System design and protocol details            |
 | [ROADMAP.md](../ROADMAP.md)                                                               | Development phases and progress               |
 | [Cargo.toml](../Cargo.toml)                                                               | Workspace configuration and dependencies      |
 | [audit/report/ARCH_COMPLIANCE.md](../audit/report/ARCH_COMPLIANCE.md)                     | Architecture compliance review report         |

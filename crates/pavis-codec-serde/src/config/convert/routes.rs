@@ -1,7 +1,8 @@
 use anyhow::Result;
 
 use crate::config::types::{
-    HeaderOperations, RetryPolicy, Route, VirtualHost, WeightedDestination,
+    HeaderAction, HeaderOperations, RetryPolicy, RewritePolicy, Route, VirtualHost,
+    WeightedDestination,
 };
 
 pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::VirtualHost>> {
@@ -10,21 +11,8 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
     for v in routes {
         let mut paths = Vec::new();
         for p in v.paths {
-            let request_headers = if let Some(h) = p.request_headers {
-                let add: Vec<(String, String)> = h.add.unwrap_or_default().into_iter().collect();
-                let remove = h.remove.unwrap_or_default();
-                Some(pavis_core::HeaderOperations { add, remove })
-            } else {
-                None
-            };
-
-            let response_headers = if let Some(h) = p.response_headers {
-                let add: Vec<(String, String)> = h.add.unwrap_or_default().into_iter().collect();
-                let remove = h.remove.unwrap_or_default();
-                Some(pavis_core::HeaderOperations { add, remove })
-            } else {
-                None
-            };
+            let request_headers = p.request_headers.map(|h| to_runtime_headers(&h));
+            let response_headers = p.response_headers.map(|h| to_runtime_headers(&h));
 
             let destinations = p
                 .destinations
@@ -55,6 +43,11 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 None
             };
 
+            let rewrite = p.rewrite.map(|r| pavis_core::RewritePolicy {
+                path_prefix_rewrite: r.path_prefix_rewrite,
+                host_rewrite_literal: r.host_rewrite_literal,
+            });
+
             paths.push(pavis_core::Route {
                 match_type: p.match_type,
                 path: p.path,
@@ -62,6 +55,7 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 retry_policy,
                 request_headers,
                 response_headers,
+                rewrite,
                 destinations,
             });
         }
@@ -75,21 +69,27 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
     Ok(runtime_routes)
 }
 
+fn to_runtime_headers(h: &HeaderOperations) -> pavis_core::HeaderOperations {
+    let actions = h
+        .actions
+        .iter()
+        .map(|a| pavis_core::HeaderAction {
+            key: a.key.clone(),
+            value: a.value.clone(),
+            action: a.action,
+        })
+        .collect();
+    pavis_core::HeaderOperations { actions }
+}
+
 pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualHost> {
     let mut serde_routes = Vec::new();
 
     for v in routes {
         let mut paths = Vec::new();
         for p in v.paths {
-            let request_headers = p.request_headers.map(|h| HeaderOperations {
-                add: Some(h.add.into_iter().collect()),
-                remove: Some(h.remove),
-            });
-
-            let response_headers = p.response_headers.map(|h| HeaderOperations {
-                add: Some(h.add.into_iter().collect()),
-                remove: Some(h.remove),
-            });
+            let request_headers = p.request_headers.as_ref().map(from_runtime_headers);
+            let response_headers = p.response_headers.as_ref().map(from_runtime_headers);
 
             let destinations = p
                 .destinations
@@ -111,6 +111,11 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                     .collect(),
             });
 
+            let rewrite = p.rewrite.map(|r| RewritePolicy {
+                path_prefix_rewrite: r.path_prefix_rewrite,
+                host_rewrite_literal: r.host_rewrite_literal,
+            });
+
             paths.push(Route {
                 match_type: p.match_type,
                 path: p.path,
@@ -118,6 +123,7 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 retry,
                 request_headers,
                 response_headers,
+                rewrite,
                 destinations,
             });
         }
@@ -131,11 +137,28 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
     serde_routes
 }
 
+fn from_runtime_headers(h: &pavis_core::HeaderOperations) -> HeaderOperations {
+    let actions = h
+        .actions
+        .iter()
+        .map(|a| HeaderAction {
+            key: a.key.clone(),
+            value: a.value.clone(),
+            action: a.action,
+        })
+        .collect();
+    HeaderOperations { actions }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{from_runtime, to_runtime};
     use crate::config::types::{RetryPolicy, Route, VirtualHost, WeightedDestination};
-    use pavis_core::{MatchType, Route as RuntimeRoute, VirtualHost as RuntimeVhost};
+    use pavis_core::{
+        HeaderAction as RuntimeHeaderAction, HeaderActionType,
+        HeaderOperations as RuntimeHeaderOperations, MatchType, Route as RuntimeRoute,
+        VirtualHost as RuntimeVhost,
+    };
     use serde_json::json;
     use std::time::Duration;
 
@@ -154,6 +177,7 @@ mod tests {
                 }),
                 request_headers: None,
                 response_headers: None,
+                rewrite: None,
                 destinations: vec![WeightedDestination {
                     upstream: "backend".to_string(),
                     weight: 1,
@@ -178,10 +202,21 @@ mod tests {
                 timeout_ms: None,
                 retry_policy: None,
                 request_headers: None,
-                response_headers: Some(pavis_core::HeaderOperations {
-                    add: vec![("x-added".to_string(), "1".to_string())],
-                    remove: vec!["x-remove".to_string()],
+                response_headers: Some(RuntimeHeaderOperations {
+                    actions: vec![
+                        RuntimeHeaderAction {
+                            key: "x-added".to_string(),
+                            value: Some("1".to_string()),
+                            action: HeaderActionType::Set,
+                        },
+                        RuntimeHeaderAction {
+                            key: "x-remove".to_string(),
+                            value: None,
+                            action: HeaderActionType::Remove,
+                        },
+                    ],
                 }),
+                rewrite: None,
                 destinations: vec![pavis_core::WeightedDestination {
                     upstream: "backend".to_string(),
                     weight: 1,
@@ -194,9 +229,12 @@ mod tests {
             .response_headers
             .as_ref()
             .expect("headers");
-        let add = headers.add.as_ref().expect("add");
-        assert_eq!(add.get("x-added").map(String::as_str), Some("1"));
-        let remove = headers.remove.as_ref().expect("remove");
-        assert_eq!(remove, &vec!["x-remove".to_string()]);
+        assert_eq!(headers.actions.len(), 2);
+        assert_eq!(headers.actions[0].key, "x-added");
+        assert_eq!(headers.actions[0].value.as_deref(), Some("1"));
+        assert_eq!(headers.actions[0].action, HeaderActionType::Set);
+        assert_eq!(headers.actions[1].key, "x-remove");
+        assert!(headers.actions[1].value.is_none());
+        assert_eq!(headers.actions[1].action, HeaderActionType::Remove);
     }
 }

@@ -1,6 +1,7 @@
 use pavis_core::{
-    ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, MatchType, Route, RuntimeConfig,
-    ServerConfig, TelemetryConfig, Upstream, VirtualHost, WeightedDestination,
+    ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress, HttpVersion, Listener,
+    LoadBalancer, MatchType, Route, RuntimeConfig, TelemetryConfig, Upstream, VirtualHost,
+    WeightedDestination,
 };
 use std::net::SocketAddr;
 
@@ -11,11 +12,12 @@ pub fn runtime_config(
     route_upstream: &str,
 ) -> RuntimeConfig {
     RuntimeConfig {
-        server: ServerConfig {
+        listeners: vec![Listener {
+            name: "default".to_string(),
             listen_addr,
             worker_threads: None,
             tls: None,
-        },
+        }],
         telemetry: TelemetryConfig {
             level: None,
             pingora: None,
@@ -37,6 +39,7 @@ pub fn runtime_config(
                 retry_policy: None,
                 request_headers: None,
                 response_headers: None,
+                rewrite: None,
                 destinations: vec![WeightedDestination {
                     upstream: route_upstream.to_string(),
                     weight: 1,
@@ -49,6 +52,7 @@ pub fn runtime_config(
 pub fn upstream(name: &str, addr: SocketAddr) -> Upstream {
     Upstream {
         name: name.to_string(),
+        discovery_type: DiscoveryType::Static,
         load_balancer: LoadBalancer::RoundRobin,
         http_version: HttpVersion::H1,
         connection_pool: ConnectionPoolConfig {
@@ -57,8 +61,7 @@ pub fn upstream(name: &str, addr: SocketAddr) -> Upstream {
         },
         tls: None,
         endpoints: vec![Endpoint {
-            ip: addr.ip(),
-            port: addr.port(),
+            address: EndpointAddress::Ip(addr),
             weight: 1,
         }],
     }

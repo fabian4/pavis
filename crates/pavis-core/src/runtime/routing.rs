@@ -22,7 +22,16 @@ pub struct Route {
     pub retry_policy: Option<RetryPolicy>,
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
+    pub rewrite: Option<RewritePolicy>,
     pub destinations: Vec<WeightedDestination>,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub struct RewritePolicy {
+    pub path_prefix_rewrite: Option<String>,
+    pub host_rewrite_literal: Option<String>,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]

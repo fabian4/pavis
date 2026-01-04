@@ -50,13 +50,13 @@ Inbound behavior must be treated as an explicit tradeoff and **must not** leak g
 
 | Component              | Description                                                                                       |
 | :--------------------- | :------------------------------------------------------------------------------------------------ |
-| **`pavis`**            | Proxy – Runtime Engine. Reads optimized `.pvs` binary files only.                                 |
+| **`pavis`**            | Proxy – Runtime Engine. Reads optimized `.pvs` binary files only. Executes fully prepared configs.|
 | **`pavis-core`**       | Protocol – Canonical types, semantic validation, and memory layout.                               |
-| **`pavis-relay`**      | Relay – Versions `.pvs`, manages caches/last-known-good, and distributes artifacts via long poll. |
+| **`pavis-relay`**      | Relay – Versions `.pvs`, manages caches. **Pass-through** for validation; distributes artifacts.  |
 | **`pavis-ingest-*`**   | Ingest – Source connectivity (xDS, K8s, file watch): streams, auth, retries, resync.              |
-| **`pavis-ingest-api`** | Ingest API – SourceArtifact (raw bytes + metadata) and ingest trait boundary.                    |
-| **`pavis-codec-*`**    | Codec – DTO ↔ RuntimeConfig transforms, mechanical defaults, compatibility, and core validation.  |
-| **`pavis-codec-api`**  | Codec API – Codec trait boundary for SourceArtifact ↔ RuntimeConfig transforms.                  |
+| **`pavis-ingest-api`** | Ingest API – SourceArtifact (raw bytes + metadata) and ingest trait boundary.                     |
+| **`pavis-codec-*`**    | Codec – DTO ↔ RuntimeConfig transforms, **default population**, and core validation.              |
+| **`pavis-codec-api`**  | Codec API – Codec trait boundary for SourceArtifact ↔ RuntimeConfig transforms.                   |
 | **`pavis-pvs`**        | Binary Protocol – Integrity layer (Header + Checksum + Encoding).                                 |
 | **`pavctl`**           | CLI – Developer tool for manual generation, conversion, and runtime management.                   |
 
@@ -83,12 +83,12 @@ Inbound behavior must be treated as an explicit tradeoff and **must not** leak g
 | Responsibility     | Component        | Description                                                                                        |
 | :----------------- | :--------------- | :------------------------------------------------------------------------------------------------- |
 | **Ingest**         | `pavis-ingest-*` | Subscribes to configuration sources. Handles auth, watch/stream, retries, and resync.              |
-| **Codec**          | `pavis-codec-*`  | Maps raw source DTOs to `RuntimeConfig`, applies mechanical defaults, and invokes core validation. |
-| **Relay**          | `pavis-relay`    | Versions artifacts, manages caches/last-known-good, and serves `.pvs` via long-poll.               |
+| **Codec**          | `pavis-codec-*`  | Maps source DTOs to `RuntimeConfig`. **Populates defaults** and **validates** configuration.       |
+| **Relay**          | `pavis-relay`    | Versions artifacts and distributes `.pvs`. **Pass-through** for logic; no validation or population.|
 | **Governor**       | `pavis-governor` | Admission, policy enforcement, and approval of change plans (future/optional).                     |
 | **Manual Tooling** | `pavctl`         | Reuses codecs for local file generation (`gen`), conversion (`convert`), and manual `apply`.       |
 | **Integrity**      | `pavis-pvs`      | Computes checksums and adds protocol headers to encoded payloads.                                  |
-| **Execution**      | `pavis`          | Zero-copy execution of the binary config. No semantic knowledge of the source.                     |
+| **Execution**      | `pavis`          | Zero-copy execution of the binary config. **No validation or default population**.                 |
 
 ## 3. Modular Ingest Pipeline
 
@@ -101,13 +101,16 @@ To support diverse environments (Kubernetes, Service Meshes, and standalone file
     *   **Output**: Emits **SourceArtifacts** (raw bytes + metadata) into the pipeline.
 
 2.  **pavis-codec-* (The Transformation Layer)**:
-    *   **Responsibility**: Converts SourceArtifacts (xDS, YAML, CRD, JSON bytes) into the canonical `RuntimeConfig` model and back (best-effort).
-    *   **Purity**: Codecs are pure transformers; no I/O, no networking.
-    *   **Validation**: Performs source-specific preflight validation (Artifact → CheckedArtifact), then invokes canonical semantic validation in `pavis-core` (RuntimeConfig → ValidatedRuntimeConfig).
+    *   **Responsibility**: Converts SourceArtifacts into `RuntimeConfig`.
+    *   **Default Population**: Populates all missing fields (timeouts, retries) with safe defaults.
+    *   **Validation**: Performs structure/type checks and invokes `pavis-core` validation.
+    *   **Output**: `ValidatedRuntimeConfig` (ready for execution).
+    *   **Purity**: Pure transformers; no I/O.
 
 3.  **pavis-relay (The Distribution Layer)**:
-    *   **Responsibility**: Manages **PVS Artifacts** (versioning, checksums, cache/last-known-good) and distributes them via long polling.
-    *   **Invariant**: Enforces the **Single Source Authority** execution-time constraint—only one approved source controls the proxy at a time.
+    *   **Responsibility**: Manages **PVS Artifacts** (versioning, checksums) and distributes them.
+    *   **Pass-Through**: Does **not** validate, modify, or populate config. It trusts the Codec's output.
+    *   **Invariant**: Enforces the **Single Source Authority**.
     *   **Constraint**: The relay MUST NOT parse DTOs or decode `RuntimeConfig`, but it MUST handle PVS bytes. Integrity checks should be delegated to `pavis-pvs` (header validation, checksum, archive integrity), and the relay should cache and serve the verified bytes.
     *   **HTTP API Contract**: See `crates/pavis-relay/README.md` for the endpoint-level contract and long-poll semantics.
 
@@ -623,6 +626,71 @@ The Relay acts as a pure artifact distributor. It does not perform semantic filt
 **Outcome:**
 - **Network Efficiency** – The sidecar receives a compact binary optimized for zero-copy loading.
 - **Security** – A compromised sidecar only receives IPs it is explicitly allowed to talk to (enforced by upstream scoping).
+
+## 8. Configuration Architecture & Invariants
+
+This section defines the Pavis configuration architecture, strictly separating **Policy** (Codec) from **Mechanism** (Runtime).
+
+### 8.1. Architectural Invariants
+
+The following rules are absolute.
+
+#### Codec Layer (`pavis-codec-*`)
+*   **Role:** Owner of **Defaults** and **Policy**.
+*   **Responsibility:** MUST materialize all optional fields into explicit values.
+*   **Responsibility:** MUST normalize user input (YAML/JSON/xDS) into `ValidatedRuntimeConfig`.
+*   **Output:** A fully deterministic configuration. Implicit "magic" defaults MUST be resolved here.
+
+#### Runtime Layer (`pavis`)
+*   **Role:** Executor of **Explicit Configuration**.
+*   **Input:** STRICTLY `ValidatedRuntimeConfig` (via `.pvs`).
+*   **Invariant:** MUST NOT apply semantic defaults (e.g., "missing timeout means 5s"). `None` implies "Disabled" or "System Choice" (e.g., auto-threads), never "Business Default".
+*   **Invariant:** MUST NOT mutate configuration after load.
+*   **Failure:** MUST fail immediately on invalid structural state (e.g., missing cert files).
+
+#### Relay Layer
+*   **Role:** Distribution Pipeline.
+*   **Invariant:** MUST treat `.pvs` blobs as opaque, immutable, and versioned.
+
+#### .pvs Artifacts
+*   **Nature:** Fully materialized and frozen.
+*   **Guarantee:** A `.pvs` compiled today MUST execute identically on future runtime versions. Policy changes (defaults) affect only *newly compiled* artifacts.
+
+### 8.2. Option Semantics in RuntimeConfig
+
+The Runtime consumes a configuration where all policy decisions are **explicit**. `Option<T>` fields in `RuntimeConfig` have strictly defined semantics:
+
+Any new `Option<T>` added to `RuntimeConfig` MUST be classified as either "Disabled" or "Mechanism Auto". Policy defaults in RuntimeConfig are forbidden.
+
+1.  **`None` means "Disabled"**:
+    *   Examples: `tls`, `retry_policy`, `tracing`.
+    *   The feature is turned off. The Runtime does **not** enable it with default settings.
+2.  **`None` means "Mechanism Auto"**:
+    *   Example: `worker_threads`.
+    *   The Runtime calculates a value based on hardware resources (e.g., CPU cores). This is a system optimization, not a policy choice.
+3.  **No Implicit Policy**:
+    *   The Runtime MUST NOT interpret `None` as "use standard default".
+    *   Examples: Timeouts, Log Levels, LB Algorithms. These fields are **mandatory** or must be Fully Explicit by the Codec.
+
+For a complete inventory of fields and their explicit semantics, see [doc/REFERENCE_CONFIG.yaml](doc/REFERENCE_CONFIG.yaml).
+
+### 8.3. Codec Responsibility (Policy Ownership)
+
+The **Codec Layer** is the sole owner of policy defaults. It transforms sparse user input into Fully Explicit `RuntimeConfig`.
+
+*   **Materialization**: The Codec MUST populate all optional policy fields.
+    *   *Example:* If user omits `log_level`, Codec sets `Info`. Runtime receives `Info`.
+    *   *Example:* If user omits `load_balancer`, Codec sets `Random`. Runtime receives `Random`.
+*   **Determinism**: The resulting `.pvs` artifact contains no hidden choices. A runtime executing it 5 years from now will use the exact same policies (timeouts, algorithms) defined today.
+
+### 8.4. User Configuration & References
+
+Users provide minimal configuration (e.g., listeners and routes); the Codec expands this into the full Runtime state.
+
+*   **User Input**: Minimal, declarative intent (handled by Codec).
+*   **System Output**: Fully Explicit configuration (consumed by Runtime).
+
+See [doc/REFERENCE_CONFIG.yaml](doc/REFERENCE_CONFIG.yaml) for the canonical definition of the Fully Explicit Runtime Configuration.
 
 ## Future: Governor (Control Plane)
 

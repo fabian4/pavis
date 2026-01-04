@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use pavis_core::MatchType;
 
@@ -19,7 +18,14 @@ pub struct Route {
     pub retry: Option<RetryPolicy>,
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
+    pub rewrite: Option<RewritePolicy>,
     pub destinations: Vec<WeightedDestination>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RewritePolicy {
+    pub path_prefix_rewrite: Option<String>,
+    pub host_rewrite_literal: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -32,8 +38,14 @@ pub struct RetryPolicy {
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct HeaderOperations {
-    pub add: Option<HashMap<String, String>>,
-    pub remove: Option<Vec<String>>,
+    pub actions: Vec<HeaderAction>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct HeaderAction {
+    pub key: String,
+    pub value: Option<String>,
+    pub action: pavis_core::HeaderActionType,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

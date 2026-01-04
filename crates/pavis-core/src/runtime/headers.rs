@@ -6,7 +6,26 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct HeaderOperations {
-    // Maps of HeaderName -> HeaderValue
-    pub add: Vec<(String, String)>,
-    pub remove: Vec<String>,
+    pub actions: Vec<HeaderAction>,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub struct HeaderAction {
+    pub key: String,
+    pub value: Option<String>,
+    pub action: HeaderActionType,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[archive(check_bytes)]
+pub enum HeaderActionType {
+    #[default]
+    Set,
+    Append,
+    AddIfAbsent,
+    Remove,
 }

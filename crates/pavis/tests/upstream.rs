@@ -3,15 +3,17 @@ mod common;
 use common::base_config;
 use pavis::upstream::Manager;
 use pavis_core::{
-    ConnectionPoolConfig, Endpoint, HttpVersion, LoadBalancer, Upstream, UpstreamTlsConfig,
+    ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress, HttpVersion, LoadBalancer,
+    Upstream, UpstreamTlsConfig,
 };
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[test]
 fn test_upstream_load_balancer_round_robin() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
         name: "backend-rr".to_string(),
+        discovery_type: DiscoveryType::Static,
         load_balancer: LoadBalancer::RoundRobin,
         http_version: HttpVersion::H1,
         connection_pool: ConnectionPoolConfig {
@@ -21,13 +23,17 @@ fn test_upstream_load_balancer_round_robin() {
         tls: None,
         endpoints: vec![
             Endpoint {
-                ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                port: 80,
+                address: EndpointAddress::Ip(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                    80,
+                )),
                 weight: 1,
             },
             Endpoint {
-                ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
-                port: 80,
+                address: EndpointAddress::Ip(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                    80,
+                )),
                 weight: 1,
             },
         ],
@@ -44,9 +50,18 @@ fn test_upstream_load_balancer_round_robin() {
     let ip1 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
     let ip2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 
-    assert_eq!(ep1.ip, ip1);
-    assert_eq!(ep2.ip, ip2);
-    assert_eq!(ep3.ip, ip1);
+    match ep1.address {
+        EndpointAddress::Ip(addr) => assert_eq!(addr.ip(), ip1),
+        _ => panic!("expected ip"),
+    }
+    match ep2.address {
+        EndpointAddress::Ip(addr) => assert_eq!(addr.ip(), ip2),
+        _ => panic!("expected ip"),
+    }
+    match ep3.address {
+        EndpointAddress::Ip(addr) => assert_eq!(addr.ip(), ip1),
+        _ => panic!("expected ip"),
+    }
 }
 
 #[test]
@@ -54,6 +69,7 @@ fn test_upstream_empty_endpoints() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
         name: "empty-upstream".to_string(),
+        discovery_type: DiscoveryType::Static,
         load_balancer: LoadBalancer::Random,
         http_version: HttpVersion::H1,
         connection_pool: ConnectionPoolConfig {
@@ -74,6 +90,7 @@ fn test_upstream_tls_config() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
         name: "backend-secure".to_string(),
+        discovery_type: DiscoveryType::Static,
         load_balancer: LoadBalancer::Random,
         http_version: HttpVersion::H1,
         connection_pool: ConnectionPoolConfig {
@@ -87,8 +104,10 @@ fn test_upstream_tls_config() {
             sni: Some("secure.internal".to_string()),
         }),
         endpoints: vec![Endpoint {
-            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            port: 443,
+            address: EndpointAddress::Ip(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                443,
+            )),
             weight: 1,
         }],
     });

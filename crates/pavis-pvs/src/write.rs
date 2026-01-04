@@ -47,15 +47,16 @@ pub fn write(path: impl AsRef<Path>, config: &RuntimeConfig) -> PvsResult<()> {
 mod tests {
     use super::write;
     use crate::header::{HEADER_SIZE, PAVIS_MAGIC};
-    use pavis_core::{RuntimeConfig, ServerConfig, TelemetryConfig};
+    use pavis_core::{Listener, RuntimeConfig, TelemetryConfig};
 
     fn minimal_config() -> RuntimeConfig {
         RuntimeConfig {
-            server: ServerConfig {
+            listeners: vec![Listener {
+                name: "default".to_string(),
                 listen_addr: "127.0.0.1:8080".parse().expect("addr"),
                 worker_threads: None,
                 tls: None,
-            },
+            }],
             telemetry: TelemetryConfig {
                 level: None,
                 pingora: None,

@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn validate_allows_string_retry_on_values() {
         let mut config = SerdeConfig {
-            server: Default::default(),
+            listeners: vec![],
             telemetry: Default::default(),
             upstreams: vec![],
             routes: vec![VirtualHost {
@@ -79,6 +79,7 @@ mod tests {
                     }),
                     request_headers: None,
                     response_headers: None,
+                    rewrite: None,
                     destinations: vec![],
                 }],
             }],
@@ -89,7 +90,7 @@ mod tests {
     #[test]
     fn validate_rejects_non_string_retry_on_values() {
         let mut config = SerdeConfig {
-            server: Default::default(),
+            listeners: vec![],
             telemetry: Default::default(),
             upstreams: vec![],
             routes: vec![VirtualHost {
@@ -105,6 +106,7 @@ mod tests {
                     }),
                     request_headers: None,
                     response_headers: None,
+                    rewrite: None,
                     destinations: vec![],
                 }],
             }],

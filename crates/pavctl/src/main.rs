@@ -116,13 +116,14 @@ mod tests {
 
     fn write_yaml(path: &PathBuf) {
         let content = r#"
-server:
-  listen_addr: "127.0.0.1:8080"
+listeners:
+  - name: "default"
+    listen_addr: "127.0.0.1:8080"
 telemetry: {}
 upstreams:
   - name: "backend"
     endpoints:
-      - ip: "127.0.0.1"
+      - address: "127.0.0.1"
         port: 8081
 routes:
   - host: "example.com"

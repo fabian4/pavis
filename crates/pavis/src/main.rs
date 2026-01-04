@@ -12,6 +12,7 @@ use pavis::load::{self, RuntimeLoadError};
 use pavis::proxy::Proxy;
 use pavis::state::RuntimeStateHandle;
 use pavis::telemetry::Telemetry;
+use pavis::upstream::UpstreamResolver;
 use pavis_core::{AccessLogConfig, LogLevel};
 
 #[derive(Parser, Debug)]
@@ -114,9 +115,21 @@ fn main() -> Result<()> {
         AccessLogConfig::File(path) => format!("file:{}", path),
     };
 
+    // Listener selection logic
+    if config.listeners.is_empty() {
+        anyhow::bail!("No listeners configured in runtime config.");
+    }
+
+    let max_threads = config
+        .listeners
+        .iter()
+        .filter_map(|l| l.worker_threads)
+        .max();
+
     tracing::info!(
-        listen = %config.server.listen_addr,
         config = %args.config,
+        listener_count = config.listeners.len(),
+        max_threads = ?max_threads,
         access_log = %access_log_desc,
         "Pavis starting"
     );
@@ -125,7 +138,7 @@ fn main() -> Result<()> {
         daemon: false,
         ..Default::default()
     };
-    if let Some(threads) = config.server.worker_threads {
+    if let Some(threads) = max_threads {
         server_conf.threads = threads as usize;
     }
     let mut server = Server::new_with_opt_and_conf(None, server_conf);
@@ -151,41 +164,50 @@ fn main() -> Result<()> {
 
     let (telemetry, access_log_worker) = Telemetry::new(&config.telemetry);
     let telemetry = Arc::new(telemetry);
+    let resolver = UpstreamResolver::new(state_handle.clone(), Duration::from_secs(10));
 
-    let mut proxy_service = http_proxy_service(
-        &server.configuration,
-        Proxy {
+    for listener in &config.listeners {
+        let proxy_app = Proxy {
             state: state_handle.clone(),
-            telemetry,
-        },
-    );
-    let listen_addr_str = config.server.listen_addr.to_string();
-    if let Some(tls_config) = &config.server.tls {
-        if tls_config.enabled {
-            // Core validation guarantees cert/key presence when enabled.
-            let cert_path = tls_config
-                .cert_path
-                .as_ref()
-                .expect("core validation must ensure cert_path when TLS enabled");
-            let key_path = tls_config
-                .key_path
-                .as_ref()
-                .expect("core validation must ensure key_path when TLS enabled");
-            proxy_service
-                .add_tls(&listen_addr_str, cert_path, key_path)
-                .context("Failed to add TLS listener")?;
+            telemetry: telemetry.clone(),
+        };
+
+        let mut proxy_service = http_proxy_service(&server.configuration, proxy_app);
+        let listen_addr_str = listener.listen_addr.to_string();
+        if let Some(tls_config) = &listener.tls {
+            if tls_config.enabled {
+                // Core validation guarantees cert/key presence when enabled.
+                let cert_path = tls_config
+                    .cert_path
+                    .as_ref()
+                    .expect("core validation must ensure cert_path when TLS enabled");
+                let key_path = tls_config
+                    .key_path
+                    .as_ref()
+                    .expect("core validation must ensure key_path when TLS enabled");
+                proxy_service
+                    .add_tls(&listen_addr_str, cert_path, key_path)
+                    .with_context(|| format!("Failed to add TLS listener: {}", listener.name))?;
+            } else {
+                proxy_service.add_tcp(&listen_addr_str);
+            }
         } else {
             proxy_service.add_tcp(&listen_addr_str);
         }
-    } else {
-        proxy_service.add_tcp(&listen_addr_str);
+
+        tracing::info!(
+            name = %listener.name,
+            addr = %listen_addr_str,
+            "Listener registered"
+        );
+        server.add_service(proxy_service);
     }
 
     server.add_service(access_log_worker);
+    server.add_service(resolver);
     if let Some(agent) = config_agent {
         let agent = agent?;
         server.add_service(agent.worker());
     }
-    server.add_service(proxy_service);
     server.run_forever();
 }

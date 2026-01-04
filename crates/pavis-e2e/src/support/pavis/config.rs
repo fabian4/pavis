@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use pavis_codec_serde::config::{
-    AccessLogConfig, ConnectionPoolConfig, HeaderOperations, HttpVersion, LoadBalancer, MatchType,
-    SerdeConfig, ServerConfig, TlsConfig, TracingConfig, Upstream, UpstreamTlsConfig, VirtualHost,
-    WeightedDestination,
+    AccessLogConfig, ConnectionPoolConfig, HeaderAction, HeaderOperations, HttpVersion, Listener,
+    LoadBalancer, MatchType, SerdeConfig, TlsConfig, TracingConfig, Upstream, UpstreamTlsConfig,
+    VirtualHost, WeightedDestination,
 };
 use pavis_codec_serde::config::{Endpoint, Route, TelemetryConfig};
-use std::collections::HashMap;
+use pavis_core::{DiscoveryType, HeaderActionType};
 use std::env;
 use std::fs;
 use std::net::IpAddr;
@@ -76,7 +76,8 @@ pub fn tls_support_config(
     upstream_port: u16,
 ) -> SerdeConfig {
     SerdeConfig {
-        server: ServerConfig {
+        listeners: vec![Listener {
+            name: "default".to_string(),
             listen_addr: listen_addr.to_string(),
             worker_threads: None,
             tls: Some(TlsConfig {
@@ -84,7 +85,7 @@ pub fn tls_support_config(
                 cert_path: Some(cert_path.to_string()),
                 key_path: Some(key_path.to_string()),
             }),
-        },
+        }],
         telemetry: TelemetryConfig {
             level: Some("debug".to_string()),
             pingora: None,
@@ -119,11 +120,12 @@ pub fn upstream_tls_config(
     upstream_port: u16,
 ) -> SerdeConfig {
     SerdeConfig {
-        server: ServerConfig {
+        listeners: vec![Listener {
+            name: "default".to_string(),
             listen_addr: listen_addr.to_string(),
             worker_threads: None,
             tls: None,
-        },
+        }],
         telemetry: TelemetryConfig {
             level: None,
             pingora: None,
@@ -639,11 +641,12 @@ fn base_config(
         key_path: None,
     });
     SerdeConfig {
-        server: ServerConfig {
+        listeners: vec![Listener {
+            name: "default".to_string(),
             listen_addr: listen_addr.to_string(),
             worker_threads,
             tls,
-        },
+        }],
         telemetry,
         upstreams,
         routes,
@@ -674,6 +677,7 @@ fn upstream(
 ) -> Upstream {
     Upstream {
         name: name.to_string(),
+        discovery_type: DiscoveryType::Static,
         load_balancer,
         http_version,
         connection_pool: ConnectionPoolConfig::default(),
@@ -686,7 +690,7 @@ fn upstream(
 
 fn endpoint(host: &str, port: u16, weight: u32) -> Endpoint {
     Endpoint {
-        ip: host.to_string(),
+        address: host.to_string(),
         port,
         weight: Some(weight),
     }
@@ -706,6 +710,7 @@ fn route(
         retry: None,
         request_headers,
         response_headers,
+        rewrite: None,
         destinations,
     }
 }
@@ -718,19 +723,20 @@ fn destination(upstream: &str, weight: u32) -> WeightedDestination {
 }
 
 fn header_ops(add: Vec<(&str, &str)>, remove: Vec<&str>) -> HeaderOperations {
-    let add = if add.is_empty() {
-        None
-    } else {
-        let mut map = HashMap::new();
-        for (key, value) in add {
-            map.insert(key.to_string(), value.to_string());
-        }
-        Some(map)
-    };
-    let remove = if remove.is_empty() {
-        None
-    } else {
-        Some(remove.into_iter().map(|value| value.to_string()).collect())
-    };
-    HeaderOperations { add, remove }
+    let mut actions = Vec::new();
+    for (key, value) in add {
+        actions.push(HeaderAction {
+            key: key.to_string(),
+            value: Some(value.to_string()),
+            action: HeaderActionType::Set,
+        });
+    }
+    for key in remove {
+        actions.push(HeaderAction {
+            key: key.to_string(),
+            value: None,
+            action: HeaderActionType::Remove,
+        });
+    }
+    HeaderOperations { actions }
 }

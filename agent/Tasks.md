@@ -28,7 +28,7 @@ All findings across tasks 1-11 MUST use consistent severity levels:
 ## Task 1: Architecture Compliance Review
 
 ### Objective
-Verify the entire repository implements `Architecture.md` correctly.
+Verify the entire repository implements `ARCHITECTURE.md` correctly.
 
 ### Strict Requirements
 
@@ -60,19 +60,19 @@ Verify the entire repository implements `Architecture.md` correctly.
 ### Classification Rules
 For each inconsistency, classify as:
 - **Implementation Bug**: Code violates architecture intent
-- **Documentation Drift**: Architecture.md outdated vs implementation
+- **Documentation Drift**: ARCHITECTURE.md outdated vs implementation
 - **Acceptable Deviation**: Justified exception (must document reason)
 
 ### Output
 - Report: `../audit/report/ARCH_COMPLIANCE.md`
-- MUST NOT modify `Architecture.md` in this task
+- MUST NOT modify `ARCHITECTURE.md` in this task
 
 ---
 
 ## Task 2: Architecture vs Roadmap Consistency Review
 
 ### Objective
-Ensure `ROADMAP.md` aligns with `Architecture.md` constraints and phasing.
+Ensure `ROADMAP.md` aligns with `ARCHITECTURE.md` constraints and phasing.
 
 ### Strict Requirements
 
@@ -99,7 +99,7 @@ Ensure `ROADMAP.md` aligns with `Architecture.md` constraints and phasing.
 ### Output
 - Report: `../audit/report/ARCH_ROADMAP_ALIGNMENT.md`
 - MAY update `ROADMAP.md` to fix alignment issues
-- MUST NOT modify `Architecture.md`
+- MUST NOT modify `ARCHITECTURE.md`
 
 ---
 

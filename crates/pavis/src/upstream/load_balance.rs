@@ -45,9 +45,16 @@ pub fn select_index(
 #[cfg(test)]
 mod tests {
     use super::select_index;
-    use pavis_core::{Endpoint, LoadBalancer};
-    use std::net::{IpAddr, Ipv4Addr};
+    use pavis_core::{Endpoint, EndpointAddress, LoadBalancer};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::atomic::AtomicUsize;
+
+    fn make_endpoint(ip: Ipv4Addr, port: u16, weight: u32) -> Endpoint {
+        Endpoint {
+            address: EndpointAddress::Ip(SocketAddr::new(IpAddr::V4(ip), port)),
+            weight,
+        }
+    }
 
     #[test]
     fn select_index_returns_zero_for_empty_or_zero_weight() {
@@ -55,11 +62,7 @@ mod tests {
         let idx = select_index(LoadBalancer::RoundRobin, &[], &counter, 0);
         assert_eq!(idx, 0);
 
-        let endpoints = vec![Endpoint {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            port: 8080,
-            weight: 0,
-        }];
+        let endpoints = vec![make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 0)];
         let idx = select_index(LoadBalancer::Random, &endpoints, &counter, 0);
         assert_eq!(idx, 0);
     }
@@ -68,16 +71,8 @@ mod tests {
     fn select_index_round_robin_respects_weights() {
         let counter = AtomicUsize::new(0);
         let endpoints = vec![
-            Endpoint {
-                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                port: 8080,
-                weight: 2,
-            },
-            Endpoint {
-                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
-                port: 8081,
-                weight: 1,
-            },
+            make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 2),
+            make_endpoint(Ipv4Addr::new(127, 0, 0, 2), 8081, 1),
         ];
         let total_weight = 3;
         assert_eq!(
@@ -98,16 +93,8 @@ mod tests {
     fn select_index_random_is_in_range() {
         let counter = AtomicUsize::new(0);
         let endpoints = vec![
-            Endpoint {
-                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                port: 8080,
-                weight: 1,
-            },
-            Endpoint {
-                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
-                port: 8081,
-                weight: 1,
-            },
+            make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 1),
+            make_endpoint(Ipv4Addr::new(127, 0, 0, 2), 8081, 1),
         ];
         let total_weight = 2;
         for _ in 0..10 {
@@ -119,11 +106,7 @@ mod tests {
     #[test]
     fn select_index_round_robin_falls_back_when_weights_mismatch() {
         let counter = AtomicUsize::new(2);
-        let endpoints = vec![Endpoint {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            port: 8080,
-            weight: 1,
-        }];
+        let endpoints = vec![make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 1)];
         let idx = select_index(LoadBalancer::RoundRobin, &endpoints, &counter, 3);
         assert_eq!(idx, 0);
     }
@@ -131,11 +114,7 @@ mod tests {
     #[test]
     fn select_index_random_falls_back_when_weights_zeroed() {
         let counter = AtomicUsize::new(0);
-        let endpoints = vec![Endpoint {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            port: 8080,
-            weight: 0,
-        }];
+        let endpoints = vec![make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 0)];
         let idx = select_index(LoadBalancer::Random, &endpoints, &counter, 1);
         assert_eq!(idx, 0);
     }

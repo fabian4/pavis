@@ -151,13 +151,15 @@ mod tests {
         let lkg = dir.join("config.pvs");
 
         let runtime_config = pavis_core::RuntimeConfig {
-            server: pavis_core::ServerConfig {
+            listeners: vec![pavis_core::Listener {
+                name: "default".to_string(),
+
                 listen_addr: "127.0.0.1:8080".parse().unwrap(),
 
                 worker_threads: None,
 
                 tls: None,
-            },
+            }],
 
             telemetry: pavis_core::TelemetryConfig {
                 level: None,
