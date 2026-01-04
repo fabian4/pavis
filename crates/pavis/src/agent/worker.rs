@@ -178,14 +178,17 @@ mod tests {
     use axum::routing::get;
     use pavis_core::ValidatedRuntimeConfig;
     use pavis_core::{
-        ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress, HttpVersion, Listener,
-        LoadBalancer, MatchType, Route, TelemetryConfig, Upstream, VirtualHost,
-        WeightedDestination,
+        AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery,
+        Duration as RuntimeDuration, Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout,
+        Listener, ListenerName, LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy,
+        Rewrite, RewriteHost, RewritePath, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy,
+        Upstream, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use pavis_pvs::PAVIS_VERSION_HEADER;
     use pingora::services::Service;
     use reqwest::Client;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::num::{NonZeroU16, NonZeroU32};
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
@@ -194,50 +197,58 @@ mod tests {
     fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
         pavis_core::RuntimeConfig {
             listeners: vec![Listener {
-                name: "default".to_string(),
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
-                worker_threads: None,
-                tls: None,
+                name: ListenerName("default".to_string()),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
+                workers: WorkerCount::Auto,
+                tls: TlsConfig::Disabled,
             }],
-            telemetry: TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: Some(name.to_string()),
-                prometheus_addr: None,
-                access_log: Default::default(),
-                tracing: None,
+            telemetry: Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: ServiceName(name.to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Stdout,
+                tracing: pavis_core::TracingPolicy::Disabled,
             },
             upstreams: vec![Upstream {
-                name: "backend".to_string(),
-                discovery_type: DiscoveryType::Static,
-                load_balancer: LoadBalancer::RoundRobin,
-                http_version: HttpVersion::H1,
-                connection_pool: ConnectionPoolConfig {
-                    idle_timeout_secs: 60,
-                    connection_timeout_secs: 5,
-                },
-                tls: None,
-                endpoints: vec![Endpoint {
-                    address: EndpointAddress::Ip(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::LOCALHOST),
-                        8080,
+                id: UpstreamId(NonZeroU16::new(1).unwrap()),
+                name: UpstreamName("backend".to_string()),
+                discovery: Discovery::Static,
+                balancer: LoadBalancer::RoundRobin,
+                protocol: HttpVersion::H1,
+                pool: Pool {
+                    idle: IdleTimeout::Enabled(RuntimeDuration(NonZeroU32::new(60_000).unwrap())),
+                    connect: ConnectTimeout::Enabled(RuntimeDuration(
+                        NonZeroU32::new(5_000).unwrap(),
                     )),
-                    weight: 1,
+                    max: ConnectionLimit::Unlimited,
+                },
+                tls: TlsPolicy::Disabled,
+                endpoints: vec![Endpoint {
+                    address: EndpointAddr::Ip {
+                        address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        port: Port(NonZeroU16::new(8080).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
                 }],
             }],
             routes: vec![VirtualHost {
-                host: "*".to_string(),
-                paths: vec![Route {
-                    match_type: MatchType::Prefix,
-                    path: "/".to_string(),
-                    timeout_ms: None,
-                    retry_policy: None,
-                    request_headers: None,
-                    response_headers: None,
-                    rewrite: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "backend".to_string(),
-                        weight: 1,
+                host: Host("*".to_string()),
+                paths: vec![pavis_core::Route {
+                    matcher: PathMatch::Prefix {
+                        path: Path("/".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: pavis_core::HeadersPolicy::Disabled,
+                    response_headers: pavis_core::HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("backend".to_string()),
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
                     }],
                 }],
             }],
@@ -246,8 +257,9 @@ mod tests {
 
     fn config_with_upstream(service_name: &str, upstream_name: &str) -> pavis_core::RuntimeConfig {
         let mut config = minimal_config(service_name);
-        config.upstreams[0].name = upstream_name.to_string();
-        config.routes[0].paths[0].destinations[0].upstream = upstream_name.to_string();
+        config.upstreams[0].name = UpstreamName(upstream_name.to_string());
+        config.routes[0].paths[0].destinations[0].upstream =
+            UpstreamName(upstream_name.to_string());
         config
     }
 
@@ -571,7 +583,11 @@ mod tests {
             }),
         );
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(err) => panic!("bind failed: {err}"),
+        };
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();

@@ -25,7 +25,7 @@ impl Manager {
     pub fn new(upstreams: &[Upstream]) -> Self {
         let mut clusters = HashMap::new();
         for u in upstreams {
-            clusters.insert(u.name.clone(), Cluster::new(u.clone()));
+            clusters.insert(u.name.0.clone(), Cluster::new(u.clone()));
         }
         Self { clusters }
     }
@@ -43,34 +43,38 @@ impl Manager {
 mod tests {
     use super::Manager;
     use pavis_core::{
-        ConnectionPoolConfig, Endpoint, EndpointAddress, HttpVersion, LoadBalancer, Upstream,
+        ConnectTimeout, ConnectionLimit, Endpoint, EndpointAddr, HttpVersion, IdleTimeout,
+        LoadBalancer, Pool, Port, TlsPolicy, Upstream, UpstreamId, UpstreamName, Weight,
     };
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::num::NonZeroU16;
 
     #[test]
     fn manager_returns_configured_cluster() {
         let upstreams = vec![Upstream {
-            name: "backend".to_string(),
-            discovery_type: pavis_core::DiscoveryType::Static,
-            load_balancer: LoadBalancer::RoundRobin,
-            http_version: HttpVersion::H1,
-            connection_pool: ConnectionPoolConfig {
-                idle_timeout_secs: 60,
-                connection_timeout_secs: 5,
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("backend".to_string()),
+            discovery: pavis_core::Discovery::Static,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit::Unlimited,
             },
-            tls: None,
+            tls: TlsPolicy::Disabled,
             endpoints: vec![Endpoint {
-                address: EndpointAddress::Ip(SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                    8080,
-                )),
-                weight: 1,
+                address: EndpointAddr::Ip {
+                    address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
             }],
         }];
 
         let manager = Manager::new(&upstreams);
         let cluster = manager.get("backend");
         assert!(cluster.is_some());
-        assert_eq!(cluster.unwrap().config.name, "backend");
+        assert_eq!(cluster.unwrap().config.name.0, "backend");
     }
 }

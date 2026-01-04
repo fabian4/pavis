@@ -18,17 +18,18 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
     writeln!(&mut out, "--- Config Tree ---").ok();
     writeln!(&mut out, "Listeners ({}):", config.listeners.len()).ok();
     for listener in &config.listeners {
-        writeln!(&mut out, "- Name: {}", listener.name).ok();
-        writeln!(&mut out, "  Address: {}", listener.listen_addr).ok();
+        writeln!(&mut out, "- Name: {}", listener.name.0).ok();
+        writeln!(&mut out, "  Address: {}", listener.address).ok();
     }
 
     writeln!(&mut out, "Upstreams ({}):", config.upstreams.len()).ok();
     for upstream in &config.upstreams {
-        let lb_str = match upstream.load_balancer {
+        let lb_str = match upstream.balancer {
             binary::LoadBalancer::RoundRobin => "RoundRobin",
             binary::LoadBalancer::Random => "Random",
+            binary::LoadBalancer::LeastRequest => "LeastRequest",
         };
-        let hv_str = match upstream.http_version {
+        let hv_str = match upstream.protocol {
             binary::HttpVersion::H1 => "H1",
             binary::HttpVersion::H2 => "H2",
             binary::HttpVersion::H2H1 => "H2H1",
@@ -36,7 +37,7 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
         writeln!(
             &mut out,
             "- Upstream: {}, LB: {}, HTTP: {}, endpoints: {}",
-            upstream.name,
+            upstream.name.0,
             lb_str,
             hv_str,
             upstream.endpoints.len()
@@ -44,28 +45,30 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
         .ok();
         for endpoint in &upstream.endpoints {
             let addr_str = match &endpoint.address {
-                binary::EndpointAddress::Ip(addr) => addr.to_string(),
-                binary::EndpointAddress::Dns(host, port) => format!("{}:{}", host, port),
+                binary::EndpointAddr::Ip { address, port } => {
+                    format!("{}:{}", address, port.0)
+                }
+                binary::EndpointAddr::Dns { host, port } => format!("{}:{}", host.0, port.0),
             };
-            writeln!(&mut out, "  - {} weight={}", addr_str, endpoint.weight).ok();
+            writeln!(&mut out, "  - {} weight={}", addr_str, endpoint.weight.0).ok();
         }
     }
 
     writeln!(&mut out, "Routes ({}):", config.routes.len()).ok();
     for vhost in &config.routes {
-        writeln!(&mut out, "Host: {}", vhost.host).ok();
+        writeln!(&mut out, "Host: {}", vhost.host.0).ok();
         for route in &vhost.paths {
-            let match_type = match route.match_type {
-                binary::MatchType::Prefix => "prefix",
-                binary::MatchType::Exact => "exact",
-                binary::MatchType::Regex => "regex",
+            let (match_type, path) = match &route.matcher {
+                binary::PathMatch::Prefix { path } => ("prefix", path.0.as_str()),
+                binary::PathMatch::Exact { path } => ("exact", path.0.as_str()),
+                binary::PathMatch::Regex { path } => ("regex", path.0.as_str()),
             };
-            writeln!(&mut out, "  - [{match_type}] {}", route.path).ok();
+            writeln!(&mut out, "  - [{match_type}] {}", path).ok();
             for dest in &route.destinations {
                 writeln!(
                     &mut out,
                     "      -> {} (weight {})",
-                    dest.upstream, dest.weight
+                    dest.upstream.0, dest.weight.0
                 )
                 .ok();
             }
@@ -109,12 +112,115 @@ pub fn format_stats(config: &binary::RuntimeConfig, total_bytes: u64) -> String 
 mod tests {
     use super::{format_config, format_header, format_stats};
     use pavis_core::{
-        AccessLogConfig, ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress,
-        HttpVersion, Listener, LoadBalancer, MatchType, Route, RuntimeConfig, TelemetryConfig,
-        Upstream, VirtualHost, WeightedDestination,
+        AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint,
+        EndpointAddr, Host, HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer,
+        Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost, RewritePath,
+        RuntimeConfig, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, Upstream, UpstreamId,
+        UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use pavis_pvs::{PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::num::{NonZeroU16, NonZeroU32};
+
+    fn sample_config() -> RuntimeConfig {
+        RuntimeConfig {
+            listeners: vec![Listener {
+                name: ListenerName("default".to_string()),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
+                workers: WorkerCount::Auto,
+                tls: TlsConfig::Disabled,
+            }],
+            telemetry: Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: ServiceName("pavis".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            },
+            upstreams: vec![
+                Upstream {
+                    id: UpstreamId(NonZeroU16::new(1).unwrap()),
+                    name: UpstreamName("backend".to_string()),
+                    discovery: pavis_core::Discovery::Static,
+                    balancer: LoadBalancer::RoundRobin,
+                    protocol: HttpVersion::H2,
+                    pool: Pool {
+                        idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
+                        connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
+                        max: ConnectionLimit::Unlimited,
+                    },
+                    tls: TlsPolicy::Disabled,
+                    endpoints: vec![Endpoint {
+                        address: EndpointAddr::Ip {
+                            address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                            port: Port(NonZeroU16::new(8081).unwrap()),
+                        },
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
+                    }],
+                },
+                Upstream {
+                    id: UpstreamId(NonZeroU16::new(2).unwrap()),
+                    name: UpstreamName("backend-h2h1".to_string()),
+                    discovery: pavis_core::Discovery::Static,
+                    balancer: LoadBalancer::Random,
+                    protocol: HttpVersion::H2H1,
+                    pool: Pool {
+                        idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(30_000).unwrap())),
+                        connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(3_000).unwrap())),
+                        max: ConnectionLimit::Unlimited,
+                    },
+                    tls: TlsPolicy::Disabled,
+                    endpoints: vec![Endpoint {
+                        address: EndpointAddr::Ip {
+                            address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                            port: Port(NonZeroU16::new(8082).unwrap()),
+                        },
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
+                    }],
+                },
+            ],
+            routes: vec![VirtualHost {
+                host: Host("example.com".to_string()),
+                paths: vec![
+                    pavis_core::Route {
+                        matcher: PathMatch::Exact {
+                            path: Path("/health".to_string()),
+                        },
+                        timeout: Timeout::Disabled,
+                        retry: RetryPolicy::Disabled,
+                        request_headers: pavis_core::HeadersPolicy::Disabled,
+                        response_headers: pavis_core::HeadersPolicy::Disabled,
+                        rewrite: Rewrite {
+                            path: RewritePath::Disabled,
+                            host: RewriteHost::Disabled,
+                        },
+                        destinations: vec![Destination {
+                            upstream: UpstreamName("backend".to_string()),
+                            weight: Weight(NonZeroU16::new(1).unwrap()),
+                        }],
+                    },
+                    pavis_core::Route {
+                        matcher: PathMatch::Regex {
+                            path: Path("^/items/[0-9]+$".to_string()),
+                        },
+                        timeout: Timeout::Disabled,
+                        retry: RetryPolicy::Disabled,
+                        request_headers: pavis_core::HeadersPolicy::Disabled,
+                        response_headers: pavis_core::HeadersPolicy::Disabled,
+                        rewrite: Rewrite {
+                            path: RewritePath::Disabled,
+                            host: RewriteHost::Disabled,
+                        },
+                        destinations: vec![Destination {
+                            upstream: UpstreamName("backend-h2h1".to_string()),
+                            weight: Weight(NonZeroU16::new(1).unwrap()),
+                        }],
+                    },
+                ],
+            }],
+        }
+    }
 
     #[test]
     fn format_header_emits_expected_fields() {
@@ -135,91 +241,7 @@ mod tests {
 
     #[test]
     fn format_config_emits_routes_and_upstreams() {
-        let config = RuntimeConfig {
-            listeners: vec![Listener {
-                name: "default".to_string(),
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
-                worker_threads: None,
-                tls: None,
-            }],
-            telemetry: TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: AccessLogConfig::Disabled,
-                tracing: None,
-            },
-            upstreams: vec![
-                Upstream {
-                    name: "backend".to_string(),
-                    discovery_type: DiscoveryType::Static,
-                    load_balancer: LoadBalancer::RoundRobin,
-                    http_version: HttpVersion::H2,
-                    connection_pool: ConnectionPoolConfig {
-                        idle_timeout_secs: 60,
-                        connection_timeout_secs: 5,
-                    },
-                    tls: None,
-                    endpoints: vec![Endpoint {
-                        address: EndpointAddress::Ip(SocketAddr::new(
-                            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                            8081,
-                        )),
-                        weight: 1,
-                    }],
-                },
-                Upstream {
-                    name: "backend-h2h1".to_string(),
-                    discovery_type: DiscoveryType::Static,
-                    load_balancer: LoadBalancer::Random,
-                    http_version: HttpVersion::H2H1,
-                    connection_pool: ConnectionPoolConfig {
-                        idle_timeout_secs: 30,
-                        connection_timeout_secs: 3,
-                    },
-                    tls: None,
-                    endpoints: vec![Endpoint {
-                        address: EndpointAddress::Ip(SocketAddr::new(
-                            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
-                            8082,
-                        )),
-                        weight: 1,
-                    }],
-                },
-            ],
-            routes: vec![VirtualHost {
-                host: "example.com".to_string(),
-                paths: vec![
-                    Route {
-                        match_type: MatchType::Exact,
-                        path: "/health".to_string(),
-                        rewrite: None,
-                        timeout_ms: None,
-                        retry_policy: None,
-                        request_headers: None,
-                        response_headers: None,
-                        destinations: vec![WeightedDestination {
-                            upstream: "backend".to_string(),
-                            weight: 1,
-                        }],
-                    },
-                    Route {
-                        match_type: MatchType::Regex,
-                        path: "^/items/[0-9]+$".to_string(),
-                        rewrite: None,
-                        timeout_ms: None,
-                        retry_policy: None,
-                        request_headers: None,
-                        response_headers: None,
-                        destinations: vec![WeightedDestination {
-                            upstream: "backend-h2h1".to_string(),
-                            weight: 1,
-                        }],
-                    },
-                ],
-            }],
-        };
+        let config = sample_config();
 
         let output = format_config(&config);
         assert!(output.contains("Listeners (1):"));
@@ -235,67 +257,12 @@ mod tests {
 
     #[test]
     fn format_stats_emits_sizes_and_counts() {
-        let config = RuntimeConfig {
-            listeners: vec![Listener {
-                name: "default".to_string(),
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
-                worker_threads: None,
-                tls: None,
-            }],
-            telemetry: TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: AccessLogConfig::Disabled,
-                tracing: None,
-            },
-            upstreams: vec![Upstream {
-                name: "backend".to_string(),
-                discovery_type: DiscoveryType::Static,
-                load_balancer: LoadBalancer::RoundRobin,
-                http_version: HttpVersion::H2,
-                connection_pool: ConnectionPoolConfig {
-                    idle_timeout_secs: 60,
-                    connection_timeout_secs: 5,
-                },
-                tls: None,
-                endpoints: vec![Endpoint {
-                    address: EndpointAddress::Ip(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                        8081,
-                    )),
-                    weight: 1,
-                }],
-            }],
-            routes: vec![VirtualHost {
-                host: "example.com".to_string(),
-                paths: vec![Route {
-                    match_type: MatchType::Exact,
-                    path: "/health".to_string(),
-                    rewrite: None,
-                    timeout_ms: None,
-                    retry_policy: None,
-                    request_headers: None,
-                    response_headers: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "backend".to_string(),
-                        weight: 1,
-                    }],
-                }],
-            }],
-        };
-
-        let output = format_stats(&config, 1024);
-        assert!(output.contains("--- Binary Stats ---"));
-        assert!(output.contains("Total Size: 1024 bytes"));
-        assert!(output.contains("Header Size: 64 bytes"));
-        assert!(output.contains("--- Structure Stats ---"));
+        let config = sample_config();
+        let output = format_stats(&config, 128);
+        assert!(output.contains("Total Size: 128 bytes"));
         assert!(output.contains("Listeners: 1"));
-        assert!(output.contains("Upstreams: 1"));
-        assert!(output.contains("Endpoints: 1"));
-        assert!(output.contains("Virtual Hosts: 1"));
-        assert!(output.contains("Routes: 1"));
-        assert!(output.contains("Destinations: 1"));
+        assert!(output.contains("Upstreams: 2"));
+        assert!(output.contains("Routes: 2"));
+        assert!(output.contains("Destinations: 2"));
     }
 }

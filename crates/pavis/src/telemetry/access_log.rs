@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use pavis_core::AccessLogConfig;
+use pavis_core::AccessLogPolicy;
 use pingora::proxy::Session;
 use pingora::services::Service;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ pub struct AccessLog {
 
 pub struct AccessLogWorker {
     rx: Option<mpsc::Receiver<String>>,
-    config: AccessLogConfig,
+    config: AccessLogPolicy,
 }
 
 #[async_trait]
@@ -27,11 +27,11 @@ impl Service for AccessLogWorker {
     ) {
         let mut rx = self.rx.take().expect("Worker started twice");
 
-        let mut file_writer = if let AccessLogConfig::File(path) = &self.config {
+        let mut file_writer = if let AccessLogPolicy::File(path) = &self.config {
             match std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(path)
+                .open(&path.0)
             {
                 Ok(f) => Some(BufWriter::new(File::from_std(f))),
                 Err(e) => {
@@ -53,10 +53,10 @@ impl Service for AccessLogWorker {
                     match msg {
                         Some(log_line) => {
                             match &self.config {
-                                AccessLogConfig::Stdout => {
+                                AccessLogPolicy::Stdout => {
                                     print!("{}", log_line);
                                 }
-                                AccessLogConfig::File(_) => {
+                                AccessLogPolicy::File(_) => {
                                     #[allow(clippy::collapsible_if)]
                                     if let Some(w) = &mut file_writer {
                                         if let Err(e) = w.write_all(log_line.as_bytes()).await {
@@ -64,7 +64,7 @@ impl Service for AccessLogWorker {
                                         }
                                     }
                                 }
-                                AccessLogConfig::Disabled => {}
+                                AccessLogPolicy::Disabled => {}
                             }
                         }
                         None => break,
@@ -85,9 +85,9 @@ impl Service for AccessLogWorker {
 }
 
 impl AccessLog {
-    pub fn new(config: &AccessLogConfig) -> (Self, AccessLogWorker) {
+    pub fn new(config: &AccessLogPolicy) -> (Self, AccessLogWorker) {
         let (tx, rx) = mpsc::channel::<String>(4096);
-        let enabled = *config != AccessLogConfig::Disabled;
+        let enabled = *config != AccessLogPolicy::Disabled;
 
         let worker = AccessLogWorker {
             rx: Some(rx),
@@ -183,7 +183,7 @@ fn format_log_line(entry: LogEntry<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{AccessLog, LogEntry, format_log_line};
-    use pavis_core::AccessLogConfig;
+    use pavis_core::{AccessLogPolicy, Path};
     use pingora::proxy::Session;
     use pingora::services::Service;
     use std::time::Duration;
@@ -192,13 +192,13 @@ mod tests {
 
     #[test]
     fn access_log_disabled_for_false() {
-        let (access_log, _worker) = AccessLog::new(&AccessLogConfig::Disabled);
+        let (access_log, _worker) = AccessLog::new(&AccessLogPolicy::Disabled);
         assert!(!access_log.enabled);
     }
 
     #[test]
     fn access_log_enabled_for_stdout() {
-        let (access_log, _worker) = AccessLog::new(&AccessLogConfig::Stdout);
+        let (access_log, _worker) = AccessLog::new(&AccessLogPolicy::Stdout);
         assert!(access_log.enabled);
     }
 
@@ -222,7 +222,7 @@ mod tests {
     async fn test_access_log_file_write() {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("pavis_access_log_{}.log", std::process::id()));
-        let config = AccessLogConfig::File(path.to_string_lossy().to_string());
+        let config = AccessLogPolicy::File(Path(path.to_string_lossy().to_string()));
 
         let (access_log, mut worker) = AccessLog::new(&config);
 
@@ -251,7 +251,7 @@ mod tests {
 
     #[tokio::test]
     async fn access_log_emits_entry_for_request() {
-        let (access_log, mut worker) = AccessLog::new(&AccessLogConfig::Stdout);
+        let (access_log, mut worker) = AccessLog::new(&AccessLogPolicy::Stdout);
         let mut rx = worker.rx.take().expect("rx");
 
         let (mut client, server) = tokio::io::duplex(1024);

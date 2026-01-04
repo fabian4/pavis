@@ -201,18 +201,18 @@ fn test_cli_lifecycle_sigint() {
     // Create a valid config programmatically
     let config = RuntimeConfig {
         listeners: vec![pavis_core::Listener {
-            name: "default".to_string(),
-            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-            worker_threads: None,
-            tls: None,
+            name: pavis_core::ListenerName("default".to_string()),
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+            workers: pavis_core::WorkerCount::Auto,
+            tls: pavis_core::TlsConfig::Disabled,
         }],
-        telemetry: pavis_core::TelemetryConfig {
-            level: None,
-            pingora: None,
-            service_name: None,
-            prometheus_addr: None,
-            access_log: pavis_core::AccessLogConfig::Disabled,
-            tracing: None,
+        telemetry: pavis_core::Telemetry {
+            level: pavis_core::LogLevel::Info,
+            pingora: pavis_core::LogLevel::Info,
+            service_name: pavis_core::ServiceName("pavis".to_string()),
+            metrics: pavis_core::Metrics::Disabled,
+            access_log: pavis_core::AccessLogPolicy::Disabled,
+            tracing: pavis_core::TracingPolicy::Disabled,
         },
         upstreams: vec![],
         routes: vec![],

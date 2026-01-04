@@ -26,9 +26,9 @@ mod tests {
 
     #[test]
     fn parse_runtime_handles_yaml() {
-        let input = b"listeners:\n  - name: default\n    listen_addr: 127.0.0.1:8080";
+        let input = b"listeners:\n  - name: default\n    address: 127.0.0.1:8080";
         let config = parse_runtime_from_bytes(SerdeFormat::Yaml, input).expect("yaml");
-        assert_eq!(config.listeners[0].listen_addr.port(), 8080);
+        assert_eq!(config.listeners[0].address.port(), 8080);
     }
 
     #[test]
@@ -36,10 +36,10 @@ mod tests {
         let input = br#"{
             "listeners": [{
                 "name": "default",
-                "listen_addr": "127.0.0.1:9090"
+                "address": "127.0.0.1:9090"
             }]
         }"#;
         let config = parse_runtime_from_bytes(SerdeFormat::Json, input).expect("json");
-        assert_eq!(config.listeners[0].listen_addr.port(), 9090);
+        assert_eq!(config.listeners[0].address.port(), 9090);
     }
 }

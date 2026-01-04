@@ -13,7 +13,7 @@ use pavis::proxy::Proxy;
 use pavis::state::RuntimeStateHandle;
 use pavis::telemetry::Telemetry;
 use pavis::upstream::UpstreamResolver;
-use pavis_core::{AccessLogConfig, LogLevel};
+use pavis_core::{AccessLogPolicy, LogLevel, WorkerCount};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -24,56 +24,55 @@ struct Args {
     relay_url: Option<String>,
 }
 
-fn log_level_to_str(level: Option<LogLevel>) -> &'static str {
+fn log_level_to_str(level: LogLevel) -> &'static str {
     match level {
-        Some(LogLevel::Error) => "error",
-        Some(LogLevel::Warn) => "warn",
-        Some(LogLevel::Info) => "info",
-        Some(LogLevel::Debug) => "debug",
-        Some(LogLevel::Trace) => "trace",
-        None => "info",
+        LogLevel::Error => "error",
+        LogLevel::Warn => "warn",
+        LogLevel::Info => "info",
+        LogLevel::Debug => "debug",
+        LogLevel::Trace => "trace",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::log_level_to_str;
-    use pavis_core::{AccessLogConfig, LogLevel};
+    use pavis_core::{AccessLogPolicy, LogLevel, Path};
 
     #[test]
     fn log_level_to_str_defaults_to_info() {
-        assert_eq!(log_level_to_str(None), "info");
+        assert_eq!(log_level_to_str(LogLevel::Info), "info");
     }
 
     #[test]
     fn log_level_to_str_maps_values() {
-        assert_eq!(log_level_to_str(Some(LogLevel::Error)), "error");
-        assert_eq!(log_level_to_str(Some(LogLevel::Warn)), "warn");
-        assert_eq!(log_level_to_str(Some(LogLevel::Info)), "info");
-        assert_eq!(log_level_to_str(Some(LogLevel::Debug)), "debug");
-        assert_eq!(log_level_to_str(Some(LogLevel::Trace)), "trace");
+        assert_eq!(log_level_to_str(LogLevel::Error), "error");
+        assert_eq!(log_level_to_str(LogLevel::Warn), "warn");
+        assert_eq!(log_level_to_str(LogLevel::Info), "info");
+        assert_eq!(log_level_to_str(LogLevel::Debug), "debug");
+        assert_eq!(log_level_to_str(LogLevel::Trace), "trace");
     }
 
     #[test]
     fn access_log_description_logic() {
-        let desc = match AccessLogConfig::Disabled {
-            AccessLogConfig::Disabled => "off".to_string(),
-            AccessLogConfig::Stdout => "stdout".to_string(),
-            AccessLogConfig::File(path) => format!("file:{}", path),
+        let desc = match AccessLogPolicy::Disabled {
+            AccessLogPolicy::Disabled => "off".to_string(),
+            AccessLogPolicy::Stdout => "stdout".to_string(),
+            AccessLogPolicy::File(path) => format!("file:{}", path.0),
         };
         assert_eq!(desc, "off");
 
-        let desc = match AccessLogConfig::Stdout {
-            AccessLogConfig::Disabled => "off".to_string(),
-            AccessLogConfig::Stdout => "stdout".to_string(),
-            AccessLogConfig::File(path) => format!("file:{}", path),
+        let desc = match AccessLogPolicy::Stdout {
+            AccessLogPolicy::Disabled => "off".to_string(),
+            AccessLogPolicy::Stdout => "stdout".to_string(),
+            AccessLogPolicy::File(path) => format!("file:{}", path.0),
         };
         assert_eq!(desc, "stdout");
 
-        let desc = match AccessLogConfig::File("/tmp/test".to_string()) {
-            AccessLogConfig::Disabled => "off".to_string(),
-            AccessLogConfig::Stdout => "stdout".to_string(),
-            AccessLogConfig::File(path) => format!("file:{}", path),
+        let desc = match AccessLogPolicy::File(Path("/tmp/test".to_string())) {
+            AccessLogPolicy::Disabled => "off".to_string(),
+            AccessLogPolicy::Stdout => "stdout".to_string(),
+            AccessLogPolicy::File(path) => format!("file:{}", path.0),
         };
         assert_eq!(desc, "file:/tmp/test");
     }
@@ -100,19 +99,17 @@ fn main() -> Result<()> {
     let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
 
-    if let Some(p_level) = config.telemetry.pingora {
-        let p_str = log_level_to_str(Some(p_level));
-        filter = filter
-            .add_directive(format!("pingora={}", p_str).parse()?)
-            .add_directive(format!("pingora_core={}", p_str).parse()?);
-    }
+    let p_str = log_level_to_str(config.telemetry.pingora);
+    filter = filter
+        .add_directive(format!("pingora={}", p_str).parse()?)
+        .add_directive(format!("pingora_core={}", p_str).parse()?);
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let access_log_desc = match &config.telemetry.access_log {
-        AccessLogConfig::Disabled => "off".to_string(),
-        AccessLogConfig::Stdout => "stdout".to_string(),
-        AccessLogConfig::File(path) => format!("file:{}", path),
+        AccessLogPolicy::Disabled => "off".to_string(),
+        AccessLogPolicy::Stdout => "stdout".to_string(),
+        AccessLogPolicy::File(path) => format!("file:{}", path.0),
     };
 
     // Listener selection logic
@@ -123,7 +120,10 @@ fn main() -> Result<()> {
     let max_threads = config
         .listeners
         .iter()
-        .filter_map(|l| l.worker_threads)
+        .filter_map(|l| match l.workers {
+            WorkerCount::Count(count) => Some(count.get() as u64),
+            WorkerCount::Auto => None,
+        })
         .max();
 
     tracing::info!(
@@ -173,30 +173,23 @@ fn main() -> Result<()> {
         };
 
         let mut proxy_service = http_proxy_service(&server.configuration, proxy_app);
-        let listen_addr_str = listener.listen_addr.to_string();
-        if let Some(tls_config) = &listener.tls {
-            if tls_config.enabled {
-                // Core validation guarantees cert/key presence when enabled.
-                let cert_path = tls_config
-                    .cert_path
-                    .as_ref()
-                    .expect("core validation must ensure cert_path when TLS enabled");
-                let key_path = tls_config
-                    .key_path
-                    .as_ref()
-                    .expect("core validation must ensure key_path when TLS enabled");
-                proxy_service
-                    .add_tls(&listen_addr_str, cert_path, key_path)
-                    .with_context(|| format!("Failed to add TLS listener: {}", listener.name))?;
-            } else {
+        let listen_addr_str = listener.address.to_string();
+        match &listener.tls {
+            pavis_core::TlsConfig::Disabled => {
                 proxy_service.add_tcp(&listen_addr_str);
             }
-        } else {
-            proxy_service.add_tcp(&listen_addr_str);
+            pavis_core::TlsConfig::Enabled {
+                cert_path,
+                key_path,
+            } => {
+                proxy_service
+                    .add_tls(&listen_addr_str, &cert_path.0, &key_path.0)
+                    .with_context(|| format!("Failed to add TLS listener: {}", listener.name.0))?;
+            }
         }
 
         tracing::info!(
-            name = %listener.name,
+            name = %listener.name.0,
             addr = %listen_addr_str,
             "Listener registered"
         );

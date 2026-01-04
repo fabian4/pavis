@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use pavis_core::MatchType;
-
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct VirtualHost {
     pub host: String,
@@ -11,8 +9,7 @@ pub struct VirtualHost {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Route {
     #[serde(default)]
-    pub match_type: MatchType,
-    pub path: String,
+    pub matcher: Matcher,
     #[serde(default, with = "humantime_serde")]
     pub timeout: Option<std::time::Duration>,
     pub retry: Option<RetryPolicy>,
@@ -20,6 +17,22 @@ pub struct Route {
     pub response_headers: Option<HeaderOperations>,
     pub rewrite: Option<RewritePolicy>,
     pub destinations: Vec<WeightedDestination>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum Matcher {
+    Prefix { path: String },
+    Exact { path: String },
+    Regex { path: String },
+}
+
+impl Default for Matcher {
+    fn default() -> Self {
+        Matcher::Prefix {
+            path: "/".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -38,14 +51,14 @@ pub struct RetryPolicy {
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct HeaderOperations {
-    pub actions: Vec<HeaderAction>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct HeaderAction {
-    pub key: String,
-    pub value: Option<String>,
-    pub action: pavis_core::HeaderActionType,
+    #[serde(default)]
+    pub set_headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub append_headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub add_headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub remove_headers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

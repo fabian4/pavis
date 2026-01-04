@@ -1,11 +1,10 @@
 use anyhow::{Context, Result};
 use pavis_codec_serde::config::{
-    AccessLogConfig, ConnectionPoolConfig, HeaderAction, HeaderOperations, HttpVersion, Listener,
-    LoadBalancer, MatchType, SerdeConfig, TlsConfig, TracingConfig, Upstream, UpstreamTlsConfig,
-    VirtualHost, WeightedDestination,
+    AccessLogPolicy, ConnectionPoolConfig, Endpoint, HeaderOperations, HttpVersion, Listener,
+    LoadBalancer, Matcher, Route, SerdeConfig, TelemetryConfig, TlsConfig, TracingConfig, Upstream,
+    UpstreamTlsConfig, VirtualHost, WeightedDestination,
 };
-use pavis_codec_serde::config::{Endpoint, Route, TelemetryConfig};
-use pavis_core::{DiscoveryType, HeaderActionType};
+use pavis_core::Discovery;
 use std::env;
 use std::fs;
 use std::net::IpAddr;
@@ -33,7 +32,7 @@ impl PavisConfigScenario {
         match self {
             Self::BasicRouting => "basic_routing",
             Self::HeaderManipulation => "header_manipulation",
-            Self::HttpVersion => "http_version",
+            Self::HttpVersion => "http",
             Self::RegexMatching => "regex_matching",
             Self::ResponseHeaders => "response_headers",
             Self::RoundRobin => "round_robin",
@@ -78,10 +77,9 @@ pub fn tls_support_config(
     SerdeConfig {
         listeners: vec![Listener {
             name: "default".to_string(),
-            listen_addr: listen_addr.to_string(),
-            worker_threads: None,
+            address: listen_addr.to_string(),
+            workers: None,
             tls: Some(TlsConfig {
-                enabled: true,
                 cert_path: Some(cert_path.to_string()),
                 key_path: Some(key_path.to_string()),
             }),
@@ -90,8 +88,8 @@ pub fn tls_support_config(
             level: Some("debug".to_string()),
             pingora: None,
             service_name: None,
-            prometheus_addr: None,
-            access_log: AccessLogConfig::Stdout,
+            metrics: None,
+            access_log: AccessLogPolicy::Stdout,
             tracing: None,
         },
         upstreams: vec![upstream(
@@ -104,8 +102,9 @@ pub fn tls_support_config(
         routes: vec![VirtualHost {
             host: "*".to_string(),
             paths: vec![route(
-                MatchType::Prefix,
-                "/",
+                Matcher::Prefix {
+                    path: "/".to_string(),
+                },
                 None,
                 None,
                 vec![destination("backend", 1)],
@@ -122,16 +121,16 @@ pub fn upstream_tls_config(
     SerdeConfig {
         listeners: vec![Listener {
             name: "default".to_string(),
-            listen_addr: listen_addr.to_string(),
-            worker_threads: None,
+            address: listen_addr.to_string(),
+            workers: None,
             tls: None,
         }],
         telemetry: TelemetryConfig {
             level: None,
             pingora: None,
             service_name: None,
-            prometheus_addr: None,
-            access_log: AccessLogConfig::Stdout,
+            metrics: None,
+            access_log: AccessLogPolicy::Stdout,
             tracing: None,
         },
         upstreams: vec![upstream(
@@ -149,8 +148,9 @@ pub fn upstream_tls_config(
         routes: vec![VirtualHost {
             host: "*".to_string(),
             paths: vec![route(
-                MatchType::Prefix,
-                "/",
+                Matcher::Prefix {
+                    path: "/".to_string(),
+                },
                 None,
                 None,
                 vec![destination("backend-tls", 1)],
@@ -209,8 +209,9 @@ fn build_config(
             let routes = vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![route(
-                    MatchType::Prefix,
-                    "/",
+                    Matcher::Prefix {
+                        path: "/".to_string(),
+                    },
                     Some(headers),
                     None,
                     vec![destination("backend-v1", 50), destination("backend-v2", 50)],
@@ -244,8 +245,9 @@ fn build_config(
             let routes = vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![route(
-                    MatchType::Prefix,
-                    "/headers",
+                    Matcher::Prefix {
+                        path: "/headers".to_string(),
+                    },
                     Some(headers),
                     None,
                     vec![destination("backend-v1", 100)],
@@ -282,15 +284,17 @@ fn build_config(
                 host: "*".to_string(),
                 paths: vec![
                     route(
-                        MatchType::Prefix,
-                        "/h1",
+                        Matcher::Prefix {
+                            path: "/h1".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-h1", 100)],
                     ),
                     route(
-                        MatchType::Prefix,
-                        "/h2",
+                        Matcher::Prefix {
+                            path: "/h2".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-h2", 100)],
@@ -328,22 +332,25 @@ fn build_config(
                 host: "*".to_string(),
                 paths: vec![
                     route(
-                        MatchType::Regex,
-                        "^/api/v[0-9]+/users/[0-9]+$",
+                        Matcher::Regex {
+                            path: "^/api/v[0-9]+/users/[0-9]+$".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-v1", 100)],
                     ),
                     route(
-                        MatchType::Regex,
-                        "^/posts/[a-z0-9-]+$",
+                        Matcher::Regex {
+                            path: "^/posts/[a-z0-9-]+$".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-v2", 100)],
                     ),
                     route(
-                        MatchType::Prefix,
-                        "/",
+                        Matcher::Prefix {
+                            path: "/".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-v1", 100)],
@@ -364,8 +371,8 @@ fn build_config(
                 level: Some("info".to_string()),
                 pingora: Some("warn".to_string()),
                 service_name: Some("pavis-e2e-response-headers".to_string()),
-                prometheus_addr: None,
-                access_log: AccessLogConfig::Stdout,
+                metrics: None,
+                access_log: AccessLogPolicy::Stdout,
                 tracing: None,
             };
             let upstreams = vec![upstream(
@@ -386,8 +393,9 @@ fn build_config(
             let routes = vec![VirtualHost {
                 host: "response-headers".to_string(),
                 paths: vec![route(
-                    MatchType::Prefix,
-                    "/headers",
+                    Matcher::Prefix {
+                        path: "/headers".to_string(),
+                    },
                     None,
                     Some(headers),
                     vec![destination("echo-backend", 100)],
@@ -410,8 +418,9 @@ fn build_config(
             let routes = vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![route(
-                    MatchType::Prefix,
-                    "/round-robin",
+                    Matcher::Prefix {
+                        path: "/round-robin".to_string(),
+                    },
                     None,
                     None,
                     vec![destination("backend-mixed", 100)],
@@ -448,22 +457,25 @@ fn build_config(
                 host: "*".to_string(),
                 paths: vec![
                     route(
-                        MatchType::Exact,
-                        "/exact-only",
+                        Matcher::Exact {
+                            path: "/exact-only".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-v1", 100)],
                     ),
                     route(
-                        MatchType::Prefix,
-                        "/prefix-match",
+                        Matcher::Prefix {
+                            path: "/prefix-match".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-v2", 100)],
                     ),
                     route(
-                        MatchType::Prefix,
-                        "/",
+                        Matcher::Prefix {
+                            path: "/".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-v1", 100)],
@@ -491,8 +503,9 @@ fn build_config(
             let routes = vec![VirtualHost {
                 host: "example.com".to_string(),
                 paths: vec![route(
-                    MatchType::Prefix,
-                    "/api",
+                    Matcher::Prefix {
+                        path: "/api".to_string(),
+                    },
                     None,
                     None,
                     vec![destination("backend-v1", 100)],
@@ -522,8 +535,9 @@ fn build_config(
             let routes = vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![route(
-                    MatchType::Prefix,
-                    "/",
+                    Matcher::Prefix {
+                        path: "/".to_string(),
+                    },
                     None,
                     None,
                     vec![destination("backend-weighted", 100)],
@@ -559,8 +573,9 @@ fn build_config(
             let routes = vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![route(
-                    MatchType::Prefix,
-                    "/weighted-test",
+                    Matcher::Prefix {
+                        path: "/weighted-test".to_string(),
+                    },
                     None,
                     None,
                     vec![destination("backend-v1", 80), destination("backend-v2", 20)],
@@ -597,8 +612,9 @@ fn build_config(
                 VirtualHost {
                     host: "api.example.com".to_string(),
                     paths: vec![route(
-                        MatchType::Prefix,
-                        "/",
+                        Matcher::Prefix {
+                            path: "/".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-v1", 100)],
@@ -607,8 +623,9 @@ fn build_config(
                 VirtualHost {
                     host: "*".to_string(),
                     paths: vec![route(
-                        MatchType::Prefix,
-                        "/",
+                        Matcher::Prefix {
+                            path: "/".to_string(),
+                        },
                         None,
                         None,
                         vec![destination("backend-v2", 100)],
@@ -629,22 +646,27 @@ fn build_config(
 
 fn base_config(
     listen_addr: &str,
-    worker_threads: Option<usize>,
+    worker_threads: Option<u16>,
     tls_enabled: Option<bool>,
     telemetry: TelemetryConfig,
     upstreams: Vec<Upstream>,
     routes: Vec<VirtualHost>,
 ) -> SerdeConfig {
-    let tls = tls_enabled.map(|enabled| TlsConfig {
-        enabled,
-        cert_path: None,
-        key_path: None,
+    let tls = tls_enabled.and_then(|enabled| {
+        if enabled {
+            Some(TlsConfig {
+                cert_path: None,
+                key_path: None,
+            })
+        } else {
+            None
+        }
     });
     SerdeConfig {
         listeners: vec![Listener {
             name: "default".to_string(),
-            listen_addr: listen_addr.to_string(),
-            worker_threads,
+            address: listen_addr.to_string(),
+            workers: worker_threads,
             tls,
         }],
         telemetry,
@@ -658,29 +680,29 @@ fn telemetry_with_tracing(service_name: &str) -> TelemetryConfig {
         level: Some("info".to_string()),
         pingora: Some("info".to_string()),
         service_name: Some(service_name.to_string()),
-        prometheus_addr: Some("0.0.0.0:9091".to_string()),
-        access_log: AccessLogConfig::Stdout,
+        metrics: Some("0.0.0.0:9091".to_string()),
+        access_log: AccessLogPolicy::Stdout,
         tracing: Some(TracingConfig {
-            enabled: true,
-            provider: "opentelemetry".to_string(),
-            sampling_rate: 1.0,
+            provider: Some("otlp".to_string()),
+            sampling: Some(1),
         }),
     }
 }
 
 fn upstream(
     name: &str,
-    load_balancer: LoadBalancer,
-    http_version: HttpVersion,
+    lb: LoadBalancer,
+    http: HttpVersion,
     tls: Option<UpstreamTlsConfig>,
     endpoints: Vec<Endpoint>,
 ) -> Upstream {
     Upstream {
+        id: None,
         name: name.to_string(),
-        discovery_type: DiscoveryType::Static,
-        load_balancer,
-        http_version,
-        connection_pool: ConnectionPoolConfig::default(),
+        discovery: Discovery::Static,
+        balancer: lb,
+        protocol: http,
+        pool: ConnectionPoolConfig::default(),
         tls,
         circuit_breaker: None,
         health_check: None,
@@ -697,15 +719,13 @@ fn endpoint(host: &str, port: u16, weight: u32) -> Endpoint {
 }
 
 fn route(
-    match_type: MatchType,
-    path: &str,
+    matcher: Matcher,
     request_headers: Option<HeaderOperations>,
     response_headers: Option<HeaderOperations>,
     destinations: Vec<WeightedDestination>,
 ) -> Route {
     Route {
-        match_type,
-        path: path.to_string(),
+        matcher,
         timeout: None,
         retry: None,
         request_headers,
@@ -723,20 +743,13 @@ fn destination(upstream: &str, weight: u32) -> WeightedDestination {
 }
 
 fn header_ops(add: Vec<(&str, &str)>, remove: Vec<&str>) -> HeaderOperations {
-    let mut actions = Vec::new();
-    for (key, value) in add {
-        actions.push(HeaderAction {
-            key: key.to_string(),
-            value: Some(value.to_string()),
-            action: HeaderActionType::Set,
-        });
+    HeaderOperations {
+        set_headers: add
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect(),
+        append_headers: Vec::new(),
+        add_headers: Vec::new(),
+        remove_headers: remove.into_iter().map(|key| key.to_string()).collect(),
     }
-    for key in remove {
-        actions.push(HeaderAction {
-            key: key.to_string(),
-            value: None,
-            action: HeaderActionType::Remove,
-        });
-    }
-    HeaderOperations { actions }
 }

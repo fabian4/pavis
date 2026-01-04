@@ -28,8 +28,8 @@ This section defines the concrete translation work required to map Envoy xDS sna
     - `LOGICAL_DNS` -> `LogicalDns`
     - `STRICT_DNS` -> `StrictDns`
   - Endpoints:
-    - `STATIC`: endpoints must be IP literals, map to `EndpointAddress::Ip`.
-    - `LOGICAL_DNS`/`STRICT_DNS`: endpoints must be hostnames, map to `EndpointAddress::Dns`.
+    - `STATIC`: endpoints must be IP literals, map to `EndpointAddr::Ip`.
+    - `LOGICAL_DNS`/`STRICT_DNS`: endpoints must be hostnames, map to `EndpointAddr::Dns`.
   - Reject EDS clusters (unless explicitly planned) with `CodecError::UnsupportedFeature`.
   - `load_balancing_policy` maps to `LoadBalancer` using a strict supported subset (document supported values).
   - `http_protocol_options` map to `HttpVersion` with explicit defaults.
@@ -40,22 +40,23 @@ This section defines the concrete translation work required to map Envoy xDS sna
 - **Rules**:
   - Each `virtual_host` maps to `VirtualHost::host` and `VirtualHost::paths`.
   - Supported matches:
-    - Prefix match -> `MatchType::Prefix`.
-    - Exact match -> `MatchType::Exact`.
-    - Regex match -> `MatchType::Regex` (ensure regex length limit aligns with core validation).
+    - Prefix match -> `PathMatch::Prefix`.
+    - Exact match -> `PathMatch::Exact`.
+    - Regex match -> `PathMatch::Regex` (ensure regex length limit aligns with core validation).
   - Route ordering preserved from xDS.
   - Reject unsupported match types with `CodecError::UnsupportedFeature`.
   - Header actions:
-    - `request_headers_to_add` and `response_headers_to_add` map to `HeaderActionType::Append` or `Set` based on `append`.
-    - `headers_to_remove` map to `HeaderActionType::Remove`.
+    - `request_headers_to_add` maps to `Headers.set_headers` or `Headers.append_headers` based on `append`.
+    - `response_headers_to_add` maps to `Headers.set_headers` or `Headers.append_headers` based on `append`.
+    - `headers_to_remove` maps to `Headers.remove_headers`.
   - Rewrite rules:
-    - `prefix_rewrite` -> `RewritePolicy::path_prefix_rewrite`.
-    - `host_rewrite_literal` -> `RewritePolicy::host_rewrite_literal`.
+    - `prefix_rewrite` -> `RewritePath::Prefix`.
+    - `host_rewrite_literal` -> `RewriteHost::Literal`.
   - Destinations:
-    - Weighted clusters map to `WeightedDestination`.
+    - Weighted clusters map to `Destination`.
     - Ensure referenced upstreams exist; otherwise reject with a clear error.
   - Timeouts and retries:
-    - Map `timeout` and retry policy into `Route::timeout_ms` and `RetryPolicy` with explicit defaults.
+    - Map `timeout` and retry policy into `Route::timeout` and `RetryPolicy` with explicit defaults.
 
 ### D. Canonical Defaults & Validation Surface
 - **Defaults**:

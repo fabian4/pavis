@@ -1,14 +1,15 @@
+use crate::runtime::HeadersPolicy;
+use crate::runtime::types::{Host, Hostname, Path, Timeout, TryTimeout, UpstreamName, Weight};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
-use super::HeaderOperations;
+use std::num::NonZeroU16;
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct VirtualHost {
-    pub host: String, // e.g. "example.com" or "*"
+    pub host: Host,
     pub paths: Vec<Route>,
 }
 
@@ -16,51 +17,82 @@ pub struct VirtualHost {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct Route {
-    pub match_type: MatchType,
-    pub path: String,
-    pub timeout_ms: Option<u64>,
-    pub retry_policy: Option<RetryPolicy>,
-    pub request_headers: Option<HeaderOperations>,
-    pub response_headers: Option<HeaderOperations>,
-    pub rewrite: Option<RewritePolicy>,
-    pub destinations: Vec<WeightedDestination>,
+    pub matcher: PathMatch,
+    pub timeout: Timeout,
+    pub retry: RetryPolicy,
+    pub request_headers: HeadersPolicy,
+    pub response_headers: HeadersPolicy,
+    pub rewrite: Rewrite,
+    pub destinations: Vec<Destination>,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
-pub struct RewritePolicy {
-    pub path_prefix_rewrite: Option<String>,
-    pub host_rewrite_literal: Option<String>,
+pub struct Rewrite {
+    pub path: RewritePath,
+    pub host: RewriteHost,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
-pub struct RetryPolicy {
-    pub attempts: u32,
-    pub per_try_timeout_ms: u64,
-    // Simple list of status codes or conditions expressed as strings.
-    pub retry_on: Vec<String>,
+pub enum RetryPolicy {
+    Disabled,
+    Enabled {
+        attempts: NonZeroU16,
+        per_try: TryTimeout,
+        on: RetryFlags,
+    },
 }
 
-#[derive(
-    Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default, Hash,
-)]
+#[repr(u8)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
-pub enum MatchType {
-    #[default]
-    Prefix,
-    Exact,
-    Regex,
+pub enum PathMatch {
+    Prefix { path: Path },
+    Exact { path: Path },
+    Regex { path: Path },
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub struct RetryFlags(pub u8);
+
+#[allow(dead_code)]
+pub const RETRY_FIVE_XX: u8 = 0b0000_0001;
+#[allow(dead_code)]
+pub const RETRY_CONNECT_FAILURE: u8 = 0b0000_0010;
+#[allow(dead_code)]
+pub const RETRY_RESET: u8 = 0b0000_0100;
+#[allow(dead_code)]
+pub const RETRY_REFUSED: u8 = 0b0000_1000;
+#[allow(dead_code)]
+pub const RETRY_RESERVED: u8 = 0b1111_0000;
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub struct Destination {
+    pub upstream: UpstreamName,
+    pub weight: Weight,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
-pub struct WeightedDestination {
-    pub upstream: String,
-    pub weight: u32,
+pub enum RewritePath {
+    Disabled,
+    Prefix { from: Path, to: Path },
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub enum RewriteHost {
+    Disabled,
+    Literal { host: Hostname },
 }

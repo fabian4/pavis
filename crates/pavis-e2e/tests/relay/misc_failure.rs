@@ -47,7 +47,7 @@ async fn r13_transient_permission_failure() -> Result<()> {
 
     fs::write(
         config_path,
-        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8081\"",
+        "listeners:\n  - name: \"default\"\n    address: \"127.0.0.1:8081\"",
     )?;
     scenario.wait_for_relay_version(v_start + 1).await?;
 
@@ -74,7 +74,7 @@ async fn r14_transient_empty_file() -> Result<()> {
 
     fs::write(
         config_path,
-        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8081\"",
+        "listeners:\n  - name: \"default\"\n    address: \"127.0.0.1:8081\"",
     )?;
     scenario.wait_for_relay_version(v_after_empty + 1).await?;
 
@@ -95,7 +95,7 @@ async fn r15_artifact_size_limits() -> Result<()> {
     // Write valid but large config
     fs::write(
         config_path,
-        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8081\"",
+        "listeners:\n  - name: \"default\"\n    address: \"127.0.0.1:8081\"",
     )?;
     sleep(Duration::from_millis(1500)).await;
 

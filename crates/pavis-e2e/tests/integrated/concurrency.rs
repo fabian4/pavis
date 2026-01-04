@@ -51,7 +51,7 @@ async fn integrated_multiple_runtimes_converge() -> Result<()> {
         ("upstream-b", upstreams.b),
         "upstream-b",
     );
-    config_v2.telemetry.service_name = Some("pavis-integrated-v2".to_string());
+    config_v2.telemetry.service_name = pavis_core::ServiceName("pavis-integrated-v2".to_string());
     scenario.apply_config(&config_v2).await?;
 
     let mut config_v3 = runtime_config(
@@ -60,7 +60,7 @@ async fn integrated_multiple_runtimes_converge() -> Result<()> {
         ("upstream-b", upstreams.b),
         "upstream-a",
     );
-    config_v3.telemetry.service_name = Some("pavis-integrated-v3".to_string());
+    config_v3.telemetry.service_name = pavis_core::ServiceName("pavis-integrated-v3".to_string());
     scenario.apply_config(&config_v3).await?;
 
     for env in &pavis_envs {

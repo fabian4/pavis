@@ -4,8 +4,7 @@ mod telemetry;
 mod upstreams;
 
 pub use routes::{
-    HeaderAction, HeaderOperations, RetryPolicy, RewritePolicy, Route, VirtualHost,
-    WeightedDestination,
+    HeaderOperations, Matcher, RetryPolicy, RewritePolicy, Route, VirtualHost, WeightedDestination,
 };
 pub use server::{Listener, TlsConfig};
 pub use telemetry::{TelemetryConfig, TracingConfig};
@@ -55,24 +54,18 @@ impl SerdeConfig {
 mod tests {
     use super::SerdeConfig;
     use crate::SerdeFormat;
-    use pavis_core::{AccessLogConfig, HttpVersion, LoadBalancer};
+    use pavis_core::{AccessLogPolicy, HttpVersion, LoadBalancer};
     use std::time::Duration;
 
     fn assert_defaults(config: SerdeConfig) {
         let upstream = &config.upstreams[0];
-        assert_eq!(upstream.load_balancer, LoadBalancer::Random);
-        assert_eq!(upstream.http_version, HttpVersion::H1);
-        assert_eq!(
-            upstream.connection_pool.idle_timeout,
-            Duration::from_secs(60)
-        );
-        assert_eq!(
-            upstream.connection_pool.connection_timeout,
-            Duration::from_secs(5)
-        );
+        assert_eq!(upstream.balancer, LoadBalancer::Random);
+        assert_eq!(upstream.protocol, HttpVersion::H1);
+        assert_eq!(upstream.pool.idle, Duration::from_secs(60));
+        assert_eq!(upstream.pool.connect, Duration::from_secs(5));
         let tls = upstream.tls.as_ref().expect("tls config");
         assert!(tls.enabled);
-        assert_eq!(config.telemetry.access_log, AccessLogConfig::Stdout);
+        assert_eq!(config.telemetry.access_log, AccessLogPolicy::Stdout);
     }
 
     #[test]
@@ -80,7 +73,7 @@ mod tests {
         let yaml = r#"
 listeners:
   - name: "default"
-    listen_addr: "0.0.0.0:8080"
+    address: "0.0.0.0:8080"
 telemetry: {}
 upstreams:
   - name: "backend"
@@ -91,7 +84,8 @@ upstreams:
 routes:
   - host: "example.com"
     paths:
-      - path: "/"
+      - matcher: !prefix
+          path: "/"
         destinations:
           - upstream: "backend"
             weight: 1
@@ -105,7 +99,7 @@ routes:
     fn parse_applies_defaults_for_upstream_and_telemetry_json() {
         let json = r#"
 {
-  "listeners": [{ "name": "default", "listen_addr": "0.0.0.0:8080" }],
+  "listeners": [{ "name": "default", "address": "0.0.0.0:8080" }],
   "telemetry": {},
   "upstreams": [
     {
@@ -119,7 +113,7 @@ routes:
       "host": "example.com",
       "paths": [
         {
-          "path": "/",
+          "matcher": { "prefix": { "path": "/" } },
           "destinations": [{ "upstream": "backend", "weight": 1 }]
         }
       ]
@@ -137,12 +131,12 @@ routes:
         let yaml = r#"
 listeners:
   - name: "default"
-    listen_addr: "127.0.0.1:8080"
+    address: "127.0.0.1:8080"
 telemetry: {}
 upstreams:
   - name: "backend"
-    connection_pool:
-      idle_timeout: "not-a-duration"
+    pool:
+      idle: "not-a-duration"
     endpoints:
       - ip: "127.0.0.1"
         port: 8081
@@ -150,14 +144,14 @@ routes: []
 "#;
 
         let err = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect_err("invalid duration");
-        assert!(err.to_string().contains("idle_timeout"));
+        assert!(err.to_string().contains("idle"));
     }
 
     #[test]
     fn parse_bytes_accepts_json() {
         let json = br#"
 {
-  "listeners": [{ "name": "default", "listen_addr": "0.0.0.0:8080" }],
+  "listeners": [{ "name": "default", "address": "0.0.0.0:8080" }],
   "telemetry": {},
   "upstreams": [
     {
@@ -170,6 +164,6 @@ routes: []
 }
 "#;
         let config = SerdeConfig::parse_bytes(SerdeFormat::Json, json).expect("parse bytes");
-        assert_eq!(config.listeners[0].listen_addr, "0.0.0.0:8080");
+        assert_eq!(config.listeners[0].address, "0.0.0.0:8080");
     }
 }

@@ -1,149 +1,141 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 37/81
-- **Foundation**: 18/23
-- **Protocol**: 12/13
-- **Security**: 0/4
-- **Observability**: 0/4
-- **Operations**: 7/21
-- **Advanced Features**: 0/14
-- **Kubernetes Integration**: 0/2
+- **Total**: 17/59
+- **Core Features**: 17/43
+- **Technical Debt**: 0/16
 
-> **Reference:** [ARCHITECTURE.md](./ARCHITECTURE.md) for technical details on components and protocols.
+> **Status**: Active
+> **Focus**: Phase 3 (Dynamic Config) & Phase 9 (xDS)
+> **Reference**: [ARCHITECTURE.md](./ARCHITECTURE.md)
 
----
-
-## Foundation
-
-### Phase 1: Core Setup & Infrastructure
-- [x] [MUST] **Cloudflare Pingora integration**: Implementation of the `ProxyHttp` trait.
-- [x] [MUST] **Upstreams**: Static IP-based selection (DNS unsupported).
-- [x] [MUST] **Routing**: Basic routing (prefix, exact, regex, wildcard); Forwarding only.
-- [x] [MUST] **Traffic**: Weighted splitting and Round-robin load balancing.
-- [x] [MUST] **Headers**: Request/Response manipulation (Insert/Overwrite behavior).
-- [x] [MUST] **Listener**: Single-listener support with file-based TLS.
-- [x] [MUST] **CLI & Docker**: Support for `--config` and containerization.
-- [x] [MUST] Runtime (`pavis`) dependency on `pavis-core` and `pavis-pvs` only.
-- [x] [MUST] `pavis-pvs` binary integrity checks (no semantic validation).
-- [x] [MUST] Codec validation using `pavis-core::validate_runtime` after adaptation.
-- [ ] [MUST] Relay (and later Governor) ownership of migration and current-version PVS emission.
-- [ ] [MUST] CI validation of compatibility fixtures (vN, vN-1) for header/version compatibility.
-- [ ] [MUST] **Unit Testing**: 100% coverage of logic branches for new features.
-- [ ] [MUST] **Integration Testing**: Verify `RuntimeConfig` changes propagate to internal state without restarts.
-- [ ] [MUST] **End-to-End Testing**: Full `pavis` binary against real network targets (Docker/Kind).
-
-### Phase 3: Dynamic Configuration Surface
-- [x] [MUST] **Close the Loop**: Enable live, hitless configuration updates (Ingest -> Codec -> Long-Poll -> Hot Reload).
-- [ ] [MUST] **Enable Zero-Copy**: mmap-based loading using `ArchivedRuntimeConfig`.
-- [x] [MUST] **Identity & Bindings**: `identity.*`, `http.admin_bind`, `metrics.prometheus_bind`.
-- [x] [MUST] **Artifacts**: Naming, paths, limits (`max_pvs_bytes`, `max_routes`), and storage backend.
-- [x] [MUST] **Pipeline**: Source ID, ingest settings, codec selection, and strictness options.
-- [x] [MUST] **Execution**: Versioning scheme and atomic write/fsync durability.
-- [x] [MUST] **Distribution**: Long-poll tuning (headers, timeouts) and direct fetch toggles.
+This roadmap distinguishes between **Delivery Phases** (user-visible capabilities) and **Technical Debt** (engineering health and optimization).
 
 ---
 
-## Protocol
+# A. Delivery Roadmap (Feature-Oriented)
 
-### Phase 2: Binary Format & Tooling
-- [x] [MUST] **`pavis-core`**: `RuntimeConfig` schema with `rkyv` derivation.
-- [x] [MUST] **`pavis-pvs`**: `PvsHeader` with Magic Bytes (`PAVS`) and checksum verification.
-- [x] [MUST] **Binary Integrity**: Validation logic in the protocol layer.
-- [x] [MUST] **`pavctl gen`**: Compile YAML to `.pvs` with validation.
-- [x] [MUST] **`pavctl view`**: Inspect/debug binary files.
-- [x] [MUST] **`pavctl check`**: Validate YAML without compiling.
-- [x] [MUST] **`pavctl convert`**: Reverse `.pvs` to YAML.
-- [x] [MUST] **Runtime Loading**: Load `rkyv`-based binary format with version checks.
-- [x] [MUST] **Error Handling**: Graceful rejection of invalid/mismatched configs.
+## Phase 1: Foundation (Core Proxy)
+> **Goal**: A functional, programmable HTTP proxy based on Pingora.
+> **Status**: ✅ Complete
 
-### Phase 3: Long Polling API
-- [x] [MUST] **Endpoints**: Implement `GET /v1/config`, `GET /v1/status`, `POST /v1/publish`, and `GET /v1/artifacts/{version}`.
-- [x] [MUST] **Long Polling Protocol**: 60s hold until update, `X-Pavis-Version` mismatch handling, and concurrent client support.
-- [x] [MUST] **Integrity Headers**: `X-Pavis-Version`, `X-Pavis-Checksum`, and `X-Pavis-Checksum-Alg`.
-- [ ] [SHOULD] **Traceability**: Add `X-Pavis-Generated-At` header.
+- [x] **Core Engine**: Implementation of `ProxyHttp` trait (Pingora integration).
+- [x] **Routing**: Prefix, exact, regex, and wildcard matching.
+- [x] **Traffic Management**: Weighted splitting and Round-robin load balancing.
+- [x] **Headers**: Request/Response manipulation (Insert/Overwrite).
+- [x] **TLS**: Single-listener support with file-based certificates.
+- [x] **Upstreams**: Static IP-based selection.
+- [x] **CLI**: `pavis` runtime and `pavctl` tooling support.
 
----
+## Phase 2: Protocol & Tooling (The PVS Format)
+> **Goal**: A zero-copy, verifiable binary configuration protocol.
+> **Status**: ✅ Complete
 
-## Security
+- [x] **Schema**: `pavis-core` RuntimeConfig with `rkyv` derivation.
+- [x] **Integrity**: Magic Bytes (`PAVS`), versioning, and checksum verification.
+- [x] **Tooling**: `pavctl` commands for generation (`gen`), inspection (`view`), check (`check`), and reverse conversion (`convert`).
+- [x] **Safety**: Graceful rejection of invalid, corrupt, or version-mismatched binaries.
 
-### Phase 4: Core TLS Enhancements
-- [ ] [SHOULD] **TLS Enhancements**: Support inline certificates (SDS-style) and multiple certs per listener (SNI).
+## Phase 3: Dynamic Configuration (The Control Loop)
+> **Goal**: Live, hitless reconfiguration from external sources.
+> **Status**: 🚧 In Progress
 
-### Phase 6: Secure Communication
-- [ ] [MUST] **mTLS**: Client/Server TLS, certificate management, and SPIFFE/SPIRE integration.
-- [ ] [MUST] **Authorization**: RBAC policies, deny-by-default, and audit logging.
-- [ ] [SHOULD] **Identity**: JWT validation and JWKS caching.
+- [x] **Pipeline**: Source ingestion (File) -> Codec transformation -> Artifact generation.
+- [x] **Distribution API**: Long-polling endpoints (`GET /v1/config`, `POST /v1/publish`).
+- [x] **Hot Reload**: Atomic `ArcSwap` of runtime state without dropping connections.
+- [x] **Durability**: Last-Known-Good (LKG) persistence to disk (`/etc/pavis/config.pvs`) with fsync.
+- [x] **Recovery**: Boot from LKG if control plane is unreachable.
+- [x] **Identity**: Configurable bindings for Admin and Prometheus interfaces.
+- [ ] **Traceability**: `X-Pavis-Generated-At` headers for lineage tracking.
 
----
+## Phase 4: xDS & Service Mesh Integration
+> **Goal**: First-class integration with external control planes (Istio, Kuma).
+> **Status**: 🚧 In Progress (Codec Layer)
 
-## Observability
+- [ ] **xDS Ingest**: gRPC-based ADS (Aggregated Discovery Service) implementation.
+- [ ] **xDS Codec**: Map LDS, RDS, CDS, and EDS into `RuntimeConfig`.
+- [ ] **State Synchronization**: Handle snapshot consistency and resource tracking.
+- [ ] **Istio Compatibility**: Verified integration with Istio Discovery (pilot).
+- [ ] **Kuma Compatibility**: Verified integration with Kuma Control Plane.
 
-### Phase 3: Runtime Visibility
-- [ ] [SHOULD] **Metrics**: Track config version, reload counts (success/fail), and payload size.
+## Phase 5: Security (TLS & Auth)
+> **Goal**: Enterprise-grade security capabilities.
+> **Status**: ⏳ Planned
 
-### Phase 7: System-Wide Observability
-- [ ] [MUST] **Metrics**: Prometheus endpoint with request, connection, and upstream stats.
-- [ ] [MUST] **Access Logs**: Configurable formats (JSON/Text) and destinations.
-- [ ] [SHOULD] **Tracing**: OpenTelemetry integration (OTLP/Jaeger/Zipkin).
+- [ ] **Advanced TLS**: SNI support (multiple certs per listener) and SDS-style inline certificates.
+- [ ] **mTLS**: Mutual TLS for downstream (client) and upstream (server) connections.
+- [ ] **SPIFFE/SPIRE**: Workload identity integration.
+- [ ] **Authorization**: RBAC policies (Deny-by-default) and audit logging.
+- [ ] **Identity**: JWT validation and JWKS caching.
 
----
+## Phase 6: Observability
+> **Goal**: Deep visibility into proxy behavior.
+> **Status**: ⏳ Planned
 
-## Operations
+- [ ] **Metrics**: Prometheus exporter with request, connection, and upstream dimensions.
+- [ ] **Access Logs**: Configurable JSON/Text output to stdout or file.
+- [ ] **Tracing**: OpenTelemetry (OTLP) integration for distributed request tracing.
+- [ ] **Runtime Stats**: Internal telemetry (config version, reload counts, payload size).
 
-### Phase 3: Relay & Data Plane Operations
-- [x] [MUST] **In-Memory Cache**: Fast access to current config and history in `pavis-relay`.
-- [x] [MUST] **Pipeline Ingestion**: `pavis-ingest-file` with debounced watching and automatic versioning.
-- [x] [MUST] **Durability**: Atomic Last-Known-Good (LKG) persistence with `fsync` safety.
-- [x] [MUST] **Polling Thread**: Periodic polling with exponential backoff and jitter in `pavis`.
-- [x] [MUST] **Hot Reload**: Atomic `ArcSwap` of runtime config with pre-swap validation and rollback.
-- [ ] [SHOULD] **Tuning**: Configurable poll intervals, timeouts, and multi-source failover.
-- [ ] [SHOULD] **Visibility**: Config diff logging on update.
-- [x] [MUST] **Persistence**: Save last-known-good config to disk (`/etc/pavis/config.pvs`).
-- [x] [MUST] **Recovery**: Boot from disk if control plane is unreachable.
-- [ ] [SHOULD] **Safety**: Track last successful reload timestamp for heuristic checks.
-- [x] [MUST] Config update triggers route change.
-- [x] [MUST] Long poll holds connection until update.
-- [x] [MUST] Checksum mismatch triggers retry.
-- [x] [MUST] Proxy continues serving during config reload.
-- [x] [MUST] Crash recovery loads config from disk.
-- [x] [MUST] Multiple proxies receive same update.
-- [ ] [SHOULD] Exponential backoff on xDS server failure.
+## Phase 7: Operations (Resilience & Lifecycle)
+> **Goal**: Production readiness and ease of operation.
+> **Status**: ⏳ Planned
 
-### Phase 4 & 8: Operational Lifecycle
-- [ ] [NICE] **Modular Ingestion**: Control-plane pipeline migration (accept N-1, emit N).
-- [ ] [MUST] **Health Checks**: Active/Passive checks and outlier detection.
-- [ ] [MUST] **Lifecycle**: Graceful shutdown and connection draining.
-- [ ] [SHOULD] **Admin API**: Runtime stats, config dumps, and log level changes.
+- [ ] **Health Checks**: Active/Passive upstream health checking and outlier detection.
+- [ ] **Lifecycle**: Graceful shutdown sequences and connection draining.
+- [ ] **Admin API**: Runtime inspection endpoints and dynamic log level adjustment.
+- [ ] **Tuning**: Configurable poll intervals and timeouts.
 
----
+## Phase 8: Advanced Traffic Management
+> **Goal**: Sophisticated routing and traffic control.
+> **Status**: ⏳ Planned
 
-## Advanced Features
+- [ ] **DNS Upstreams**: `LOGICAL_DNS` support for dynamic backends.
+- [ ] **Route Actions**: Direct responses, Redirects, Host rewrites, Path rewrites.
+- [ ] **Traffic Control**: Rate limiting (local/distributed) and Fault injection.
+- [ ] **Protocols**: gRPC transcoding, WebSocket support, and HTTP/2 upstream.
+- [ ] **Extensibility**: WASM plugin interface.
 
-### Phase 3: Optimization & Stability
-- [ ] [MUST] **Concurrency Limits**: Enforce per-upstream limits on in-flight requests/connections.
-- [ ] [MUST] **Connection Reuse**: Enable upstream keepalive and maintain a reusable connection pool.
-- [ ] [SHOULD] **Idempotent Retries**: Limited retries for idempotent methods on transient errors.
-- [ ] [SHOULD] **Log Throttling**: Rate-limit or aggregate repetitive upstream errors.
-- [ ] [NICE] **Zero-Copy Access**: Refactor runtime to use `ArchivedRuntimeConfig` (mmap) via `rkyv`.
-- [ ] [NICE] **Lazy Compilation**: Implement lazy regex compilation for archived routes.
+## Phase 9: Kubernetes Integration
+> **Goal**: Native Kubernetes operator and deployment models.
+> **Status**: ⏳ Planned
 
-### Phase 4 & 5: Core Expansion & Traffic
-- [ ] [SHOULD] **Multi-Listener Support**: Support multiple bind addresses and protocols in a single runtime.
-- [ ] [SHOULD] **DNS-Based Upstreams**: Hostname-based dynamic backends using `LOGICAL_DNS`.
-- [ ] [SHOULD] **Advanced Route Actions**: `DirectResponse`, `Redirect`, `HostRewrite`, and `PathRewrite`.
-- [ ] [NICE] **Traffic Management**: Request timeouts, retry policies, and circuit breakers.
+- [ ] **Operator**: Controller for `PavisConfig` and `PavisGateway` CRDs.
+- [ ] **Deployment**: Sidecar injector webhook and Helm charts.
 
-### Phase 9: Extended Functionality
-- [ ] [NICE] **Traffic Control**: Rate limiting (local/distributed) and Fault injection.
-- [ ] [NICE] **Transforms**: URL rewriting and body transformation.
-- [ ] [NICE] **Protocols**: gRPC, WebSocket, and HTTP/2 upstream.
-- [ ] [NICE] **Extensibility**: WASM plugins.
+
 
 ---
 
-## Kubernetes Integration
+# B. Technical Debt Register
 
-### Phase 10: Native Kubernetes
-- [ ] [SHOULD] **Operator**: CRDs (`PavisConfig`, `PavisGateway`) and Controller.
-- [ ] [NICE] **Deployment**: Sidecar injection and Helm charts.
+> **Definition**: Deferred engineering work, optimizations, and architectural alignment tasks.
+> **Policy**: Must be reviewed before starting new Delivery Phases.
+
+### TD-1: Testing & Quality Assurance
+- [ ] **[Safety] Unit Testing Gaps**: Low confidence in edge cases for new features. (Trigger: Before Phase 4)
+- [ ] **[Safety] Integration Testing**: Risk of state desync during reloads. (Trigger: Before Phase 4)
+- [ ] **[Safety] E2E Testing**: No validation against real network targets/kernels. (Trigger: Before v1.0 Release)
+
+### TD-2: Release Engineering & Safety
+- [ ] **[Safety] CI Compatibility Fixtures**: Risk of breaking backward compatibility for older binaries. (Trigger: Before first public release)
+- [ ] **[Arch] Governance Ownership**: Relay currently owns migration logic; should move to Governor. (Trigger: When Governor component is introduced)
+
+### TD-3: Architectural Coupling (Relay)
+- [ ] **[Arch] Monolithic Relay Build**: `pavis-relay` couples to all concrete ingests/codecs. (Trigger: Introduction of 3rd source type)
+- [ ] **[DX] Feature-Gate Backends**: Bloated binary size; slow compile times. (Trigger: Immediate/Short-term)
+- [ ] **[Arch] Inversion of Control**: Relay core depends on concrete types, violating Open/Closed. (Trigger: Before Phase 8 K8s)
+
+### TD-4: Performance Optimizations
+- [ ] **[Perf] Zero-Copy Loading (mmap)**: Config loading copies bytes to heap; increases startup RAM. (Trigger: Config sizes > 10MB)
+- [ ] **[Perf] Lazy Regex Compilation**: Startup penalty for configs with many regex routes. (Trigger: > 100 regex routes)
+- [ ] **[Perf] Connection Reuse**: High TCP churn; increased latency. (Trigger: High-throughput stress tests)
+
+### TD-5: Resilience & Scalability
+- [ ] **[Scale] Concurrency Limits**: No protection against "thundering herd" or DOS. (Trigger: Public internet exposure)
+- [ ] **[Resilience] xDS Backoff**: Aggressive retries can DDOS the control plane. (Trigger: Deployment to large mesh)
+- [ ] **[Resilience] Idempotent Retries**: Network blips cause user-visible errors. (Trigger: High availability SLA requirements)
+
+### TD-6: Service Mesh & xDS
+- [ ] **[Perf] Delta xDS (Incremental)**: High CPU/Network for large meshes; full snapshot transfers. (Trigger: > 1000 Envoy resources)
+- [ ] **[Arch] Stateful Resource Tracking**: Potential for stale endpoints if EDS/CDS desync. (Trigger: Multi-cluster deployments)

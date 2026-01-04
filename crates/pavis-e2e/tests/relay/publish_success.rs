@@ -1,5 +1,8 @@
 use anyhow::Result;
-use pavis_core::{AccessLogConfig, Listener, RuntimeConfig, TelemetryConfig};
+use pavis_core::{
+    AccessLogPolicy, Listener, ListenerName, LogLevel, Metrics, RuntimeConfig, ServiceName,
+    Telemetry, TlsConfig, TracingPolicy, WorkerCount,
+};
 use pavis_e2e::support::PavisScenario;
 use pavis_e2e::support::relay::RelayOptions;
 use pavis_pvs::PAVIS_MAGIC;
@@ -8,18 +11,18 @@ use std::fs;
 fn default_runtime_config() -> RuntimeConfig {
     RuntimeConfig {
         listeners: vec![Listener {
-            name: "default".to_string(),
-            listen_addr: "127.0.0.1:8080".parse().unwrap(),
-            worker_threads: None,
-            tls: None,
+            name: ListenerName("default".to_string()),
+            address: "127.0.0.1:8080".parse().unwrap(),
+            workers: WorkerCount::Auto,
+            tls: TlsConfig::Disabled,
         }],
-        telemetry: TelemetryConfig {
-            level: None,
-            pingora: None,
-            service_name: None,
-            prometheus_addr: None,
-            access_log: AccessLogConfig::Disabled,
-            tracing: None,
+        telemetry: Telemetry {
+            level: LogLevel::Info,
+            pingora: LogLevel::Info,
+            service_name: ServiceName("pavis-relay-e2e".to_string()),
+            metrics: Metrics::Disabled,
+            access_log: AccessLogPolicy::Disabled,
+            tracing: TracingPolicy::Disabled,
         },
         upstreams: Vec::new(),
         routes: Vec::new(),
@@ -57,7 +60,7 @@ async fn r1_publish_success() -> Result<()> {
 
     // Publish v2
     let mut config_v2 = default_runtime_config();
-    config_v2.listeners[0].listen_addr = "127.0.0.1:9090".parse().unwrap();
+    config_v2.listeners[0].address = "127.0.0.1:9090".parse().unwrap();
     scenario.apply_config(&config_v2).await?;
 
     // Verify LKG updated

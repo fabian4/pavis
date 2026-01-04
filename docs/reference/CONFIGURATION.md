@@ -1,200 +1,321 @@
 # Runtime Configuration Reference
 
 > **Status:** Reference
-> **Role:** The canonical definition of the "Fully Explicit" Runtime Configuration.
+> **Role:** Canonical definition of the fully materialized runtime configuration and its YAML form.
 
-This document describes the `RuntimeConfig` structure consumed by the Pavis runtime. 
-It represents the **fully materialized** state after the Codec layer has processed user input and applied all policy defaults.
+This document describes the `pavis_core::RuntimeConfig` structure consumed by the Pavis runtime and the YAML emitted/accepted by the serde codec.
 
-## Configuration File Structure
+## RuntimeConfig (Rust)
+```rust
+pub struct RuntimeConfig {
+    pub listeners: Vec<Listener>,
+    pub telemetry: Telemetry,
+    pub upstreams: Vec<Upstream>,
+    pub routes: Vec<VirtualHost>,
+}
 
-The following YAML reference corresponds strictly to the `pavis_core::RuntimeConfig` struct.
+pub struct Duration(pub NonZeroU32);
+
+pub enum Timeout {
+    Disabled,
+    Enabled(Duration),
+}
+
+pub enum ConnectTimeout {
+    Disabled,
+    Enabled(Duration),
+}
+
+pub enum IdleTimeout {
+    Disabled,
+    Enabled(Duration),
+}
+
+pub enum TryTimeout {
+    Inherit,
+    Disabled,
+    Enabled(Duration),
+}
+
+pub struct Hostname(pub String);
+pub struct Host(pub String);
+pub struct Path(pub String);
+pub struct ServiceName(pub String);
+pub struct HeaderName(pub String);
+pub struct HeaderValue(pub String);
+pub struct UpstreamName(pub String);
+pub struct UpstreamId(pub NonZeroU16);
+pub struct ListenerName(pub String);
+pub struct Port(pub NonZeroU16);
+pub struct Weight(pub NonZeroU16);
+pub struct SampleRate(pub u32);
+
+pub struct Listener {
+    pub name: ListenerName,
+    pub address: SocketAddr,
+    pub workers: WorkerCount,
+    pub tls: TlsConfig,
+}
+
+pub enum WorkerCount {
+    Auto,
+    Count(NonZeroU16),
+}
+
+pub enum TlsConfig {
+    Disabled,
+    Enabled { cert_path: Path, key_path: Path },
+}
+
+pub struct Telemetry {
+    pub level: LogLevel,
+    pub pingora: LogLevel,
+    pub service_name: ServiceName,
+    pub metrics: Metrics,
+    pub access_log: AccessLogPolicy,
+    pub tracing: TracingPolicy,
+}
+
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+pub enum AccessLogPolicy {
+    Disabled,
+    Stdout,
+    File(Path),
+}
+
+pub enum TracingPolicy {
+    Disabled,
+    Enabled {
+        provider: TracingProvider,
+        sampling: SampleRate,
+    },
+}
+
+pub enum TracingProvider {
+    Otlp,
+    Jaeger,
+    Zipkin,
+}
+
+pub enum Metrics {
+    Disabled,
+    Enabled { addr: SocketAddr },
+}
+
+pub struct Upstream {
+    pub id: UpstreamId,
+    pub name: UpstreamName,
+    pub discovery: Discovery,
+    pub balancer: LoadBalancer,
+    pub protocol: HttpVersion,
+    pub pool: Pool,
+    pub tls: TlsPolicy,
+    pub endpoints: Vec<Endpoint>,
+}
+
+pub enum Discovery {
+    Static,
+    StrictDns,
+    LogicalDns,
+}
+
+pub enum LoadBalancer {
+    RoundRobin,
+    Random,
+    LeastRequest,
+}
+
+pub enum HttpVersion {
+    H1,
+    H2,
+    H2H1,
+}
+
+pub struct Pool {
+    pub idle: IdleTimeout,
+    pub connect: ConnectTimeout,
+    pub max: ConnectionLimit,
+}
+
+pub enum ConnectionLimit {
+    Unlimited,
+    Limited(NonZeroU32),
+}
+
+pub enum TlsPolicy {
+    Disabled,
+    Enabled { verify_mode: TlsVerify, sni: SniName },
+}
+
+pub enum TlsVerify {
+    Disabled,
+    Cert,
+    CertAndHost,
+}
+
+pub enum SniName {
+    Auto,
+    Value(Hostname),
+}
+
+pub struct Endpoint {
+    pub address: EndpointAddr,
+    pub weight: Weight,
+}
+
+pub enum EndpointAddr {
+    Ip { address: IpAddr, port: Port },
+    Dns { host: Hostname, port: Port },
+}
+
+pub struct VirtualHost {
+    pub host: Host,
+    pub paths: Vec<Route>,
+}
+
+pub struct Route {
+    pub matcher: PathMatch,
+    pub timeout: Timeout,
+    pub retry: RetryPolicy,
+    pub request_headers: HeadersPolicy,
+    pub response_headers: HeadersPolicy,
+    pub rewrite: Rewrite,
+    pub destinations: Vec<Destination>,
+}
+
+pub enum PathMatch {
+    Prefix { path: Path },
+    Exact { path: Path },
+    Regex { path: Path },
+}
+
+pub enum RetryPolicy {
+    Disabled,
+    Enabled {
+        attempts: NonZeroU16,
+        per_try: TryTimeout,
+        on: RetryFlags,
+    },
+}
+
+pub struct RetryFlags(pub u8);
+pub const RETRY_FIVE_XX: u8 = 0b0000_0001;
+pub const RETRY_CONNECT_FAILURE: u8 = 0b0000_0010;
+pub const RETRY_RESET: u8 = 0b0000_0100;
+pub const RETRY_REFUSED: u8 = 0b0000_1000;
+pub const RETRY_RESERVED: u8 = 0b1111_0000;
+
+pub enum HeadersPolicy {
+    Disabled,
+    Enabled { rules: Headers },
+}
+
+pub struct Headers {
+    pub set_headers: Vec<(HeaderName, HeaderValue)>,
+    pub append_headers: Vec<(HeaderName, HeaderValue)>,
+    pub add_headers: Vec<(HeaderName, HeaderValue)>,
+    pub remove_headers: Vec<HeaderName>,
+}
+
+pub struct Rewrite {
+    pub path: RewritePath,
+    pub host: RewriteHost,
+}
+
+pub enum RewritePath {
+    Disabled,
+    Prefix { from: Path, to: Path },
+}
+
+pub enum RewriteHost {
+    Disabled,
+    Literal { host: Hostname },
+}
+
+pub struct Destination {
+    pub upstream: UpstreamName,
+    pub weight: Weight,
+}
+```
+
+**Normative Semantics**
+- `HeadersPolicy::Disabled` means no header mutations are applied.
+- Regex compilation happens at runtime load/swap and is not stored in the schema.
+
+## YAML Reference (serde codec)
 
 ```yaml
-# ------------------------------------------------------------------------------
-# PAVIS RUNTIME CONFIGURATION (Fully Explicit Reference)
-# ------------------------------------------------------------------------------
-# This configuration represents the "Fully Materialized" state consumed by the
-# Pavis runtime. It is the result of the Codec layer processing user input and
-# applying all policy defaults.
-#
-# NOTE: This format corresponds strictly to the `pavis_core::RuntimeConfig` struct.
-# All policy decisions (timeouts, algorithms) are explicit here.
-# ------------------------------------------------------------------------------
-
-# ------------------------------------------------------------------------------
-# LISTENERS
-# Define entry points where Pavis accepts incoming connections.
-# ------------------------------------------------------------------------------
 listeners:
-  - name: "public-https"                # [Required] Unique identifier for logs/metrics.
-    listen_addr: "0.0.0.0:443"          # [Required] Bind address (IP:Port).
-    
-    # [Optional] Thread pool size for this listener.
-    # If null, the Runtime uses a system heuristic (e.g., 1 thread per core).
-    # Explicit values ensure deterministic resource usage across environments.
-    worker_threads: 4
-
-    # [Optional] TLS termination settings.
-    # If null, the listener operates in cleartext (TCP/HTTP).
-    # If present, TLS is enforced.
-    tls:
-      enabled: true                     # [Required] Master toggle for TLS on this listener.
-      cert_path: "/etc/pavis/cert.pem"  # [Required if enabled] Path to server certificate.
-      key_path: "/etc/pavis/key.pem"    # [Required if enabled] Path to private key.
-
-# ------------------------------------------------------------------------------
-# TELEMETRY
-# Observability settings (Logs, Metrics, Tracing).
-# ------------------------------------------------------------------------------
-telemetry:
-  # [Optional] Global logging verbosity.
-  # Codec Default: "info"
-  # Runtime Behavior: If null, defaults to "info". Explicit value preferred for determinism.
-  level: "info"
-
-  # [Optional] Pingora engine internal logging verbosity.
-  # Often set deeper (e.g., "debug") for network troubleshooting, or same as level.
-  pingora: "warn"
-
-  # [Optional] Service identifier for distributed tracing and metrics tags.
-  # Should match the deployment name.
-  service_name: "pavis-gateway-prod"
-
-  # [Optional] Address to expose Prometheus metrics.
-  # If null, the metrics server is not started.
-  prometheus_addr: "0.0.0.0:9090"
-
-  # [Required] Access log destination.
-  # Options: "Disabled", "Stdout", or { "File": "/path/to/log" }.
-  # Codec Default: "Stdout".
-  access_log: "Stdout"
-
-  # [Optional] Distributed tracing configuration.
-  # If null, tracing is disabled.
-  tracing:
-    enabled: true                       # [Required] Master toggle.
-    provider: "otlp"                    # [Required] Tracing backend (currently only "otlp").
-    sampling_rate: 0.1                  # [Required] 0.0 to 1.0 (10% sampling).
-
-# ------------------------------------------------------------------------------
-# UPSTREAMS
-# Backend service definitions (Clusters).
-# ------------------------------------------------------------------------------
-upstreams:
-  # UPSTREAM 1: HTTP/1.1 App Service
-  - name: "app-service-v1"              # [Required] ID referenced by routes.
-    
-    # [Required] How endpoints are resolved.
-    # "static"      -> Fixed IP list (config driven).
-    # "strict-dns"  -> DNS A records, TTL respected.
-    # "logical-dns" -> DNS resolved lazily at connection time.
-    discovery_type: "static"
-
-    # [Required] Load balancing algorithm.
-    # "round-robin" -> Cyclic iteration.
-    # "random"      -> Stateless random selection (Codec Default).
-    load_balancer: "round-robin"
-
-    # [Required] Upstream protocol.
-    # "h1"   -> HTTP/1.1 (Codec Default).
-    # "h2"   -> HTTP/2.
-    # "auto" -> ALPN negotiation.
-    http_version: "h1"
-
-    # [Required] Connection pool sizing and timeouts.
-    connection_pool:
-      idle_timeout_secs: 60             # Keep-alive duration for idle connections.
-      connection_timeout_secs: 5        # Max time to wait for TCP handshake.
-
-    # [Optional] Upstream TLS settings (for backend encryption).
-    # If null, connects via plaintext.
+  - name: "default"
+    address: "0.0.0.0:8080"
+    workers: null
     tls: null
 
-    # [Optional] Static list of endpoints (if discovery_type is static).
+telemetry:
+  level: null
+  pingora: null
+  service_name: null
+  metrics: null
+  access_log: "stdout"   # "stdout", "false", or file path
+  tracing:
+    provider: "otlp"      # otlp, jaeger, zipkin
+    sampling: 1000
+
+upstreams:
+  - id: 1                # optional
+    name: "backend"
+    discovery: "static"        # static, strict-dns, logical-dns
+    balancer: "round-robin"    # round-robin, random, least-request
+    protocol: "h1"            # h1, h2, h2h1
+    pool:
+      idle: "60s"
+      connect: "5s"
+      max: null                # null = unlimited
+    tls:
+      enabled: true
+      verify_hostname: true
+      verify_cert: true
+      sni: "backend.local"
+    circuit_breaker: null
+    health_check: null
     endpoints:
-      - address: { "ip": "10.0.1.10:8080" } # [Required] Target address.
-        weight: 1                           # [Required] Load balancing weight (default 1).
-      - address: { "ip": "10.0.1.11:8080" }
+      - address: "127.0.0.1"
+        port: 8081
         weight: 1
 
-  # UPSTREAM 2: HTTP/2 gRPC Service with TLS
-  - name: "grpc-core"
-    discovery_type: "logical-dns"
-    load_balancer: "random"
-    http_version: "h2"
-    connection_pool:
-      idle_timeout_secs: 120
-      connection_timeout_secs: 2
-    
-    tls:
-      enabled: true                     # [Required] Enable TLS to upstream.
-      verify_hostname: true             # [Required] Verify cert Common Name matches host.
-      verify_cert: true                 # [Required] Validate cert trust chain.
-      sni: "grpc.internal.svc"          # [Optional] SNI header to send.
-
-    endpoints:
-      - address: { "dns": ["grpc.internal.svc", 9000] }
-        weight: 5
-
-# ------------------------------------------------------------------------------
-# ROUTES
-# Mapping incoming requests to Upstreams.
-# ------------------------------------------------------------------------------
 routes:
-  # VIRTUAL HOST 1: Public API
-  - host: "api.example.com"             # [Required] "Host" header match. "*" matches any.
+  - host: "example.com"
     paths:
-      
-      # ROUTE 1: Exact match for login
-      - match_type: "exact"             # [Required] "prefix", "exact", or "regex".
-        path: "/v1/login"               # [Required] URI pattern.
-        
-        # [Optional] Request processing timeout.
-        # If null, defaults to system/global limit.
-        # Explicit values preferred for SLA enforcement.
-        timeout_ms: 2000
-
-        # [Optional] Retry policy for transient failures.
-        retry_policy:
-          attempts: 2                   # Total tries (1 initial + 2 retries).
-          per_try_timeout_ms: 500       # Limit per individual attempt.
-          retry_on: ["5xx", "connect-failure"] # Conditions triggering retry.
-
-        destinations:
-          - upstream: "app-service-v1"  # [Required] Target upstream name.
-            weight: 1                   # [Required] Traffic split weight.
-
-      # ROUTE 2: Prefix match for general API
-      - match_type: "prefix"
-        path: "/v1/"
-        timeout_ms: 5000
-        retry_policy: null              # No retries for general endpoints.
-        
-        # [Optional] Header manipulation.
+      - matcher:
+          prefix:
+            path: "/"
+        timeout: null          # duration string or null
+        retry:
+          attempts: 2
+          per_try_timeout: "250ms"
+          retry_on: ["5xx", "connect_failure"]
         request_headers:
-          actions:
-            - key: "x-proxy-id"
-              value: "pavis-gateway"
-              action: "set"             # "set", "append", "add_if_absent", "remove"
-
-        destinations:
-          - upstream: "app-service-v1"
-            weight: 1
-
-  # VIRTUAL HOST 2: gRPC Subdomain
-  - host: "grpc.example.com"
-    paths:
-      - match_type: "prefix"
-        path: "/"
-        timeout_ms: 10000
-        
-        # [Optional] Rewrite logic.
+          set_headers:
+            - ["x-added", "1"]
+          append_headers: []
+          add_headers: []
+          remove_headers: ["x-remove"]
+        response_headers: null
         rewrite:
-          path_prefix_rewrite: "/"      # Strip prefix if needed.
-          host_rewrite_literal: "grpc.internal.svc" # Change Host header upstream.
-
+          path_prefix_rewrite: "/v2"
+          host_rewrite_literal: "backend.local"
         destinations:
-          - upstream: "grpc-core"
+          - upstream: "backend"
             weight: 1
 ```
+
+Notes:
+- YAML durations (`idle`, `connect`, `timeout`, `per_try`) accept human-friendly strings and are materialized into milliseconds in `RuntimeConfig`.
+- Endpoint weights and destination weights are `NonZeroU16` in the runtime config.

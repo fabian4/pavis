@@ -9,5 +9,5 @@ pub mod validation;
 
 #[allow(unused_imports)]
 pub use convert::*;
-pub use pavis_core::{AccessLogConfig, HttpVersion, LoadBalancer, MatchType};
+pub use pavis_core::{AccessLogPolicy, HttpVersion, LoadBalancer, PathMatch};
 pub use types::*;

@@ -22,11 +22,11 @@ The testing strategy strictly follows the layered architecture of Pavis. We vali
 | ID | Test Case Name | Input Description | Expected Outcome | Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | **C-01** | `listener_name_required` | `Listener` struct with empty name string | Validation Error | Listener names are critical for selection. |
-| **C-02** | `endpoint_address_variants` | Valid `Ip(SocketAddr)` and `Dns(String, u16)` variants | Struct creation succeeds | Ensure enum variants serialize/deserialize correctly. |
-| **C-03** | `rewrite_policy_defaults` | `Route` without `rewrite` field | `rewrite` field is `None` | Backward compatibility for existing routes. |
-| **C-04** | `header_action_defaults` | `HeaderAction` with old schema (if supported) | Maps to `HeaderActionType::Set` | Ensure migration safety if manual conversion isn't forced. |
+| **C-02** | `endpoint_address_variants` | Valid `Ip { address, port }` and `Dns { host, port }` variants | Struct creation succeeds | Ensure enum variants serialize/deserialize correctly. |
+| **C-03** | `rewrite_policy_defaults` | `Route` without explicit rewrite policy | `rewrite` is `Rewrite { path: Disabled, host: Disabled }` | Backward compatibility for existing routes. |
+| **C-04** | `header_action_defaults` | Header add/remove input (legacy if supported) | Mapped into `Headers` lists | Ensure migration safety if manual conversion isn't forced. |
 | **C-05** | `validate_listeners_non_empty` | `RuntimeConfig` with empty `listeners` vector | Validation Error | A config with no listeners is non-functional. |
-| **C-06** | `validate_dns_endpoint_port` | `EndpointAddress::Dns` with port 0 | Validation Error | DNS endpoints must have explicit ports. |
+| **C-06** | `validate_dns_endpoint_port` | `EndpointAddr::Dns` with port 0 | Validation Error | DNS endpoints must have explicit ports. |
 
 ### B. pavis-codec-xds (Transformation Tests)
 
@@ -36,11 +36,11 @@ The testing strategy strictly follows the layered architecture of Pavis. We vali
 | **X-02** | `reject_complex_listener` | Listener with multiple filter chains | `CodecError::UnsupportedFeature` | We only support flattened listeners. |
 | **X-03** | `map_logical_dns_cluster` | Cluster type `LOGICAL_DNS` | `Upstream.discovery` = `LogicalDns` | Correct enum mapping. |
 | **X-04** | `map_strict_dns_cluster` | Cluster type `STRICT_DNS` | `Upstream.discovery` = `StrictDns` | Correct enum mapping. |
-| **X-05** | `map_prefix_rewrite` | Route with `prefix_rewrite` | `Route.rewrite.path_prefix_rewrite` set | Correct field mapping. |
-| **X-06** | `map_host_rewrite` | Route with `host_rewrite_literal` | `Route.rewrite.host_rewrite_literal` set | Correct field mapping. |
-| **X-07** | `map_header_append` | `request_headers_to_add` with `append: true` | `HeaderActionType::Append` | Correct enum mapping. |
+| **X-05** | `map_prefix_rewrite` | Route with `prefix_rewrite` | `RewritePath::Prefix` set | Correct field mapping. |
+| **X-06** | `map_host_rewrite` | Route with `host_rewrite_literal` | `RewriteHost::Literal` set | Correct field mapping. |
+| **X-07** | `map_header_append` | `request_headers_to_add` with `append: true` | `Headers.append_headers` populated | Correct mapping. |
 | **X-08** | `deterministic_output` | Two identical xDS snapshots | Identical `pavis-core` bytes | Transformation must be deterministic. |
-| **X-09** | `default_timeouts` | Route without timeouts | `timeout_ms` populated with default | Codec must apply defaults. |
+| **X-09** | `default_timeouts` | Route without timeouts | `timeout` populated with default | Codec must apply defaults. |
 | **X-10** | `default_retry_policy` | Route with partial retry config | Full `RetryPolicy` populated | Codec ensures completeness. |
 
 ### C. pavis runtime (Behavioral Tests)

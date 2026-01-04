@@ -67,7 +67,7 @@ impl RelayInstance {
             if !path.exists() {
                 fs::write(
                     path,
-                    "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:0\"",
+                    "listeners:\n  - name: \"default\"\n    address: \"127.0.0.1:0\"",
                 )?;
             }
         }

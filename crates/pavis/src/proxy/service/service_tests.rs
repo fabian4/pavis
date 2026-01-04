@@ -4,75 +4,86 @@ use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::Telemetry;
 use crate::upstream::Manager;
 use pavis_core::{
-    AccessLogConfig, ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress, HeaderAction,
-    HeaderActionType, HeaderOperations, HttpVersion, LoadBalancer, MatchType, Route,
-    TelemetryConfig, Upstream, UpstreamTlsConfig, VirtualHost, WeightedDestination,
+    AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint,
+    EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname, HttpVersion,
+    IdleTimeout, LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite,
+    RewriteHost, RewritePath, ServiceName, Telemetry as RuntimeTelemetry, Timeout, TlsPolicy,
+    Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::ProxyHttp;
 use pingora::proxy::Session;
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
+use std::num::{NonZeroU16, NonZeroU32};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[test]
 fn apply_route_headers_populates_router_context() {
-    let route = Route {
-        match_type: MatchType::Exact,
-        path: "/".to_string(),
-        timeout_ms: None,
-        retry_policy: None,
-        request_headers: Some(HeaderOperations {
-            actions: vec![
-                HeaderAction {
-                    key: "x-req".to_string(),
-                    value: Some("1".to_string()),
-                    action: HeaderActionType::Set,
-                },
-                HeaderAction {
-                    key: "x-remove".to_string(),
-                    value: None,
-                    action: HeaderActionType::Remove,
-                },
-            ],
-        }),
-        response_headers: Some(HeaderOperations {
-            actions: vec![HeaderAction {
-                key: "x-resp".to_string(),
-                value: Some("ok".to_string()),
-                action: HeaderActionType::Set,
-            }],
-        }),
-        rewrite: None,
-        destinations: vec![WeightedDestination {
-            upstream: "backend".to_string(),
-            weight: 1,
+    let route = pavis_core::Route {
+        matcher: PathMatch::Exact {
+            path: Path("/".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![(
+                    HeaderName("x-req".to_string()),
+                    HeaderValue("1".to_string()),
+                )],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: vec![HeaderName("x-remove".to_string())],
+            },
+        },
+        response_headers: HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![(
+                    HeaderName("x-resp".to_string()),
+                    HeaderValue("ok".to_string()),
+                )],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
+        },
+        rewrite: Rewrite {
+            path: RewritePath::Disabled,
+            host: RewriteHost::Disabled,
+        },
+        destinations: vec![Destination {
+            upstream: UpstreamName("backend".to_string()),
+            weight: Weight(NonZeroU16::new(1).unwrap()),
         }],
     };
     let mut ctx = RouterContext {
         upstream_name: None,
-        request_headers: None,
-        response_headers: None,
+        request_headers: HeadersPolicy::Disabled,
+        response_headers: HeadersPolicy::Disabled,
         sni_override: None,
         start_time: std::time::Instant::now(),
     };
 
     apply_route_headers(&mut ctx, &route);
 
-    assert!(ctx.request_headers.is_some());
-    assert!(ctx.response_headers.is_some());
+    assert!(matches!(ctx.request_headers, HeadersPolicy::Enabled { .. }));
+    assert!(matches!(
+        ctx.response_headers,
+        HeadersPolicy::Enabled { .. }
+    ));
 }
 
 fn test_telemetry() -> Arc<Telemetry> {
-    let (telemetry, _worker) = Telemetry::new(&TelemetryConfig {
-        level: None,
-        pingora: None,
-        service_name: None,
-        prometheus_addr: None,
-        access_log: AccessLogConfig::Disabled,
-        tracing: None,
+    let (telemetry, _worker) = Telemetry::new(&RuntimeTelemetry {
+        level: pavis_core::LogLevel::Info,
+        pingora: pavis_core::LogLevel::Info,
+        service_name: ServiceName("svc".to_string()),
+        metrics: Metrics::Disabled,
+        access_log: AccessLogPolicy::Disabled,
+        tracing: pavis_core::TracingPolicy::Disabled,
     });
     Arc::new(telemetry)
 }
@@ -93,8 +104,8 @@ fn new_ctx_defaults_are_empty() {
     let before = Instant::now();
     let ctx = proxy.new_ctx();
     assert!(ctx.upstream_name.is_none());
-    assert!(ctx.request_headers.is_none());
-    assert!(ctx.response_headers.is_none());
+    assert!(matches!(ctx.request_headers, HeadersPolicy::Disabled));
+    assert!(matches!(ctx.response_headers, HeadersPolicy::Disabled));
     assert!(ctx.sni_override.is_none());
     assert!(ctx.start_time >= before);
 }
@@ -107,23 +118,25 @@ async fn session_for_request(request: &[u8]) -> (Session, tokio::io::DuplexStrea
     (session, client)
 }
 
-fn upstream(name: &str, port: u16) -> Upstream {
+fn upstream(name: &str, id: u16, port: u16) -> Upstream {
     Upstream {
-        name: name.to_string(),
-        discovery_type: DiscoveryType::Static,
-        load_balancer: LoadBalancer::Random,
-        http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig {
-            idle_timeout_secs: 60,
-            connection_timeout_secs: 5,
+        id: UpstreamId(NonZeroU16::new(id).unwrap()),
+        name: UpstreamName(name.to_string()),
+        discovery: Discovery::Static,
+        balancer: LoadBalancer::Random,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
+            connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
+            max: ConnectionLimit::Unlimited,
         },
-        tls: None,
+        tls: TlsPolicy::Disabled,
         endpoints: vec![Endpoint {
-            address: EndpointAddress::Ip(std::net::SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::LOCALHOST),
-                port,
-            )),
-            weight: 1,
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(port).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
         }],
     }
 }
@@ -131,28 +144,32 @@ fn upstream(name: &str, port: u16) -> Upstream {
 #[tokio::test]
 async fn request_filter_selects_weighted_destination() {
     let routes = vec![VirtualHost {
-        host: "*".to_string(),
-        paths: vec![Route {
-            match_type: MatchType::Exact,
-            path: "/api".to_string(),
-            timeout_ms: None,
-            retry_policy: None,
-            request_headers: None,
-            response_headers: None,
-            rewrite: None,
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Exact {
+                path: Path("/api".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled,
+            response_headers: HeadersPolicy::Disabled,
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
             destinations: vec![
-                WeightedDestination {
-                    upstream: "blue".to_string(),
-                    weight: 1,
+                Destination {
+                    upstream: UpstreamName("blue".to_string()),
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
                 },
-                WeightedDestination {
-                    upstream: "green".to_string(),
-                    weight: 2,
+                Destination {
+                    upstream: UpstreamName("green".to_string()),
+                    weight: Weight(NonZeroU16::new(2).unwrap()),
                 },
             ],
         }],
     }];
-    let manager = Manager::new(&[upstream("blue", 8081), upstream("green", 8082)]);
+    let manager = Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]);
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
@@ -173,7 +190,11 @@ async fn request_filter_selects_weighted_destination() {
     assert!(!should_respond);
 
     let expected: HashSet<&str> = ["blue", "green"].into_iter().collect();
-    let selected = ctx.upstream_name.as_deref().expect("upstream selected");
+    let selected = ctx
+        .upstream_name
+        .as_ref()
+        .map(|v| v.0.as_str())
+        .expect("upstream selected");
     assert!(expected.contains(selected));
 }
 
@@ -210,25 +231,31 @@ async fn request_filter_returns_404_when_no_route_matches() {
 #[tokio::test]
 async fn request_filter_applies_rewrite_policy() {
     let routes = vec![VirtualHost {
-        host: "*".to_string(),
-        paths: vec![Route {
-            match_type: MatchType::Prefix,
-            path: "/api".to_string(),
-            timeout_ms: None,
-            retry_policy: None,
-            request_headers: None,
-            response_headers: None,
-            rewrite: Some(pavis_core::RewritePolicy {
-                path_prefix_rewrite: Some("/v2".to_string()),
-                host_rewrite_literal: Some("rewrite.example.com".to_string()),
-            }),
-            destinations: vec![WeightedDestination {
-                upstream: "backend".to_string(),
-                weight: 1,
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Prefix {
+                path: Path("/api".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled,
+            response_headers: HeadersPolicy::Disabled,
+            rewrite: Rewrite {
+                path: RewritePath::Prefix {
+                    from: Path("/api".to_string()),
+                    to: Path("/v2".to_string()),
+                },
+                host: RewriteHost::Literal {
+                    host: Hostname("rewrite.example.com".to_string()),
+                },
+            },
+            destinations: vec![Destination {
+                upstream: UpstreamName("backend".to_string()),
+                weight: Weight(NonZeroU16::new(1).unwrap()),
             }],
         }],
     }];
-    let manager = Manager::new(&[upstream("backend", 8081)]);
+    let manager = Manager::new(&[upstream("backend", 1, 8081)]);
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
@@ -255,34 +282,32 @@ async fn request_filter_applies_rewrite_policy() {
         header.headers.get("Host").unwrap().to_str().unwrap(),
         "rewrite.example.com"
     );
-    assert_eq!(ctx.sni_override.as_deref(), Some("rewrite.example.com"));
+    assert_eq!(
+        ctx.sni_override.as_ref().map(|v| v.0.as_str()),
+        Some("rewrite.example.com")
+    );
 }
 
 #[tokio::test]
-async fn request_filter_skips_selection_when_total_weight_zero() {
+async fn request_filter_skips_selection_when_no_destinations() {
     let routes = vec![VirtualHost {
-        host: "*".to_string(),
-        paths: vec![Route {
-            match_type: MatchType::Exact,
-            path: "/api".to_string(),
-            timeout_ms: None,
-            retry_policy: None,
-            request_headers: None,
-            response_headers: None,
-            rewrite: None,
-            destinations: vec![
-                WeightedDestination {
-                    upstream: "blue".to_string(),
-                    weight: 0,
-                },
-                WeightedDestination {
-                    upstream: "green".to_string(),
-                    weight: 0,
-                },
-            ],
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Exact {
+                path: Path("/api".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled,
+            response_headers: HeadersPolicy::Disabled,
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
+            destinations: Vec::new(),
         }],
     }];
-    let manager = Manager::new(&[upstream("blue", 8081), upstream("green", 8082)]);
+    let manager = Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]);
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
@@ -307,26 +332,26 @@ async fn request_filter_skips_selection_when_total_weight_zero() {
 #[tokio::test]
 async fn upstream_peer_defaults_sni() {
     let manager = Manager::new(&[Upstream {
-        name: "secure".to_string(),
-        discovery_type: DiscoveryType::Static,
-        load_balancer: LoadBalancer::RoundRobin,
-        http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig {
-            idle_timeout_secs: 60,
-            connection_timeout_secs: 5,
+        id: UpstreamId(NonZeroU16::new(1).unwrap()),
+        name: UpstreamName("secure".to_string()),
+        discovery: Discovery::Static,
+        balancer: LoadBalancer::RoundRobin,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
+            connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
+            max: ConnectionLimit::Unlimited,
         },
-        tls: Some(UpstreamTlsConfig {
-            enabled: true,
-            verify_hostname: true,
-            verify_cert: true,
-            sni: None,
-        }),
+        tls: TlsPolicy::Enabled {
+            verify_mode: pavis_core::TlsVerify::CertAndHost,
+            sni: pavis_core::SniName::Auto,
+        },
         endpoints: vec![Endpoint {
-            address: EndpointAddress::Ip(std::net::SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::LOCALHOST),
-                8443,
-            )),
-            weight: 1,
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(8443).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
         }],
     }]);
     let state = RuntimeState {
@@ -342,7 +367,7 @@ async fn upstream_peer_defaults_sni() {
     let (mut session, _client) =
         session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
-    ctx.upstream_name = Some("secure".to_string());
+    ctx.upstream_name = Some(UpstreamName("secure".to_string()));
 
     let peer = proxy
         .upstream_peer(&mut session, &mut ctx)
@@ -365,20 +390,17 @@ async fn upstream_response_filter_applies_headers() {
     };
 
     let mut ctx = proxy.new_ctx();
-    ctx.response_headers = Some(HeaderOperations {
-        actions: vec![
-            HeaderAction {
-                key: "x-added".to_string(),
-                value: Some("ok".to_string()),
-                action: HeaderActionType::Set,
-            },
-            HeaderAction {
-                key: "x-drop".to_string(),
-                value: None,
-                action: HeaderActionType::Remove,
-            },
-        ],
-    });
+    ctx.response_headers = HeadersPolicy::Enabled {
+        rules: Headers {
+            set_headers: vec![(
+                HeaderName("x-added".to_string()),
+                HeaderValue("ok".to_string()),
+            )],
+            append_headers: Vec::new(),
+            add_headers: Vec::new(),
+            remove_headers: vec![HeaderName("x-drop".to_string())],
+        },
+    };
 
     let (mut session, _client) =
         session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;

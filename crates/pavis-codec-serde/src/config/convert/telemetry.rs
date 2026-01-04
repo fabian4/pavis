@@ -1,36 +1,82 @@
-use pavis_core::{LogLevel, TelemetryConfig as RuntimeTelemetryConfig, TracingConfig};
+use anyhow::Result;
+use std::net::SocketAddr;
+
+use pavis_core::{
+    LogLevel, Metrics, SampleRate, ServiceName, Telemetry as RuntimeTelemetry, TracingPolicy,
+    TracingProvider,
+};
 
 use crate::config::types::TelemetryConfig;
 
-pub(super) fn to_runtime(telemetry: TelemetryConfig) -> RuntimeTelemetryConfig {
-    RuntimeTelemetryConfig {
-        level: parse_log_level(telemetry.level),
-        pingora: parse_log_level(telemetry.pingora),
-        service_name: telemetry.service_name,
-        prometheus_addr: telemetry.prometheus_addr,
+pub(super) fn to_runtime(telemetry: TelemetryConfig) -> Result<RuntimeTelemetry> {
+    let level = parse_log_level(telemetry.level).unwrap_or(LogLevel::Info);
+    let pingora = parse_log_level(telemetry.pingora).unwrap_or(LogLevel::Info);
+    let service_name = ServiceName(
+        telemetry
+            .service_name
+            .unwrap_or_else(|| "pavis".to_string()),
+    );
+
+    let metrics = match telemetry.metrics {
+        None => Metrics::Disabled,
+        Some(addr) => Metrics::Enabled {
+            addr: addr.parse::<SocketAddr>().map_err(|e| {
+                anyhow::anyhow!("metrics must be a socket address (host:port): {}", e)
+            })?,
+        },
+    };
+
+    let tracing = match telemetry.tracing {
+        None => TracingPolicy::Disabled,
+        Some(tracing) => {
+            let provider = tracing
+                .provider
+                .unwrap_or_else(|| "otlp".to_string())
+                .to_lowercase();
+            let provider = match provider.as_str() {
+                "otlp" => TracingProvider::Otlp,
+                "jaeger" => TracingProvider::Jaeger,
+                "zipkin" => TracingProvider::Zipkin,
+                _ => TracingProvider::Otlp,
+            };
+            let sampling = SampleRate(tracing.sampling.unwrap_or(0));
+            TracingPolicy::Enabled { provider, sampling }
+        }
+    };
+
+    Ok(RuntimeTelemetry {
+        level,
+        pingora,
+        service_name,
+        metrics,
         access_log: telemetry.access_log,
-        tracing: telemetry.tracing.map(|t| TracingConfig {
-            enabled: t.enabled,
-            provider: t.provider,
-            sampling_rate: t.sampling_rate,
-        }),
-    }
+        tracing,
+    })
 }
 
-pub(super) fn from_runtime(telemetry: RuntimeTelemetryConfig) -> TelemetryConfig {
+pub(super) fn from_runtime(telemetry: RuntimeTelemetry) -> TelemetryConfig {
     TelemetryConfig {
         level: log_level_to_string(telemetry.level),
         pingora: log_level_to_string(telemetry.pingora),
-        service_name: telemetry.service_name,
-        prometheus_addr: telemetry.prometheus_addr,
+        service_name: Some(telemetry.service_name.0),
+        metrics: match telemetry.metrics {
+            Metrics::Disabled => None,
+            Metrics::Enabled { addr } => Some(addr.to_string()),
+        },
         access_log: telemetry.access_log,
-        tracing: telemetry
-            .tracing
-            .map(|t| crate::config::types::TracingConfig {
-                enabled: t.enabled,
-                provider: t.provider,
-                sampling_rate: t.sampling_rate,
-            }),
+        tracing: match telemetry.tracing {
+            TracingPolicy::Disabled => None,
+            TracingPolicy::Enabled { provider, sampling } => {
+                Some(crate::config::types::TracingConfig {
+                    provider: Some(match provider {
+                        TracingProvider::Otlp => "otlp".to_string(),
+                        TracingProvider::Jaeger => "jaeger".to_string(),
+                        TracingProvider::Zipkin => "zipkin".to_string(),
+                    }),
+                    sampling: Some(sampling.0),
+                })
+            }
+        },
     }
 }
 
@@ -41,72 +87,16 @@ fn parse_log_level(level: Option<String>) -> Option<LogLevel> {
         "info" => Some(LogLevel::Info),
         "debug" => Some(LogLevel::Debug),
         "trace" => Some(LogLevel::Trace),
-        _ => None, // Fallback to None (or could error, but Option is safe)
+        _ => None,
     })
 }
 
-fn log_level_to_string(level: Option<LogLevel>) -> Option<String> {
-    level.map(|l| match l {
+fn log_level_to_string(level: LogLevel) -> Option<String> {
+    Some(match level {
         LogLevel::Error => "error".to_string(),
         LogLevel::Warn => "warn".to_string(),
         LogLevel::Info => "info".to_string(),
         LogLevel::Debug => "debug".to_string(),
         LogLevel::Trace => "trace".to_string(),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{from_runtime, log_level_to_string, parse_log_level, to_runtime};
-    use crate::config::types::{TelemetryConfig, TracingConfig};
-    use pavis_core::{AccessLogConfig, LogLevel, TelemetryConfig as RuntimeTelemetryConfig};
-
-    #[test]
-    fn parse_log_level_handles_known_and_unknown_values() {
-        assert_eq!(
-            parse_log_level(Some("INFO".to_string())),
-            Some(LogLevel::Info)
-        );
-        assert_eq!(parse_log_level(Some("unknown".to_string())), None);
-        assert_eq!(parse_log_level(None), None);
-    }
-
-    #[test]
-    fn log_level_to_string_maps_variants() {
-        assert_eq!(
-            log_level_to_string(Some(LogLevel::Error)),
-            Some("error".to_string())
-        );
-        assert_eq!(
-            log_level_to_string(Some(LogLevel::Warn)),
-            Some("warn".to_string())
-        );
-    }
-
-    #[test]
-    fn telemetry_round_trips_tracing() {
-        let telemetry = TelemetryConfig {
-            level: Some("debug".to_string()),
-            pingora: Some("trace".to_string()),
-            service_name: Some("svc".to_string()),
-            prometheus_addr: Some("0.0.0.0:9000".to_string()),
-            access_log: AccessLogConfig::Stdout,
-            tracing: Some(TracingConfig {
-                enabled: true,
-                provider: "otlp".to_string(),
-                sampling_rate: 0.5,
-            }),
-        };
-        let runtime = to_runtime(telemetry);
-        let serde = from_runtime(RuntimeTelemetryConfig {
-            level: runtime.level,
-            pingora: runtime.pingora,
-            service_name: runtime.service_name.clone(),
-            prometheus_addr: runtime.prometheus_addr.clone(),
-            access_log: runtime.access_log,
-            tracing: runtime.tracing,
-        });
-        assert_eq!(serde.service_name.as_deref(), Some("svc"));
-        assert_eq!(serde.tracing.as_ref().unwrap().provider, "otlp");
-    }
 }

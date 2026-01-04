@@ -47,23 +47,26 @@ pub fn write(path: impl AsRef<Path>, config: &RuntimeConfig) -> PvsResult<()> {
 mod tests {
     use super::write;
     use crate::header::{HEADER_SIZE, PAVIS_MAGIC};
-    use pavis_core::{Listener, RuntimeConfig, TelemetryConfig};
+    use pavis_core::{
+        AccessLogPolicy, Listener, ListenerName, Metrics, RuntimeConfig, ServiceName, Telemetry,
+        WorkerCount,
+    };
 
     fn minimal_config() -> RuntimeConfig {
         RuntimeConfig {
             listeners: vec![Listener {
-                name: "default".to_string(),
-                listen_addr: "127.0.0.1:8080".parse().expect("addr"),
-                worker_threads: None,
-                tls: None,
+                name: ListenerName("default".to_string()),
+                address: "127.0.0.1:8080".parse().expect("addr"),
+                workers: WorkerCount::Auto,
+                tls: pavis_core::TlsConfig::Disabled,
             }],
-            telemetry: TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: Default::default(),
-                tracing: None,
+            telemetry: Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: ServiceName("pavis".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Stdout,
+                tracing: pavis_core::TracingPolicy::Disabled,
             },
             upstreams: Vec::new(),
             routes: Vec::new(),

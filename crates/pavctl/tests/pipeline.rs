@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use pavis_codec_serde::SerdeFormat;
 use pavis_codec_serde::config::{
-    ConnectionPoolConfig, Listener, Route, SerdeConfig, Upstream, VirtualHost, WeightedDestination,
+    ConnectionPoolConfig, Listener, Matcher, Route, SerdeConfig, Upstream, VirtualHost,
+    WeightedDestination,
 };
-use pavis_core::{HttpVersion, LoadBalancer, MatchType};
+use pavis_core::{Discovery, HttpVersion, LoadBalancer};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -108,17 +109,18 @@ fn sample_config() -> SerdeConfig {
     SerdeConfig {
         listeners: vec![Listener {
             name: "default".to_string(),
-            listen_addr: "127.0.0.1:8080".to_string(),
-            worker_threads: None,
+            address: "127.0.0.1:8080".to_string(),
+            workers: None,
             tls: None,
         }],
         telemetry: Default::default(),
         upstreams: vec![Upstream {
+            id: None,
             name: "backend".to_string(),
-            discovery_type: pavis_core::DiscoveryType::Static,
-            load_balancer: LoadBalancer::Random,
-            http_version: HttpVersion::H1,
-            connection_pool: ConnectionPoolConfig::default(),
+            discovery: Discovery::Static,
+            balancer: LoadBalancer::Random,
+            protocol: HttpVersion::H1,
+            pool: ConnectionPoolConfig::default(),
             tls: None,
             circuit_breaker: None,
             health_check: None,
@@ -131,8 +133,9 @@ fn sample_config() -> SerdeConfig {
         routes: vec![VirtualHost {
             host: "example.com".to_string(),
             paths: vec![Route {
-                match_type: MatchType::Prefix,
-                path: "/".to_string(),
+                matcher: Matcher::Prefix {
+                    path: "/".to_string(),
+                },
                 timeout: None,
                 retry: None,
                 request_headers: None,
@@ -185,7 +188,54 @@ fn write_config(path: &Path, format: SerdeFormat, config: &SerdeConfig) -> Resul
 }
 
 fn pavctl_bin() -> PathBuf {
-    pavctl_bin_helper(std::env::var("CARGO_BIN_EXE_pavctl").ok())
+    let env_val = std::env::var("CARGO_BIN_EXE_pavctl").ok();
+    if let Some(env_val) = env_val {
+        return pavctl_bin_helper(Some(env_val));
+    }
+
+    let root = workspace_root();
+    ensure_pavctl_built(&root);
+    debug_pavctl_path(&root)
+}
+
+fn ensure_pavctl_built(root: &Path) {
+    use std::sync::OnceLock;
+
+    static BUILT: OnceLock<()> = OnceLock::new();
+    let root = root.to_path_buf();
+    BUILT.get_or_init(|| {
+        if debug_pavctl_path(&root).exists() {
+            return;
+        }
+
+        let status = Command::new("cargo")
+            .args(["build", "-p", "pavctl"])
+            .current_dir(&root)
+            .status()
+            .expect("spawn cargo build");
+        assert!(status.success(), "cargo build -p pavctl failed");
+    });
+}
+
+fn workspace_root() -> PathBuf {
+    let mut dir = std::env::current_dir().expect("cwd");
+    loop {
+        if dir.join("Cargo.lock").exists() {
+            break;
+        }
+        if !dir.pop() {
+            panic!("Could not find workspace root");
+        }
+    }
+
+    dir
+}
+
+fn debug_pavctl_path(root: &Path) -> PathBuf {
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        return PathBuf::from(target_dir).join("debug/pavctl");
+    }
+    root.join("target/debug/pavctl")
 }
 
 fn pavctl_bin_helper(env_val: Option<String>) -> PathBuf {

@@ -1,5 +1,5 @@
 use http::header::{HeaderName, HeaderValue};
-use pavis_core::HeaderOperations;
+use pavis_core::{HeaderName as CoreHeaderName, HeaderValue as CoreHeaderValue, HeadersPolicy};
 use pingora::Result;
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
@@ -80,6 +80,28 @@ where
     Some(buf)
 }
 
+fn apply_set<H: HeaderEditor>(
+    headers: &mut H,
+    name: &CoreHeaderName,
+    value: &CoreHeaderValue,
+    scope: &str,
+) -> Result<()> {
+    match (
+        HeaderName::from_str(&name.0),
+        HeaderValue::from_str(&value.0),
+    ) {
+        (Ok(key), Ok(val)) => headers.insert(key, val),
+        (Err(e), _) => {
+            tracing::warn!("Invalid {} header name '{:?}': {}", scope, name.0, e);
+            Ok(())
+        }
+        (_, Err(e)) => {
+            tracing::warn!("Invalid {} header value for '{:?}': {}", scope, name.0, e);
+            Ok(())
+        }
+    }
+}
+
 fn apply_append<H: HeaderEditor>(
     headers: &mut H,
     key: &str,
@@ -132,110 +154,52 @@ fn apply_append<H: HeaderEditor>(
     Ok(())
 }
 
-pub fn apply_request_headers(
-    req: &mut RequestHeader,
-    headers: Option<&HeaderOperations>,
-) -> Result<()> {
+pub fn apply_request_headers(req: &mut RequestHeader, headers: &HeadersPolicy) -> Result<()> {
     req.insert_header("X-Proxy-By", "Pavis")?;
 
-    if let Some(headers) = headers {
-        for action in &headers.actions {
-            let k = &action.key;
-            let v = action.value.as_deref().unwrap_or("");
+    let rules = match headers {
+        HeadersPolicy::Disabled => return Ok(()),
+        HeadersPolicy::Enabled { rules } => rules,
+    };
 
-            match action.action {
-                pavis_core::HeaderActionType::Set => {
-                    match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
-                        (Ok(key), Ok(val)) => {
-                            req.insert_header(key, val)?;
-                        }
-                        (Err(e), _) => {
-                            tracing::warn!("Invalid request header name '{:?}': {}", k, e);
-                        }
-                        (_, Err(e)) => {
-                            tracing::warn!("Invalid request header value for '{:?}': {}", k, e);
-                        }
-                    }
-                }
-                pavis_core::HeaderActionType::Append => {
-                    apply_append(req, k, v, "request")?;
-                }
-                pavis_core::HeaderActionType::AddIfAbsent => {
-                    if req.headers.get(k).is_none() {
-                        match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
-                            (Ok(key), Ok(val)) => {
-                                req.insert_header(key, val)?;
-                            }
-                            (Err(e), _) => {
-                                tracing::warn!("Invalid request header name '{:?}': {}", k, e);
-                            }
-                            (_, Err(e)) => {
-                                tracing::warn!("Invalid request header value for '{:?}': {}", k, e);
-                            }
-                        }
-                    }
-                }
-                pavis_core::HeaderActionType::Remove => {
-                    req.remove_header(k);
-                }
-            }
+    for (name, value) in &rules.set_headers {
+        apply_set(req, name, value, "request")?;
+    }
+    for (name, value) in &rules.append_headers {
+        apply_append(req, &name.0, &value.0, "request")?;
+    }
+    for (name, value) in &rules.add_headers {
+        if req.headers.get(name.0.as_str()).is_none() {
+            apply_set(req, name, value, "request")?;
         }
+    }
+    for name in &rules.remove_headers {
+        req.remove_header(name.0.as_str());
     }
     Ok(())
 }
 
-pub fn apply_response_headers(
-    resp: &mut ResponseHeader,
-    headers: Option<&HeaderOperations>,
-) -> Result<()> {
+pub fn apply_response_headers(resp: &mut ResponseHeader, headers: &HeadersPolicy) -> Result<()> {
     resp.insert_header("X-Proxy-By", "Pavis")?;
 
-    if let Some(headers) = headers {
-        for action in &headers.actions {
-            let k = &action.key;
-            let v = action.value.as_deref().unwrap_or("");
+    let rules = match headers {
+        HeadersPolicy::Disabled => return Ok(()),
+        HeadersPolicy::Enabled { rules } => rules,
+    };
 
-            match action.action {
-                pavis_core::HeaderActionType::Set => {
-                    match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
-                        (Ok(key), Ok(val)) => {
-                            resp.insert_header(key, val)?;
-                        }
-                        (Err(e), _) => {
-                            tracing::warn!("Invalid response header name '{:?}': {}", k, e);
-                        }
-                        (_, Err(e)) => {
-                            tracing::warn!("Invalid response header value for '{:?}': {}", k, e);
-                        }
-                    }
-                }
-                pavis_core::HeaderActionType::Append => {
-                    apply_append(resp, k, v, "response")?;
-                }
-                pavis_core::HeaderActionType::AddIfAbsent => {
-                    if resp.headers.get(k).is_none() {
-                        match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
-                            (Ok(key), Ok(val)) => {
-                                resp.insert_header(key, val)?;
-                            }
-                            (Err(e), _) => {
-                                tracing::warn!("Invalid response header name '{:?}': {}", k, e);
-                            }
-                            (_, Err(e)) => {
-                                tracing::warn!(
-                                    "Invalid response header value for '{:?}': {}",
-                                    k,
-                                    e
-                                );
-                            }
-                        }
-                    }
-                }
-                pavis_core::HeaderActionType::Remove => {
-                    resp.remove_header(k);
-                }
-            }
+    for (name, value) in &rules.set_headers {
+        apply_set(resp, name, value, "response")?;
+    }
+    for (name, value) in &rules.append_headers {
+        apply_append(resp, &name.0, &value.0, "response")?;
+    }
+    for (name, value) in &rules.add_headers {
+        if resp.headers.get(name.0.as_str()).is_none() {
+            apply_set(resp, name, value, "response")?;
         }
+    }
+    for name in &rules.remove_headers {
+        resp.remove_header(name.0.as_str());
     }
     Ok(())
 }
@@ -243,7 +207,7 @@ pub fn apply_response_headers(
 #[cfg(test)]
 mod tests {
     use super::{apply_request_headers, apply_response_headers};
-    use pavis_core::{HeaderAction, HeaderActionType, HeaderOperations};
+    use pavis_core::{HeaderName, HeaderValue, Headers, HeadersPolicy};
     use pingora::http::{RequestHeader, ResponseHeader};
 
     #[test]
@@ -251,22 +215,19 @@ mod tests {
         let mut req = RequestHeader::build("GET", b"/", None).unwrap();
         req.insert_header("X-Remove", "old-value").unwrap();
 
-        let ops = HeaderOperations {
-            actions: vec![
-                HeaderAction {
-                    key: "X-Add".to_string(),
-                    value: Some("new-value".to_string()),
-                    action: HeaderActionType::Set,
-                },
-                HeaderAction {
-                    key: "X-Remove".to_string(),
-                    value: None,
-                    action: HeaderActionType::Remove,
-                },
-            ],
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![(
+                    HeaderName("X-Add".to_string()),
+                    HeaderValue("new-value".to_string()),
+                )],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: vec![HeaderName("X-Remove".to_string())],
+            },
         };
 
-        apply_request_headers(&mut req, Some(&ops)).unwrap();
+        apply_request_headers(&mut req, &ops).unwrap();
 
         assert_eq!(
             req.headers.get("X-Proxy-By").unwrap().to_str().unwrap(),
@@ -284,22 +245,19 @@ mod tests {
         let mut resp = ResponseHeader::build(200, None).unwrap();
         resp.insert_header("X-Remove-Resp", "bad-value").unwrap();
 
-        let ops = HeaderOperations {
-            actions: vec![
-                HeaderAction {
-                    key: "X-Add-Resp".to_string(),
-                    value: Some("good-value".to_string()),
-                    action: HeaderActionType::Set,
-                },
-                HeaderAction {
-                    key: "X-Remove-Resp".to_string(),
-                    value: None,
-                    action: HeaderActionType::Remove,
-                },
-            ],
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![(
+                    HeaderName("X-Add-Resp".to_string()),
+                    HeaderValue("good-value".to_string()),
+                )],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: vec![HeaderName("X-Remove-Resp".to_string())],
+            },
         };
 
-        apply_response_headers(&mut resp, Some(&ops)).unwrap();
+        apply_response_headers(&mut resp, &ops).unwrap();
 
         assert_eq!(
             resp.headers.get("X-Proxy-By").unwrap().to_str().unwrap(),
@@ -315,22 +273,25 @@ mod tests {
     #[test]
     fn test_apply_request_headers_skips_invalid_entries() {
         let mut req = RequestHeader::build("GET", b"/", None).unwrap();
-        let ops = HeaderOperations {
-            actions: vec![
-                HeaderAction {
-                    key: "bad header".to_string(),
-                    value: Some("ok".to_string()),
-                    action: HeaderActionType::Set,
-                },
-                HeaderAction {
-                    key: "x-bad-value".to_string(),
-                    value: Some("bad\nvalue".to_string()),
-                    action: HeaderActionType::Set,
-                },
-            ],
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![
+                    (
+                        HeaderName("bad header".to_string()),
+                        HeaderValue("ok".to_string()),
+                    ),
+                    (
+                        HeaderName("x-bad-value".to_string()),
+                        HeaderValue("bad\nvalue".to_string()),
+                    ),
+                ],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
         };
 
-        apply_request_headers(&mut req, Some(&ops)).unwrap();
+        apply_request_headers(&mut req, &ops).unwrap();
 
         assert!(req.headers.get("bad header").is_none());
         assert!(req.headers.get("x-bad-value").is_none());
@@ -339,22 +300,25 @@ mod tests {
     #[test]
     fn test_apply_response_headers_skips_invalid_entries() {
         let mut resp = ResponseHeader::build(200, None).unwrap();
-        let ops = HeaderOperations {
-            actions: vec![
-                HeaderAction {
-                    key: "bad header".to_string(),
-                    value: Some("ok".to_string()),
-                    action: HeaderActionType::Set,
-                },
-                HeaderAction {
-                    key: "x-bad-value".to_string(),
-                    value: Some("bad\nvalue".to_string()),
-                    action: HeaderActionType::Set,
-                },
-            ],
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![
+                    (
+                        HeaderName("bad header".to_string()),
+                        HeaderValue("ok".to_string()),
+                    ),
+                    (
+                        HeaderName("x-bad-value".to_string()),
+                        HeaderValue("bad\nvalue".to_string()),
+                    ),
+                ],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
         };
 
-        apply_response_headers(&mut resp, Some(&ops)).unwrap();
+        apply_response_headers(&mut resp, &ops).unwrap();
 
         assert!(resp.headers.get("bad header").is_none());
         assert!(resp.headers.get("x-bad-value").is_none());
@@ -366,15 +330,19 @@ mod tests {
         req.insert_header("X-Test", "a").unwrap();
         req.append_header("X-Test", "b").unwrap();
 
-        let ops = HeaderOperations {
-            actions: vec![HeaderAction {
-                key: "X-Test".to_string(),
-                value: Some("c".to_string()),
-                action: HeaderActionType::Append,
-            }],
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: Vec::new(),
+                append_headers: vec![(
+                    HeaderName("X-Test".to_string()),
+                    HeaderValue("c".to_string()),
+                )],
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
         };
 
-        apply_request_headers(&mut req, Some(&ops)).unwrap();
+        apply_request_headers(&mut req, &ops).unwrap();
 
         let values: Vec<_> = req.headers.get_all("X-Test").iter().collect();
         assert_eq!(values.len(), 1);
@@ -386,15 +354,19 @@ mod tests {
         let mut req = RequestHeader::build("GET", b"/", None).unwrap();
         req.insert_header("Set-Cookie", "a=1").unwrap();
 
-        let ops = HeaderOperations {
-            actions: vec![HeaderAction {
-                key: "set-cookie".to_string(),
-                value: Some("b=2".to_string()),
-                action: HeaderActionType::Append,
-            }],
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: Vec::new(),
+                append_headers: vec![(
+                    HeaderName("set-cookie".to_string()),
+                    HeaderValue("b=2".to_string()),
+                )],
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
         };
 
-        apply_request_headers(&mut req, Some(&ops)).unwrap();
+        apply_request_headers(&mut req, &ops).unwrap();
 
         let values: Vec<_> = req
             .headers
@@ -411,15 +383,19 @@ mod tests {
         resp.insert_header("X-Test", "one").unwrap();
         resp.append_header("X-Test", "two").unwrap();
 
-        let ops = HeaderOperations {
-            actions: vec![HeaderAction {
-                key: "x-test".to_string(),
-                value: Some("three".to_string()),
-                action: HeaderActionType::Append,
-            }],
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: Vec::new(),
+                append_headers: vec![(
+                    HeaderName("x-test".to_string()),
+                    HeaderValue("three".to_string()),
+                )],
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
         };
 
-        apply_response_headers(&mut resp, Some(&ops)).unwrap();
+        apply_response_headers(&mut resp, &ops).unwrap();
 
         let values: Vec<_> = resp.headers.get_all("X-Test").iter().collect();
         assert_eq!(values.len(), 1);

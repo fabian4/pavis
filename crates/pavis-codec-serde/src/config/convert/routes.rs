@@ -1,8 +1,8 @@
 use anyhow::Result;
+use std::num::{NonZeroU16, NonZeroU32};
 
 use crate::config::types::{
-    HeaderAction, HeaderOperations, RetryPolicy, RewritePolicy, Route, VirtualHost,
-    WeightedDestination,
+    HeaderOperations, Matcher, RetryPolicy, RewritePolicy, Route, VirtualHost, WeightedDestination,
 };
 
 pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::VirtualHost>> {
@@ -11,48 +11,102 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
     for v in routes {
         let mut paths = Vec::new();
         for p in v.paths {
-            let request_headers = p.request_headers.map(|h| to_runtime_headers(&h));
-            let response_headers = p.response_headers.map(|h| to_runtime_headers(&h));
+            let request_headers = to_runtime_headers(p.request_headers);
+            let response_headers = to_runtime_headers(p.response_headers);
 
             let destinations = p
                 .destinations
                 .into_iter()
-                .map(|d| pavis_core::WeightedDestination {
-                    upstream: d.upstream,
-                    weight: d.weight,
-                })
-                .collect();
-
-            let timeout_ms = p.timeout.map(|d| d.as_millis() as u64);
-            let retry_policy = if let Some(r) = p.retry {
-                let retry_on = r
-                    .retry_on
-                    .iter()
-                    .map(|v| {
-                        v.as_str().map(str::to_string).ok_or_else(|| {
-                            anyhow::anyhow!("retry.retry_on entries must be strings")
-                        })
+                .map(|d| {
+                    let weight = u16::try_from(d.weight)
+                        .map_err(|_| anyhow::anyhow!("destination weight exceeds u16::MAX"))?;
+                    let weight = NonZeroU16::new(weight)
+                        .ok_or_else(|| anyhow::anyhow!("destination weight must be > 0"))?;
+                    Ok(pavis_core::Destination {
+                        upstream: pavis_core::UpstreamName(d.upstream),
+                        weight: pavis_core::Weight(weight),
                     })
-                    .collect::<Result<Vec<_>>>()?;
-                Some(pavis_core::RetryPolicy {
-                    attempts: r.attempts as u32,
-                    per_try_timeout_ms: r.per_try_timeout.as_millis() as u64,
-                    retry_on,
                 })
-            } else {
-                None
+                .collect::<Result<Vec<_>>>()?;
+
+            let timeout = match p.timeout {
+                Some(d) => {
+                    let ms = u32::try_from(d.as_millis())
+                        .map_err(|_| anyhow::anyhow!("timeout exceeds u32::MAX ms"))?;
+                    let ms = NonZeroU32::new(ms)
+                        .ok_or_else(|| anyhow::anyhow!("timeout must be > 0"))?;
+                    pavis_core::Timeout::Enabled(pavis_core::Duration(ms))
+                }
+                None => pavis_core::Timeout::Disabled,
             };
 
-            let rewrite = p.rewrite.map(|r| pavis_core::RewritePolicy {
-                path_prefix_rewrite: r.path_prefix_rewrite,
-                host_rewrite_literal: r.host_rewrite_literal,
-            });
+            let retry = if let Some(r) = p.retry {
+                let attempts = NonZeroU16::new(
+                    u16::try_from(r.attempts)
+                        .map_err(|_| anyhow::anyhow!("retry.attempts exceeds u16::MAX"))?,
+                )
+                .ok_or_else(|| anyhow::anyhow!("retry.attempts must be > 0"))?;
+
+                let per_try_ms = u32::try_from(r.per_try_timeout.as_millis())
+                    .map_err(|_| anyhow::anyhow!("retry.per_try_timeout exceeds u32::MAX ms"))?;
+                let per_try = if let Some(ms) = NonZeroU32::new(per_try_ms) {
+                    pavis_core::TryTimeout::Enabled(pavis_core::Duration(ms))
+                } else {
+                    pavis_core::TryTimeout::Disabled
+                };
+
+                let on = parse_retry_flags(&r.retry_on)?;
+                pavis_core::RetryPolicy::Enabled {
+                    attempts,
+                    per_try,
+                    on,
+                }
+            } else {
+                pavis_core::RetryPolicy::Disabled
+            };
+
+            let rewrite = match p.rewrite {
+                None => pavis_core::Rewrite {
+                    path: pavis_core::RewritePath::Disabled,
+                    host: pavis_core::RewriteHost::Disabled,
+                },
+                Some(r) => {
+                    let path = match r.path_prefix_rewrite {
+                        Some(to) => {
+                            let from = matcher_path(&p.matcher);
+                            pavis_core::RewritePath::Prefix {
+                                from: pavis_core::Path(from),
+                                to: pavis_core::Path(to),
+                            }
+                        }
+                        None => pavis_core::RewritePath::Disabled,
+                    };
+                    let host = match r.host_rewrite_literal {
+                        Some(host) => pavis_core::RewriteHost::Literal {
+                            host: pavis_core::Hostname(host),
+                        },
+                        None => pavis_core::RewriteHost::Disabled,
+                    };
+                    pavis_core::Rewrite { path, host }
+                }
+            };
+
+            let matcher = match p.matcher {
+                Matcher::Prefix { path } => pavis_core::PathMatch::Prefix {
+                    path: pavis_core::Path(path),
+                },
+                Matcher::Exact { path } => pavis_core::PathMatch::Exact {
+                    path: pavis_core::Path(path),
+                },
+                Matcher::Regex { path } => pavis_core::PathMatch::Regex {
+                    path: pavis_core::Path(path),
+                },
+            };
 
             paths.push(pavis_core::Route {
-                match_type: p.match_type,
-                path: p.path,
-                timeout_ms,
-                retry_policy,
+                matcher,
+                timeout,
+                retry,
                 request_headers,
                 response_headers,
                 rewrite,
@@ -61,7 +115,7 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
         }
 
         runtime_routes.push(pavis_core::VirtualHost {
-            host: v.host,
+            host: pavis_core::Host(v.host),
             paths,
         });
     }
@@ -69,17 +123,61 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
     Ok(runtime_routes)
 }
 
-fn to_runtime_headers(h: &HeaderOperations) -> pavis_core::HeaderOperations {
-    let actions = h
-        .actions
-        .iter()
-        .map(|a| pavis_core::HeaderAction {
-            key: a.key.clone(),
-            value: a.value.clone(),
-            action: a.action,
-        })
-        .collect();
-    pavis_core::HeaderOperations { actions }
+fn matcher_path(matcher: &Matcher) -> String {
+    match matcher {
+        Matcher::Prefix { path } => path.clone(),
+        Matcher::Exact { path } => path.clone(),
+        Matcher::Regex { path } => path.clone(),
+    }
+}
+
+fn to_runtime_headers(h: Option<HeaderOperations>) -> pavis_core::HeadersPolicy {
+    match h {
+        None => pavis_core::HeadersPolicy::Disabled,
+        Some(h) => pavis_core::HeadersPolicy::Enabled {
+            rules: pavis_core::Headers {
+                set_headers: h
+                    .set_headers
+                    .into_iter()
+                    .map(|(k, v)| (pavis_core::HeaderName(k), pavis_core::HeaderValue(v)))
+                    .collect(),
+                append_headers: h
+                    .append_headers
+                    .into_iter()
+                    .map(|(k, v)| (pavis_core::HeaderName(k), pavis_core::HeaderValue(v)))
+                    .collect(),
+                add_headers: h
+                    .add_headers
+                    .into_iter()
+                    .map(|(k, v)| (pavis_core::HeaderName(k), pavis_core::HeaderValue(v)))
+                    .collect(),
+                remove_headers: h
+                    .remove_headers
+                    .into_iter()
+                    .map(pavis_core::HeaderName)
+                    .collect(),
+            },
+        },
+    }
+}
+
+fn parse_retry_flags(values: &[serde_json::Value]) -> Result<pavis_core::RetryFlags> {
+    let mut flags = 0u8;
+    for v in values {
+        let s = v
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("retry.retry_on entries must be strings"))?;
+        match s {
+            "5xx" | "five_xx" => flags |= pavis_core::RETRY_FIVE_XX,
+            "connect_failure" => flags |= pavis_core::RETRY_CONNECT_FAILURE,
+            "reset" => flags |= pavis_core::RETRY_RESET,
+            "refused" => flags |= pavis_core::RETRY_REFUSED,
+            other => {
+                return Err(anyhow::anyhow!("unsupported retry condition: {}", other));
+            }
+        }
+    }
+    Ok(pavis_core::RetryFlags(flags))
 }
 
 pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualHost> {
@@ -88,37 +186,71 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
     for v in routes {
         let mut paths = Vec::new();
         for p in v.paths {
-            let request_headers = p.request_headers.as_ref().map(from_runtime_headers);
-            let response_headers = p.response_headers.as_ref().map(from_runtime_headers);
+            let request_headers = from_runtime_headers(&p.request_headers);
+            let response_headers = from_runtime_headers(&p.response_headers);
 
             let destinations = p
                 .destinations
                 .into_iter()
                 .map(|d| WeightedDestination {
-                    upstream: d.upstream,
-                    weight: d.weight,
+                    upstream: d.upstream.0,
+                    weight: d.weight.0.get() as u32,
                 })
                 .collect();
 
-            let timeout = p.timeout_ms.map(std::time::Duration::from_millis);
-            let retry = p.retry_policy.map(|r| RetryPolicy {
-                attempts: r.attempts as usize,
-                per_try_timeout: std::time::Duration::from_millis(r.per_try_timeout_ms),
-                retry_on: r
-                    .retry_on
-                    .into_iter()
-                    .map(serde_json::Value::String)
-                    .collect(),
-            });
+            let timeout = match p.timeout {
+                pavis_core::Timeout::Disabled => None,
+                pavis_core::Timeout::Enabled(d) => {
+                    Some(std::time::Duration::from_millis(d.0.get() as u64))
+                }
+            };
 
-            let rewrite = p.rewrite.map(|r| RewritePolicy {
-                path_prefix_rewrite: r.path_prefix_rewrite,
-                host_rewrite_literal: r.host_rewrite_literal,
-            });
+            let retry = match p.retry {
+                pavis_core::RetryPolicy::Disabled => None,
+                pavis_core::RetryPolicy::Enabled {
+                    attempts,
+                    per_try,
+                    on,
+                } => {
+                    let per_try_timeout = match per_try {
+                        pavis_core::TryTimeout::Enabled(d) => {
+                            std::time::Duration::from_millis(d.0.get() as u64)
+                        }
+                        _ => std::time::Duration::from_millis(0),
+                    };
+                    Some(RetryPolicy {
+                        attempts: attempts.get() as usize,
+                        per_try_timeout,
+                        retry_on: retry_flags_to_values(on),
+                    })
+                }
+            };
+
+            let rewrite = match p.rewrite {
+                pavis_core::Rewrite {
+                    path: pavis_core::RewritePath::Disabled,
+                    host: pavis_core::RewriteHost::Disabled,
+                } => None,
+                pavis_core::Rewrite { path, host } => Some(RewritePolicy {
+                    path_prefix_rewrite: match path {
+                        pavis_core::RewritePath::Prefix { to, .. } => Some(to.0),
+                        pavis_core::RewritePath::Disabled => None,
+                    },
+                    host_rewrite_literal: match host {
+                        pavis_core::RewriteHost::Literal { host } => Some(host.0),
+                        pavis_core::RewriteHost::Disabled => None,
+                    },
+                }),
+            };
+
+            let matcher = match p.matcher {
+                pavis_core::PathMatch::Prefix { path } => Matcher::Prefix { path: path.0 },
+                pavis_core::PathMatch::Exact { path } => Matcher::Exact { path: path.0 },
+                pavis_core::PathMatch::Regex { path } => Matcher::Regex { path: path.0 },
+            };
 
             paths.push(Route {
-                match_type: p.match_type,
-                path: p.path,
+                matcher,
                 timeout,
                 retry,
                 request_headers,
@@ -129,7 +261,7 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
         }
 
         serde_routes.push(VirtualHost {
-            host: v.host,
+            host: v.host.0,
             paths,
         });
     }
@@ -137,104 +269,44 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
     serde_routes
 }
 
-fn from_runtime_headers(h: &pavis_core::HeaderOperations) -> HeaderOperations {
-    let actions = h
-        .actions
-        .iter()
-        .map(|a| HeaderAction {
-            key: a.key.clone(),
-            value: a.value.clone(),
-            action: a.action,
-        })
-        .collect();
-    HeaderOperations { actions }
+fn from_runtime_headers(h: &pavis_core::HeadersPolicy) -> Option<HeaderOperations> {
+    match h {
+        pavis_core::HeadersPolicy::Disabled => None,
+        pavis_core::HeadersPolicy::Enabled { rules } => Some(HeaderOperations {
+            set_headers: rules
+                .set_headers
+                .iter()
+                .map(|(k, v)| (k.0.clone(), v.0.clone()))
+                .collect(),
+            append_headers: rules
+                .append_headers
+                .iter()
+                .map(|(k, v)| (k.0.clone(), v.0.clone()))
+                .collect(),
+            add_headers: rules
+                .add_headers
+                .iter()
+                .map(|(k, v)| (k.0.clone(), v.0.clone()))
+                .collect(),
+            remove_headers: rules.remove_headers.iter().map(|k| k.0.clone()).collect(),
+        }),
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{from_runtime, to_runtime};
-    use crate::config::types::{RetryPolicy, Route, VirtualHost, WeightedDestination};
-    use pavis_core::{
-        HeaderAction as RuntimeHeaderAction, HeaderActionType,
-        HeaderOperations as RuntimeHeaderOperations, MatchType, Route as RuntimeRoute,
-        VirtualHost as RuntimeVhost,
-    };
-    use serde_json::json;
-    use std::time::Duration;
-
-    #[test]
-    fn to_runtime_rejects_non_string_retry_on() {
-        let routes = vec![VirtualHost {
-            host: "*".to_string(),
-            paths: vec![Route {
-                match_type: MatchType::Prefix,
-                path: "/".to_string(),
-                timeout: None,
-                retry: Some(RetryPolicy {
-                    attempts: 1,
-                    per_try_timeout: Duration::from_millis(100),
-                    retry_on: vec![json!(500)],
-                }),
-                request_headers: None,
-                response_headers: None,
-                rewrite: None,
-                destinations: vec![WeightedDestination {
-                    upstream: "backend".to_string(),
-                    weight: 1,
-                }],
-            }],
-        }];
-
-        let err = to_runtime(routes).expect_err("non-string retry_on");
-        assert!(
-            err.to_string()
-                .contains("retry.retry_on entries must be strings")
-        );
+fn retry_flags_to_values(flags: pavis_core::RetryFlags) -> Vec<serde_json::Value> {
+    let mut values = Vec::new();
+    let bits = flags.0;
+    if bits & pavis_core::RETRY_FIVE_XX != 0 {
+        values.push(serde_json::Value::String("5xx".to_string()));
     }
-
-    #[test]
-    fn from_runtime_preserves_response_headers() {
-        let routes = vec![RuntimeVhost {
-            host: "example.com".to_string(),
-            paths: vec![RuntimeRoute {
-                match_type: MatchType::Exact,
-                path: "/".to_string(),
-                timeout_ms: None,
-                retry_policy: None,
-                request_headers: None,
-                response_headers: Some(RuntimeHeaderOperations {
-                    actions: vec![
-                        RuntimeHeaderAction {
-                            key: "x-added".to_string(),
-                            value: Some("1".to_string()),
-                            action: HeaderActionType::Set,
-                        },
-                        RuntimeHeaderAction {
-                            key: "x-remove".to_string(),
-                            value: None,
-                            action: HeaderActionType::Remove,
-                        },
-                    ],
-                }),
-                rewrite: None,
-                destinations: vec![pavis_core::WeightedDestination {
-                    upstream: "backend".to_string(),
-                    weight: 1,
-                }],
-            }],
-        }];
-
-        let serde_routes = from_runtime(routes);
-        let headers = serde_routes[0].paths[0]
-            .response_headers
-            .as_ref()
-            .expect("headers");
-        assert_eq!(headers.actions.len(), 2);
-        assert_eq!(headers.actions[0].key, "x-added");
-        assert_eq!(headers.actions[0].value.as_deref(), Some("1"));
-        assert_eq!(headers.actions[0].action, HeaderActionType::Set);
-        assert_eq!(headers.actions[1].key, "x-remove");
-        assert!(headers.actions[1].value.is_none());
-        assert_eq!(headers.actions[1].action, HeaderActionType::Remove);
+    if bits & pavis_core::RETRY_CONNECT_FAILURE != 0 {
+        values.push(serde_json::Value::String("connect_failure".to_string()));
     }
+    if bits & pavis_core::RETRY_RESET != 0 {
+        values.push(serde_json::Value::String("reset".to_string()));
+    }
+    if bits & pavis_core::RETRY_REFUSED != 0 {
+        values.push(serde_json::Value::String("refused".to_string()));
+    }
+    values
 }

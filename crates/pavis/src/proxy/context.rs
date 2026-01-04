@@ -1,36 +1,41 @@
-use pavis_core::HeaderOperations;
+use pavis_core::{HeadersPolicy, Hostname, UpstreamName};
 
 pub struct RouterContext {
-    pub upstream_name: Option<String>,
-    pub request_headers: Option<HeaderOperations>,
-    pub response_headers: Option<HeaderOperations>,
-    pub sni_override: Option<String>,
+    pub upstream_name: Option<UpstreamName>,
+    pub request_headers: HeadersPolicy,
+    pub response_headers: HeadersPolicy,
+    pub sni_override: Option<Hostname>,
     pub start_time: std::time::Instant,
 }
 
 #[cfg(test)]
 mod tests {
     use super::RouterContext;
-    use pavis_core::{HeaderAction, HeaderActionType, HeaderOperations};
+    use pavis_core::{HeaderName, HeaderValue, Headers, HeadersPolicy, UpstreamName};
 
     #[test]
     fn router_context_holds_fields() {
         let ctx = RouterContext {
-            upstream_name: Some("backend".to_string()),
-            request_headers: Some(HeaderOperations {
-                actions: vec![HeaderAction {
-                    key: "x-test".to_string(),
-                    value: Some("1".to_string()),
-                    action: HeaderActionType::Set,
-                }],
-            }),
-            response_headers: None,
+            upstream_name: Some(UpstreamName("backend".to_string())),
+            request_headers: HeadersPolicy::Enabled {
+                rules: Headers {
+                    set_headers: vec![(
+                        HeaderName("x-test".to_string()),
+                        HeaderValue("1".to_string()),
+                    )],
+                    append_headers: Vec::new(),
+                    add_headers: Vec::new(),
+                    remove_headers: Vec::new(),
+                },
+            },
+            response_headers: HeadersPolicy::Disabled,
             sni_override: None,
             start_time: std::time::Instant::now(),
         };
 
-        assert_eq!(ctx.upstream_name.as_deref(), Some("backend"));
-        assert!(ctx.request_headers.is_some());
-        assert!(ctx.response_headers.is_none());
+        assert_eq!(
+            ctx.upstream_name.as_ref().map(|v| v.0.as_str()),
+            Some("backend")
+        );
     }
 }

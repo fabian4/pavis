@@ -47,7 +47,7 @@ fn write_config(path: &Path, upstream_name: &str, host: &str, port: u16) -> Resu
         r#"
 listeners:
   - name: "default"
-    listen_addr: "0.0.0.0:8080"
+    address: "0.0.0.0:8080"
 telemetry: {{}}
 upstreams:
   - name: "{upstream_name}"
@@ -57,7 +57,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - path: "/"
+      - matcher: !prefix
+          path: "/"
         destinations:
           - upstream: "{upstream_name}"
             weight: 1

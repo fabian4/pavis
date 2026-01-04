@@ -7,7 +7,7 @@
 //! 3. **Read-Only**: The router state is immutable after initialization.
 
 use anyhow::{Context, Result};
-use pavis_core::{MatchType, Route, VirtualHost};
+use pavis_core::{PathMatch, Route, VirtualHost};
 use regex::Regex;
 
 pub mod matcher;
@@ -32,12 +32,11 @@ impl Router {
         for vhost in routes {
             let mut compiled = Vec::new();
             for (index, route) in vhost.paths.iter().enumerate() {
-                let regex = if route.match_type == MatchType::Regex {
-                    Some(Regex::new(&route.path).with_context(|| {
-                        format!("Failed to compile regex for path: {}", route.path)
-                    })?)
-                } else {
-                    None
+                let regex = match &route.matcher {
+                    PathMatch::Regex { path } => Some(Regex::new(&path.0).with_context(|| {
+                        format!("Failed to compile regex for path: {}", path.0)
+                    })?),
+                    _ => None,
                 };
                 compiled.push(CompiledRoute { index, regex });
             }
@@ -63,54 +62,70 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pavis_core::{MatchType, Route, VirtualHost, WeightedDestination};
+    use pavis_core::{
+        Destination, HeadersPolicy, Host, Path, PathMatch, RetryPolicy, Rewrite, RewriteHost,
+        RewritePath, Timeout, UpstreamName, Weight,
+    };
+    use std::num::NonZeroU16;
 
     fn create_routes() -> Vec<VirtualHost> {
         vec![
             VirtualHost {
-                host: "example.com".to_string(),
+                host: Host("example.com".to_string()),
                 paths: vec![
                     Route {
-                        match_type: MatchType::Exact,
-                        path: "/exact".to_string(),
-                        timeout_ms: None,
-                        retry_policy: None,
-                        request_headers: None,
-                        response_headers: None,
-                        rewrite: None,
-                        destinations: vec![WeightedDestination {
-                            upstream: "backend-1".to_string(),
-                            weight: 1,
+                        matcher: PathMatch::Exact {
+                            path: Path("/exact".to_string()),
+                        },
+                        timeout: Timeout::Disabled,
+                        retry: RetryPolicy::Disabled,
+                        request_headers: HeadersPolicy::Disabled,
+                        response_headers: HeadersPolicy::Disabled,
+                        rewrite: Rewrite {
+                            path: RewritePath::Disabled,
+                            host: RewriteHost::Disabled,
+                        },
+                        destinations: vec![Destination {
+                            upstream: UpstreamName("backend-1".to_string()),
+                            weight: Weight(NonZeroU16::new(1).unwrap()),
                         }],
                     },
                     Route {
-                        match_type: MatchType::Prefix,
-                        path: "/api".to_string(),
-                        timeout_ms: None,
-                        retry_policy: None,
-                        request_headers: None,
-                        response_headers: None,
-                        rewrite: None,
-                        destinations: vec![WeightedDestination {
-                            upstream: "backend-1".to_string(),
-                            weight: 1,
+                        matcher: PathMatch::Prefix {
+                            path: Path("/api".to_string()),
+                        },
+                        timeout: Timeout::Disabled,
+                        retry: RetryPolicy::Disabled,
+                        request_headers: HeadersPolicy::Disabled,
+                        response_headers: HeadersPolicy::Disabled,
+                        rewrite: Rewrite {
+                            path: RewritePath::Disabled,
+                            host: RewriteHost::Disabled,
+                        },
+                        destinations: vec![Destination {
+                            upstream: UpstreamName("backend-1".to_string()),
+                            weight: Weight(NonZeroU16::new(1).unwrap()),
                         }],
                     },
                 ],
             },
             VirtualHost {
-                host: "*".to_string(),
+                host: Host("*".to_string()),
                 paths: vec![Route {
-                    match_type: MatchType::Prefix,
-                    path: "/public".to_string(),
-                    timeout_ms: None,
-                    retry_policy: None,
-                    request_headers: None,
-                    response_headers: None,
-                    rewrite: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "backend-2".to_string(),
-                        weight: 1,
+                    matcher: PathMatch::Prefix {
+                        path: Path("/public".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled,
+                    response_headers: HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("backend-2".to_string()),
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
                     }],
                 }],
             },
@@ -120,15 +135,19 @@ mod tests {
     #[test]
     fn test_invalid_regex_compilation() {
         let routes = vec![VirtualHost {
-            host: "*".to_string(),
+            host: Host("*".to_string()),
             paths: vec![Route {
-                match_type: MatchType::Regex,
-                path: "[unclosed".to_string(),
-                timeout_ms: None,
-                retry_policy: None,
-                request_headers: None,
-                response_headers: None,
-                rewrite: None,
+                matcher: PathMatch::Regex {
+                    path: Path("[unclosed".to_string()),
+                },
+                timeout: Timeout::Disabled,
+                retry: RetryPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled,
+                response_headers: HeadersPolicy::Disabled,
+                rewrite: Rewrite {
+                    path: RewritePath::Disabled,
+                    host: RewriteHost::Disabled,
+                },
                 destinations: vec![],
             }],
         }];
@@ -142,8 +161,11 @@ mod tests {
         let (vhost, route) = router
             .match_request(Some("example.com"), "/exact")
             .expect("Should match");
-        assert_eq!(vhost.host, "example.com");
-        assert_eq!(route.path, "/exact");
+        assert_eq!(vhost.host.0, "example.com");
+        match &route.matcher {
+            PathMatch::Exact { path } => assert_eq!(path.0, "/exact"),
+            _ => panic!("expected exact match"),
+        }
     }
 
     #[test]
@@ -152,8 +174,11 @@ mod tests {
         let (vhost, route) = router
             .match_request(Some("example.com"), "/api/v1/users")
             .expect("Should match");
-        assert_eq!(vhost.host, "example.com");
-        assert_eq!(route.path, "/api");
+        assert_eq!(vhost.host.0, "example.com");
+        match &route.matcher {
+            PathMatch::Prefix { path } => assert_eq!(path.0, "/api"),
+            _ => panic!("expected prefix match"),
+        }
     }
 
     #[test]
@@ -162,8 +187,11 @@ mod tests {
         let (vhost, route) = router
             .match_request(Some("any.com"), "/public/stuff")
             .expect("Should match");
-        assert_eq!(vhost.host, "*");
-        assert_eq!(route.path, "/public");
+        assert_eq!(vhost.host.0, "*");
+        match &route.matcher {
+            PathMatch::Prefix { path } => assert_eq!(path.0, "/public"),
+            _ => panic!("expected prefix match"),
+        }
     }
 
     #[test]
@@ -183,18 +211,22 @@ mod tests {
     #[test]
     fn test_find_route_regex_match() {
         let routes = vec![VirtualHost {
-            host: "*".to_string(),
+            host: Host("*".to_string()),
             paths: vec![Route {
-                match_type: MatchType::Regex,
-                path: r"^/api/v[0-9]+/users/\d+$".to_string(),
-                timeout_ms: None,
-                retry_policy: None,
-                request_headers: None,
-                response_headers: None,
-                rewrite: None,
-                destinations: vec![WeightedDestination {
-                    upstream: "backend".to_string(),
-                    weight: 1,
+                matcher: PathMatch::Regex {
+                    path: Path(r"^/api/v[0-9]+/users/\d+$".to_string()),
+                },
+                timeout: Timeout::Disabled,
+                retry: RetryPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled,
+                response_headers: HeadersPolicy::Disabled,
+                rewrite: Rewrite {
+                    path: RewritePath::Disabled,
+                    host: RewriteHost::Disabled,
+                },
+                destinations: vec![Destination {
+                    upstream: UpstreamName("backend".to_string()),
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
                 }],
             }],
         }];
@@ -204,7 +236,7 @@ mod tests {
         let result = router.match_request(None, "/api/v1/users/123");
         assert!(result.is_some());
         let (_, route) = result.unwrap();
-        assert_eq!(route.match_type, MatchType::Regex);
+        matches!(route.matcher, PathMatch::Regex { .. });
 
         let result = router.match_request(None, "/api/v2/users/456");
         assert!(result.is_some());
@@ -219,32 +251,40 @@ mod tests {
     #[test]
     fn test_route_order_precedence() {
         let routes = vec![VirtualHost {
-            host: "*".to_string(),
+            host: Host("*".to_string()),
             paths: vec![
                 Route {
-                    match_type: MatchType::Prefix,
-                    path: "/app".to_string(),
-                    timeout_ms: None,
-                    retry_policy: None,
-                    request_headers: None,
-                    response_headers: None,
-                    rewrite: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "backend-1".to_string(),
-                        weight: 1,
+                    matcher: PathMatch::Prefix {
+                        path: Path("/app".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled,
+                    response_headers: HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("backend-1".to_string()),
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
                     }],
                 },
                 Route {
-                    match_type: MatchType::Exact,
-                    path: "/app".to_string(),
-                    timeout_ms: None,
-                    retry_policy: None,
-                    request_headers: None,
-                    response_headers: None,
-                    rewrite: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "backend-2".to_string(),
-                        weight: 1,
+                    matcher: PathMatch::Exact {
+                        path: Path("/app".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled,
+                    response_headers: HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("backend-2".to_string()),
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
                     }],
                 },
             ],
@@ -252,6 +292,6 @@ mod tests {
 
         let router = Router::new(routes).unwrap();
         let (_, route) = router.match_request(None, "/app").expect("match");
-        assert_eq!(route.match_type, MatchType::Prefix);
+        matches!(route.matcher, PathMatch::Prefix { .. });
     }
 }

@@ -2,7 +2,10 @@ use super::config::{PavisConfigScenario, generate_config};
 use super::http::wait_for_pavis;
 use crate::support::pick_port;
 use anyhow::{Context, Result};
-use pavis_core::{AccessLogConfig, Listener, RuntimeConfig, TelemetryConfig};
+use pavis_core::{
+    AccessLogPolicy, Listener, ListenerName, Metrics, RuntimeConfig, ServiceName, Telemetry,
+    TracingPolicy, WorkerCount,
+};
 use reqwest::Client;
 use std::env;
 use std::fs;
@@ -164,18 +167,20 @@ impl TestEnv {
 
             let config = RuntimeConfig {
                 listeners: vec![Listener {
-                    name: "default".to_string(),
-                    listen_addr: format!("127.0.0.1:{port}").parse()?,
-                    worker_threads: None,
-                    tls: None,
+                    name: ListenerName("default".to_string()),
+                    address: format!("127.0.0.1:{port}").parse()?,
+                    workers: WorkerCount::Auto,
+                    tls: pavis_core::TlsConfig::Disabled,
                 }],
-                telemetry: TelemetryConfig {
-                    level: None,
-                    pingora: None,
-                    service_name: None,
-                    prometheus_addr: Some(format!("127.0.0.1:{admin_port}").parse()?),
-                    access_log: AccessLogConfig::Disabled,
-                    tracing: None,
+                telemetry: Telemetry {
+                    level: pavis_core::LogLevel::Info,
+                    pingora: pavis_core::LogLevel::Info,
+                    service_name: ServiceName("pavis".to_string()),
+                    metrics: Metrics::Enabled {
+                        addr: format!("127.0.0.1:{admin_port}").parse()?,
+                    },
+                    access_log: AccessLogPolicy::Disabled,
+                    tracing: TracingPolicy::Disabled,
                 },
                 upstreams: Vec::new(),
                 routes: Vec::new(),
@@ -200,18 +205,20 @@ impl TestEnv {
             // Docker uses default port 8080 and 9091
             let config = RuntimeConfig {
                 listeners: vec![Listener {
-                    name: "default".to_string(),
-                    listen_addr: "0.0.0.0:8080".parse()?,
-                    worker_threads: None,
-                    tls: None,
+                    name: ListenerName("default".to_string()),
+                    address: "0.0.0.0:8080".parse()?,
+                    workers: WorkerCount::Auto,
+                    tls: pavis_core::TlsConfig::Disabled,
                 }],
-                telemetry: TelemetryConfig {
-                    level: None,
-                    pingora: None,
-                    service_name: None,
-                    prometheus_addr: Some("0.0.0.0:9091".parse()?),
-                    access_log: AccessLogConfig::Disabled,
-                    tracing: None,
+                telemetry: Telemetry {
+                    level: pavis_core::LogLevel::Info,
+                    pingora: pavis_core::LogLevel::Info,
+                    service_name: ServiceName("pavis".to_string()),
+                    metrics: Metrics::Enabled {
+                        addr: "0.0.0.0:9091".parse()?,
+                    },
+                    access_log: AccessLogPolicy::Disabled,
+                    tracing: TracingPolicy::Disabled,
                 },
                 upstreams: Vec::new(),
                 routes: Vec::new(),

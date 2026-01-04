@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::{Router, routing::get};
 use pavis::agent::{Backoff, ConfigAgent, PollOutcome, lkg_version, load_lkg_config};
 use pavis::state::{RuntimeState, RuntimeStateHandle};
-use pavis_core::{RuntimeConfig, TelemetryConfig};
+use pavis_core::{AccessLogPolicy, Metrics, RuntimeConfig, ServiceName, Telemetry, WorkerCount};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,18 +39,18 @@ async fn relay_config(State(state): State<RelayStub>, headers: HeaderMap) -> imp
 fn minimal_config(label: &str) -> RuntimeConfig {
     RuntimeConfig {
         listeners: vec![pavis_core::Listener {
-            name: "default".to_string(),
-            listen_addr: "127.0.0.1:8080".parse().expect("addr"),
-            worker_threads: None,
-            tls: None,
+            name: pavis_core::ListenerName("default".to_string()),
+            address: "127.0.0.1:8080".parse().expect("addr"),
+            workers: WorkerCount::Auto,
+            tls: pavis_core::TlsConfig::Disabled,
         }],
-        telemetry: TelemetryConfig {
-            level: None,
-            pingora: None,
-            service_name: Some(label.to_string()),
-            prometheus_addr: None,
-            access_log: Default::default(),
-            tracing: None,
+        telemetry: Telemetry {
+            level: pavis_core::LogLevel::Info,
+            pingora: pavis_core::LogLevel::Info,
+            service_name: ServiceName(label.to_string()),
+            metrics: Metrics::Disabled,
+            access_log: AccessLogPolicy::Stdout,
+            tracing: pavis_core::TracingPolicy::Disabled,
         },
         upstreams: Vec::new(),
         routes: Vec::new(),
@@ -134,7 +134,7 @@ async fn poller_updates_lkg_and_version() {
     assert_eq!(lkg_version_value, 2);
     let (validated, version) = load_lkg_config(&lkg_path).unwrap();
     assert_eq!(version, 2);
-    assert_eq!(validated.telemetry.service_name.as_deref(), Some("v2"));
+    assert_eq!(validated.telemetry.service_name.0.as_str(), "v2");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

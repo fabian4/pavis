@@ -477,7 +477,29 @@ impl RelayMetrics {
 mod tests {
     use super::{RelayMeta, RelayOptions, RelayState, execute_plan};
     use axum::body::Bytes;
+    use pavis_core::{AccessLogPolicy, ListenerName, Metrics, ServiceName, Telemetry, WorkerCount};
+    use std::net::SocketAddr;
 
+    fn minimal_config() -> pavis_core::RuntimeConfig {
+        pavis_core::RuntimeConfig {
+            listeners: vec![pavis_core::Listener {
+                name: ListenerName("default".to_string()),
+                address: "127.0.0.1:8080".parse::<SocketAddr>().unwrap(),
+                workers: WorkerCount::Auto,
+                tls: pavis_core::TlsConfig::Disabled,
+            }],
+            telemetry: Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: ServiceName("pavis".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            },
+            upstreams: vec![],
+            routes: vec![],
+        }
+    }
     #[test]
     fn execute_plan_rejects_non_monotonic_versions() {
         let err = execute_plan(5, 5).expect_err("non-monotonic");
@@ -515,24 +537,7 @@ mod tests {
     #[tokio::test]
     async fn state_publish_auto_increments_version() {
         // Use a valid PVS for publish_auto as it inspects the header
-        let config = pavis_core::RuntimeConfig {
-            listeners: vec![pavis_core::Listener {
-                name: "default".to_string(),
-                listen_addr: "127.0.0.1:8080".parse().unwrap(),
-                worker_threads: None,
-                tls: None,
-            }],
-            telemetry: pavis_core::TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: pavis_core::AccessLogConfig::Disabled,
-                tracing: None,
-            },
-            upstreams: vec![],
-            routes: vec![],
-        };
+        let config = minimal_config();
         let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
 
         let state = RelayState::new(10, Bytes::new()).expect("state");
@@ -622,24 +627,7 @@ mod tests {
         options.lkg_path = Some(lkg.clone());
 
         // Use valid PVS bytes
-        let config = pavis_core::RuntimeConfig {
-            listeners: vec![pavis_core::Listener {
-                name: "default".to_string(),
-                listen_addr: "127.0.0.1:8080".parse().unwrap(),
-                worker_threads: None,
-                tls: None,
-            }],
-            telemetry: pavis_core::TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: pavis_core::AccessLogConfig::Disabled,
-                tracing: None,
-            },
-            upstreams: vec![],
-            routes: vec![],
-        };
+        let config = minimal_config();
         let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
 
         let state = RelayState::new_with_options(0, pvs_bytes.into(), options).expect("state");
@@ -718,24 +706,8 @@ mod tests {
         let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
 
         // Publish something
-        let config = pavis_core::RuntimeConfig {
-            listeners: vec![pavis_core::Listener {
-                name: "default".to_string(),
-                listen_addr: "127.0.0.1:8080".parse().unwrap(),
-                worker_threads: None,
-                tls: None,
-            }],
-            telemetry: pavis_core::TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: Some("persist_test".to_string()),
-                prometheus_addr: None,
-                access_log: pavis_core::AccessLogConfig::Disabled,
-                tracing: None,
-            },
-            upstreams: vec![],
-            routes: vec![],
-        };
+        let mut config = minimal_config();
+        config.telemetry.service_name = ServiceName("persist_test".to_string());
         let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
         state
             .publish_auto(pvs_bytes.clone().into())
@@ -775,24 +747,7 @@ mod tests {
 
         let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
 
-        let config = pavis_core::RuntimeConfig {
-            listeners: vec![pavis_core::Listener {
-                name: "default".to_string(),
-                listen_addr: "127.0.0.1:8080".parse().unwrap(),
-                worker_threads: None,
-                tls: None,
-            }],
-            telemetry: pavis_core::TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: pavis_core::AccessLogConfig::Disabled,
-                tracing: None,
-            },
-            upstreams: vec![],
-            routes: vec![],
-        };
+        let config = minimal_config();
         let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
         state
             .publish_auto(pvs_bytes.clone().into())

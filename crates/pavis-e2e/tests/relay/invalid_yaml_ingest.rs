@@ -40,7 +40,7 @@ async fn r8_codec_validation_file() -> Result<()> {
     // Write valid YAML
     fs::write(
         config_path,
-        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8080\"",
+        "listeners:\n  - name: \"default\"\n    address: \"127.0.0.1:8080\"",
     )?;
     scenario.wait_for_relay_version(v_start + 1).await?;
 

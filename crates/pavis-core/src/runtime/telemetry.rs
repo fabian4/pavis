@@ -1,17 +1,19 @@
+use crate::runtime::types::{Path, SampleRate, ServiceName};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
-pub struct TelemetryConfig {
-    pub level: Option<LogLevel>,
-    pub pingora: Option<LogLevel>,
-    pub service_name: Option<String>,
-    pub prometheus_addr: Option<String>,
-    pub access_log: AccessLogConfig,
-    pub tracing: Option<TracingConfig>,
+pub struct Telemetry {
+    pub level: LogLevel,
+    pub pingora: LogLevel,
+    pub service_name: ServiceName,
+    pub metrics: Metrics,
+    pub access_log: AccessLogPolicy,
+    pub tracing: TracingPolicy,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,18 +31,37 @@ pub enum LogLevel {
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq, Default)]
 #[archive(check_bytes)]
-pub enum AccessLogConfig {
+pub enum AccessLogPolicy {
     Disabled,
     #[default]
     Stdout,
-    File(String),
+    File(Path),
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
-pub struct TracingConfig {
-    pub enabled: bool,
-    pub provider: String,
-    pub sampling_rate: f64,
+pub enum TracingPolicy {
+    Disabled,
+    Enabled {
+        provider: TracingProvider,
+        sampling: SampleRate,
+    },
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub enum TracingProvider {
+    Otlp,
+    Jaeger,
+    Zipkin,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub enum Metrics {
+    Disabled,
+    Enabled { addr: SocketAddr },
 }

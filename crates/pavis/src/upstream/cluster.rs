@@ -24,7 +24,11 @@ pub struct Cluster {
 
 impl Cluster {
     pub fn new(config: Upstream) -> Self {
-        let total_weight = config.endpoints.iter().map(|e| e.weight).sum();
+        let total_weight = config
+            .endpoints
+            .iter()
+            .map(|e| e.weight.0.get() as u32)
+            .sum();
         let state = ClusterState {
             endpoints: config.endpoints.clone(),
             total_weight,
@@ -42,7 +46,7 @@ impl Cluster {
             return None;
         }
         let idx = load_balance::select_index(
-            self.config.load_balancer,
+            self.config.balancer,
             &state.endpoints,
             &self.rr_counter.0,
             state.total_weight,
@@ -51,7 +55,7 @@ impl Cluster {
     }
 
     pub fn update_endpoints(&self, endpoints: Vec<Endpoint>) {
-        let total_weight = endpoints.iter().map(|e| e.weight).sum();
+        let total_weight = endpoints.iter().map(|e| e.weight.0.get() as u32).sum();
         let state = ClusterState {
             endpoints,
             total_weight,
@@ -68,29 +72,34 @@ impl Cluster {
 mod tests {
     use super::Cluster;
     use pavis_core::{
-        ConnectionPoolConfig, Endpoint, EndpointAddress, HttpVersion, LoadBalancer, Upstream,
+        ConnectTimeout, ConnectionLimit, Endpoint, EndpointAddr, HttpVersion, IdleTimeout,
+        LoadBalancer, Pool, Port, TlsPolicy, Upstream, UpstreamId, UpstreamName, Weight,
     };
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::num::NonZeroU16;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
-    fn make_endpoint(ip: Ipv4Addr, port: u16, weight: u32) -> Endpoint {
+    fn make_endpoint(ip: Ipv4Addr, port: u16, weight: u16) -> Endpoint {
         Endpoint {
-            address: EndpointAddress::Ip(SocketAddr::new(IpAddr::V4(ip), port)),
-            weight,
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(ip),
+                port: Port(NonZeroU16::new(port).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(weight).unwrap()),
         }
     }
 
     fn get_ip(e: &Endpoint) -> IpAddr {
         match e.address {
-            EndpointAddress::Ip(addr) => addr.ip(),
+            EndpointAddr::Ip { address, .. } => address,
             _ => panic!("expected ip"),
         }
     }
 
     fn get_port(e: &Endpoint) -> u16 {
         match e.address {
-            EndpointAddress::Ip(addr) => addr.port(),
+            EndpointAddr::Ip { port, .. } => port.0.get(),
             _ => panic!("expected ip"),
         }
     }
@@ -98,15 +107,17 @@ mod tests {
     #[test]
     fn test_weighted_round_robin_respects_weights() {
         let upstream = Upstream {
-            name: "test".to_string(),
-            discovery_type: pavis_core::DiscoveryType::Static,
-            load_balancer: LoadBalancer::RoundRobin,
-            http_version: HttpVersion::H1,
-            connection_pool: ConnectionPoolConfig {
-                idle_timeout_secs: 60,
-                connection_timeout_secs: 5,
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: pavis_core::Discovery::Static,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit::Unlimited,
             },
-            tls: None,
+            tls: TlsPolicy::Disabled,
             endpoints: vec![
                 make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 3),
                 make_endpoint(Ipv4Addr::new(127, 0, 0, 2), 8081, 1),
@@ -128,15 +139,17 @@ mod tests {
     #[test]
     fn test_round_robin_cycles_endpoints_evenly() {
         let upstream = Upstream {
-            name: "test-upstream".to_string(),
-            discovery_type: pavis_core::DiscoveryType::Static,
-            load_balancer: LoadBalancer::RoundRobin,
-            http_version: HttpVersion::H1,
-            connection_pool: ConnectionPoolConfig {
-                idle_timeout_secs: 60,
-                connection_timeout_secs: 5,
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test-upstream".to_string()),
+            discovery: pavis_core::Discovery::Static,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit::Unlimited,
             },
-            tls: None,
+            tls: TlsPolicy::Disabled,
             endpoints: vec![
                 make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8081, 1),
                 make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8082, 1),
@@ -162,15 +175,17 @@ mod tests {
     #[test]
     fn test_concurrent_round_robin() {
         let upstream = Upstream {
-            name: "concurrent-upstream".to_string(),
-            discovery_type: pavis_core::DiscoveryType::Static,
-            load_balancer: LoadBalancer::RoundRobin,
-            http_version: HttpVersion::H1,
-            connection_pool: ConnectionPoolConfig {
-                idle_timeout_secs: 60,
-                connection_timeout_secs: 5,
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("concurrent-upstream".to_string()),
+            discovery: pavis_core::Discovery::Static,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit::Unlimited,
             },
-            tls: None,
+            tls: TlsPolicy::Disabled,
             endpoints: vec![
                 make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 80, 1),
                 make_endpoint(Ipv4Addr::new(127, 0, 0, 2), 80, 1),

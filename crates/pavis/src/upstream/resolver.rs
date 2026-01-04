@@ -1,5 +1,5 @@
 use anyhow::Result;
-use pavis_core::{DiscoveryType, Endpoint, EndpointAddress, Upstream};
+use pavis_core::{Discovery, Endpoint, EndpointAddr, Upstream};
 use pingora::services::Service;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,8 +32,8 @@ impl UpstreamResolver {
             let config = cluster.config.clone();
             let current = cluster.current_endpoints();
             if !matches!(
-                config.discovery_type,
-                DiscoveryType::LogicalDns | DiscoveryType::StrictDns
+                config.discovery,
+                Discovery::LogicalDns | Discovery::StrictDns
             ) {
                 continue;
             }
@@ -90,10 +90,10 @@ async fn resolve_upstream(
     config: Upstream,
     current: Vec<Endpoint>,
 ) -> Option<ResolvedUpdate> {
-    let result = match config.discovery_type {
-        DiscoveryType::LogicalDns => resolve_logical_dns(&config, &current).await,
-        DiscoveryType::StrictDns => resolve_strict_dns(&config).await,
-        DiscoveryType::Static => return None,
+    let result = match config.discovery {
+        Discovery::LogicalDns => resolve_logical_dns(&config, &current).await,
+        Discovery::StrictDns => resolve_strict_dns(&config).await,
+        Discovery::Static => return None,
     };
 
     match result {
@@ -120,12 +120,12 @@ async fn resolve_logical_dns(
     let dns_endpoints: Vec<&Endpoint> = config
         .endpoints
         .iter()
-        .filter(|e| matches!(e.address, EndpointAddress::Dns(_, _)))
+        .filter(|e| matches!(e.address, EndpointAddr::Dns { .. }))
         .collect();
 
     if dns_endpoints.is_empty() {
         tracing::warn!(
-            upstream = %config.name,
+            upstream = %config.name.0,
             "Logical DNS upstream has no DNS endpoints"
         );
         return Ok(None);
@@ -133,14 +133,14 @@ async fn resolve_logical_dns(
 
     if dns_endpoints.len() > 1 || config.endpoints.len() != dns_endpoints.len() {
         tracing::warn!(
-            upstream = %config.name,
+            upstream = %config.name.0,
             "Logical DNS upstream should define exactly one DNS endpoint"
         );
     }
 
     let endpoint = dns_endpoints[0];
     let (host, port) = match &endpoint.address {
-        EndpointAddress::Dns(host, port) => (host.as_str(), *port),
+        EndpointAddr::Dns { host, port } => (host.0.as_str(), port.0.get()),
         _ => unreachable!("filtered to DNS endpoints"),
     };
 
@@ -151,7 +151,10 @@ async fn resolve_logical_dns(
 
     let selected = select_existing_or_first(&resolved, current).unwrap_or_else(|| resolved[0]);
     let new_endpoint = Endpoint {
-        address: EndpointAddress::Ip(selected),
+        address: EndpointAddr::Ip {
+            address: selected.ip(),
+            port: endpoint_port(selected),
+        },
         weight: endpoint.weight,
     };
 
@@ -163,18 +166,24 @@ async fn resolve_strict_dns(config: &Upstream) -> Result<Option<Vec<Endpoint>>> 
 
     for endpoint in &config.endpoints {
         match &endpoint.address {
-            EndpointAddress::Ip(addr) => resolved_endpoints.push(Endpoint {
-                address: EndpointAddress::Ip(*addr),
+            EndpointAddr::Ip { address, port } => resolved_endpoints.push(Endpoint {
+                address: EndpointAddr::Ip {
+                    address: *address,
+                    port: *port,
+                },
                 weight: endpoint.weight,
             }),
-            EndpointAddress::Dns(host, port) => {
-                let addrs = resolve_dns(host, *port).await?;
+            EndpointAddr::Dns { host, port } => {
+                let addrs = resolve_dns(host.0.as_str(), port.0.get()).await?;
                 if addrs.is_empty() {
                     return Ok(None);
                 }
                 for addr in addrs {
                     resolved_endpoints.push(Endpoint {
-                        address: EndpointAddress::Ip(addr),
+                        address: EndpointAddr::Ip {
+                            address: addr.ip(),
+                            port: endpoint_port(addr),
+                        },
                         weight: endpoint.weight,
                     });
                 }
@@ -196,10 +205,17 @@ async fn resolve_dns(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
 
 fn select_existing_or_first(resolved: &[SocketAddr], current: &[Endpoint]) -> Option<SocketAddr> {
     for endpoint in current {
-        match endpoint.address {
-            EndpointAddress::Ip(addr) if resolved.contains(&addr) => return Some(addr),
-            _ => {}
+        if let EndpointAddr::Ip { address, port } = endpoint.address {
+            let addr = SocketAddr::new(address, port.0.get());
+            if resolved.contains(&addr) {
+                return Some(addr);
+            }
         }
     }
     None
+}
+
+fn endpoint_port(addr: SocketAddr) -> pavis_core::Port {
+    use std::num::NonZeroU16;
+    pavis_core::Port(NonZeroU16::new(addr.port()).expect("non-zero port"))
 }

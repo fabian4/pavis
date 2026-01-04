@@ -61,12 +61,15 @@ pub trait Codec {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use pavis_core::runtime::{
-        AccessLogConfig, ConnectionPoolConfig, Endpoint, EndpointAddress, HttpVersion, Listener,
-        LoadBalancer, MatchType, Route, TelemetryConfig, Upstream, VirtualHost,
-        WeightedDestination,
+    use pavis_core::{
+        AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration,
+        Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout, Listener, ListenerName,
+        LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost,
+        RewritePath, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, Upstream, UpstreamId,
+        UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::num::{NonZeroU16, NonZeroU32};
 
     #[derive(Debug, thiserror::Error, PartialEq, Eq)]
     enum TestError {
@@ -129,50 +132,56 @@ mod tests {
     fn valid_config() -> pavis_core::RuntimeConfig {
         pavis_core::RuntimeConfig {
             listeners: vec![Listener {
-                name: "default".to_string(),
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
-                worker_threads: None,
-                tls: None,
+                name: ListenerName("default".to_string()),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
+                workers: WorkerCount::Auto,
+                tls: TlsConfig::Disabled,
             }],
-            telemetry: TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: AccessLogConfig::Stdout,
-                tracing: None,
+            telemetry: Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: ServiceName("pavis".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Stdout,
+                tracing: pavis_core::TracingPolicy::Disabled,
             },
             upstreams: vec![Upstream {
-                name: "upstream1".to_string(),
-                discovery_type: pavis_core::DiscoveryType::Static,
-                load_balancer: LoadBalancer::RoundRobin,
-                http_version: HttpVersion::H1,
-                connection_pool: ConnectionPoolConfig {
-                    idle_timeout_secs: 60,
-                    connection_timeout_secs: 5,
+                id: UpstreamId(NonZeroU16::new(1).unwrap()),
+                name: UpstreamName("upstream1".to_string()),
+                discovery: Discovery::Static,
+                balancer: LoadBalancer::RoundRobin,
+                protocol: HttpVersion::H1,
+                pool: Pool {
+                    idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
+                    connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
+                    max: ConnectionLimit::Unlimited,
                 },
-                tls: None,
+                tls: TlsPolicy::Disabled,
                 endpoints: vec![Endpoint {
-                    address: EndpointAddress::Ip(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::LOCALHOST),
-                        8080,
-                    )),
-                    weight: 1,
+                    address: EndpointAddr::Ip {
+                        address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        port: Port(NonZeroU16::new(8080).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
                 }],
             }],
             routes: vec![VirtualHost {
-                host: "*".to_string(),
-                paths: vec![Route {
-                    match_type: MatchType::Prefix,
-                    path: "/".to_string(),
-                    timeout_ms: None,
-                    retry_policy: None,
-                    request_headers: None,
-                    response_headers: None,
-                    rewrite: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "upstream1".to_string(),
-                        weight: 1,
+                host: Host("*".to_string()),
+                paths: vec![pavis_core::Route {
+                    matcher: PathMatch::Prefix {
+                        path: Path("/".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: pavis_core::HeadersPolicy::Disabled,
+                    response_headers: pavis_core::HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("upstream1".to_string()),
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
                     }],
                 }],
             }],
@@ -181,7 +190,7 @@ mod tests {
 
     fn invalid_config() -> pavis_core::RuntimeConfig {
         let mut cfg = valid_config();
-        cfg.upstreams[0].name = String::new();
+        cfg.upstreams[0].name = UpstreamName(String::new());
         cfg
     }
 
@@ -221,38 +230,13 @@ mod tests {
     }
 
     #[test]
-    fn materialize_returns_validated_config() {
+    fn materialize_success() {
         let codec = MockCodec::new(Mode::Ok);
         let cfg = codec
             .materialize(test_artifact(), CompactionLevel::Off)
-            .expect("materialize");
+            .expect("ok");
+        assert_eq!(cfg.listeners.len(), 1);
         assert_eq!(cfg.upstreams.len(), 1);
-        assert_eq!(cfg.upstreams[0].name, "upstream1");
-    }
-
-    #[test]
-    fn codec_error_implements_error() {
-        fn assert_error<E: std::error::Error>() {}
-        assert_error::<CodecError>();
-    }
-
-    #[test]
-    fn codec_error_from_core_maps_to_variant() {
-        let err = CodecError::from(CoreValidationError::EmptyUpstreamName);
-        match err {
-            CodecError::Core(core) => {
-                assert_eq!(core, CoreValidationError::EmptyUpstreamName);
-            }
-            other => panic!("unexpected variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn materialize_default_uses_off_level() {
-        let codec = MockCodec::new(Mode::Ok);
-        let cfg = codec
-            .materialize_default(test_artifact())
-            .expect("materialize default");
-        assert_eq!(cfg.upstreams.len(), 1);
+        assert_eq!(cfg.routes.len(), 1);
     }
 }

@@ -4,12 +4,13 @@ use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
 use async_trait::async_trait;
 use http::Uri;
-use pavis_core::{HttpVersion, MatchType};
+use pavis_core::{ConnectTimeout, EndpointAddr, HeadersPolicy, Hostname, HttpVersion, PathMatch};
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,63 +33,65 @@ fn apply_rewrite(
     uri_path: &str,
     uri_query: Option<&str>,
 ) {
-    let Some(rewrite) = route.rewrite.as_ref() else {
-        return;
-    };
-
     let req_header = session.as_downstream_mut().req_header_mut();
 
-    if let Some(host) = rewrite.host_rewrite_literal.as_ref() {
-        if let Err(err) = req_header.insert_header("Host", host.as_str()) {
-            tracing::warn!(error = %err, host = %host, "Failed to apply host rewrite");
-        } else {
-            ctx.sni_override = Some(host.clone());
+    match &route.rewrite.host {
+        pavis_core::RewriteHost::Disabled => {}
+        pavis_core::RewriteHost::Literal { host } => {
+            if let Err(err) = req_header.insert_header("Host", host.0.as_str()) {
+                tracing::warn!(error = %err, host = %host.0, "Failed to apply host rewrite");
+            } else {
+                ctx.sni_override = Some(host.clone());
+            }
         }
-    }
+    };
 
-    if let Some(path_prefix) = rewrite.path_prefix_rewrite.as_ref() {
-        let new_path = match route.match_type {
-            MatchType::Prefix => uri_path
-                .strip_prefix(route.path.as_str())
-                .map(|suffix| format!("{path_prefix}{suffix}")),
-            MatchType::Exact => (uri_path == route.path).then(|| path_prefix.to_string()),
-            MatchType::Regex => None,
-        };
+    match &route.rewrite.path {
+        pavis_core::RewritePath::Disabled => {}
+        pavis_core::RewritePath::Prefix { from: _, to } => {
+            let new_path = match &route.matcher {
+                PathMatch::Prefix { path } => uri_path
+                    .strip_prefix(path.0.as_str())
+                    .map(|suffix| format!("{}{suffix}", to.0)),
+                PathMatch::Exact { path } => (uri_path == path.0.as_str()).then(|| to.0.clone()),
+                PathMatch::Regex { .. } => None,
+            };
 
-        match new_path {
-            Some(mut path) => {
-                if let Some(query) = uri_query {
-                    path.push('?');
-                    path.push_str(query);
+            match new_path {
+                Some(mut path) => {
+                    if let Some(query) = uri_query {
+                        path.push('?');
+                        path.push_str(query);
+                    }
+
+                    match Uri::builder().path_and_query(path.as_str()).build() {
+                        Ok(uri) => req_header.set_uri(uri),
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                rewrite = %to.0,
+                                "Failed to apply path rewrite"
+                            );
+                        }
+                    }
                 }
-
-                match Uri::builder().path_and_query(path.as_str()).build() {
-                    Ok(uri) => req_header.set_uri(uri),
-                    Err(err) => {
+                None => {
+                    if matches!(route.matcher, PathMatch::Regex { .. }) {
                         tracing::warn!(
-                            error = %err,
-                            rewrite = %path_prefix,
-                            "Failed to apply path rewrite"
+                            route = %route_path(route),
+                            "Skipping path rewrite for regex match"
+                        );
+                    } else {
+                        tracing::warn!(
+                            route = %route_path(route),
+                            path = %uri_path,
+                            "Skipping path rewrite due to unmatched prefix"
                         );
                     }
                 }
             }
-            None => {
-                if route.match_type == MatchType::Regex {
-                    tracing::warn!(
-                        route = %route.path,
-                        "Skipping path rewrite for regex match"
-                    );
-                } else {
-                    tracing::warn!(
-                        route = %route.path,
-                        path = %uri_path,
-                        "Skipping path rewrite due to unmatched prefix"
-                    );
-                }
-            }
         }
-    }
+    };
 }
 
 #[async_trait]
@@ -98,8 +101,8 @@ impl ProxyHttp for Proxy {
     fn new_ctx(&self) -> Self::CTX {
         RouterContext {
             upstream_name: None,
-            request_headers: None,
-            response_headers: None,
+            request_headers: HeadersPolicy::Disabled,
+            response_headers: HeadersPolicy::Disabled,
             sni_override: None,
             start_time: std::time::Instant::now(),
         }
@@ -117,7 +120,7 @@ impl ProxyHttp for Proxy {
 
         // O(1) lookup using Manager
         let state = self.state.load();
-        let cluster = match state.upstream_manager.get(upstream_name) {
+        let cluster = match state.upstream_manager.get(upstream_name.0.as_str()) {
             Some(u) => u,
             None => return Error::e_explain(InternalError, "Upstream not found in config"),
         };
@@ -130,51 +133,77 @@ impl ProxyHttp for Proxy {
         let upstream = &cluster.config;
 
         let addr = match &endpoint.address {
-            pavis_core::EndpointAddress::Ip(addr) => *addr,
-            pavis_core::EndpointAddress::Dns(host, port) => {
+            EndpointAddr::Ip { address, port } => SocketAddr::new(*address, port.0.get()),
+            EndpointAddr::Dns { host, port } => {
                 return Error::e_explain(
                     InternalError,
-                    format!("DNS upstream {}:{} not supported yet", host, port),
+                    format!("DNS upstream {}:{} not supported yet", host.0, port.0),
                 );
             }
         };
 
         tracing::debug!(
-            upstream = %upstream_name,
+            upstream = %upstream_name.0,
             endpoint = %addr,
-            lb = ?upstream.load_balancer,
-            http_version = ?upstream.http_version,
+            lb = ?upstream.balancer,
+            http = ?upstream.protocol,
             "forwarding request"
         );
 
-        let tls_config = upstream.tls.as_ref();
-        let use_tls = tls_config.map(|c| c.enabled).unwrap_or(false);
-        let sni = tls_config
-            .and_then(|c| c.sni.clone())
+        let (use_tls, sni, verify_mode) = match &upstream.tls {
+            pavis_core::TlsPolicy::Disabled => (false, None, None),
+            pavis_core::TlsPolicy::Enabled { verify_mode, sni } => {
+                let sni_value = match sni {
+                    pavis_core::SniName::Auto => ctx.sni_override.clone(),
+                    pavis_core::SniName::Value(name) => Some(name.clone()),
+                };
+                (true, sni_value, Some(verify_mode))
+            }
+        };
+
+        let sni_value = sni
             .or_else(|| ctx.sni_override.clone())
-            .unwrap_or_else(|| "localhost".to_string());
+            .unwrap_or_else(|| Hostname("localhost".to_string()));
 
-        let mut peer = HttpPeer::new(addr, use_tls, sni);
+        let mut peer = HttpPeer::new(addr, use_tls, sni_value.0);
 
-        if let Some(c) = tls_config {
-            peer.options.verify_hostname = c.verify_hostname;
-            peer.options.verify_cert = c.verify_cert;
+        if let Some(mode) = verify_mode {
+            match mode {
+                pavis_core::TlsVerify::Disabled => {
+                    peer.options.verify_hostname = false;
+                    peer.options.verify_cert = false;
+                }
+                pavis_core::TlsVerify::Cert => {
+                    peer.options.verify_hostname = false;
+                    peer.options.verify_cert = true;
+                }
+                pavis_core::TlsVerify::CertAndHost => {
+                    peer.options.verify_hostname = true;
+                    peer.options.verify_cert = true;
+                }
+            }
         }
 
         // Configure HTTP version
-        match upstream.http_version {
+        match upstream.protocol {
             HttpVersion::H1 => peer.options.set_http_version(1, 1),
             HttpVersion::H2 => peer.options.set_http_version(2, 2),
             HttpVersion::H2H1 => peer.options.set_http_version(2, 1),
         }
 
         // Configure connection pooling
-        peer.options.idle_timeout = Some(Duration::from_secs(
-            upstream.connection_pool.idle_timeout_secs,
-        ));
-        peer.options.connection_timeout = Some(Duration::from_secs(
-            upstream.connection_pool.connection_timeout_secs,
-        ));
+        peer.options.idle_timeout = match upstream.pool.idle {
+            pavis_core::IdleTimeout::Disabled => None,
+            pavis_core::IdleTimeout::Enabled(duration) => {
+                Some(Duration::from_millis(duration.0.get() as u64))
+            }
+        };
+        peer.options.connection_timeout = match upstream.pool.connect {
+            ConnectTimeout::Disabled => None,
+            ConnectTimeout::Enabled(duration) => {
+                Some(Duration::from_millis(duration.0.get() as u64))
+            }
+        };
 
         Ok(Box::new(peer))
     }
@@ -194,12 +223,16 @@ impl ProxyHttp for Proxy {
 
         let state = self.state.load();
         if let Some((vhost, route)) = state.router.match_request(host_header, &uri_path) {
-            tracing::trace!(host = %vhost.host, path = %route.path, "matched route");
+            tracing::trace!(host = %vhost.host.0, path = %route_path(route), "matched route");
 
             apply_route_headers(ctx, route);
             apply_rewrite(session, ctx, route, &uri_path, uri_query.as_deref());
 
-            let total_weight: u32 = route.destinations.iter().map(|d| d.weight).sum();
+            let total_weight: u32 = route
+                .destinations
+                .iter()
+                .map(|d| d.weight.0.get() as u32)
+                .sum();
             if total_weight == 0 {
                 return Ok(false);
             }
@@ -208,11 +241,12 @@ impl ProxyHttp for Proxy {
             let mut pick = rng.random_range(0..total_weight);
 
             for dest in &route.destinations {
-                if pick < dest.weight {
+                let weight = dest.weight.0.get() as u32;
+                if pick < weight {
                     ctx.upstream_name = Some(dest.upstream.clone());
                     break;
                 }
-                pick -= dest.weight;
+                pick -= weight;
             }
 
             return Ok(false);
@@ -228,7 +262,7 @@ impl ProxyHttp for Proxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        apply_request_headers(upstream_request, ctx.request_headers.as_ref())
+        apply_request_headers(upstream_request, &ctx.request_headers)
     }
 
     fn upstream_response_filter(
@@ -237,14 +271,26 @@ impl ProxyHttp for Proxy {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        apply_response_headers(upstream_response, ctx.response_headers.as_ref())
+        apply_response_headers(upstream_response, &ctx.response_headers)
     }
 
     async fn logging(&self, session: &mut Session, _e: Option<&Error>, ctx: &mut Self::CTX) {
         self.telemetry
             .access_log
-            .log(session, ctx.upstream_name.as_deref(), ctx.start_time)
+            .log(
+                session,
+                ctx.upstream_name.as_ref().map(|name| name.0.as_str()),
+                ctx.start_time,
+            )
             .await;
+    }
+}
+
+fn route_path(route: &pavis_core::Route) -> &str {
+    match &route.matcher {
+        PathMatch::Prefix { path } => path.0.as_str(),
+        PathMatch::Exact { path } => path.0.as_str(),
+        PathMatch::Regex { path } => path.0.as_str(),
     }
 }
 

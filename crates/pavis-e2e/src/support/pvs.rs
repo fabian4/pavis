@@ -1,6 +1,9 @@
 use pavis_codec_api::Codec;
 use pavis_codec_serde::{SerdeCodec, SerdeFormat};
-use pavis_core::{Listener, RuntimeConfig, TelemetryConfig};
+use pavis_core::{
+    AccessLogPolicy, Listener, ListenerName, Metrics, RuntimeConfig, ServiceName, Telemetry,
+    TracingPolicy, WorkerCount,
+};
 
 #[allow(dead_code)]
 pub fn to_yaml(config: &RuntimeConfig) -> String {
@@ -14,18 +17,18 @@ pub fn to_yaml(config: &RuntimeConfig) -> String {
 pub fn build_pvs_bytes(label: &str) -> Vec<u8> {
     let config = RuntimeConfig {
         listeners: vec![Listener {
-            name: "default".to_string(),
-            listen_addr: "127.0.0.1:8080".parse().expect("addr"),
-            worker_threads: None,
-            tls: None,
+            name: ListenerName("default".to_string()),
+            address: "127.0.0.1:8080".parse().expect("addr"),
+            workers: WorkerCount::Auto,
+            tls: pavis_core::TlsConfig::Disabled,
         }],
-        telemetry: TelemetryConfig {
-            level: None,
-            pingora: None,
-            service_name: Some(label.to_string()),
-            prometheus_addr: None,
-            access_log: Default::default(),
-            tracing: None,
+        telemetry: Telemetry {
+            level: pavis_core::LogLevel::Info,
+            pingora: pavis_core::LogLevel::Info,
+            service_name: ServiceName(label.to_string()),
+            metrics: Metrics::Disabled,
+            access_log: AccessLogPolicy::Stdout,
+            tracing: TracingPolicy::Disabled,
         },
         upstreams: Vec::new(),
         routes: Vec::new(),

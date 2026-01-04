@@ -183,11 +183,14 @@ The following rules are absolute.
 *   **Nature:** Fully materialized and frozen.
 *   **Guarantee:** A `.pvs` compiled today MUST execute identically on future runtime versions. Policy changes (defaults) affect only *newly compiled* artifacts.
 
-### 8.2. Option Semantics in RuntimeConfig
+### 8.2. Zero-Option Runtime
 
-The Runtime consumes a configuration where all policy decisions are **explicit**. `Option<T>` fields in `RuntimeConfig` have strictly defined semantics:
+The Runtime consumes a configuration where all policy decisions are **explicit** and **materialized**. `Option<T>` fields are forbidden for policy configuration.
 
-Any new `Option<T>` added to `RuntimeConfig` MUST be classified as either "Disabled" or "Mechanism Auto". Policy defaults in RuntimeConfig are forbidden.
+*   **Explicit State**: Optional features must be represented by explicit enums (e.g., `TlsMode::Disabled` vs `TlsMode::Enabled`) or empty collections.
+*   **No Inference**: The Runtime MUST NOT infer defaults from missing values.
+*   **Materialization**: The Codec is responsible for converting human-friendly optionality (YAML nulls) into concrete runtime states.
+*   **Time Semantics**: Durations are materialized as `u32` milliseconds. `0` has specific, normative semantics per field (e.g., Infinite or Fail-Fast) and MUST NOT be reinterpreted as "default" by the runtime.
 
 For a complete inventory of fields and their explicit semantics, see [docs/reference/CONFIGURATION.md](docs/reference/CONFIGURATION.md).
 

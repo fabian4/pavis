@@ -18,7 +18,7 @@ impl TryFrom<SerdeConfig> for pavis_core::RuntimeConfig {
             listeners.push(server::to_runtime(l)?);
         }
 
-        let telemetry = telemetry::to_runtime(src.telemetry);
+        let telemetry = telemetry::to_runtime(src.telemetry)?;
         let upstreams = upstreams::to_runtime(src.upstreams)?;
         let routes = routes::to_runtime(src.routes)?;
 
@@ -55,19 +55,23 @@ mod tests {
     use crate::SerdeFormat;
     use crate::config::types::SerdeConfig;
     use pavis_core::{
-        AccessLogConfig, ConnectionPoolConfig, Endpoint, HttpVersion, Listener, LoadBalancer,
-        LogLevel, MatchType, RetryPolicy, Route, RuntimeConfig, TelemetryConfig, Upstream,
-        UpstreamTlsConfig, VirtualHost, WeightedDestination,
+        AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint,
+        EndpointAddr, Host, HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer,
+        LogLevel, Metrics, Path, PathMatch, Pool, Port, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX,
+        RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, RuntimeConfig, ServiceName,
+        Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider,
+        TryTimeout, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::time::Duration;
+    use std::num::{NonZeroU16, NonZeroU32};
+    use std::time::Duration as StdDuration;
 
     #[test]
     fn yaml_to_runtime_converts_defaults_and_structures() {
         let yaml = r#"
 listeners:
   - name: "default"
-    listen_addr: "127.0.0.1:8080"
+    address: "127.0.0.1:8080"
 telemetry: {}
 upstreams:
   - name: "backend"
@@ -79,21 +83,18 @@ upstreams:
 routes:
   - host: "example.com"
     paths:
-      - path: "/"
+      - matcher: !prefix
+          path: "/"
         timeout: "1s"
         request_headers:
-          actions:
-            - key: "x-added"
-              value: "1"
-              action: "set"
+          set_headers:
+            - ["x-added", "1"]
         response_headers:
-          actions:
-            - key: "x-remove"
-              action: "remove"
+          remove_headers: ["x-remove"]
         retry:
           attempts: 2
           per_try_timeout: "250ms"
-          retry_on: ["5xx", "connect-failure"]
+          retry_on: ["5xx", "connect_failure"]
         destinations:
           - upstream: "backend"
             weight: 1
@@ -103,122 +104,145 @@ routes:
         let runtime: RuntimeConfig = config.try_into().expect("convert to runtime");
 
         let upstream = &runtime.upstreams[0];
-        assert_eq!(upstream.endpoints[0].weight, 1);
-        assert_eq!(upstream.connection_pool.idle_timeout_secs, 60);
-        assert_eq!(upstream.connection_pool.connection_timeout_secs, 5);
-        let tls = upstream.tls.as_ref().expect("tls config");
-        assert!(tls.verify_hostname);
-        assert!(tls.verify_cert);
+        assert_eq!(upstream.endpoints[0].weight.0.get(), 1);
+        match upstream.pool.idle {
+            IdleTimeout::Enabled(d) => assert_eq!(d.0.get(), 60_000),
+            IdleTimeout::Disabled => panic!("idle timeout not populated"),
+        }
+        match upstream.pool.connect {
+            ConnectTimeout::Enabled(d) => assert_eq!(d.0.get(), 5_000),
+            ConnectTimeout::Disabled => panic!("connect timeout not populated"),
+        }
+        match upstream.tls {
+            TlsPolicy::Enabled { verify_mode, .. } => {
+                assert_eq!(verify_mode, TlsVerify::CertAndHost);
+            }
+            TlsPolicy::Disabled => panic!("tls not enabled"),
+        }
 
         let route = &runtime.routes[0].paths[0];
-        assert_eq!(route.timeout_ms, Some(1000));
-        let retry = route.retry_policy.as_ref().expect("retry policy");
-        assert_eq!(retry.attempts, 2);
-        assert_eq!(retry.per_try_timeout_ms, 250);
-        assert_eq!(
-            retry.retry_on,
-            vec!["5xx".to_string(), "connect-failure".to_string()]
-        );
-        let request_headers = route.request_headers.as_ref().expect("request headers");
-        assert_eq!(request_headers.actions.len(), 1);
-        assert_eq!(request_headers.actions[0].key, "x-added");
-        assert_eq!(request_headers.actions[0].value.as_deref(), Some("1"));
-        assert_eq!(
-            request_headers.actions[0].action,
-            pavis_core::HeaderActionType::Set
-        );
-
-        let response_headers = route.response_headers.as_ref().expect("response headers");
-        assert_eq!(response_headers.actions.len(), 1);
-        assert_eq!(response_headers.actions[0].key, "x-remove");
-        assert_eq!(
-            response_headers.actions[0].action,
-            pavis_core::HeaderActionType::Remove
-        );
+        match route.timeout {
+            Timeout::Enabled(d) => assert_eq!(d.0.get(), 1000),
+            Timeout::Disabled => panic!("route timeout not populated"),
+        }
+        match &route.retry {
+            RetryPolicy::Enabled {
+                attempts,
+                per_try,
+                on,
+            } => {
+                assert_eq!(attempts.get(), 2);
+                match per_try {
+                    TryTimeout::Enabled(d) => assert_eq!(d.0.get(), 250),
+                    _ => panic!("per_try timeout not populated"),
+                }
+                assert_eq!(on.0 & RETRY_FIVE_XX, RETRY_FIVE_XX);
+                assert_eq!(on.0 & RETRY_CONNECT_FAILURE, RETRY_CONNECT_FAILURE);
+            }
+            RetryPolicy::Disabled => panic!("retry policy not enabled"),
+        }
+        match &route.request_headers {
+            pavis_core::HeadersPolicy::Enabled { rules } => {
+                assert_eq!(rules.set_headers.len(), 1);
+                assert_eq!(rules.set_headers[0].0.0, "x-added");
+                assert_eq!(rules.set_headers[0].1.0, "1");
+            }
+            _ => panic!("request headers not enabled"),
+        }
+        match &route.response_headers {
+            pavis_core::HeadersPolicy::Enabled { rules } => {
+                assert_eq!(rules.remove_headers.len(), 1);
+                assert_eq!(rules.remove_headers[0].0, "x-remove");
+            }
+            _ => panic!("response headers not enabled"),
+        }
     }
 
     #[test]
     fn runtime_to_yaml_preserves_values() {
         let runtime = RuntimeConfig {
             listeners: vec![Listener {
-                name: "default".to_string(),
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
-                worker_threads: Some(2),
-                tls: None,
+                name: ListenerName("default".to_string()),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
+                workers: WorkerCount::Count(NonZeroU16::new(2).unwrap()),
+                tls: TlsConfig::Disabled,
             }],
-            telemetry: TelemetryConfig {
-                level: Some(LogLevel::Info),
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: AccessLogConfig::Disabled,
-                tracing: None,
+            telemetry: Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Warn,
+                service_name: ServiceName("svc".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Enabled {
+                    provider: TracingProvider::Otlp,
+                    sampling: pavis_core::SampleRate(10),
+                },
             },
             upstreams: vec![Upstream {
-                name: "backend".to_string(),
-                load_balancer: LoadBalancer::RoundRobin,
-                http_version: HttpVersion::H2,
-                connection_pool: ConnectionPoolConfig {
-                    idle_timeout_secs: 10,
-                    connection_timeout_secs: 2,
+                id: UpstreamId(NonZeroU16::new(7).unwrap()),
+                name: UpstreamName("backend".to_string()),
+                discovery: pavis_core::Discovery::Static,
+                balancer: LoadBalancer::RoundRobin,
+                protocol: HttpVersion::H2,
+                pool: Pool {
+                    idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(10_000).unwrap())),
+                    connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(2_000).unwrap())),
+                    max: ConnectionLimit::Limited(NonZeroU32::new(10).unwrap()),
                 },
-                tls: Some(UpstreamTlsConfig {
-                    enabled: false,
-                    verify_hostname: false,
-                    verify_cert: false,
-                    sni: Some("backend.local".to_string()),
-                }),
-                endpoints: vec![Endpoint {
-                    address: pavis_core::EndpointAddress::Ip(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                        8081,
+                tls: TlsPolicy::Enabled {
+                    verify_mode: TlsVerify::Cert,
+                    sni: pavis_core::SniName::Value(pavis_core::Hostname(
+                        "backend.local".to_string(),
                     )),
-                    weight: 3,
+                },
+                endpoints: vec![Endpoint {
+                    address: EndpointAddr::Ip {
+                        address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                        port: Port(NonZeroU16::new(8081).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(3).unwrap()),
                 }],
-                discovery_type: pavis_core::DiscoveryType::Static,
             }],
             routes: vec![VirtualHost {
-                host: "example.com".to_string(),
-                paths: vec![Route {
-                    match_type: MatchType::Exact,
-                    path: "/".to_string(),
-                    timeout_ms: Some(1500),
-                    retry_policy: Some(RetryPolicy {
-                        attempts: 3,
-                        per_try_timeout_ms: 500,
-                        retry_on: vec!["5xx".to_string()],
-                    }),
-                    request_headers: None,
-                    response_headers: None,
-                    rewrite: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "backend".to_string(),
-                        weight: 2,
+                host: Host("example.com".to_string()),
+                paths: vec![pavis_core::Route {
+                    matcher: PathMatch::Exact {
+                        path: Path("/".to_string()),
+                    },
+                    timeout: Timeout::Enabled(Duration(NonZeroU32::new(1500).unwrap())),
+                    retry: RetryPolicy::Enabled {
+                        attempts: NonZeroU16::new(3).unwrap(),
+                        per_try: TryTimeout::Enabled(Duration(NonZeroU32::new(500).unwrap())),
+                        on: RetryFlags(RETRY_FIVE_XX),
+                    },
+                    request_headers: pavis_core::HeadersPolicy::Disabled,
+                    response_headers: pavis_core::HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("backend".to_string()),
+                        weight: Weight(NonZeroU16::new(2).unwrap()),
                     }],
                 }],
             }],
         };
 
         let config: SerdeConfig = runtime.into();
-        assert_eq!(config.listeners[0].listen_addr, "127.0.0.1:8080");
-        assert_eq!(config.listeners[0].worker_threads, Some(2));
+        assert_eq!(config.listeners[0].address, "127.0.0.1:8080");
+        assert_eq!(config.listeners[0].workers, Some(2));
         assert_eq!(config.telemetry.level, Some("info".to_string()));
-        assert_eq!(config.telemetry.access_log, AccessLogConfig::Disabled);
+        assert_eq!(config.telemetry.access_log, AccessLogPolicy::Disabled);
         let upstream = &config.upstreams[0];
-        assert_eq!(upstream.load_balancer, LoadBalancer::RoundRobin);
-        assert_eq!(upstream.http_version, HttpVersion::H2);
-        assert_eq!(
-            upstream.connection_pool.idle_timeout,
-            Duration::from_secs(10)
-        );
-        assert_eq!(
-            upstream.connection_pool.connection_timeout,
-            Duration::from_secs(2)
-        );
+        assert_eq!(upstream.balancer, LoadBalancer::RoundRobin);
+        assert_eq!(upstream.protocol, HttpVersion::H2);
+        assert_eq!(upstream.pool.idle, StdDuration::from_secs(10));
+        assert_eq!(upstream.pool.connect, StdDuration::from_secs(2));
         let tls = upstream.tls.as_ref().expect("tls config");
-        assert_eq!(tls.enabled, false);
+        assert_eq!(tls.enabled, true);
         assert_eq!(tls.verify_hostname, Some(false));
-        assert_eq!(tls.verify_cert, Some(false));
+        assert_eq!(tls.verify_cert, Some(true));
         assert_eq!(tls.sni.as_deref(), Some("backend.local"));
         assert_eq!(upstream.endpoints[0].weight, Some(3));
         assert_eq!(upstream.endpoints[0].address, "127.0.0.1");
@@ -229,7 +253,7 @@ routes:
         let yaml = r#"
 listeners:
   - name: "default"
-    listen_addr: "invalid-addr"
+    address: "invalid-addr"
 telemetry: {}
 upstreams: []
 routes: []
@@ -237,7 +261,7 @@ routes: []
 
         let config = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect("parse yaml");
         let err = pavis_core::RuntimeConfig::try_from(config).expect_err("invalid listen addr");
-        assert!(err.to_string().contains("Invalid listen_addr"));
+        assert!(err.to_string().contains("Invalid address"));
     }
 
     #[test]
@@ -245,7 +269,7 @@ routes: []
         let yaml = r#"
 listeners:
   - name: "default"
-    listen_addr: "127.0.0.1:8080"
+    address: "127.0.0.1:8080"
 telemetry: {}
 upstreams:
   - name: "backend"

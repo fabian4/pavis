@@ -2,15 +2,25 @@ mod headers;
 mod routing;
 mod server;
 mod telemetry;
+mod types;
 mod upstream;
 
-pub use headers::{HeaderAction, HeaderActionType, HeaderOperations};
-pub use routing::{MatchType, RetryPolicy, RewritePolicy, Route, VirtualHost, WeightedDestination};
-pub use server::{Listener, TlsConfig};
-pub use telemetry::{AccessLogConfig, LogLevel, TelemetryConfig, TracingConfig};
+pub use headers::{Headers, HeadersPolicy};
+pub use routing::{
+    Destination, PathMatch, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED, RETRY_RESERVED,
+    RETRY_RESET, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, VirtualHost,
+};
+pub use server::{Listener, TlsConfig, WorkerCount};
+pub use telemetry::{
+    AccessLogPolicy, LogLevel, Metrics, Telemetry, TracingPolicy, TracingProvider,
+};
+pub use types::{
+    ConnectTimeout, Duration, HeaderName, HeaderValue, Host, Hostname, IdleTimeout, ListenerName,
+    Path, Port, SampleRate, ServiceName, Timeout, TryTimeout, UpstreamId, UpstreamName, Weight,
+};
 pub use upstream::{
-    ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress, HttpVersion, LoadBalancer,
-    Upstream, UpstreamTlsConfig,
+    ConnectionLimit, Discovery, Endpoint, EndpointAddr, HttpVersion, LoadBalancer, Pool, SniName,
+    TlsPolicy, TlsVerify, Upstream,
 };
 
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
@@ -24,7 +34,7 @@ use serde::{Deserialize, Serialize};
 #[archive(check_bytes)]
 pub struct RuntimeConfig {
     pub listeners: Vec<Listener>,
-    pub telemetry: TelemetryConfig,
+    pub telemetry: Telemetry,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
 }
@@ -70,61 +80,67 @@ impl std::ops::Deref for ValidatedRuntimeConfig {
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::num::NonZeroU16;
 
     #[test]
     fn test_config_structure() {
         let config = RuntimeConfig {
             listeners: vec![Listener {
-                name: "default".to_string(),
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
-                worker_threads: Some(4),
-                tls: None,
+                name: ListenerName("default".to_string()),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
+                workers: WorkerCount::Auto,
+                tls: TlsConfig::Disabled,
             }],
-            telemetry: TelemetryConfig {
-                level: Some(LogLevel::Info),
-                pingora: None,
-                service_name: Some("test".to_string()),
-                prometheus_addr: Some("0.0.0.0:9090".to_string()),
-                access_log: AccessLogConfig::Stdout,
-                tracing: None,
+            telemetry: Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Stdout,
+                tracing: TracingPolicy::Disabled,
             },
             upstreams: vec![Upstream {
-                name: "upstream1".to_string(),
-                discovery_type: DiscoveryType::Static,
-                load_balancer: LoadBalancer::RoundRobin,
-                http_version: HttpVersion::H1,
-                connection_pool: ConnectionPoolConfig {
-                    idle_timeout_secs: 60,
-                    connection_timeout_secs: 5,
+                id: UpstreamId(unsafe { NonZeroU16::new_unchecked(1) }),
+                name: UpstreamName("upstream1".to_string()),
+                discovery: Discovery::Static,
+                balancer: LoadBalancer::RoundRobin,
+                protocol: HttpVersion::H1,
+                pool: Pool {
+                    idle: IdleTimeout::Disabled,
+                    connect: ConnectTimeout::Disabled,
+                    max: ConnectionLimit::Unlimited,
                 },
-                tls: None,
+                tls: TlsPolicy::Disabled,
                 endpoints: vec![Endpoint {
-                    address: EndpointAddress::Ip(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::LOCALHOST),
-                        8080,
-                    )),
-                    weight: 1,
+                    address: EndpointAddr::Ip {
+                        address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        port: Port(unsafe { NonZeroU16::new_unchecked(8080) }),
+                    },
+                    weight: Weight(unsafe { NonZeroU16::new_unchecked(1) }),
                 }],
             }],
             routes: vec![VirtualHost {
-                host: "*".to_string(),
+                host: Host("*".to_string()),
                 paths: vec![Route {
-                    match_type: MatchType::Prefix,
-                    path: "/".to_string(),
-                    timeout_ms: None,
-                    retry_policy: None,
-                    request_headers: None,
-                    response_headers: None,
-                    rewrite: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "upstream1".to_string(),
-                        weight: 1,
+                    matcher: PathMatch::Prefix {
+                        path: Path("/".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled,
+                    response_headers: HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("upstream1".to_string()),
+                        weight: Weight(unsafe { NonZeroU16::new_unchecked(1) }),
                     }],
                 }],
             }],
         };
 
-        assert_eq!(config.listeners[0].worker_threads, Some(4));
         assert_eq!(config.upstreams.len(), 1);
         assert_eq!(config.routes.len(), 1);
     }
@@ -133,28 +149,34 @@ mod tests {
     fn validated_runtime_exposes_inner_config() {
         let config = RuntimeConfig {
             listeners: vec![Listener {
-                name: "default".to_string(),
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
-                worker_threads: Some(2),
-                tls: None,
+                name: ListenerName("default".to_string()),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
+                workers: WorkerCount::Count(unsafe { NonZeroU16::new_unchecked(2) }),
+                tls: TlsConfig::Disabled,
             }],
-            telemetry: TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: Some("svc".to_string()),
-                prometheus_addr: None,
-                access_log: AccessLogConfig::Disabled,
-                tracing: None,
+            telemetry: Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("svc".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
             },
             upstreams: Vec::new(),
             routes: Vec::new(),
         };
 
         let validated = ValidatedRuntimeConfig::new(config.clone());
-        assert_eq!(validated.as_ref().listeners[0].worker_threads, Some(2));
-        assert_eq!(validated.telemetry.service_name.as_deref(), Some("svc"));
+        match validated.as_ref().listeners[0].workers {
+            WorkerCount::Count(count) => assert_eq!(count.get(), 2),
+            WorkerCount::Auto => panic!("expected explicit worker count"),
+        }
+        assert_eq!(validated.telemetry.service_name.0, "svc");
 
         let inner = validated.into_inner();
-        assert_eq!(inner.listeners[0].worker_threads, Some(2));
+        match inner.listeners[0].workers {
+            WorkerCount::Count(count) => assert_eq!(count.get(), 2),
+            WorkerCount::Auto => panic!("expected explicit worker count"),
+        }
     }
 }

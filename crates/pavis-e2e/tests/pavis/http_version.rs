@@ -6,7 +6,7 @@ use pavis_e2e::support::get_upstream_name;
 
 /// Test that HTTP version configuration works correctly.
 /// Note: The echo-server backends are HTTP/1.1 only, so we can't verify actual H2 negotiation.
-/// This test verifies that the config is accepted and routing works with different http_version settings.
+/// This test verifies that the config is accepted and routing works with different http settings.
 #[tokio::test]
 async fn test_http_version_config() -> Result<()> {
     let (client, _env) = common::setup(PavisConfigScenario::HttpVersion).await;

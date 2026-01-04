@@ -118,20 +118,14 @@ mod tests {
         let content = r#"
 listeners:
   - name: "default"
-    listen_addr: "127.0.0.1:8080"
+    address: "127.0.0.1:8080"
 telemetry: {}
 upstreams:
   - name: "backend"
     endpoints:
       - address: "127.0.0.1"
         port: 8081
-routes:
-  - host: "example.com"
-    paths:
-      - path: "/"
-        destinations:
-          - upstream: "backend"
-            weight: 1
+routes: []
 "#;
         fs::write(path, content).expect("write yaml");
     }

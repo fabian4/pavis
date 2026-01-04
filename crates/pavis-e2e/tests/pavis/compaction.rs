@@ -45,7 +45,7 @@ fn write_config(path: &Path, host: &str, port: u16) -> Result<()> {
         r#"
 listeners:
   - name: "default"
-    listen_addr: "0.0.0.0:8080"
+    address: "0.0.0.0:8080"
 telemetry: {{}}
 upstreams:
   - name: "backend-v1"
@@ -55,7 +55,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - path: "/known"
+      - matcher: !prefix
+          path: "/known"
         destinations:
           - upstream: "backend-v1"
             weight: 1

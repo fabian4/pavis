@@ -18,7 +18,7 @@ pub fn select_index(
             let mut current = (val as u32) % total_weight;
 
             for (i, endpoint) in endpoints.iter().enumerate() {
-                let w = endpoint.weight;
+                let w = endpoint.weight.0.get() as u32;
                 if current < w {
                     return i;
                 }
@@ -31,7 +31,21 @@ pub fn select_index(
             let mut pick = rng.random_range(0..total_weight);
 
             for (i, endpoint) in endpoints.iter().enumerate() {
-                let w = endpoint.weight;
+                let w = endpoint.weight.0.get() as u32;
+                if pick < w {
+                    return i;
+                }
+                pick -= w;
+            }
+            0
+        }
+        LoadBalancer::LeastRequest => {
+            // No request-load metrics wired yet; fall back to weighted random.
+            let mut rng = rand::rng();
+            let mut pick = rng.random_range(0..total_weight);
+
+            for (i, endpoint) in endpoints.iter().enumerate() {
+                let w = endpoint.weight.0.get() as u32;
                 if pick < w {
                     return i;
                 }
@@ -45,14 +59,18 @@ pub fn select_index(
 #[cfg(test)]
 mod tests {
     use super::select_index;
-    use pavis_core::{Endpoint, EndpointAddress, LoadBalancer};
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use pavis_core::{Endpoint, EndpointAddr, LoadBalancer, Port, Weight};
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::num::NonZeroU16;
     use std::sync::atomic::AtomicUsize;
 
-    fn make_endpoint(ip: Ipv4Addr, port: u16, weight: u32) -> Endpoint {
+    fn make_endpoint(ip: Ipv4Addr, port: u16, weight: u16) -> Endpoint {
         Endpoint {
-            address: EndpointAddress::Ip(SocketAddr::new(IpAddr::V4(ip), port)),
-            weight,
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(ip),
+                port: Port(NonZeroU16::new(port).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(weight).unwrap()),
         }
     }
 
@@ -60,10 +78,6 @@ mod tests {
     fn select_index_returns_zero_for_empty_or_zero_weight() {
         let counter = AtomicUsize::new(0);
         let idx = select_index(LoadBalancer::RoundRobin, &[], &counter, 0);
-        assert_eq!(idx, 0);
-
-        let endpoints = vec![make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 0)];
-        let idx = select_index(LoadBalancer::Random, &endpoints, &counter, 0);
         assert_eq!(idx, 0);
     }
 
@@ -114,7 +128,7 @@ mod tests {
     #[test]
     fn select_index_random_falls_back_when_weights_zeroed() {
         let counter = AtomicUsize::new(0);
-        let endpoints = vec![make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 0)];
+        let endpoints = vec![make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 1)];
         let idx = select_index(LoadBalancer::Random, &endpoints, &counter, 1);
         assert_eq!(idx, 0);
     }

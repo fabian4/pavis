@@ -19,7 +19,7 @@ async fn r6_ingest_debouncing() -> Result<()> {
     // Multiple rapid writes
     for i in 0..5 {
         let content =
-            format!("listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:808{i}\"\n");
+            format!("listeners:\n  - name: \"default\"\n    address: \"127.0.0.1:808{i}\"\n");
         fs::write(config_path, content)?;
         sleep(Duration::from_millis(50)).await;
     }
@@ -47,7 +47,7 @@ async fn r11_rapid_toggle() -> Result<()> {
     // Valid
     fs::write(
         config_path,
-        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8081\"",
+        "listeners:\n  - name: \"default\"\n    address: \"127.0.0.1:8081\"",
     )?;
     sleep(Duration::from_millis(1000)).await;
 
@@ -58,7 +58,7 @@ async fn r11_rapid_toggle() -> Result<()> {
     // Valid
     fs::write(
         config_path,
-        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8082\"",
+        "listeners:\n  - name: \"default\"\n    address: \"127.0.0.1:8082\"",
     )?;
     sleep(Duration::from_millis(1000)).await;
 

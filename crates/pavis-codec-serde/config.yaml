@@ -19,9 +19,9 @@ telemetry:
 
 upstreams:
   - name: "backend-v1"
-    load_balancer: "round-robin" # Options: random, round-robin (default)
-    http_version: "h1"  # Options: h1 (default), h2, h2h1
-    connection_pool:
+    lb: "round-robin" # Options: random, round-robin (default)
+    http: "h1"  # Options: h1 (default), h2, h2h1
+    pool:
       idle_timeout: "60s"      # Keep connections alive for 60s (default)
       connection_timeout: "5s"  # Connection timeout (default: 5s)
     # tls:
@@ -44,8 +44,8 @@ upstreams:
         weight: 1
 
   - name: "backend-v2"
-    load_balancer: "random"
-    http_version: "h2"
+    lb: "random"
+    http: "h2"
     endpoints:
       - ip: "127.0.0.1"
         port: 8082

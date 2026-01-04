@@ -25,7 +25,7 @@ pub fn validate(config: &mut SerdeConfig) -> Result<()> {
                 if !upstream_names.contains(dest.upstream.as_str()) {
                     return Err(anyhow::anyhow!(
                         "Route '{}' references unknown upstream '{}'",
-                        route.path,
+                        matcher_path(&route.matcher),
                         dest.upstream
                     ));
                 }
@@ -54,6 +54,14 @@ pub fn validate(config: &mut SerdeConfig) -> Result<()> {
     Ok(())
 }
 
+fn matcher_path(matcher: &Matcher) -> &str {
+    match matcher {
+        Matcher::Prefix { path } => path.as_str(),
+        Matcher::Exact { path } => path.as_str(),
+        Matcher::Regex { path } => path.as_str(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,8 +77,9 @@ mod tests {
             routes: vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![Route {
-                    match_type: Default::default(),
-                    path: "/".to_string(),
+                    matcher: Matcher::Prefix {
+                        path: "/".to_string(),
+                    },
                     timeout: None,
                     retry: Some(RetryPolicy {
                         attempts: 1,
@@ -96,8 +105,9 @@ mod tests {
             routes: vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![Route {
-                    match_type: Default::default(),
-                    path: "/".to_string(),
+                    matcher: Matcher::Prefix {
+                        path: "/".to_string(),
+                    },
                     timeout: None,
                     retry: Some(RetryPolicy {
                         attempts: 1,

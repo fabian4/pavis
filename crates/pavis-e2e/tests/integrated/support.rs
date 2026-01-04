@@ -1,13 +1,18 @@
 use anyhow::{Context, Result};
 use pavis_core::{
-    ConnectionPoolConfig, Endpoint, HttpVersion, Listener, LoadBalancer, MatchType, Route,
-    RuntimeConfig, TelemetryConfig, Upstream, VirtualHost, WeightedDestination,
+    AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery,
+    Duration as RuntimeDuration, Endpoint, EndpointAddr, HeadersPolicy, Host, HttpVersion,
+    IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel, Metrics, Path as RoutePath,
+    PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RuntimeConfig,
+    ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, TracingPolicy, Upstream, UpstreamId,
+    UpstreamName, VirtualHost, Weight, WorkerCount,
 };
 use pavis_e2e::support::relay::RelayOptions;
 use pavis_e2e::support::{RelayEnv, find_binary, find_project_root, resolve_docker_service_ip};
 use pavis_pvs;
 use reqwest::Client;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::num::{NonZeroU16, NonZeroU32};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -440,36 +445,40 @@ pub fn runtime_config(
 ) -> RuntimeConfig {
     RuntimeConfig {
         listeners: vec![Listener {
-            name: "default".to_string(),
-            listen_addr,
-            worker_threads: None,
-            tls: None,
+            name: ListenerName("default".to_string()),
+            address: listen_addr,
+            workers: WorkerCount::Auto,
+            tls: TlsConfig::Disabled,
         }],
-        telemetry: TelemetryConfig {
-            level: None,
-            pingora: None,
-            service_name: Some("pavis-integrated".to_string()),
-            prometheus_addr: None,
-            access_log: Default::default(),
-            tracing: None,
+        telemetry: Telemetry {
+            level: LogLevel::Info,
+            pingora: LogLevel::Info,
+            service_name: ServiceName("pavis-integrated".to_string()),
+            metrics: Metrics::Disabled,
+            access_log: AccessLogPolicy::Stdout,
+            tracing: TracingPolicy::Disabled,
         },
         upstreams: vec![
             upstream(upstream_a.0, upstream_a.1),
             upstream(upstream_b.0, upstream_b.1),
         ],
         routes: vec![VirtualHost {
-            host: "*".to_string(),
+            host: Host("*".to_string()),
             paths: vec![Route {
-                match_type: MatchType::Prefix,
-                path: "/".to_string(),
-                timeout_ms: None,
-                retry_policy: None,
-                request_headers: None,
-                response_headers: None,
-                rewrite: None,
-                destinations: vec![WeightedDestination {
-                    upstream: route_upstream.to_string(),
-                    weight: 1,
+                matcher: PathMatch::Prefix {
+                    path: RoutePath("/".to_string()),
+                },
+                timeout: Timeout::Disabled,
+                retry: RetryPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled,
+                response_headers: HeadersPolicy::Disabled,
+                rewrite: Rewrite {
+                    path: RewritePath::Disabled,
+                    host: RewriteHost::Disabled,
+                },
+                destinations: vec![Destination {
+                    upstream: UpstreamName(route_upstream.to_string()),
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
                 }],
             }],
         }],
@@ -477,19 +486,25 @@ pub fn runtime_config(
 }
 
 pub fn upstream(name: &str, addr: SocketAddr) -> Upstream {
+    let id = if name.ends_with('b') { 2 } else { 1 };
     Upstream {
-        name: name.to_string(),
-        discovery_type: pavis_core::DiscoveryType::Static,
-        load_balancer: LoadBalancer::RoundRobin,
-        http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig {
-            idle_timeout_secs: 60,
-            connection_timeout_secs: 5,
+        id: UpstreamId(NonZeroU16::new(id).unwrap()),
+        name: UpstreamName(name.to_string()),
+        discovery: Discovery::Static,
+        balancer: LoadBalancer::RoundRobin,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Enabled(RuntimeDuration(NonZeroU32::new(60_000).unwrap())),
+            connect: ConnectTimeout::Enabled(RuntimeDuration(NonZeroU32::new(5_000).unwrap())),
+            max: ConnectionLimit::Unlimited,
         },
-        tls: None,
+        tls: TlsPolicy::Disabled,
         endpoints: vec![Endpoint {
-            address: pavis_core::EndpointAddress::Ip(addr),
-            weight: 1,
+            address: EndpointAddr::Ip {
+                address: addr.ip(),
+                port: Port(NonZeroU16::new(addr.port()).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
         }],
     }
 }

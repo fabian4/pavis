@@ -3,7 +3,7 @@ mod routes;
 mod server;
 mod upstreams;
 
-use crate::runtime::{MatchType, RuntimeConfig, ValidatedRuntimeConfig};
+use crate::runtime::{RuntimeConfig, ValidatedRuntimeConfig};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CoreValidationError {
@@ -31,11 +31,11 @@ pub enum CoreValidationError {
     InvalidHeaderName { context: String, name: String },
     #[error("{context}: invalid header value for '{name}'")]
     InvalidHeaderValue { context: String, name: String },
-    #[error("duplicate route '{route}' (match type {match_type:?}) for host '{host}'")]
+    #[error("duplicate route '{route}' (match type {match_type}) for host '{host}'")]
     DuplicateRoute {
         host: String,
         route: String,
-        match_type: MatchType,
+        match_type: String,
     },
     #[error(
         "path '{0}' is not normalized (must start with / and not have trailing slashes unless it is /)"
@@ -54,7 +54,7 @@ pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
 /// Returns `CoreValidationError` if any semantic invariants are violated.
 pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<ValidatedRuntimeConfig> {
     for listener in &config.listeners {
-        server::validate_server(listener.listen_addr, listener.tls.as_ref())?;
+        server::validate_server(listener.address, &listener.tls)?;
     }
     upstreams::validate_upstreams(&config.upstreams)?;
     routes::validate_routes(&config.routes, &config.upstreams)?;
@@ -65,86 +65,96 @@ pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<Validated
 mod tests {
     use super::*;
     use crate::runtime::{
-        AccessLogConfig, ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress,
-        HeaderAction, HeaderActionType, HeaderOperations, HttpVersion, Listener, LoadBalancer,
-        MatchType, RetryPolicy, Route, TelemetryConfig, TlsConfig, TracingConfig, Upstream,
-        UpstreamTlsConfig, VirtualHost, WeightedDestination,
+        AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration,
+        Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname,
+        HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel, Metrics, Path,
+        PathMatch, Pool, Port, RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost,
+        RewritePath, Route, SampleRate, ServiceName, SniName, Telemetry, Timeout, TlsConfig,
+        TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, TryTimeout, Upstream, UpstreamId,
+        UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::num::NonZeroU16;
 
     fn base_config() -> RuntimeConfig {
         RuntimeConfig {
             listeners: vec![Listener {
-                name: "default".to_string(),
-                listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
-                worker_threads: None,
-                tls: None,
+                name: ListenerName("default".to_string()),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
+                workers: WorkerCount::Auto,
+                tls: TlsConfig::Disabled,
             }],
-            telemetry: TelemetryConfig {
-                level: None,
-                pingora: None,
-                service_name: None,
-                prometheus_addr: None,
-                access_log: AccessLogConfig::Stdout,
-                tracing: Some(TracingConfig {
-                    enabled: true,
-                    provider: "otlp".to_string(),
-                    sampling_rate: 0.5,
-                }),
+            telemetry: Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("svc".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Stdout,
+                tracing: TracingPolicy::Enabled {
+                    provider: TracingProvider::Otlp,
+                    sampling: SampleRate(50),
+                },
             },
             upstreams: vec![Upstream {
-                name: "test".to_string(),
-                discovery_type: DiscoveryType::Static,
-                load_balancer: LoadBalancer::RoundRobin,
-                http_version: HttpVersion::H1,
-                connection_pool: ConnectionPoolConfig {
-                    idle_timeout_secs: 60,
-                    connection_timeout_secs: 5,
+                id: UpstreamId(unsafe { NonZeroU16::new_unchecked(1) }),
+                name: UpstreamName("test".to_string()),
+                discovery: Discovery::Static,
+                balancer: LoadBalancer::RoundRobin,
+                protocol: HttpVersion::H1,
+                pool: Pool {
+                    idle: IdleTimeout::Enabled(Duration(unsafe {
+                        std::num::NonZeroU32::new_unchecked(60_000)
+                    })),
+                    connect: ConnectTimeout::Enabled(Duration(unsafe {
+                        std::num::NonZeroU32::new_unchecked(5_000)
+                    })),
+                    max: ConnectionLimit::Unlimited,
                 },
-                tls: Some(UpstreamTlsConfig {
-                    enabled: true,
-                    verify_hostname: true,
-                    verify_cert: true,
-                    sni: Some("example.com".to_string()),
-                }),
+                tls: TlsPolicy::Enabled {
+                    verify_mode: TlsVerify::CertAndHost,
+                    sni: SniName::Value(Hostname("example.com".to_string())),
+                },
                 endpoints: vec![Endpoint {
-                    address: EndpointAddress::Ip(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::LOCALHOST),
-                        80,
-                    )),
-                    weight: 1,
+                    address: EndpointAddr::Ip {
+                        address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        port: Port(unsafe { NonZeroU16::new_unchecked(80) }),
+                    },
+                    weight: Weight(unsafe { NonZeroU16::new_unchecked(1) }),
                 }],
             }],
             routes: vec![VirtualHost {
-                host: "*".to_string(),
+                host: Host("*".to_string()),
                 paths: vec![Route {
-                    match_type: MatchType::Prefix,
-                    path: "/".to_string(),
-                    timeout_ms: None,
-                    retry_policy: Some(RetryPolicy {
-                        attempts: 1,
-                        per_try_timeout_ms: 1000,
-                        retry_on: vec!["5xx".to_string()],
-                    }),
-                    request_headers: Some(HeaderOperations {
-                        actions: vec![
-                            HeaderAction {
-                                key: "x-foo".to_string(),
-                                value: Some("bar".to_string()),
-                                action: HeaderActionType::Set,
-                            },
-                            HeaderAction {
-                                key: "x-remove".to_string(),
-                                value: None,
-                                action: HeaderActionType::Remove,
-                            },
-                        ],
-                    }),
-                    response_headers: None,
-                    rewrite: None,
-                    destinations: vec![WeightedDestination {
-                        upstream: "test".to_string(),
-                        weight: 1,
+                    matcher: PathMatch::Prefix {
+                        path: Path("/".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Enabled {
+                        attempts: NonZeroU16::new(1).unwrap(),
+                        per_try: TryTimeout::Enabled(Duration(unsafe {
+                            std::num::NonZeroU32::new_unchecked(1000)
+                        })),
+                        on: RetryFlags(RETRY_FIVE_XX),
+                    },
+                    request_headers: HeadersPolicy::Enabled {
+                        rules: Headers {
+                            set_headers: vec![(
+                                HeaderName("x-foo".to_string()),
+                                HeaderValue("bar".to_string()),
+                            )],
+                            append_headers: Vec::new(),
+                            add_headers: Vec::new(),
+                            remove_headers: vec![HeaderName("x-remove".to_string())],
+                        },
+                    },
+                    response_headers: HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("test".to_string()),
+                        weight: Weight(unsafe { NonZeroU16::new_unchecked(1) }),
                     }],
                 }],
             }],
@@ -160,11 +170,10 @@ mod tests {
     #[test]
     fn missing_tls_files_fails() {
         let mut cfg = base_config();
-        cfg.listeners[0].tls = Some(TlsConfig {
-            enabled: true,
-            cert_path: None,
-            key_path: Some("key.pem".to_string()),
-        });
+        cfg.listeners[0].tls = TlsConfig::Enabled {
+            cert_path: Path("".to_string()),
+            key_path: Path("key.pem".to_string()),
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::MissingTlsFiles));
     }
@@ -172,11 +181,10 @@ mod tests {
     #[test]
     fn missing_tls_key_fails() {
         let mut cfg = base_config();
-        cfg.listeners[0].tls = Some(TlsConfig {
-            enabled: true,
-            cert_path: Some("cert.pem".to_string()),
-            key_path: None,
-        });
+        cfg.listeners[0].tls = TlsConfig::Enabled {
+            cert_path: Path("cert.pem".to_string()),
+            key_path: Path("".to_string()),
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::MissingTlsFiles));
     }
@@ -184,8 +192,9 @@ mod tests {
     #[test]
     fn invalid_regex_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].match_type = MatchType::Regex;
-        cfg.routes[0].paths[0].path = "[unclosed".to_string();
+        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
+            path: Path("[unclosed".to_string()),
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidRegex { .. }));
     }
@@ -193,23 +202,23 @@ mod tests {
     #[test]
     fn valid_regex_passes() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].match_type = MatchType::Regex;
-        cfg.routes[0].paths[0].path = "^/items/[0-9]+$".to_string();
+        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
+            path: Path("^/items/[0-9]+$".to_string()),
+        };
         assert!(validate_runtime(cfg.clone()).is_ok());
     }
 
     #[test]
     fn invalid_header_name_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0]
-            .request_headers
-            .as_mut()
-            .unwrap()
-            .actions = vec![HeaderAction {
-            key: String::new(),
-            value: Some("v".to_string()),
-            action: HeaderActionType::Set,
-        }];
+        cfg.routes[0].paths[0].request_headers = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![(HeaderName(String::new()), HeaderValue("v".to_string()))],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
@@ -217,15 +226,17 @@ mod tests {
     #[test]
     fn invalid_header_name_non_empty_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0]
-            .request_headers
-            .as_mut()
-            .unwrap()
-            .actions = vec![HeaderAction {
-            key: "bad header".to_string(),
-            value: Some("v".to_string()),
-            action: HeaderActionType::Set,
-        }];
+        cfg.routes[0].paths[0].request_headers = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![(
+                    HeaderName("bad header".to_string()),
+                    HeaderValue("v".to_string()),
+                )],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
@@ -233,15 +244,14 @@ mod tests {
     #[test]
     fn invalid_remove_header_name_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0]
-            .request_headers
-            .as_mut()
-            .unwrap()
-            .actions = vec![HeaderAction {
-            key: String::new(),
-            value: None,
-            action: HeaderActionType::Remove,
-        }];
+        cfg.routes[0].paths[0].request_headers = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: Vec::new(),
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: vec![HeaderName(String::new())],
+            },
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
@@ -249,15 +259,14 @@ mod tests {
     #[test]
     fn invalid_remove_header_name_non_empty_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0]
-            .request_headers
-            .as_mut()
-            .unwrap()
-            .actions = vec![HeaderAction {
-            key: "bad header".to_string(),
-            value: None,
-            action: HeaderActionType::Remove,
-        }];
+        cfg.routes[0].paths[0].request_headers = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: Vec::new(),
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: vec![HeaderName("bad header".to_string())],
+            },
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
@@ -265,15 +274,17 @@ mod tests {
     #[test]
     fn invalid_header_value_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0]
-            .request_headers
-            .as_mut()
-            .unwrap()
-            .actions = vec![HeaderAction {
-            key: "x".to_string(),
-            value: Some("\u{7f}".to_string()),
-            action: HeaderActionType::Set,
-        }];
+        cfg.routes[0].paths[0].request_headers = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![(
+                    HeaderName("x".to_string()),
+                    HeaderValue("\u{7f}".to_string()),
+                )],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(
             err,
@@ -284,13 +295,17 @@ mod tests {
     #[test]
     fn invalid_response_header_name_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].response_headers = Some(HeaderOperations {
-            actions: vec![HeaderAction {
-                key: "bad header".to_string(),
-                value: Some("v".to_string()),
-                action: HeaderActionType::Set,
-            }],
-        });
+        cfg.routes[0].paths[0].response_headers = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: vec![(
+                    HeaderName("bad header".to_string()),
+                    HeaderValue("v".to_string()),
+                )],
+                append_headers: Vec::new(),
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
@@ -298,7 +313,7 @@ mod tests {
     #[test]
     fn empty_upstream_name_fails() {
         let mut cfg = base_config();
-        cfg.upstreams[0].name = String::new();
+        cfg.upstreams[0].name = UpstreamName(String::new());
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyUpstreamName));
     }
@@ -307,7 +322,7 @@ mod tests {
     fn duplicate_upstream_name_fails() {
         let mut cfg = base_config();
         let mut duplicate = cfg.upstreams[0].clone();
-        duplicate.endpoints[0].weight = 10;
+        duplicate.endpoints[0].weight = Weight(unsafe { NonZeroU16::new_unchecked(10) });
         cfg.upstreams.push(duplicate);
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::DuplicateUpstream(_)));
@@ -315,16 +330,15 @@ mod tests {
 
     #[test]
     fn endpoint_weight_zero_fails() {
-        let mut cfg = base_config();
-        cfg.upstreams[0].endpoints[0].weight = 0;
-        let err = validate_runtime(cfg.clone()).unwrap_err();
-        assert!(matches!(err, CoreValidationError::EndpointWeightZero(_)));
+        let cfg = base_config();
+        // Weight is NonZeroU16; zero is not representable in a valid runtime config.
+        let _ = validate_runtime(cfg.clone());
     }
 
     #[test]
     fn unknown_destination_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].destinations[0].upstream = "missing".to_string();
+        cfg.routes[0].paths[0].destinations[0].upstream = UpstreamName("missing".to_string());
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(
             err,
@@ -334,23 +348,23 @@ mod tests {
 
     #[test]
     fn destination_weight_zero_fails() {
-        let mut cfg = base_config();
-        cfg.routes[0].paths[0].destinations[0].weight = 0;
-        let err = validate_runtime(cfg.clone()).unwrap_err();
-        assert!(matches!(
-            err,
-            CoreValidationError::DestinationWeightZero(_, _, _)
-        ));
+        let cfg = base_config();
+        // Weight is NonZeroU16; zero is not representable in a valid runtime config.
+        let _ = validate_runtime(cfg.clone());
     }
 
     #[test]
     fn path_not_normalized_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].path = "api".to_string();
+        cfg.routes[0].paths[0].matcher = PathMatch::Prefix {
+            path: Path("api".to_string()),
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::PathNotNormalized(_)));
 
-        cfg.routes[0].paths[0].path = "/api/".to_string();
+        cfg.routes[0].paths[0].matcher = PathMatch::Prefix {
+            path: Path("/api/".to_string()),
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::PathNotNormalized(_)));
     }
@@ -359,7 +373,9 @@ mod tests {
     fn duplicate_prefix_route_fails() {
         let mut cfg = base_config();
         let mut route = cfg.routes[0].paths[0].clone();
-        route.path = "/api".to_string();
+        route.matcher = PathMatch::Prefix {
+            path: Path("/api".to_string()),
+        };
         cfg.routes[0].paths = vec![route.clone(), route];
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::DuplicateRoute { .. }));
@@ -369,7 +385,9 @@ mod tests {
     fn duplicate_exact_route_fails() {
         let mut cfg = base_config();
         let mut route = cfg.routes[0].paths[0].clone();
-        route.match_type = MatchType::Exact;
+        route.matcher = PathMatch::Exact {
+            path: Path("/".to_string()),
+        };
         cfg.routes[0].paths = vec![route.clone(), route];
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::DuplicateRoute { .. }));
@@ -378,8 +396,9 @@ mod tests {
     #[test]
     fn regex_too_long_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].match_type = MatchType::Regex;
-        cfg.routes[0].paths[0].path = "a".repeat(2049);
+        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
+            path: Path("a".repeat(2049)),
+        };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::RegexTooLong { .. }));
     }

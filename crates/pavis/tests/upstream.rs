@@ -3,46 +3,56 @@ mod common;
 use common::base_config;
 use pavis::upstream::Manager;
 use pavis_core::{
-    ConnectionPoolConfig, DiscoveryType, Endpoint, EndpointAddress, HttpVersion, LoadBalancer,
-    Upstream, UpstreamTlsConfig,
+    ConnectTimeout, ConnectionLimit, Duration, Endpoint, EndpointAddr, HttpVersion, IdleTimeout,
+    LoadBalancer, Pool, Port, TlsPolicy, TlsVerify, Upstream, UpstreamId, UpstreamName, Weight,
 };
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
+use std::num::{NonZeroU16, NonZeroU32};
+
+fn upstream(name: &str, id: u16, lb: LoadBalancer, port: u16, tls: TlsPolicy) -> Upstream {
+    Upstream {
+        id: UpstreamId(NonZeroU16::new(id).unwrap()),
+        name: UpstreamName(name.to_string()),
+        discovery: pavis_core::Discovery::Static,
+        balancer: lb,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
+            connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
+            max: ConnectionLimit::Unlimited,
+        },
+        tls,
+        endpoints: vec![Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, id as u8)),
+                port: Port(NonZeroU16::new(port).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        }],
+    }
+}
 
 #[test]
 fn test_upstream_load_balancer_round_robin() {
     let mut config = base_config();
-    config.upstreams.push(Upstream {
-        name: "backend-rr".to_string(),
-        discovery_type: DiscoveryType::Static,
-        load_balancer: LoadBalancer::RoundRobin,
-        http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig {
-            idle_timeout_secs: 60,
-            connection_timeout_secs: 5,
+    config.upstreams.push(upstream(
+        "backend-rr",
+        1,
+        LoadBalancer::RoundRobin,
+        80,
+        TlsPolicy::Disabled,
+    ));
+    config.upstreams[0].endpoints.push(Endpoint {
+        address: EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            port: Port(NonZeroU16::new(80).unwrap()),
         },
-        tls: None,
-        endpoints: vec![
-            Endpoint {
-                address: EndpointAddress::Ip(SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                    80,
-                )),
-                weight: 1,
-            },
-            Endpoint {
-                address: EndpointAddress::Ip(SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
-                    80,
-                )),
-                weight: 1,
-            },
-        ],
+        weight: Weight(NonZeroU16::new(1).unwrap()),
     });
 
     let manager = Manager::new(&config.upstreams);
     let cluster = manager.get("backend-rr").expect("Cluster not found");
 
-    // Round robin should alternate
     let ep1 = cluster.select_endpoint().unwrap();
     let ep2 = cluster.select_endpoint().unwrap();
     let ep3 = cluster.select_endpoint().unwrap();
@@ -51,15 +61,15 @@ fn test_upstream_load_balancer_round_robin() {
     let ip2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 
     match ep1.address {
-        EndpointAddress::Ip(addr) => assert_eq!(addr.ip(), ip1),
+        EndpointAddr::Ip { address, .. } => assert_eq!(address, ip1),
         _ => panic!("expected ip"),
     }
     match ep2.address {
-        EndpointAddress::Ip(addr) => assert_eq!(addr.ip(), ip2),
+        EndpointAddr::Ip { address, .. } => assert_eq!(address, ip2),
         _ => panic!("expected ip"),
     }
     match ep3.address {
-        EndpointAddress::Ip(addr) => assert_eq!(addr.ip(), ip1),
+        EndpointAddr::Ip { address, .. } => assert_eq!(address, ip1),
         _ => panic!("expected ip"),
     }
 }
@@ -68,15 +78,17 @@ fn test_upstream_load_balancer_round_robin() {
 fn test_upstream_empty_endpoints() {
     let mut config = base_config();
     config.upstreams.push(Upstream {
-        name: "empty-upstream".to_string(),
-        discovery_type: DiscoveryType::Static,
-        load_balancer: LoadBalancer::Random,
-        http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig {
-            idle_timeout_secs: 60,
-            connection_timeout_secs: 5,
+        id: UpstreamId(NonZeroU16::new(2).unwrap()),
+        name: UpstreamName("empty-upstream".to_string()),
+        discovery: pavis_core::Discovery::Static,
+        balancer: LoadBalancer::Random,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
+            connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
+            max: ConnectionLimit::Unlimited,
         },
-        tls: None,
+        tls: TlsPolicy::Disabled,
         endpoints: vec![],
     });
 
@@ -88,36 +100,23 @@ fn test_upstream_empty_endpoints() {
 #[test]
 fn test_upstream_tls_config() {
     let mut config = base_config();
-    config.upstreams.push(Upstream {
-        name: "backend-secure".to_string(),
-        discovery_type: DiscoveryType::Static,
-        load_balancer: LoadBalancer::Random,
-        http_version: HttpVersion::H1,
-        connection_pool: ConnectionPoolConfig {
-            idle_timeout_secs: 60,
-            connection_timeout_secs: 5,
+    config.upstreams.push(upstream(
+        "backend-secure",
+        1,
+        LoadBalancer::Random,
+        443,
+        TlsPolicy::Enabled {
+            verify_mode: TlsVerify::Disabled,
+            sni: pavis_core::SniName::Value(pavis_core::Hostname("secure.internal".to_string())),
         },
-        tls: Some(UpstreamTlsConfig {
-            enabled: true,
-            verify_hostname: false,
-            verify_cert: false,
-            sni: Some("secure.internal".to_string()),
-        }),
-        endpoints: vec![Endpoint {
-            address: EndpointAddress::Ip(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-                443,
-            )),
-            weight: 1,
-        }],
-    });
+    ));
 
     let upstream = &config.upstreams[0];
 
-    assert!(upstream.tls.is_some());
-    let tls = upstream.tls.as_ref().unwrap();
-    assert!(tls.enabled);
-    assert_eq!(tls.verify_hostname, false);
-    assert_eq!(tls.verify_cert, false);
-    assert_eq!(tls.sni, Some("secure.internal".to_string()));
+    match upstream.tls {
+        TlsPolicy::Enabled { verify_mode, .. } => {
+            assert_eq!(verify_mode, TlsVerify::Disabled);
+        }
+        TlsPolicy::Disabled => panic!("tls not enabled"),
+    }
 }

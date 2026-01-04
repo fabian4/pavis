@@ -1,9 +1,9 @@
-use crate::runtime::AccessLogConfig;
+use crate::runtime::{AccessLogPolicy, Path};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-impl Serialize for AccessLogConfig {
+impl Serialize for AccessLogPolicy {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -11,12 +11,12 @@ impl Serialize for AccessLogConfig {
         match self {
             Self::Disabled => serializer.serialize_bool(false),
             Self::Stdout => serializer.serialize_str("stdout"),
-            Self::File(path) => serializer.serialize_str(path),
+            Self::File(path) => serializer.serialize_str(&path.0),
         }
     }
 }
 
-impl<'de> Deserialize<'de> for AccessLogConfig {
+impl<'de> Deserialize<'de> for AccessLogPolicy {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -24,7 +24,7 @@ impl<'de> Deserialize<'de> for AccessLogConfig {
         struct AccessLogVisitor;
 
         impl<'de> Visitor<'de> for AccessLogVisitor {
-            type Value = AccessLogConfig;
+            type Value = AccessLogPolicy;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("false, 'stdout', or a file path string")
@@ -39,7 +39,7 @@ impl<'de> Deserialize<'de> for AccessLogConfig {
                         "access_log cannot be 'true'. Use 'stdout' or a file path.",
                     ))
                 } else {
-                    Ok(AccessLogConfig::Disabled)
+                    Ok(AccessLogPolicy::Disabled)
                 }
             }
 
@@ -48,9 +48,9 @@ impl<'de> Deserialize<'de> for AccessLogConfig {
                 E: de::Error,
             {
                 match v {
-                    "false" => Ok(AccessLogConfig::Disabled),
-                    "stdout" => Ok(AccessLogConfig::Stdout),
-                    path if !path.is_empty() => Ok(AccessLogConfig::File(path.to_string())),
+                    "false" => Ok(AccessLogPolicy::Disabled),
+                    "stdout" => Ok(AccessLogPolicy::Stdout),
+                    path if !path.is_empty() => Ok(AccessLogPolicy::File(Path(path.to_string()))),
                     _ => Err(E::custom("invalid access_log value")),
                 }
             }
@@ -67,47 +67,47 @@ mod tests {
 
     #[test]
     fn access_log_accepts_string_values() {
-        let v: AccessLogConfig = serde_json::from_value(json!("stdout")).unwrap();
-        assert_eq!(v, AccessLogConfig::Stdout);
+        let v: AccessLogPolicy = serde_json::from_value(json!("stdout")).unwrap();
+        assert_eq!(v, AccessLogPolicy::Stdout);
 
-        let v: AccessLogConfig = serde_json::from_value(json!("/tmp/pavis.log")).unwrap();
-        assert_eq!(v, AccessLogConfig::File("/tmp/pavis.log".to_string()));
+        let v: AccessLogPolicy = serde_json::from_value(json!("/tmp/pavis.log")).unwrap();
+        assert_eq!(v, AccessLogPolicy::File(Path("/tmp/pavis.log".to_string())));
 
-        let v: AccessLogConfig = serde_json::from_value(json!("false")).unwrap();
-        assert_eq!(v, AccessLogConfig::Disabled);
+        let v: AccessLogPolicy = serde_json::from_value(json!("false")).unwrap();
+        assert_eq!(v, AccessLogPolicy::Disabled);
     }
 
     #[test]
     fn access_log_rejects_true() {
-        let res: Result<AccessLogConfig, _> = serde_json::from_value(json!(true));
+        let res: Result<AccessLogPolicy, _> = serde_json::from_value(json!(true));
         assert!(res.is_err());
     }
 
     #[test]
     fn access_log_serializes_variants() {
-        let value = serde_json::to_value(AccessLogConfig::Disabled).unwrap();
+        let value = serde_json::to_value(AccessLogPolicy::Disabled).unwrap();
         assert_eq!(value, json!(false));
 
-        let value = serde_json::to_value(AccessLogConfig::Stdout).unwrap();
+        let value = serde_json::to_value(AccessLogPolicy::Stdout).unwrap();
         assert_eq!(value, json!("stdout"));
 
-        let value =
-            serde_json::to_value(AccessLogConfig::File("/tmp/pavis.log".to_string())).unwrap();
+        let value = serde_json::to_value(AccessLogPolicy::File(Path("/tmp/pavis.log".to_string())))
+            .unwrap();
         assert_eq!(value, json!("/tmp/pavis.log"));
     }
 
     #[test]
     fn access_log_accepts_false_bool_and_rejects_empty_string() {
-        let v: AccessLogConfig = serde_json::from_value(json!(false)).unwrap();
-        assert_eq!(v, AccessLogConfig::Disabled);
+        let v: AccessLogPolicy = serde_json::from_value(json!(false)).unwrap();
+        assert_eq!(v, AccessLogPolicy::Disabled);
 
-        let res: Result<AccessLogConfig, _> = serde_json::from_value(json!(""));
+        let res: Result<AccessLogPolicy, _> = serde_json::from_value(json!(""));
         assert!(res.is_err());
     }
 
     #[test]
     fn access_log_reports_expected_types_on_invalid_number() {
-        let res: Result<AccessLogConfig, _> = serde_json::from_value(json!(123));
+        let res: Result<AccessLogPolicy, _> = serde_json::from_value(json!(123));
         let msg = res.expect_err("invalid number").to_string();
         assert!(msg.contains("false, 'stdout', or a file path string"));
     }
@@ -153,6 +153,6 @@ mod tests {
                 tuple_struct map struct enum identifier ignored_any
             }
         }
-        let _ = AccessLogConfig::deserialize(MockDeserializer);
+        let _ = AccessLogPolicy::deserialize(MockDeserializer);
     }
 }

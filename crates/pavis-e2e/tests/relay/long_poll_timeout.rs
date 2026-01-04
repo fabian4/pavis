@@ -1,5 +1,8 @@
 use anyhow::Result;
-use pavis_core::{AccessLogConfig, Listener, RuntimeConfig, TelemetryConfig};
+use pavis_core::{
+    AccessLogPolicy, Listener, ListenerName, LogLevel, Metrics, RuntimeConfig, ServiceName,
+    Telemetry, TlsConfig, TracingPolicy, WorkerCount,
+};
 use pavis_e2e::support::PavisScenario;
 use pavis_e2e::support::relay::RelayOptions;
 use std::time::Duration;
@@ -8,18 +11,18 @@ use tokio::time::sleep;
 fn default_runtime_config() -> RuntimeConfig {
     RuntimeConfig {
         listeners: vec![Listener {
-            name: "default".to_string(),
-            listen_addr: "127.0.0.1:8080".parse().unwrap(),
-            worker_threads: None,
-            tls: None,
+            name: ListenerName("default".to_string()),
+            address: "127.0.0.1:8080".parse().unwrap(),
+            workers: WorkerCount::Auto,
+            tls: TlsConfig::Disabled,
         }],
-        telemetry: TelemetryConfig {
-            level: None,
-            pingora: None,
-            service_name: None,
-            prometheus_addr: None,
-            access_log: AccessLogConfig::Disabled,
-            tracing: None,
+        telemetry: Telemetry {
+            level: LogLevel::Info,
+            pingora: LogLevel::Info,
+            service_name: ServiceName("pavis-relay-e2e".to_string()),
+            metrics: Metrics::Disabled,
+            access_log: AccessLogPolicy::Disabled,
+            tracing: TracingPolicy::Disabled,
         },
         upstreams: Vec::new(),
         routes: Vec::new(),
@@ -47,7 +50,7 @@ async fn r3_long_poll_semantics() -> Result<()> {
     let handle = tokio::spawn(async move {
         sleep(Duration::from_millis(500)).await;
         let mut cfg = default_runtime_config();
-        cfg.listeners[0].listen_addr = "127.0.0.1:9091".parse().unwrap();
+        cfg.listeners[0].address = "127.0.0.1:9091".parse().unwrap();
         let yaml = pavis_e2e::support::to_yaml(&cfg);
         fs::write(config_path, yaml)
     });
