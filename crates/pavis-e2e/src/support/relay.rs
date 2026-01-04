@@ -65,7 +65,10 @@ impl RelayInstance {
                 fs::create_dir_all(parent)?;
             }
             if !path.exists() {
-                fs::write(path, "server:\n  listen_addr: \"127.0.0.1:0\"")?;
+                fs::write(
+                    path,
+                    "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:0\"",
+                )?;
             }
         }
 

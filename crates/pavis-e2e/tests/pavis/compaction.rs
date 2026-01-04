@@ -43,8 +43,9 @@ fn resolve_backend_host(host: String) -> Result<String> {
 fn write_config(path: &Path, host: &str, port: u16) -> Result<()> {
     let yaml = format!(
         r#"
-server:
-  listen_addr: "0.0.0.0:8080"
+listeners:
+  - name: "default"
+    listen_addr: "0.0.0.0:8080"
 telemetry: {{}}
 upstreams:
   - name: "backend-v1"

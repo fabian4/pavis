@@ -31,14 +31,17 @@ async fn r8_codec_validation_file() -> Result<()> {
     let v_start = client.status().await?.version;
 
     // Write invalid YAML
-    fs::write(config_path, "server: { invalid_syntax: [")?;
+    fs::write(config_path, "listeners: { invalid_syntax: [")?;
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
     let status = client.status().await?;
     assert_eq!(status.version, v_start);
 
     // Write valid YAML
-    fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8080\"")?;
+    fs::write(
+        config_path,
+        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8080\"",
+    )?;
     scenario.wait_for_relay_version(v_start + 1).await?;
 
     let status = client.status().await?;

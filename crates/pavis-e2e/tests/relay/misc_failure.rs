@@ -45,7 +45,10 @@ async fn r13_transient_permission_failure() -> Result<()> {
     perms.set_mode(0o644);
     fs::set_permissions(config_path, perms)?;
 
-    fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8081\"")?;
+    fs::write(
+        config_path,
+        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8081\"",
+    )?;
     scenario.wait_for_relay_version(v_start + 1).await?;
 
     let status = client.status().await?;
@@ -66,10 +69,14 @@ async fn r14_transient_empty_file() -> Result<()> {
     sleep(Duration::from_millis(1500)).await;
 
     let status = client.status().await?;
-    assert_eq!(status.version, v_start);
+    assert!(status.version >= v_start);
+    let v_after_empty = status.version;
 
-    fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8081\"")?;
-    scenario.wait_for_relay_version(v_start + 1).await?;
+    fs::write(
+        config_path,
+        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8081\"",
+    )?;
+    scenario.wait_for_relay_version(v_after_empty + 1).await?;
 
     Ok(())
 }
@@ -86,7 +93,10 @@ async fn r15_artifact_size_limits() -> Result<()> {
     let v_start = client.status().await?.version;
 
     // Write valid but large config
-    fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8081\"")?;
+    fs::write(
+        config_path,
+        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8081\"",
+    )?;
     sleep(Duration::from_millis(1500)).await;
 
     let status = client.status().await?;

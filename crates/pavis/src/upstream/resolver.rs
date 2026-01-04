@@ -196,10 +196,9 @@ async fn resolve_dns(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
 
 fn select_existing_or_first(resolved: &[SocketAddr], current: &[Endpoint]) -> Option<SocketAddr> {
     for endpoint in current {
-        if let EndpointAddress::Ip(addr) = endpoint.address
-            && resolved.contains(&addr)
-        {
-            return Some(addr);
+        match endpoint.address {
+            EndpointAddress::Ip(addr) if resolved.contains(&addr) => return Some(addr),
+            _ => {}
         }
     }
     None

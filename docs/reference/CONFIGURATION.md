@@ -1,3 +1,16 @@
+# Runtime Configuration Reference
+
+> **Status:** Reference
+> **Role:** The canonical definition of the "Fully Explicit" Runtime Configuration.
+
+This document describes the `RuntimeConfig` structure consumed by the Pavis runtime. 
+It represents the **fully materialized** state after the Codec layer has processed user input and applied all policy defaults.
+
+## Configuration File Structure
+
+The following YAML reference corresponds strictly to the `pavis_core::RuntimeConfig` struct.
+
+```yaml
 # ------------------------------------------------------------------------------
 # PAVIS RUNTIME CONFIGURATION (Fully Explicit Reference)
 # ------------------------------------------------------------------------------
@@ -184,3 +197,4 @@ routes:
         destinations:
           - upstream: "grpc-core"
             weight: 1
+```

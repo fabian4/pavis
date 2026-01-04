@@ -1,15 +1,16 @@
 use anyhow::Result;
-use pavis_core::{AccessLogConfig, RuntimeConfig, ServerConfig, TelemetryConfig};
+use pavis_core::{AccessLogConfig, Listener, RuntimeConfig, TelemetryConfig};
 use pavis_e2e::support::PavisScenario;
 use pavis_e2e::support::relay::RelayOptions;
 
 fn default_runtime_config() -> RuntimeConfig {
     RuntimeConfig {
-        server: ServerConfig {
+        listeners: vec![Listener {
+            name: "default".to_string(),
             listen_addr: "127.0.0.1:8080".parse().unwrap(),
             worker_threads: None,
             tls: None,
-        },
+        }],
         telemetry: TelemetryConfig {
             level: None,
             pingora: None,

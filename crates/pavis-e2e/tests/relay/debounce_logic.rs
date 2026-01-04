@@ -18,7 +18,8 @@ async fn r6_ingest_debouncing() -> Result<()> {
 
     // Multiple rapid writes
     for i in 0..5 {
-        let content = format!("server:\n  listen_addr: \"127.0.0.1:808{i}\"\n");
+        let content =
+            format!("listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:808{i}\"\n");
         fs::write(config_path, content)?;
         sleep(Duration::from_millis(50)).await;
     }
@@ -44,15 +45,21 @@ async fn r11_rapid_toggle() -> Result<()> {
     let v_start = client.status().await?.version;
 
     // Valid
-    fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8081\"")?;
+    fs::write(
+        config_path,
+        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8081\"",
+    )?;
     sleep(Duration::from_millis(1000)).await;
 
     // Invalid
-    fs::write(config_path, "server: [")?;
+    fs::write(config_path, "listeners: [")?;
     sleep(Duration::from_millis(1000)).await;
 
     // Valid
-    fs::write(config_path, "server:\n  listen_addr: \"127.0.0.1:8082\"")?;
+    fs::write(
+        config_path,
+        "listeners:\n  - name: \"default\"\n    listen_addr: \"127.0.0.1:8082\"",
+    )?;
     sleep(Duration::from_millis(1000)).await;
 
     let status = client.status().await?;

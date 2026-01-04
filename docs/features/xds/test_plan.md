@@ -112,3 +112,53 @@ Tests should assert that the following observability signals are emitted:
     *   `pavis_upstream_dns_resolve_total`: Counter.
     *   `pavis_upstream_dns_resolve_failures`: Counter.
     *   `pavis_upstream_active_endpoints`: Gauge.
+
+---
+
+## 6. Test Update Checklist
+
+This checklist tracks the full scope of unit, integration, and e2e tests for xDS readiness.
+
+### A. Unit Tests
+
+*   **LDS mapping**
+    *   Map listener name + address.
+    *   Reject multiple addresses.
+    *   Reject multiple filter chains.
+    *   Reject SNI-based matching.
+*   **CDS mapping**
+    *   Map `STATIC` -> `DiscoveryType::Static` (IP literals only).
+    *   Map `LOGICAL_DNS` -> `DiscoveryType::LogicalDns` (hostname only).
+    *   Map `STRICT_DNS` -> `DiscoveryType::StrictDns` (hostname only).
+    *   Reject EDS clusters.
+    *   Map supported load balancer values.
+    *   Map HTTP protocol options + defaults.
+*   **RDS mapping**
+    *   Prefix/Exact/Regex match mapping + regex length limits.
+    *   Preserve route ordering.
+    *   Header add/remove mapping (append vs set, remove).
+    *   Rewrite mapping (prefix + host).
+    *   Weighted destinations mapping + upstream existence checks.
+    *   Timeout + retry policy defaults.
+*   **Core validation boundary**
+    *   Non-empty listeners.
+    *   DNS endpoint port non-zero.
+    *   Duplicate upstream/route detection.
+    *   Header name/value constraints.
+*   **Determinism**
+    *   Identical snapshot input yields identical serialized output.
+
+### B. Integration Tests
+
+*   Codec output loads through runtime validation without mutation.
+*   Deterministic output remains stable through serialize/deserialize cycle.
+*   Runtime accepts codec output across LDS/CDS/RDS combinations.
+*   Error propagation includes resource type, name, and field path.
+
+### C. E2E Tests
+
+*   Minimum routing path: xDS -> codec -> runtime -> backend traffic.
+*   DNS upstream traffic with `StrictDns`.
+*   Rewrite + header append interaction.
+*   Runtime reload with active DNS resolver.
+*   Weighted split between static and DNS upstreams.
