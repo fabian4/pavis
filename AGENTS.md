@@ -1,39 +1,13 @@
 # AI Agent Instructions (Core)
 
-## Navigation
-
-- [Tasks](./agent/Tasks.md)
-- [Workflow](./agent/Workflow.md)
-- [Audit Overview](./agent/AuditOverview.md)
-- [Multi-Agent Rules](./agent/MultiAgentRules.md)
-- [Code Review](./agent/CodeReview.md)
-
 ## References
 
-| Document                                                                                  | Description                                   |
-| ----------------------------------------------------------------------------------------- | --------------------------------------------- |
-| [README.md](../README.md)                                                                 | Project overview and quick start              |
-| [ARCHITECTURE.md](../ARCHITECTURE.md)                                                     | System design and protocol details            |
-| [ROADMAP.md](../ROADMAP.md)                                                               | Development phases and progress               |
-| [Cargo.toml](../Cargo.toml)                                                               | Workspace configuration and dependencies      |
-| [audit/report/ARCH_COMPLIANCE.md](../audit/report/ARCH_COMPLIANCE.md)                     | Architecture compliance review report         |
-| [audit/report/ARCH_ROADMAP_ALIGNMENT.md](../audit/report/ARCH_ROADMAP_ALIGNMENT.md)       | Architecture vs roadmap alignment report      |
-| [audit/report/ROADMAP_REVIEW.md](../audit/report/ROADMAP_REVIEW.md)                       | Roadmap vs implementation review report       |
-| [audit/report/STRUCTURE_REVIEW.md](../audit/report/STRUCTURE_REVIEW.md)                   | Rust code structure & file size review report |
-| [audit/report/TEST_COVERAGE_REVIEW.md](../audit/report/TEST_COVERAGE_REVIEW.md)           | Test coverage & quality review report         |
-| [audit/report/PUBLIC_API_REVIEW.md](../audit/report/PUBLIC_API_REVIEW.md)                 | Public API & boundary stability review report |
-| [audit/report/COMMENT_REVIEW.md](../audit/report/COMMENT_REVIEW.md)                       | Code comment quality review report            |
-| [audit/report/DUPLICATION_REVIEW.md](../audit/report/DUPLICATION_REVIEW.md)               | Duplication & redundancy review report        |
-| [audit/report/SECURITY_REVIEW.md](../audit/report/SECURITY_REVIEW.md)                     | Security review report                        |
-| [audit/report/DEPENDENCY_BOUNDARY_REVIEW.md](../audit/report/DEPENDENCY_BOUNDARY_REVIEW.md) | Dependency boundary review report          |
-| [audit/report/PERFORMANCE_REVIEW.md](../audit/report/PERFORMANCE_REVIEW.md)               | Performance & allocation review report        |
-
-## Audit System Overview
-
-- Audits live under `../audit/report/`.
-- The top-level status summary is `../audit/README.md`.
-- Coverage evidence (if present) is `../audit/coverage.md`.
-- See [AuditOverview.md](./AuditOverview.md) for report rules and update criteria.
+| Document                      | Description                              |
+| ----------------------------- | ---------------------------------------- |
+| [README.md](../README.md)     | Project overview and quick start         |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) | System design and protocol details |
+| [ROADMAP.md](../ROADMAP.md)   | Development phases and progress          |
+| [Cargo.toml](../Cargo.toml)   | Workspace configuration and dependencies |
 
 ## Core Code & Cargo Modification Guard (Test Safety Rule)
 
@@ -48,24 +22,6 @@
 ## Coordination & Snapshot Workflow
 
 - Assume multiple agents may work concurrently; keep scope tight and record out-of-scope changes.
-- Follow [MultiAgentRules.md](./MultiAgentRules.md) for isolation requirements.
-
-### Snapshot Workflow (Required for Tasks 1–11)
-
-1. Create a clean, read-only snapshot at the current HEAD under `~/.temp`:
-   - `TMP="$HOME/.temp/agent-snapshots/$(date +%s)"`
-   - `mkdir -p "$TMP"`
-   - `git clone --no-hardlinks . "$TMP/repo"`
-   - `cd "$TMP/repo"`
-   - `git status --porcelain` must be empty
-   - Alternative: `git worktree add --detach "$TMP/repo" HEAD`
-2. If the snapshot is not clean:
-   - Record this under “Out-of-scope changes observed” in the relevant report entry.
-   - Continue analysis; do not block the task.
-3. Run all scanning and analysis only inside the snapshot.
-4. Generate report artifacts inside the snapshot only.
-5. Copy report outputs back into the main repo after analysis (reports and summaries only).
-6. Never copy source code from the snapshot into the main working tree.
 
 ## Workspace & Layering
 
@@ -102,8 +58,7 @@
 
 ## Tooling & Validation
 
-- After any Rust code change: run `make fmt`, `make lint`.
-- Validate builds/tests with `make build test` or `make ci` after edits.
+- After any Rust code change: run `make ci-local`.
 
 ## Code Style
 

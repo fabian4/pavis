@@ -10,6 +10,7 @@ use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
+use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,21 +36,40 @@ fn calculate_path_rewrite(
         pavis_core::RewritePath::Disabled => None,
         pavis_core::RewritePath::Prefix { from: _, to } => {
             let new_path = match &route.matcher {
-                PathMatch::Prefix { path } => uri_path
-                    .strip_prefix(path.0.as_str())
-                    .map(|suffix| format!("{}{suffix}", to.0)),
-                PathMatch::Exact { path } => (uri_path == path.0.as_str()).then(|| to.0.clone()),
+                PathMatch::Prefix { path } => {
+                    uri_path.strip_prefix(path.0.as_str()).map(|suffix| {
+                        let mut path = String::with_capacity(to.0.len() + suffix.len());
+                        path.push_str(&to.0);
+                        path.push_str(suffix);
+                        Cow::Owned(path)
+                    })
+                }
+                PathMatch::Exact { path } => {
+                    (uri_path == path.0.as_str()).then_some(Cow::Borrowed(to.0.as_str()))
+                }
                 PathMatch::Regex { .. } => None,
             };
 
             match new_path {
                 Some(mut path) => {
                     if let Some(query) = uri_query {
-                        path.push('?');
-                        path.push_str(query);
+                        let mut owned = match path {
+                            Cow::Borrowed(path) => {
+                                let mut owned = String::with_capacity(path.len() + 1 + query.len());
+                                owned.push_str(path);
+                                owned
+                            }
+                            Cow::Owned(mut owned) => {
+                                owned.reserve(1 + query.len());
+                                owned
+                            }
+                        };
+                        owned.push('?');
+                        owned.push_str(query);
+                        path = Cow::Owned(owned);
                     }
 
-                    match Uri::builder().path_and_query(path.as_str()).build() {
+                    match Uri::builder().path_and_query(path.as_ref()).build() {
                         Ok(uri) => Some(uri),
                         Err(err) => {
                             tracing::warn!(

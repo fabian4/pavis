@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
-use crate::{infer_format, is_supported};
+use crate::{infer_format, validate_bytes, validate_format};
 
 pub async fn spawn_watcher(
     path: PathBuf,
@@ -90,13 +90,25 @@ pub async fn spawn_watcher(
                     debug!("Debounce expired, reading file: {:?}", ingest_path);
 
                     let format = infer_format(&ingest_path);
-                    if !is_supported(format) {
-                        warn!("Ignored unsupported file format: {:?}", ingest_path);
+                    if let Err(err) = validate_format(&ingest_path, format) {
+                        warn!("Rejected unsupported file format: {:?}", ingest_path);
+                        if let Err(send_err) = tx.send(Err(err)).await {
+                            error!("Failed to send error through stream: {}", send_err);
+                            break;
+                        }
                         continue;
                     }
 
                     match tokio::fs::read(&ingest_path).await {
                         Ok(bytes) => {
+                            if let Err(err) = validate_bytes(&ingest_path, &bytes) {
+                                warn!("Rejected file payload: {:?}", ingest_path);
+                                if let Err(send_err) = tx.send(Err(err)).await {
+                                    error!("Failed to send error through stream: {}", send_err);
+                                    break;
+                                }
+                                continue;
+                            }
                             debug!("Read {} bytes from: {:?}", bytes.len(), ingest_path);
                             let source = SourceInfo::new(ingest_path.to_string_lossy());
                             let art = Artifact::new(Bytes::from(bytes), format, source);

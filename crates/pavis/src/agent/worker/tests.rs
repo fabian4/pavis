@@ -20,7 +20,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::{NonZeroU16, NonZeroU32};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
@@ -97,15 +96,14 @@ fn write_pvs(path: &PathBuf, name: &str) -> Vec<u8> {
 
 fn make_agent(base: String, lkg_path: PathBuf, state: Arc<RuntimeStateHandle>) -> Arc<ConfigAgent> {
     let client = Client::builder().no_proxy().build().expect("client");
-    Arc::new(ConfigAgent {
-        relay_base: base,
-        lkg_path: lkg_path.clone(),
-        version_path: version_path_for(&lkg_path),
-        client,
-        backoff: Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 0),
+    Arc::new(ConfigAgent::new_for_tests(
+        base,
+        lkg_path.clone(),
         state,
-        current_version: std::sync::atomic::AtomicU64::new(0),
-    })
+        client,
+        Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 0),
+        0,
+    ))
 }
 
 async fn start_status_stub(status: StatusCode) -> Option<String> {
@@ -166,7 +164,7 @@ async fn apply_update_replaces_state_and_version() {
         lkg.clone(),
         state_handle.clone(),
     );
-    agent.apply_update(bytes, 2).await.expect("apply");
+    agent.apply_update_for_tests(bytes, 2).await.expect("apply");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -197,7 +195,7 @@ async fn apply_update_removes_tmp_on_load_failure() {
     // Let's just pass invalid bytes to apply_update, but it calls verify() first.
     let bad_pvs = vec![0u8; 100]; // Should fail verify
     let err = agent
-        .apply_update(bad_pvs, 1)
+        .apply_update_for_tests(bad_pvs, 1)
         .await
         .expect_err("verify failure");
     assert!(err.to_string().contains("magic"));
@@ -242,17 +240,16 @@ async fn apply_update_warns_on_version_write_failure() {
     let client = Client::builder().no_proxy().build().expect("client");
     let version_dir = dir.join("version_dir");
     std::fs::create_dir_all(&version_dir).expect("version dir");
-    let agent = ConfigAgent {
-        relay_base: "http://127.0.0.1:1".to_string(),
-        lkg_path: lkg.clone(),
-        version_path: version_dir,
+    let agent = ConfigAgent::new_for_tests(
+        "http://127.0.0.1:1".to_string(),
+        lkg.clone(),
+        state_handle,
         client,
-        backoff: Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 0),
-        state: state_handle,
-        current_version: std::sync::atomic::AtomicU64::new(0),
-    };
+        Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 0),
+        0,
+    );
     let bytes = std::fs::read(&lkg).expect("read");
-    agent.apply_update(bytes, 2).await.expect("apply");
+    agent.apply_update_for_tests(bytes, 2).await.expect("apply");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -274,11 +271,11 @@ async fn test_apply_update_success() {
     let pvs = pavis_pvs::encode(&config).expect("encode");
 
     agent
-        .apply_update(pvs, 1)
+        .apply_update_for_tests(pvs, 1)
         .await
         .expect("apply update should succeed");
 
-    assert_eq!(agent.current_version.load(Ordering::SeqCst), 1);
+    assert_eq!(agent.current_version_for_tests(), 1);
     assert!(lkg.exists());
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -422,7 +419,7 @@ async fn test_poll_once_success() {
 
     let outcome = agent.poll_once().await.expect("poll");
     assert!(matches!(outcome, super::PollOutcome::Updated));
-    assert_eq!(agent.current_version.load(Ordering::SeqCst), 1);
+    assert_eq!(agent.current_version_for_tests(), 1);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

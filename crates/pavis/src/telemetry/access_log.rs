@@ -1,19 +1,20 @@
 use async_trait::async_trait;
 use pavis_core::AccessLogPolicy;
+use pingora::protocols::l4::socket::SocketAddr;
 use pingora::proxy::Session;
 use pingora::services::Service;
 use std::sync::Arc;
-use tokio::fs::File;
+use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 
 pub struct AccessLog {
-    tx: mpsc::Sender<String>,
+    tx: mpsc::Sender<LogEntry>,
     enabled: bool,
 }
 
 pub struct AccessLogWorker {
-    rx: Option<mpsc::Receiver<String>>,
+    rx: Option<mpsc::Receiver<LogEntry>>,
     config: AccessLogPolicy,
 }
 
@@ -28,12 +29,13 @@ impl Service for AccessLogWorker {
         let mut rx = self.rx.take().expect("Worker started twice");
 
         let mut file_writer = if let AccessLogPolicy::File(path) = &self.config {
-            match std::fs::OpenOptions::new()
+            match OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&path.0)
+                .await
             {
-                Ok(f) => Some(BufWriter::new(File::from_std(f))),
+                Ok(f) => Some(BufWriter::new(f)),
                 Err(e) => {
                     eprintln!("Failed to open access log file: {}", e);
                     None
@@ -51,7 +53,8 @@ impl Service for AccessLogWorker {
                 }
                 msg = rx.recv() => {
                     match msg {
-                        Some(log_line) => {
+                        Some(entry) => {
+                            let log_line = format_log_line(&entry);
                             match &self.config {
                                 AccessLogPolicy::Stdout => {
                                     print!("{}", log_line);
@@ -86,7 +89,7 @@ impl Service for AccessLogWorker {
 
 impl AccessLog {
     pub fn new(config: &AccessLogPolicy) -> (Self, AccessLogWorker) {
-        let (tx, rx) = mpsc::channel::<String>(4096);
+        let (tx, rx) = mpsc::channel::<LogEntry>(4096);
         let enabled = *config != AccessLogPolicy::Disabled;
 
         let worker = AccessLogWorker {
@@ -108,7 +111,7 @@ impl AccessLog {
         }
 
         let req = session.req_header();
-        let method = &req.method;
+        let method = req.method.clone();
         let path = req.uri.path();
         let host = req
             .headers
@@ -123,10 +126,7 @@ impl AccessLog {
 
         let upstream = upstream_name.unwrap_or("-");
         let response_time = start_time.elapsed().as_millis();
-        let client_ip = session
-            .client_addr()
-            .map(|a| a.to_string())
-            .unwrap_or_else(|| "-".to_string());
+        let client_ip = session.client_addr().cloned();
         let bytes_sent = session.body_bytes_sent();
         let request_id = req
             .headers
@@ -135,47 +135,53 @@ impl AccessLog {
             .unwrap_or("-");
 
         let entry = LogEntry {
-            method: method.as_str(),
-            host,
-            path,
+            timestamp: chrono::Utc::now(),
+            method,
+            host: host.to_string(),
+            path: path.to_string(),
             status,
-            upstream,
+            upstream: upstream.to_string(),
             response_time,
             bytes_sent,
-            client_ip: &client_ip,
-            request_id,
+            client_ip,
+            request_id: request_id.to_string(),
         };
-        let log_line = format_log_line(entry);
 
         // Non-blocking send (lossy if full)
-        let _ = self.tx.try_send(log_line);
+        let _ = self.tx.try_send(entry);
     }
 }
 
-struct LogEntry<'a> {
-    method: &'a str,
-    host: &'a str,
-    path: &'a str,
+struct LogEntry {
+    timestamp: chrono::DateTime<chrono::Utc>,
+    method: http::Method,
+    host: String,
+    path: String,
     status: u16,
-    upstream: &'a str,
+    upstream: String,
     response_time: u128,
     bytes_sent: usize,
-    client_ip: &'a str,
-    request_id: &'a str,
+    client_ip: Option<SocketAddr>,
+    request_id: String,
 }
 
-fn format_log_line(entry: LogEntry<'_>) -> String {
+fn format_log_line(entry: &LogEntry) -> String {
+    let client_ip = entry
+        .client_ip
+        .as_ref()
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|| "-".to_string());
     format!(
         "{} {} {} {} {} {} {} {} {} {}\n",
-        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ"),
-        entry.method,
+        entry.timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ"),
+        entry.method.as_str(),
         entry.host,
         entry.path,
         entry.status,
         entry.upstream,
         entry.response_time,
         entry.bytes_sent,
-        entry.client_ip,
+        client_ip,
         entry.request_id
     )
 }
@@ -183,6 +189,7 @@ fn format_log_line(entry: LogEntry<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{AccessLog, LogEntry, format_log_line};
+    use http::Method;
     use pavis_core::{AccessLogPolicy, Path};
     use pingora::proxy::Session;
     use pingora::services::Service;
@@ -204,18 +211,19 @@ mod tests {
 
     #[test]
     fn test_format_log_line() {
-        let line = format_log_line(LogEntry {
-            method: "GET",
-            host: "example.com",
-            path: "/api",
+        let line = format_log_line(&LogEntry {
+            timestamp: chrono::Utc::now(),
+            method: Method::GET,
+            host: "example.com".to_string(),
+            path: "/api".to_string(),
             status: 200,
-            upstream: "backend-1",
+            upstream: "backend-1".to_string(),
             response_time: 100,
             bytes_sent: 512,
-            client_ip: "127.0.0.1",
-            request_id: "req-123",
+            client_ip: Some("127.0.0.1:1234".parse().unwrap()),
+            request_id: "req-123".to_string(),
         });
-        assert!(line.contains("GET example.com /api 200 backend-1 100 512 127.0.0.1 req-123"));
+        assert!(line.contains("GET example.com /api 200 backend-1 100 512 127.0.0.1:1234 req-123"));
     }
 
     #[tokio::test]
@@ -227,7 +235,20 @@ mod tests {
         let (access_log, mut worker) = AccessLog::new(&config);
 
         // Inject a log manually
-        let _ = access_log.tx.try_send("TEST_LOG_LINE\n".to_string());
+        let entry = LogEntry {
+            timestamp: chrono::Utc::now(),
+            method: Method::GET,
+            host: "example.com".to_string(),
+            path: "/api".to_string(),
+            status: 200,
+            upstream: "backend-1".to_string(),
+            response_time: 100,
+            bytes_sent: 512,
+            client_ip: Some("127.0.0.1:1234".parse().unwrap()),
+            request_id: "req-123".to_string(),
+        };
+        let expected = format_log_line(&entry);
+        let _ = access_log.tx.try_send(entry);
 
         // Run worker briefly
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -244,7 +265,7 @@ mod tests {
 
         // Verify content
         let content = std::fs::read_to_string(&path).expect("read log file");
-        assert_eq!(content, "TEST_LOG_LINE\n");
+        assert_eq!(content, expected);
 
         let _ = std::fs::remove_file(path);
     }
@@ -270,8 +291,10 @@ mod tests {
             .await
             .expect("timeout")
             .expect("log line");
-        assert!(line.contains("GET example.com /api"));
-        assert!(line.contains("upstream-a"));
-        assert!(line.contains("req-1"));
+        assert_eq!(line.method, "GET");
+        assert_eq!(line.host, "example.com");
+        assert_eq!(line.path, "/api");
+        assert_eq!(line.upstream, "upstream-a");
+        assert_eq!(line.request_id, "req-1");
     }
 }

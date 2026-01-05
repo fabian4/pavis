@@ -1,6 +1,6 @@
 # Code Change & Readability Checklist
 
-Derived from Audit Tasks 1–11 and Rust Readability Standards. Verify before completion.
+Derived from Rust Readability Standards. Verify before completion.
 
 ### 1. Architecture & Layering
 - [ ] **Layering**: Dependency direction respected (Core -> PVS -> Runtime)?
@@ -51,4 +51,3 @@ Derived from Audit Tasks 1–11 and Rust Readability Standards. Verify before co
 
 ### 9. Documentation & Roadmap
 - [ ] **Roadmap**: Change is aligned with `ROADMAP.md`?
-- [ ] **Audit Logs**: Relevant reports in `audit/report/` updated with UTC timestamp?

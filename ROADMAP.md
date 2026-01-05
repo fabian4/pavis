@@ -1,9 +1,9 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 18/67
+- **Total**: 19/67
 - **Core Features**: 18/50
-- **Technical Debt**: 0/17
+- **Technical Debt**: 1/17
 
 > **Status**: Active
 > **Focus**: Phase 3 (Dynamic Config) & Phase 3.5 (Architecture Convergence)
@@ -149,7 +149,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [ ] **[DX] Binary Size/Compile-Time Polish**: Optimize relay build after feature gating is in place. (Trigger: After Phase 3.5)
 
 ### TD-4: Performance Optimizations
-- [ ] **[Perf] Zero-Copy Loading (mmap)**: Config loading copies bytes to heap; increases startup RAM. (Trigger: Config sizes > 10MB)
+- [x] **[Perf] Zero-Copy Loading (mmap)**: Config loading copies bytes to heap; increases startup RAM. (Trigger: Config sizes > 10MB)
 - [ ] **[Perf] Lazy Regex Compilation**: Startup penalty for configs with many regex routes. (Trigger: > 100 regex routes)
 - [ ] **[Perf] Connection Reuse**: High TCP churn; increased latency. (Trigger: High-throughput stress tests)
 

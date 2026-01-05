@@ -51,6 +51,13 @@ impl ValidatedRuntimeConfig {
 
     /// Construct a validated config without re-checking semantic invariants.
     ///
+    /// Callers must ensure canonical validation has already occurred upstream.
+    pub fn assume_validated(runtime: RuntimeConfig) -> Self {
+        Self { runtime }
+    }
+
+    /// Construct a validated config without re-checking semantic invariants.
+    ///
     /// # Safety
     /// Caller must guarantee the runtime config has already passed canonical validation.
     pub unsafe fn from_trusted(runtime: RuntimeConfig) -> Self {

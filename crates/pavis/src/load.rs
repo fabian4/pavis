@@ -26,9 +26,9 @@ pub fn load_file(path: &str) -> LoadResult<ValidatedRuntimeConfig> {
 }
 
 pub(crate) fn assume_validated(config: RuntimeConfig) -> ValidatedRuntimeConfig {
-    // SAFETY: `.pvs` artifacts are produced after canonical validation; runtime does not
+    // `.pvs` artifacts are produced after canonical validation; runtime does not
     // perform semantic inference or mutation after loading.
-    unsafe { ValidatedRuntimeConfig::from_trusted(config) }
+    ValidatedRuntimeConfig::assume_validated(config)
 }
 
 #[cfg(test)]

@@ -26,6 +26,41 @@ pub(crate) fn is_supported(format: Format) -> bool {
     matches!(format, Format::Yaml | Format::Json)
 }
 
+pub(crate) fn validate_format(path: &Path, format: Format) -> Result<(), IngestError> {
+    if !is_supported(format) {
+        return Err(IngestError::Io(anyhow::anyhow!(
+            "Unsupported file format for path: {:?}",
+            path
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_bytes(path: &Path, bytes: &[u8]) -> Result<(), IngestError> {
+    if bytes.is_empty() {
+        return Err(IngestError::Io(anyhow::anyhow!(
+            "Empty or whitespace-only file for path: {:?}",
+            path
+        )));
+    }
+
+    let text = std::str::from_utf8(bytes).map_err(|e| {
+        IngestError::Io(anyhow::anyhow!(
+            "Malformed UTF-8 for path {:?}: {}",
+            path,
+            e
+        ))
+    })?;
+    if text.trim().is_empty() {
+        return Err(IngestError::Io(anyhow::anyhow!(
+            "Empty or whitespace-only file for path: {:?}",
+            path
+        )));
+    }
+
+    Ok(())
+}
+
 pub struct FileIngest {
     path: PathBuf,
     debounce_duration: Duration,
@@ -40,17 +75,14 @@ impl FileIngest {
     }
 
     async fn read_artifact(&self) -> Result<Artifact, IngestError> {
+        let format = infer_format(&self.path);
+        validate_format(&self.path, format)?;
+
         let bytes = tokio::fs::read(&self.path)
             .await
             .map_err(|e| IngestError::Io(anyhow::anyhow!(e)))?;
 
-        let format = infer_format(&self.path);
-        if !is_supported(format) {
-            return Err(IngestError::Io(anyhow::anyhow!(
-                "Unsupported file format for path: {:?}",
-                self.path
-            )));
-        }
+        validate_bytes(&self.path, &bytes)?;
 
         let source = SourceInfo::new(self.path.to_string_lossy());
         Ok(Artifact::new(Bytes::from(bytes), format, source))
@@ -78,8 +110,13 @@ impl Ingest for FileIngest {
         let (tx, rx) = mpsc::channel(1);
 
         // Emit initial state
-        if let Ok(art) = self.read_artifact().await {
-            let _ = tx.send(Ok(art)).await;
+        match self.read_artifact().await {
+            Ok(art) => {
+                let _ = tx.send(Ok(art)).await;
+            }
+            Err(err) => {
+                let _ = tx.send(Err(err)).await;
+            }
         }
 
         let watcher = watch::spawn_watcher(self.path.clone(), self.debounce_duration, tx).await?;
@@ -228,11 +265,11 @@ mod tests {
         let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(50));
         let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
 
-        // Expect initial empty artifact
-        if let Some(Ok(artifact)) = stream.next().await {
-            assert!(artifact.bytes.is_empty());
+        // Expect initial empty error
+        if let Some(Err(err)) = stream.next().await {
+            assert!(err.to_string().contains("Empty"));
         } else {
-            panic!("Expected initial empty artifact");
+            panic!("Expected initial empty file error");
         }
 
         // Write update
@@ -284,18 +321,24 @@ mod tests {
         let mut ingest = FileIngest::new(txt_path.clone(), Duration::from_millis(10));
         let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
 
-        // Should not emit anything for unsupported format initially
-        tokio::select! {
-            _ = stream.next() => panic!("Unexpected artifact for unsupported format"),
-            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+        // Should emit an error for unsupported format initially
+        if let Some(Err(err)) = stream.next().await {
+            assert!(err.to_string().contains("Unsupported file format"));
+        } else {
+            panic!("Expected unsupported format error");
         }
 
         // Trigger an update
         std::fs::write(&txt_path, b"updated content")?;
 
-        // Should still not emit anything
+        // Should emit an error for unsupported format update
         tokio::select! {
-            _ = stream.next() => panic!("Unexpected artifact for unsupported format update"),
+            res = stream.next() => {
+                match res {
+                    Some(Err(err)) => assert!(err.to_string().contains("Unsupported file format")),
+                    _ => panic!("Expected unsupported format error"),
+                }
+            }
             _ = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
 
@@ -410,27 +453,6 @@ mod tests {
         let yaml_path = path.with_extension("yaml");
         std::fs::rename(&path, &yaml_path)?;
 
-        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(10));
-        let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
-
-        // Skip initial
-        let _ = stream.next().await;
-
-        // Now rename the file to an unsupported extension while it's being watched.
-        // Wait, the watcher is watching the FILE path, not the directory.
-        // If we rename it, the watch might break or trigger.
-
-        // Let's just write to a path that is supposedly supported but then check format.
-        // The watcher uses the path it was given.
-
-        // If we want to hit line 104-105 in watch.rs:
-        // let format = infer_format(&ingest_path);
-        // if !is_supported(format) { ... }
-
-        // Since ingest_path is fixed, we'd need to start a watcher on a .txt file.
-        // But FileIngest::read_artifact() fails on .txt on startup.
-        // However, FileIngest::stream() ignores error from initial read!
-
         let txt_path = dir_join("test_unsupported.txt");
         std::fs::write(&txt_path, b"content")?;
 
@@ -438,14 +460,25 @@ mod tests {
         // stream() will successfully start the watcher even if initial read fails (because it's .txt)
         let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
 
+        // Initial should be an unsupported format error
+        if let Some(Err(err)) = stream.next().await {
+            assert!(err.to_string().contains("Unsupported file format"));
+        } else {
+            panic!("Expected unsupported format error");
+        }
+
         // Trigger an update
         tokio::time::sleep(Duration::from_millis(20)).await;
         std::fs::write(&txt_path, b"updated")?;
 
-        // The watcher should trigger, call infer_format -> Unknown, is_supported -> false, and warn!.
-        // We check that nothing comes out of the stream.
+        // The watcher should emit an error for unsupported format.
         tokio::select! {
-            _ = stream.next() => panic!("Should not get artifact for .txt"),
+            res = stream.next() => {
+                match res {
+                    Some(Err(err)) => assert!(err.to_string().contains("Unsupported file format")),
+                    _ => panic!("Expected unsupported format error"),
+                }
+            }
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
 
@@ -493,5 +526,26 @@ mod tests {
 
     fn dir_join(name: &str) -> PathBuf {
         std::env::temp_dir().join(name)
+    }
+
+    #[tokio::test]
+    async fn test_file_ingest_rejects_malformed_utf8() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        file.as_file_mut().write_all(&[0xff, 0xfe])?;
+        let path = file.path().to_path_buf();
+        let yaml_path = path.with_extension("yaml");
+        std::fs::rename(&path, &yaml_path)?;
+
+        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(10));
+        let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+
+        if let Some(Err(err)) = stream.next().await {
+            assert!(err.to_string().contains("Malformed UTF-8"));
+        } else {
+            panic!("Expected malformed UTF-8 error");
+        }
+
+        std::fs::remove_file(yaml_path)?;
+        Ok(())
     }
 }

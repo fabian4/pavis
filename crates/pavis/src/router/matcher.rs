@@ -50,8 +50,38 @@ pub(crate) fn match_request<'a>(
     }
 
     // 2. Try wildcard host matches (order preserved from config)
-    for vhost in &router.wildcard_hosts {
-        if vhost.config.host.0 == "*" || Some(vhost.config.host.0.as_str()) == normalized_host {
+    let wildcard_exact = normalized_host
+        .and_then(|host| router.wildcard_exact.get(host))
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let wildcard_all = router.wildcard_all.as_slice();
+
+    let mut exact_index = 0;
+    let mut all_index = 0;
+
+    while exact_index < wildcard_exact.len() || all_index < wildcard_all.len() {
+        let next = match (wildcard_exact.get(exact_index), wildcard_all.get(all_index)) {
+            (Some(&exact), Some(&all)) => {
+                if exact <= all {
+                    exact_index += 1;
+                    exact
+                } else {
+                    all_index += 1;
+                    all
+                }
+            }
+            (Some(&exact), None) => {
+                exact_index += 1;
+                exact
+            }
+            (None, Some(&all)) => {
+                all_index += 1;
+                all
+            }
+            (None, None) => break,
+        };
+
+        if let Some(vhost) = router.wildcard_hosts.get(next) {
             if let Some(found) = try_match(vhost) {
                 return Some(found);
             }
@@ -82,6 +112,7 @@ mod tests {
         Destination, HeadersPolicy, Host, Path, PathMatch, RetryPolicy, Rewrite, RewriteHost,
         RewritePath, Route, Timeout, Weight,
     };
+    use std::collections::HashMap;
     use std::num::NonZeroU16;
 
     #[test]
@@ -123,8 +154,10 @@ mod tests {
         };
 
         let router = Router {
-            exact_hosts: std::collections::HashMap::new(),
+            exact_hosts: HashMap::new(),
             wildcard_hosts: vec![vhost],
+            wildcard_exact: HashMap::new(),
+            wildcard_all: vec![0],
         };
 
         let (_, res) = match_request(&router, None, "/exact").unwrap();

@@ -33,7 +33,7 @@ help:
 	@echo "  build              - Build debug workspace"
 	@echo "  binary-build       - Build release binaries (CRATE=workspace|pavis|relay|...)"
 	@echo "  docker-build       - Build docker image (IMAGE=pavis|relay, MODE=local|ci)"
-	@echo "  coverage-report    - Generate coverage markdown at ./audit/coverage.md"
+	@echo "  coverage-report    - Generate coverage markdown at ./docs/coverage.md"
 	@echo "  run-pavis          - Run proxy engine"
 	@echo "  run-relay          - Run relay service"
 	@echo "  fmt                - Format code"

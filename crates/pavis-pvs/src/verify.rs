@@ -41,10 +41,34 @@ impl PvsHeaderView {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct VerifiedPvs {
     header: PvsHeader,
-    bytes: Vec<u8>,
+    bytes: VerifiedBytes,
+}
+
+#[derive(Debug)]
+enum VerifiedBytes {
+    Owned(Vec<u8>),
+    Mapped(Mmap),
+}
+
+impl Clone for VerifiedBytes {
+    fn clone(&self) -> Self {
+        match self {
+            VerifiedBytes::Owned(bytes) => VerifiedBytes::Owned(bytes.clone()),
+            VerifiedBytes::Mapped(mmap) => VerifiedBytes::Owned(mmap.to_vec()),
+        }
+    }
+}
+
+impl Clone for VerifiedPvs {
+    fn clone(&self) -> Self {
+        Self {
+            header: self.header,
+            bytes: self.bytes.clone(),
+        }
+    }
 }
 
 impl VerifiedPvs {
@@ -73,11 +97,17 @@ impl VerifiedPvs {
     }
 
     pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+        match &self.bytes {
+            VerifiedBytes::Owned(bytes) => bytes,
+            VerifiedBytes::Mapped(mmap) => mmap,
+        }
     }
 
     pub fn into_bytes(self) -> Vec<u8> {
-        self.bytes
+        match self.bytes {
+            VerifiedBytes::Owned(bytes) => bytes,
+            VerifiedBytes::Mapped(mmap) => mmap.to_vec(),
+        }
     }
 }
 
@@ -91,8 +121,9 @@ pub fn verify(bytes: &[u8]) -> PvsResult<VerifiedPvs> {
 }
 
 pub fn read_from_path(path: impl AsRef<Path>) -> PvsResult<VerifiedPvs> {
-    let bytes = fs::read(path).map_err(PvsError::Io)?;
-    verify_owned(bytes)
+    let file = fs::File::open(path).map_err(PvsError::Io)?;
+    let mmap = unsafe { Mmap::map(&file).map_err(PvsError::Io)? };
+    verify_mapped(mmap)
 }
 
 pub fn verify_file(path: impl AsRef<Path>) -> PvsResult<()> {
@@ -142,7 +173,20 @@ fn verify_owned(bytes: Vec<u8>) -> PvsResult<VerifiedPvs> {
     let (header, payload) = verify_bytes(&bytes)?;
     let _archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
-    Ok(VerifiedPvs { header, bytes })
+    Ok(VerifiedPvs {
+        header,
+        bytes: VerifiedBytes::Owned(bytes),
+    })
+}
+
+fn verify_mapped(mmap: Mmap) -> PvsResult<VerifiedPvs> {
+    let (header, payload) = verify_bytes(&mmap)?;
+    let _archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
+        .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
+    Ok(VerifiedPvs {
+        header,
+        bytes: VerifiedBytes::Mapped(mmap),
+    })
 }
 
 pub fn load(path: impl AsRef<Path>) -> PvsResult<RuntimeConfig> {
