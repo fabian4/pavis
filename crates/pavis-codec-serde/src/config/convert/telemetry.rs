@@ -39,12 +39,13 @@ mod tests {
             pingora: None,
             service_name: None,
             metrics: None,
-            access_log: AccessLogPolicy::Disabled,
+            access_log: None,
             tracing: None,
         };
         let runtime = to_runtime(config).unwrap();
         assert_eq!(runtime.level, LogLevel::Info);
         assert_eq!(runtime.service_name.0, "pavis");
+        assert_eq!(runtime.access_log, AccessLogPolicy::Disabled);
     }
 
     #[test]
@@ -54,7 +55,7 @@ mod tests {
             pingora: None,
             service_name: None,
             metrics: Some("invalid".to_string()),
-            access_log: AccessLogPolicy::Disabled,
+            access_log: None,
             tracing: None,
         };
         let err = to_runtime(config).unwrap_err();
@@ -76,7 +77,7 @@ mod tests {
                 pingora: None,
                 service_name: None,
                 metrics: None,
-                access_log: AccessLogPolicy::Disabled,
+                access_log: None,
                 tracing: Some(TracingConfig {
                     provider: Some(input.to_string()),
                     sampling: Some(100),
@@ -166,7 +167,9 @@ pub(super) fn to_runtime(telemetry: TelemetryConfig) -> Result<RuntimeTelemetry>
         pingora,
         service_name,
         metrics,
-        access_log: telemetry.access_log,
+        access_log: telemetry
+            .access_log
+            .unwrap_or(pavis_core::AccessLogPolicy::Disabled),
         tracing,
     })
 }
@@ -180,7 +183,7 @@ pub(super) fn from_runtime(telemetry: RuntimeTelemetry) -> TelemetryConfig {
             Metrics::Disabled => None,
             Metrics::Enabled { addr } => Some(addr.to_string()),
         },
-        access_log: telemetry.access_log,
+        access_log: Some(telemetry.access_log),
         tracing: match telemetry.tracing {
             TracingPolicy::Disabled => None,
             TracingPolicy::Enabled { provider, sampling } => {

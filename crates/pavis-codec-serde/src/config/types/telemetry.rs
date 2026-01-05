@@ -10,8 +10,7 @@ pub struct TelemetryConfig {
     #[serde(rename = "metrics", alias = "prometheus_addr")]
     pub metrics: Option<String>,
     /// Access log: "stdout" (default), "off", or file path
-    #[serde(default)]
-    pub access_log: AccessLogPolicy,
+    pub access_log: Option<AccessLogPolicy>,
     pub tracing: Option<TracingConfig>,
 }
 

@@ -1,4 +1,4 @@
-use super::{Proxy, apply_route_headers};
+use super::{Proxy, apply_route_headers, calculate_path_rewrite, route_path};
 use crate::proxy::context::RouterContext;
 use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::Telemetry;
@@ -429,5 +429,248 @@ async fn logging_handles_disabled_access_log() {
     let (mut session, _client) =
         session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    proxy.logging(&mut session, None, &mut ctx).await;
+}
+
+#[test]
+fn test_calculate_path_rewrite() {
+    let route_prefix = pavis_core::Route {
+        matcher: PathMatch::Prefix {
+            path: Path("/api".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled,
+        response_headers: HeadersPolicy::Disabled,
+        rewrite: Rewrite {
+            path: RewritePath::Prefix {
+                from: Path("/api".to_string()),
+                to: Path("/v2".to_string()),
+            },
+            host: RewriteHost::Disabled,
+        },
+        destinations: vec![],
+    };
+
+    // Prefix match
+    let uri = calculate_path_rewrite(&route_prefix, "/api/foo", Some("q=1")).unwrap();
+    assert_eq!(uri.path(), "/v2/foo");
+    assert_eq!(uri.query(), Some("q=1"));
+
+    // Prefix match without query
+    let uri = calculate_path_rewrite(&route_prefix, "/api/foo", None).unwrap();
+    assert_eq!(uri.path(), "/v2/foo");
+    assert_eq!(uri.query(), None);
+
+    let route_exact = pavis_core::Route {
+        matcher: PathMatch::Exact {
+            path: Path("/api".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled,
+        response_headers: HeadersPolicy::Disabled,
+        rewrite: Rewrite {
+            path: RewritePath::Prefix {
+                from: Path("/api".to_string()),
+                to: Path("/v2".to_string()),
+            },
+            host: RewriteHost::Disabled,
+        },
+        destinations: vec![],
+    };
+
+    // Exact match
+    let uri = calculate_path_rewrite(&route_exact, "/api", None).unwrap();
+    assert_eq!(uri.path(), "/v2");
+
+    // Exact mismatch
+    assert!(calculate_path_rewrite(&route_exact, "/api/foo", None).is_none());
+
+    let route_regex = pavis_core::Route {
+        matcher: PathMatch::Regex {
+            path: Path("/api/.*".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled,
+        response_headers: HeadersPolicy::Disabled,
+        rewrite: Rewrite {
+            path: RewritePath::Prefix {
+                from: Path("/api".to_string()),
+                to: Path("/v2".to_string()),
+            },
+            host: RewriteHost::Disabled,
+        },
+        destinations: vec![],
+    };
+
+    // Regex match (currently returns None for rewrite)
+    assert!(calculate_path_rewrite(&route_regex, "/api/foo", None).is_none());
+}
+
+#[test]
+fn test_route_path_helper() {
+    let r1 = pavis_core::Route {
+        matcher: PathMatch::Prefix {
+            path: Path("/p".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled,
+        response_headers: HeadersPolicy::Disabled,
+        rewrite: Rewrite {
+            path: RewritePath::Disabled,
+            host: RewriteHost::Disabled,
+        },
+        destinations: vec![],
+    };
+    assert_eq!(route_path(&r1), "/p");
+
+    let r2 = pavis_core::Route {
+        matcher: PathMatch::Exact {
+            path: Path("/e".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled,
+        response_headers: HeadersPolicy::Disabled,
+        rewrite: Rewrite {
+            path: RewritePath::Disabled,
+            host: RewriteHost::Disabled,
+        },
+        destinations: vec![],
+    };
+    assert_eq!(route_path(&r2), "/e");
+
+    let r3 = pavis_core::Route {
+        matcher: PathMatch::Regex {
+            path: Path("/r".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled,
+        response_headers: HeadersPolicy::Disabled,
+        rewrite: Rewrite {
+            path: RewritePath::Disabled,
+            host: RewriteHost::Disabled,
+        },
+        destinations: vec![],
+    };
+    assert_eq!(route_path(&r3), "/r");
+}
+
+#[tokio::test]
+async fn upstream_peer_fails_when_no_upstream_in_ctx() {
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: Manager::new(&[]),
+        })),
+        telemetry: test_telemetry(),
+    };
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    let res = proxy.upstream_peer(&mut session, &mut ctx).await;
+    assert!(res.is_err());
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("No upstream selected")
+    );
+}
+
+#[tokio::test]
+async fn upstream_peer_fails_when_upstream_not_found() {
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: Manager::new(&[]),
+        })),
+        telemetry: test_telemetry(),
+    };
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("missing".to_string()));
+    let res = proxy.upstream_peer(&mut session, &mut ctx).await;
+    assert!(res.is_err());
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("Upstream not found in config")
+    );
+}
+
+#[tokio::test]
+async fn upstream_peer_fails_when_no_endpoints() {
+    let manager = Manager::new(&[Upstream {
+        id: UpstreamId(NonZeroU16::new(1).unwrap()),
+        name: UpstreamName("empty".to_string()),
+        discovery: Discovery::Static,
+        balancer: LoadBalancer::Random,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Disabled,
+            connect: ConnectTimeout::Disabled,
+            max: ConnectionLimit::Unlimited,
+        },
+        tls: TlsPolicy::Disabled,
+        endpoints: vec![],
+    }]);
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: manager,
+        })),
+        telemetry: test_telemetry(),
+    };
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("empty".to_string()));
+    let res = proxy.upstream_peer(&mut session, &mut ctx).await;
+    assert!(res.is_err());
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("Upstream has no endpoints")
+    );
+}
+
+#[test]
+fn test_calculate_path_rewrite_unmatched_prefix() {
+    let route = pavis_core::Route {
+        matcher: PathMatch::Prefix {
+            path: Path("/api".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled,
+        response_headers: HeadersPolicy::Disabled,
+        rewrite: Rewrite {
+            path: RewritePath::Prefix {
+                from: Path("/api".to_string()),
+                to: Path("/v2".to_string()),
+            },
+            host: RewriteHost::Disabled,
+        },
+        destinations: vec![],
+    };
+
+    // Path does not start with /api
+    assert!(calculate_path_rewrite(&route, "/other", None).is_none());
+}
+
+#[tokio::test]
+async fn test_proxy_logging_with_upstream() {
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: Manager::new(&[]),
+        })),
+        telemetry: test_telemetry(),
+    };
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("backend".to_string()));
     proxy.logging(&mut session, None, &mut ctx).await;
 }

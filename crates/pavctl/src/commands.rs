@@ -40,8 +40,9 @@ mod tests {
 
     fn minimal_yaml() -> &'static str {
         r#"
-server:
-  listen_addr: "127.0.0.1:8080"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:8080"
 telemetry: {}
 upstreams:
   - name: "backend"
@@ -51,7 +52,8 @@ upstreams:
 routes:
   - host: "example.com"
     paths:
-      - path: "/"
+      - matcher: !prefix
+          path: "/"
         destinations:
           - upstream: "backend"
             weight: 1
@@ -151,8 +153,9 @@ routes:
     fn validate_rejects_unknown_upstream() {
         let yaml_path = unique_path("pavctl_bad", "yaml");
         let content = r#"
-server:
-  listen_addr: "127.0.0.1:8080"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:8080"
 telemetry: {}
 upstreams:
   - name: "backend"
@@ -162,7 +165,8 @@ upstreams:
 routes:
   - host: "example.com"
     paths:
-      - path: "/"
+      - matcher: !prefix
+          path: "/"
         destinations:
           - upstream: "missing"
             weight: 1

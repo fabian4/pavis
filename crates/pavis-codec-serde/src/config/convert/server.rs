@@ -71,6 +71,30 @@ mod tests {
         assert_eq!(tls.cert_path.as_deref(), Some("cert.pem"));
         assert_eq!(tls.key_path.as_deref(), Some("key.pem"));
     }
+
+    #[test]
+    fn to_runtime_success() {
+        let listener = Listener {
+            name: "test".to_string(),
+            address: "127.0.0.1:8080".to_string(),
+            workers: Some(2),
+            tls: Some(SerdeTls {
+                cert_path: Some("cert.pem".to_string()),
+                key_path: Some("key.pem".to_string()),
+            }),
+        };
+        let runtime = to_runtime(listener).unwrap();
+        assert_eq!(runtime.name.0, "test");
+        assert_eq!(runtime.address.port(), 8080);
+        match runtime.workers {
+            WorkerCount::Count(n) => assert_eq!(n.get(), 2),
+            _ => panic!("expected worker count"),
+        }
+        match runtime.tls {
+            TlsConfig::Enabled { .. } => {}
+            _ => panic!("expected tls enabled"),
+        }
+    }
 }
 
 pub(super) fn to_runtime(listener: Listener) -> Result<RuntimeListener> {

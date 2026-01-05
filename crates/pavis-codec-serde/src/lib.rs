@@ -1,11 +1,14 @@
 pub mod config;
 pub mod serde_helpers;
 
-use pavis_codec_api::{CheckedArtifact, Codec, CodecError};
+use pavis_codec_api::{
+    CheckedArtifact, Codec, CodecError, PartialDto, SourceDto, StructurallyCompleteDto,
+};
 use pavis_core::RuntimeConfig;
 use pavis_ingest_api::{Artifact, Format, SourceInfo};
 
-use crate::config::types::SerdeConfig;
+use crate::config::structural_complete;
+use crate::config::types::{SerdeConfig, StructurallyCompleteConfig};
 use crate::serde_helpers::{emit_with_format, parse_with_format};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +33,9 @@ pub struct SerdeCodec {
 
 impl Codec for SerdeCodec {
     type Error = CodecError;
+    type Source = SerdeConfig;
+    type Partial = SerdeConfig;
+    type Complete = StructurallyCompleteConfig;
 
     fn check(&self, artifact: Artifact) -> Result<CheckedArtifact, CodecError> {
         let mut config: SerdeConfig = parse_with_format(self.format, &artifact.bytes)
@@ -40,7 +46,7 @@ impl Codec for SerdeCodec {
         Ok(CheckedArtifact::with_state(artifact, config))
     }
 
-    fn compile(&self, checked: &CheckedArtifact) -> Result<RuntimeConfig, CodecError> {
+    fn decode(&self, checked: &CheckedArtifact) -> Result<SourceDto<Self::Source>, CodecError> {
         let config = checked
             .state
             .as_ref()
@@ -61,7 +67,30 @@ impl Codec for SerdeCodec {
             }
         };
 
-        let runtime = config.build().map_err(|err| {
+        Ok(SourceDto(config))
+    }
+
+    fn to_partial(
+        &self,
+        source: SourceDto<Self::Source>,
+    ) -> Result<PartialDto<Self::Partial>, CodecError> {
+        Ok(PartialDto(source.into_inner()))
+    }
+
+    fn complete(
+        &self,
+        partial: PartialDto<Self::Partial>,
+    ) -> Result<StructurallyCompleteDto<Self::Complete>, CodecError> {
+        Ok(StructurallyCompleteDto(structural_complete(
+            partial.into_inner(),
+        )))
+    }
+
+    fn compile(
+        &self,
+        complete: StructurallyCompleteDto<Self::Complete>,
+    ) -> Result<RuntimeConfig, CodecError> {
+        let runtime: RuntimeConfig = complete.into_inner().try_into().map_err(|err| {
             CodecError::Compile(anyhow::anyhow!("Failed to build RuntimeConfig: {err}"))
         })?;
         Ok(runtime)
@@ -103,7 +132,10 @@ listeners:
         };
         // Compile directly without state populated by check
         let checked = CheckedArtifact::new(artifact);
-        let config = codec.compile(&checked).expect("compile");
+        let source = codec.decode(&checked).expect("decode");
+        let partial = codec.to_partial(source).expect("to_partial");
+        let complete = codec.complete(partial).expect("complete");
+        let config = codec.compile(complete).expect("compile");
         assert_eq!(config.listeners[0].address.port(), 8080);
     }
 

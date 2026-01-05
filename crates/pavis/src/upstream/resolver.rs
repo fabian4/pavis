@@ -219,3 +219,172 @@ fn endpoint_port(addr: SocketAddr) -> pavis_core::Port {
     use std::num::NonZeroU16;
     pavis_core::Port(NonZeroU16::new(addr.port()).expect("non-zero port"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pavis_core::{Port, Weight};
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::num::NonZeroU16;
+
+    #[test]
+    fn test_endpoint_port() {
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+        let port = endpoint_port(addr);
+        assert_eq!(port.0.get(), 8080);
+    }
+
+    #[test]
+    fn test_select_existing_or_first() {
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)), 8080);
+        let resolved = vec![addr1, addr2];
+
+        // Case 1: Current is empty
+        assert_eq!(select_existing_or_first(&resolved, &[]), None);
+
+        // Case 2: Current matches one of resolved
+        let current = vec![Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+                port: Port(NonZeroU16::new(8080).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        }];
+        assert_eq!(select_existing_or_first(&resolved, &current), Some(addr2));
+
+        // Case 3: Current matches nothing in resolved
+        let current_mismatch = vec![Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)),
+                port: Port(NonZeroU16::new(8080).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        }];
+        assert_eq!(select_existing_or_first(&resolved, &current_mismatch), None);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_logical_dns_no_dns_endpoints() {
+        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: Discovery::LogicalDns,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![Endpoint {
+                address: EndpointAddr::Ip {
+                    address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            }],
+        };
+
+        let result = resolve_logical_dns(&config, &[]).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_strict_dns_empty_endpoints() {
+        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: Discovery::StrictDns,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![],
+        };
+
+        let result = resolve_strict_dns(&config).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_upstream_static() {
+        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: Discovery::Static,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![],
+        };
+
+        let result = resolve_upstream("test".to_string(), config, vec![]).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_logical_dns_multiple_endpoints_warning() {
+        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: Discovery::LogicalDns,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![
+                Endpoint {
+                    address: EndpointAddr::Dns {
+                        host: pavis_core::Hostname("localhost".to_string()),
+                        port: pavis_core::Port(NonZeroU16::new(8080).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
+                },
+                Endpoint {
+                    address: EndpointAddr::Dns {
+                        host: pavis_core::Hostname("localhost".to_string()),
+                        port: pavis_core::Port(NonZeroU16::new(8081).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
+                },
+            ],
+        };
+
+        // This should still work but hit the warning branch
+        let result = resolve_logical_dns(&config, &[]).await.unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_dns_success() {
+        let res = resolve_dns("localhost", 80).await.unwrap();
+        assert!(!res.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_dns_failure() {
+        // Empty host should fail
+        let res = resolve_dns("", 80).await;
+        assert!(res.is_err());
+    }
+}

@@ -8,8 +8,7 @@ pub struct VirtualHost {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Route {
-    #[serde(default)]
-    pub matcher: Matcher,
+    pub matcher: Option<Matcher>,
     #[serde(default, with = "humantime_serde")]
     pub timeout: Option<std::time::Duration>,
     pub retry: Option<RetryPolicy>,
@@ -25,14 +24,6 @@ pub enum Matcher {
     Prefix { path: String },
     Exact { path: String },
     Regex { path: String },
-}
-
-impl Default for Matcher {
-    fn default() -> Self {
-        Matcher::Prefix {
-            path: "/".to_string(),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

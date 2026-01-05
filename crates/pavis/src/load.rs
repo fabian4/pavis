@@ -1,4 +1,4 @@
-use pavis_core::ValidatedRuntimeConfig;
+use pavis_core::{RuntimeConfig, ValidatedRuntimeConfig};
 use pavis_pvs::PvsError;
 use std::path::PathBuf;
 
@@ -22,8 +22,13 @@ pub fn load_file(path: &str) -> LoadResult<ValidatedRuntimeConfig> {
     }
 
     let config = pavis_pvs::load(path)?;
-    let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config) };
-    Ok(validated)
+    Ok(assume_validated(config))
+}
+
+pub(crate) fn assume_validated(config: RuntimeConfig) -> ValidatedRuntimeConfig {
+    // SAFETY: `.pvs` artifacts are produced after canonical validation; runtime does not
+    // perform semantic inference or mutation after loading.
+    unsafe { ValidatedRuntimeConfig::from_trusted(config) }
 }
 
 #[cfg(test)]

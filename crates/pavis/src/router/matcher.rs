@@ -73,3 +73,64 @@ fn normalize_host(host: &str) -> &str {
     }
     host
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::router::CompiledRoute;
+    use pavis_core::{
+        Destination, HeadersPolicy, Host, Path, PathMatch, RetryPolicy, Rewrite, RewriteHost,
+        RewritePath, Route, Timeout, Weight,
+    };
+    use std::num::NonZeroU16;
+
+    #[test]
+    fn test_normalize_host() {
+        assert_eq!(normalize_host("example.com"), "example.com");
+        assert_eq!(normalize_host("example.com:8080"), "example.com");
+        assert_eq!(normalize_host("[::1]"), "::1");
+        assert_eq!(normalize_host("[::1]:8080"), "::1");
+        assert_eq!(normalize_host("127.0.0.1"), "127.0.0.1");
+    }
+
+    #[test]
+    fn test_match_exact_linear() {
+        let vhost = CompiledVirtualHost {
+            config: VirtualHost {
+                host: Host("*".to_string()),
+                paths: vec![Route {
+                    matcher: PathMatch::Exact {
+                        path: Path("/exact".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled,
+                    response_headers: HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: pavis_core::UpstreamName("u".to_string()),
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
+                    }],
+                }],
+            },
+            zones: vec![RouteZone::Linear(vec![CompiledRoute {
+                index: 0,
+                regex: None,
+            }])],
+        };
+
+        let router = Router {
+            exact_hosts: std::collections::HashMap::new(),
+            wildcard_hosts: vec![vhost],
+        };
+
+        let (_, res) = match_request(&router, None, "/exact").unwrap();
+        assert!(matches!(res.matcher, PathMatch::Exact { .. }));
+
+        let res_miss = match_request(&router, None, "/exact/more");
+        assert!(res_miss.is_none());
+    }
+}

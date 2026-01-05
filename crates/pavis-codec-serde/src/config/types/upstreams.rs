@@ -7,16 +7,16 @@ use pavis_core::{Discovery, HttpVersion, LoadBalancer};
 pub struct Upstream {
     pub id: Option<u16>,
     pub name: String,
-    #[serde(default, alias = "discovery_type")]
-    pub discovery: Discovery,
-    #[serde(default, rename = "balancer", alias = "load_balancer", alias = "lb")]
-    pub balancer: LoadBalancer,
+    #[serde(alias = "discovery_type")]
+    pub discovery: Option<Discovery>,
+    #[serde(rename = "balancer", alias = "load_balancer", alias = "lb")]
+    pub balancer: Option<LoadBalancer>,
     /// HTTP version for upstream connections (h1, h2, h2h1). Default: h1
-    #[serde(default, rename = "protocol", alias = "http_version", alias = "http")]
-    pub protocol: HttpVersion,
+    #[serde(rename = "protocol", alias = "http_version", alias = "http")]
+    pub protocol: Option<HttpVersion>,
     /// Connection pool settings
-    #[serde(default, alias = "connection_pool")]
-    pub pool: ConnectionPoolConfig,
+    #[serde(alias = "connection_pool")]
+    pub pool: Option<ConnectionPoolConfig>,
     /// TLS configuration for upstream connections
     pub tls: Option<UpstreamTlsConfig>,
     pub circuit_breaker: Option<CircuitBreaker>,
@@ -26,47 +26,23 @@ pub struct Upstream {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct UpstreamTlsConfig {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
+    pub enabled: Option<bool>,
     pub verify_hostname: Option<bool>,
     pub verify_cert: Option<bool>,
     pub sni: Option<String>,
 }
 
-fn default_true() -> bool {
-    true
-}
-
 /// Connection pool configuration for upstream connections
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct ConnectionPoolConfig {
     /// Idle timeout for pooled connections. Default: 60s
-    #[serde(default = "default_idle_timeout", with = "humantime_serde")]
-    pub idle: Duration,
+    #[serde(default, with = "humantime_serde")]
+    pub idle: Option<Duration>,
     /// Connection timeout. Default: 5s
-    #[serde(default = "default_connection_timeout", with = "humantime_serde")]
-    pub connect: Duration,
+    #[serde(default, with = "humantime_serde")]
+    pub connect: Option<Duration>,
     /// Connection limit. Default: 0 (unlimited)
-    #[serde(default)]
     pub max: Option<u32>,
-}
-
-fn default_idle_timeout() -> Duration {
-    Duration::from_secs(60)
-}
-
-fn default_connection_timeout() -> Duration {
-    Duration::from_secs(5)
-}
-
-impl Default for ConnectionPoolConfig {
-    fn default() -> Self {
-        Self {
-            idle: default_idle_timeout(),
-            connect: default_connection_timeout(),
-            max: None,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

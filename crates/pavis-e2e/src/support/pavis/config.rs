@@ -75,7 +75,7 @@ pub fn tls_support_config(
     upstream_port: u16,
 ) -> SerdeConfig {
     SerdeConfig {
-        listeners: vec![Listener {
+        listeners: Some(vec![Listener {
             name: "default".to_string(),
             address: listen_addr.to_string(),
             workers: None,
@@ -83,23 +83,23 @@ pub fn tls_support_config(
                 cert_path: Some(cert_path.to_string()),
                 key_path: Some(key_path.to_string()),
             }),
-        }],
-        telemetry: TelemetryConfig {
+        }]),
+        telemetry: Some(TelemetryConfig {
             level: Some("debug".to_string()),
             pingora: None,
             service_name: None,
             metrics: None,
-            access_log: AccessLogPolicy::Stdout,
+            access_log: Some(AccessLogPolicy::Stdout),
             tracing: None,
-        },
-        upstreams: vec![upstream(
+        }),
+        upstreams: Some(vec![upstream(
             "backend",
             LoadBalancer::RoundRobin,
             HttpVersion::H1,
             None,
             vec![endpoint(upstream_host, upstream_port, 1)],
-        )],
-        routes: vec![VirtualHost {
+        )]),
+        routes: Some(vec![VirtualHost {
             host: "*".to_string(),
             paths: vec![route(
                 Matcher::Prefix {
@@ -109,7 +109,7 @@ pub fn tls_support_config(
                 None,
                 vec![destination("backend", 1)],
             )],
-        }],
+        }]),
     }
 }
 
@@ -119,33 +119,33 @@ pub fn upstream_tls_config(
     upstream_port: u16,
 ) -> SerdeConfig {
     SerdeConfig {
-        listeners: vec![Listener {
+        listeners: Some(vec![Listener {
             name: "default".to_string(),
             address: listen_addr.to_string(),
             workers: None,
             tls: None,
-        }],
-        telemetry: TelemetryConfig {
+        }]),
+        telemetry: Some(TelemetryConfig {
             level: None,
             pingora: None,
             service_name: None,
             metrics: None,
-            access_log: AccessLogPolicy::Stdout,
+            access_log: Some(AccessLogPolicy::Stdout),
             tracing: None,
-        },
-        upstreams: vec![upstream(
+        }),
+        upstreams: Some(vec![upstream(
             "backend-tls",
             LoadBalancer::RoundRobin,
             HttpVersion::H1,
             Some(UpstreamTlsConfig {
-                enabled: true,
+                enabled: Some(true),
                 verify_hostname: Some(false),
                 verify_cert: Some(false),
                 sni: None,
             }),
             vec![endpoint(upstream_host, upstream_port, 1)],
-        )],
-        routes: vec![VirtualHost {
+        )]),
+        routes: Some(vec![VirtualHost {
             host: "*".to_string(),
             paths: vec![route(
                 Matcher::Prefix {
@@ -155,7 +155,7 @@ pub fn upstream_tls_config(
                 None,
                 vec![destination("backend-tls", 1)],
             )],
-        }],
+        }]),
     }
 }
 
@@ -372,7 +372,7 @@ fn build_config(
                 pingora: Some("warn".to_string()),
                 service_name: Some("pavis-e2e-response-headers".to_string()),
                 metrics: None,
-                access_log: AccessLogPolicy::Stdout,
+                access_log: Some(AccessLogPolicy::Stdout),
                 tracing: None,
             };
             let upstreams = vec![upstream(
@@ -663,15 +663,15 @@ fn base_config(
         }
     });
     SerdeConfig {
-        listeners: vec![Listener {
+        listeners: Some(vec![Listener {
             name: "default".to_string(),
             address: listen_addr.to_string(),
             workers: worker_threads,
             tls,
-        }],
-        telemetry,
-        upstreams,
-        routes,
+        }]),
+        telemetry: Some(telemetry),
+        upstreams: Some(upstreams),
+        routes: Some(routes),
     }
 }
 
@@ -681,7 +681,7 @@ fn telemetry_with_tracing(service_name: &str) -> TelemetryConfig {
         pingora: Some("info".to_string()),
         service_name: Some(service_name.to_string()),
         metrics: Some("0.0.0.0:9091".to_string()),
-        access_log: AccessLogPolicy::Stdout,
+        access_log: Some(AccessLogPolicy::Stdout),
         tracing: Some(TracingConfig {
             provider: Some("otlp".to_string()),
             sampling: Some(1),
@@ -699,10 +699,10 @@ fn upstream(
     Upstream {
         id: None,
         name: name.to_string(),
-        discovery: Discovery::Static,
-        balancer: lb,
-        protocol: http,
-        pool: ConnectionPoolConfig::default(),
+        discovery: Some(Discovery::Static),
+        balancer: Some(lb),
+        protocol: Some(http),
+        pool: Some(ConnectionPoolConfig::default()),
         tls,
         circuit_breaker: None,
         health_check: None,
@@ -725,7 +725,7 @@ fn route(
     destinations: Vec<WeightedDestination>,
 ) -> Route {
     Route {
-        matcher,
+        matcher: Some(matcher),
         timeout: None,
         retry: None,
         request_headers,

@@ -16,9 +16,9 @@ mod tests {
         let vhost = VirtualHost {
             host: "*".to_string(),
             paths: vec![Route {
-                matcher: Matcher::Prefix {
+                matcher: Some(Matcher::Prefix {
                     path: "/".to_string(),
-                },
+                }),
                 timeout: None,
                 retry: None,
                 request_headers: None,
@@ -39,9 +39,9 @@ mod tests {
         let vhost = VirtualHost {
             host: "*".to_string(),
             paths: vec![Route {
-                matcher: Matcher::Prefix {
+                matcher: Some(Matcher::Prefix {
                     path: "/".to_string(),
-                },
+                }),
                 timeout: Some(Duration::from_millis(u64::MAX)), // Exceeds u32
                 retry: None,
                 request_headers: None,
@@ -59,9 +59,9 @@ mod tests {
         let vhost = VirtualHost {
             host: "*".to_string(),
             paths: vec![Route {
-                matcher: Matcher::Prefix {
+                matcher: Some(Matcher::Prefix {
                     path: "/".to_string(),
-                },
+                }),
                 timeout: None,
                 retry: Some(RetryPolicy {
                     attempts: 0, // Invalid
@@ -83,9 +83,9 @@ mod tests {
         let vhost = VirtualHost {
             host: "*".to_string(),
             paths: vec![Route {
-                matcher: Matcher::Prefix {
+                matcher: Some(Matcher::Prefix {
                     path: "/".to_string(),
-                },
+                }),
                 timeout: None,
                 retry: Some(RetryPolicy {
                     attempts: 1,
@@ -122,9 +122,9 @@ mod tests {
         let vhost = VirtualHost {
             host: "*".to_string(),
             paths: vec![Route {
-                matcher: Matcher::Prefix {
+                matcher: Some(Matcher::Prefix {
                     path: "/".to_string(),
-                },
+                }),
                 timeout: None,
                 retry: Some(RetryPolicy {
                     attempts: 1,
@@ -181,6 +181,214 @@ mod tests {
         let rewrite = serde_vhost[0].paths[0].rewrite.as_ref().unwrap();
         assert_eq!(rewrite.path_prefix_rewrite.as_deref(), Some("/api"));
         assert_eq!(rewrite.host_rewrite_literal.as_deref(), Some("backend"));
+    }
+
+    #[test]
+    fn to_runtime_handles_all_matchers() {
+        let vhosts = vec![VirtualHost {
+            host: "*".to_string(),
+            paths: vec![
+                Route {
+                    matcher: Some(Matcher::Exact {
+                        path: "/exact".to_string(),
+                    }),
+                    timeout: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    rewrite: None,
+                    destinations: vec![],
+                },
+                Route {
+                    matcher: Some(Matcher::Regex {
+                        path: "/regex/.*".to_string(),
+                    }),
+                    timeout: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    rewrite: None,
+                    destinations: vec![],
+                },
+            ],
+        }];
+        let runtime = to_runtime(vhosts).unwrap();
+        assert!(matches!(
+            runtime[0].paths[0].matcher,
+            pavis_core::PathMatch::Exact { .. }
+        ));
+        assert!(matches!(
+            runtime[0].paths[1].matcher,
+            pavis_core::PathMatch::Regex { .. }
+        ));
+    }
+
+    #[test]
+    fn to_runtime_handles_header_ops() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Some(Matcher::Prefix {
+                    path: "/".to_string(),
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: Some(HeaderOperations {
+                    set_headers: vec![("x-set".to_string(), "v1".to_string())],
+                    append_headers: vec![("x-append".to_string(), "v2".to_string())],
+                    add_headers: vec![("x-add".to_string(), "v3".to_string())],
+                    remove_headers: vec!["x-remove".to_string()],
+                }),
+                response_headers: None,
+                rewrite: None,
+                destinations: vec![],
+            }],
+        };
+        let runtime = to_runtime(vec![vhost]).unwrap();
+        match &runtime[0].paths[0].request_headers {
+            pavis_core::HeadersPolicy::Enabled { rules } => {
+                assert_eq!(rules.set_headers.len(), 1);
+                assert_eq!(rules.append_headers.len(), 1);
+                assert_eq!(rules.add_headers.len(), 1);
+                assert_eq!(rules.remove_headers.len(), 1);
+            }
+            _ => panic!("headers not enabled"),
+        }
+    }
+
+    #[test]
+    fn to_runtime_error_on_missing_matcher() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                destinations: vec![],
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("matcher is required"));
+    }
+
+    #[test]
+    fn from_runtime_handles_all_headers() {
+        use pavis_core::*;
+        let runtime_vhost = VirtualHost {
+            host: Host("example.com".to_string()),
+            paths: vec![pavis_core::Route {
+                matcher: PathMatch::Prefix {
+                    path: Path("/".to_string()),
+                },
+                timeout: Timeout::Disabled,
+                retry: RetryPolicy::Disabled,
+                request_headers: HeadersPolicy::Enabled {
+                    rules: Headers {
+                        set_headers: vec![],
+                        append_headers: vec![(
+                            HeaderName("x-a".to_string()),
+                            HeaderValue("v".to_string()),
+                        )],
+                        add_headers: vec![(
+                            HeaderName("x-b".to_string()),
+                            HeaderValue("v".to_string()),
+                        )],
+                        remove_headers: vec![HeaderName("x-c".to_string())],
+                    },
+                },
+                response_headers: HeadersPolicy::Disabled,
+                rewrite: Rewrite {
+                    path: RewritePath::Disabled,
+                    host: RewriteHost::Disabled,
+                },
+                destinations: vec![],
+            }],
+        };
+
+        let serde_vhost = from_runtime(vec![runtime_vhost]);
+        let headers = serde_vhost[0].paths[0].request_headers.as_ref().unwrap();
+        assert_eq!(headers.append_headers.len(), 1);
+        assert_eq!(headers.add_headers.len(), 1);
+        assert_eq!(headers.remove_headers.len(), 1);
+    }
+
+    #[test]
+    fn test_matcher_path_variants() {
+        assert_eq!(
+            super::matcher_path(&Matcher::Prefix {
+                path: "/p".to_string()
+            }),
+            "/p"
+        );
+        assert_eq!(
+            super::matcher_path(&Matcher::Exact {
+                path: "/e".to_string()
+            }),
+            "/e"
+        );
+        assert_eq!(
+            super::matcher_path(&Matcher::Regex {
+                path: "/r".to_string()
+            }),
+            "/r"
+        );
+    }
+
+    #[test]
+    fn to_runtime_handles_partial_rewrites() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Some(Matcher::Prefix {
+                    path: "/".to_string(),
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: Some(RewritePolicy {
+                    path_prefix_rewrite: Some("/v2".to_string()),
+                    host_rewrite_literal: None,
+                }),
+                destinations: vec![],
+            }],
+        };
+        let runtime = to_runtime(vec![vhost]).unwrap();
+        assert!(matches!(
+            runtime[0].paths[0].rewrite.path,
+            pavis_core::RewritePath::Prefix { .. }
+        ));
+        assert!(matches!(
+            runtime[0].paths[0].rewrite.host,
+            pavis_core::RewriteHost::Disabled
+        ));
+    }
+
+    #[test]
+    fn to_runtime_error_on_rewrite_missing_matcher() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: Some(RewritePolicy {
+                    path_prefix_rewrite: Some("/v2".to_string()),
+                    host_rewrite_literal: None,
+                }),
+                destinations: vec![],
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("matcher is required for path rewrite")
+        );
     }
 }
 
@@ -252,7 +460,10 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 Some(r) => {
                     let path = match r.path_prefix_rewrite {
                         Some(to) => {
-                            let from = matcher_path(&p.matcher);
+                            let matcher_ref = p.matcher.as_ref().ok_or_else(|| {
+                                anyhow::anyhow!("matcher is required for path rewrite")
+                            })?;
+                            let from = matcher_path(matcher_ref);
                             pavis_core::RewritePath::Prefix {
                                 from: pavis_core::Path(from),
                                 to: pavis_core::Path(to),
@@ -271,15 +482,16 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
             };
 
             let matcher = match p.matcher {
-                Matcher::Prefix { path } => pavis_core::PathMatch::Prefix {
+                Some(Matcher::Prefix { path }) => pavis_core::PathMatch::Prefix {
                     path: pavis_core::Path(path),
                 },
-                Matcher::Exact { path } => pavis_core::PathMatch::Exact {
+                Some(Matcher::Exact { path }) => pavis_core::PathMatch::Exact {
                     path: pavis_core::Path(path),
                 },
-                Matcher::Regex { path } => pavis_core::PathMatch::Regex {
+                Some(Matcher::Regex { path }) => pavis_core::PathMatch::Regex {
                     path: pavis_core::Path(path),
                 },
+                None => return Err(anyhow::anyhow!("matcher is required")),
             };
 
             paths.push(pavis_core::Route {
@@ -429,7 +641,7 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
             };
 
             paths.push(Route {
-                matcher,
+                matcher: Some(matcher),
                 timeout,
                 retry,
                 request_headers,

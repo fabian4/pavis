@@ -7,12 +7,12 @@ use anyhow::Result;
 
 use pavis_core::validate_runtime;
 
-use super::types::SerdeConfig;
+use super::types::{SerdeConfig, StructurallyCompleteConfig};
 
-impl TryFrom<SerdeConfig> for pavis_core::RuntimeConfig {
+impl TryFrom<StructurallyCompleteConfig> for pavis_core::RuntimeConfig {
     type Error = anyhow::Error;
 
-    fn try_from(src: SerdeConfig) -> Result<Self, Self::Error> {
+    fn try_from(src: StructurallyCompleteConfig) -> Result<Self, Self::Error> {
         let mut listeners = Vec::with_capacity(src.listeners.len());
         for l in src.listeners {
             listeners.push(server::to_runtime(l)?);
@@ -42,10 +42,10 @@ impl From<pavis_core::RuntimeConfig> for SerdeConfig {
             .map(server::from_runtime)
             .collect();
         SerdeConfig {
-            listeners,
-            telemetry: telemetry::from_runtime(binary.telemetry),
-            upstreams: upstreams::from_runtime(binary.upstreams),
-            routes: routes::from_runtime(binary.routes),
+            listeners: Some(listeners),
+            telemetry: Some(telemetry::from_runtime(binary.telemetry)),
+            upstreams: Some(upstreams::from_runtime(binary.upstreams)),
+            routes: Some(routes::from_runtime(binary.routes)),
         }
     }
 }
@@ -101,7 +101,7 @@ routes:
 "#;
 
         let config = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect("parse yaml");
-        let runtime: RuntimeConfig = config.try_into().expect("convert to runtime");
+        let runtime = config.build().expect("convert to runtime");
 
         let upstream = &runtime.upstreams[0];
         assert_eq!(upstream.endpoints[0].weight.0.get(), 1);
@@ -230,17 +230,32 @@ routes:
         };
 
         let config: SerdeConfig = runtime.into();
-        assert_eq!(config.listeners[0].address, "127.0.0.1:8080");
-        assert_eq!(config.listeners[0].workers, Some(2));
-        assert_eq!(config.telemetry.level, Some("info".to_string()));
-        assert_eq!(config.telemetry.access_log, AccessLogPolicy::Disabled);
-        let upstream = &config.upstreams[0];
-        assert_eq!(upstream.balancer, LoadBalancer::RoundRobin);
-        assert_eq!(upstream.protocol, HttpVersion::H2);
-        assert_eq!(upstream.pool.idle, StdDuration::from_secs(10));
-        assert_eq!(upstream.pool.connect, StdDuration::from_secs(2));
+        assert_eq!(
+            config.listeners.as_ref().unwrap()[0].address,
+            "127.0.0.1:8080"
+        );
+        assert_eq!(config.listeners.as_ref().unwrap()[0].workers, Some(2));
+        assert_eq!(
+            config.telemetry.as_ref().unwrap().level,
+            Some("info".to_string())
+        );
+        assert_eq!(
+            config.telemetry.as_ref().unwrap().access_log,
+            Some(AccessLogPolicy::Disabled)
+        );
+        let upstream = &config.upstreams.as_ref().unwrap()[0];
+        assert_eq!(upstream.balancer, Some(LoadBalancer::RoundRobin));
+        assert_eq!(upstream.protocol, Some(HttpVersion::H2));
+        assert_eq!(
+            upstream.pool.as_ref().unwrap().idle,
+            Some(StdDuration::from_secs(10))
+        );
+        assert_eq!(
+            upstream.pool.as_ref().unwrap().connect,
+            Some(StdDuration::from_secs(2))
+        );
         let tls = upstream.tls.as_ref().expect("tls config");
-        assert_eq!(tls.enabled, true);
+        assert_eq!(tls.enabled, Some(true));
         assert_eq!(tls.verify_hostname, Some(false));
         assert_eq!(tls.verify_cert, Some(true));
         assert_eq!(tls.sni.as_deref(), Some("backend.local"));
@@ -260,7 +275,7 @@ routes: []
 "#;
 
         let config = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect("parse yaml");
-        let err = pavis_core::RuntimeConfig::try_from(config).expect_err("invalid listen addr");
+        let err = config.build().expect_err("invalid listen addr");
         assert!(err.to_string().contains("Invalid address"));
     }
 
@@ -280,7 +295,7 @@ routes: []
 "#;
 
         let config = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect("parse yaml");
-        let err = pavis_core::RuntimeConfig::try_from(config).expect_err("invalid endpoint ip");
+        let err = config.build().expect_err("invalid endpoint ip");
         assert!(err.to_string().contains("Invalid endpoint IP"));
     }
 }

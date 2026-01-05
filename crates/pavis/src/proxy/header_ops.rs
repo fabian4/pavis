@@ -401,4 +401,98 @@ mod tests {
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].to_str().unwrap(), "one, two, three");
     }
+
+    #[test]
+    fn test_apply_headers_disabled() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        apply_request_headers(&mut req, &HeadersPolicy::Disabled).unwrap();
+        assert_eq!(
+            req.headers.get("X-Proxy-By").unwrap().to_str().unwrap(),
+            "Pavis"
+        );
+    }
+
+    #[test]
+    fn test_add_headers_skips_if_exists() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.insert_header("X-Exists", "original").unwrap();
+
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: Vec::new(),
+                append_headers: Vec::new(),
+                add_headers: vec![(
+                    HeaderName("X-Exists".to_string()),
+                    HeaderValue("new".to_string()),
+                )],
+                remove_headers: Vec::new(),
+            },
+        };
+
+        apply_request_headers(&mut req, &ops).unwrap();
+        assert_eq!(
+            req.headers.get("X-Exists").unwrap().to_str().unwrap(),
+            "original"
+        );
+    }
+
+    #[test]
+    fn test_apply_append_no_existing() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: Vec::new(),
+                append_headers: vec![(
+                    HeaderName("X-New".to_string()),
+                    HeaderValue("value".to_string()),
+                )],
+                add_headers: Vec::new(),
+                remove_headers: Vec::new(),
+            },
+        };
+
+        apply_request_headers(&mut req, &ops).unwrap();
+        assert_eq!(req.headers.get("X-New").unwrap().to_str().unwrap(), "value");
+    }
+
+    #[test]
+    fn test_apply_set_invalid_inputs() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        // Invalid name (contains space)
+        super::apply_set(
+            &mut req,
+            &HeaderName("Bad Name".to_string()),
+            &HeaderValue("v".to_string()),
+            "test",
+        )
+        .unwrap();
+        assert!(req.headers.get("Bad Name").is_none());
+
+        // Invalid value (contains newline)
+        super::apply_set(
+            &mut req,
+            &HeaderName("X-Valid".to_string()),
+            &HeaderValue("bad\nvalue".to_string()),
+            "test",
+        )
+        .unwrap();
+        assert!(req.headers.get("X-Valid").is_none());
+    }
+
+    #[test]
+    fn test_apply_append_invalid_inputs() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        // Invalid name
+        super::apply_append(&mut req, "Bad Name", "v", "test").unwrap();
+        // Invalid value
+        super::apply_append(&mut req, "X-Valid", "bad\nvalue", "test").unwrap();
+        assert!(req.headers.get("X-Valid").is_none());
+    }
+
+    #[test]
+    fn test_build_joined_value_empty() {
+        let val = http::HeaderValue::from_static("v");
+        let res = super::build_joined_value(std::iter::empty(), &val);
+        assert!(res.is_none());
+    }
 }

@@ -107,20 +107,20 @@ fn run_pavctl(bin: &Path, args: &[&str]) -> Result<()> {
 
 fn sample_config() -> SerdeConfig {
     SerdeConfig {
-        listeners: vec![Listener {
+        listeners: Some(vec![Listener {
             name: "default".to_string(),
             address: "127.0.0.1:8080".to_string(),
             workers: None,
             tls: None,
-        }],
-        telemetry: Default::default(),
-        upstreams: vec![Upstream {
+        }]),
+        telemetry: Some(Default::default()),
+        upstreams: Some(vec![Upstream {
             id: None,
             name: "backend".to_string(),
-            discovery: Discovery::Static,
-            balancer: LoadBalancer::Random,
-            protocol: HttpVersion::H1,
-            pool: ConnectionPoolConfig::default(),
+            discovery: Some(Discovery::Static),
+            balancer: Some(LoadBalancer::Random),
+            protocol: Some(HttpVersion::H1),
+            pool: Some(ConnectionPoolConfig::default()),
             tls: None,
             circuit_breaker: None,
             health_check: None,
@@ -129,13 +129,13 @@ fn sample_config() -> SerdeConfig {
                 port: 8081,
                 weight: Some(1),
             }],
-        }],
-        routes: vec![VirtualHost {
+        }]),
+        routes: Some(vec![VirtualHost {
             host: "example.com".to_string(),
             paths: vec![Route {
-                matcher: Matcher::Prefix {
+                matcher: Some(Matcher::Prefix {
                     path: "/".to_string(),
-                },
+                }),
                 timeout: None,
                 retry: None,
                 request_headers: None,
@@ -146,7 +146,7 @@ fn sample_config() -> SerdeConfig {
                     weight: 1,
                 }],
             }],
-        }],
+        }]),
     }
 }
 

@@ -22,12 +22,28 @@ use crate::SerdeFormat;
 use crate::serde_helpers::parse_with_format;
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-#[serde(default)]
 pub struct SerdeConfig {
+    pub listeners: Option<Vec<Listener>>,
+    pub telemetry: Option<TelemetryConfig>,
+    pub upstreams: Option<Vec<Upstream>>,
+    pub routes: Option<Vec<VirtualHost>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructurallyCompleteConfig {
     pub listeners: Vec<Listener>,
     pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
+}
+
+pub fn structural_complete(src: SerdeConfig) -> StructurallyCompleteConfig {
+    StructurallyCompleteConfig {
+        listeners: src.listeners.unwrap_or_default(),
+        telemetry: src.telemetry.unwrap_or_default(),
+        upstreams: src.upstreams.unwrap_or_default(),
+        routes: src.routes.unwrap_or_default(),
+    }
 }
 
 impl SerdeConfig {
@@ -46,7 +62,8 @@ impl SerdeConfig {
     pub fn build(self) -> AnyResult<RuntimeConfig> {
         let mut config = self;
         validation::validate(&mut config)?;
-        config.try_into()
+        let complete = structural_complete(config);
+        complete.try_into()
     }
 }
 
@@ -54,22 +71,19 @@ impl SerdeConfig {
 mod tests {
     use super::SerdeConfig;
     use crate::SerdeFormat;
-    use pavis_core::{AccessLogPolicy, HttpVersion, LoadBalancer};
-    use std::time::Duration;
 
-    fn assert_defaults(config: SerdeConfig) {
-        let upstream = &config.upstreams[0];
-        assert_eq!(upstream.balancer, LoadBalancer::Random);
-        assert_eq!(upstream.protocol, HttpVersion::H1);
-        assert_eq!(upstream.pool.idle, Duration::from_secs(60));
-        assert_eq!(upstream.pool.connect, Duration::from_secs(5));
+    fn assert_sparse(config: SerdeConfig) {
+        let upstream = &config.upstreams.as_ref().unwrap()[0];
+        assert!(upstream.balancer.is_none());
+        assert!(upstream.protocol.is_none());
+        assert!(upstream.pool.is_none());
         let tls = upstream.tls.as_ref().expect("tls config");
-        assert!(tls.enabled);
-        assert_eq!(config.telemetry.access_log, AccessLogPolicy::Stdout);
+        assert!(tls.enabled.is_none());
+        assert!(config.telemetry.as_ref().unwrap().access_log.is_none());
     }
 
     #[test]
-    fn parse_applies_defaults_for_upstream_and_telemetry() {
+    fn parse_leaves_upstream_and_telemetry_sparse() {
         let yaml = r#"
 listeners:
   - name: "default"
@@ -92,11 +106,11 @@ routes:
 "#;
 
         let config = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect("parse yaml");
-        assert_defaults(config);
+        assert_sparse(config);
     }
 
     #[test]
-    fn parse_applies_defaults_for_upstream_and_telemetry_json() {
+    fn parse_leaves_upstream_and_telemetry_sparse_json() {
         let json = r#"
 {
   "listeners": [{ "name": "default", "address": "0.0.0.0:8080" }],
@@ -123,7 +137,7 @@ routes:
 "#;
 
         let config = SerdeConfig::parse_str(SerdeFormat::Json, json).expect("parse json");
-        assert_defaults(config);
+        assert_sparse(config);
     }
 
     #[test]
@@ -164,6 +178,9 @@ routes: []
 }
 "#;
         let config = SerdeConfig::parse_bytes(SerdeFormat::Json, json).expect("parse bytes");
-        assert_eq!(config.listeners[0].address, "0.0.0.0:8080");
+        assert_eq!(
+            config.listeners.as_ref().unwrap()[0].address,
+            "0.0.0.0:8080"
+        );
     }
 }

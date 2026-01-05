@@ -83,8 +83,9 @@ fn build_state_parts(endpoints: Vec<Endpoint>) -> (Vec<Endpoint>, Vec<u32>, u32)
 mod tests {
     use super::Cluster;
     use pavis_core::{
-        ConnectTimeout, ConnectionLimit, Endpoint, EndpointAddr, HttpVersion, IdleTimeout,
-        LoadBalancer, Pool, Port, TlsPolicy, Upstream, UpstreamId, UpstreamName, Weight,
+        ConnectTimeout, ConnectionLimit, Discovery, Endpoint, EndpointAddr, HttpVersion,
+        IdleTimeout, LoadBalancer, Pool, Port, TlsPolicy, Upstream, UpstreamId, UpstreamName,
+        Weight,
     };
     use std::net::{IpAddr, Ipv4Addr};
     use std::num::NonZeroU16;
@@ -221,5 +222,38 @@ mod tests {
 
         let count = cluster.rr_counter.0.load(Ordering::Relaxed);
         assert_eq!(count, 1000);
+    }
+
+    #[test]
+    fn test_cluster_update_endpoints() {
+        let u = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: Discovery::Static,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit::Unlimited,
+            },
+            tls: TlsPolicy::Disabled,
+            endpoints: vec![],
+        };
+        let cluster = Cluster::new(u);
+        assert!(cluster.current_endpoints().is_empty());
+
+        let ep = Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(8080).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        };
+        cluster.update_endpoints(vec![ep.clone()]);
+
+        let current = cluster.current_endpoints();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].address, ep.address);
     }
 }

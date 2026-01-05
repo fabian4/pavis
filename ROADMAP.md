@@ -1,15 +1,24 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 17/59
-- **Core Features**: 17/43
-- **Technical Debt**: 0/16
+- **Total**: 17/67
+- **Core Features**: 17/50
+- **Technical Debt**: 0/17
 
 > **Status**: Active
-> **Focus**: Phase 3 (Dynamic Config) & Phase 9 (xDS)
+> **Focus**: Phase 3 (Dynamic Config) & Phase 3.5 (Architecture Convergence)
 > **Reference**: [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 This roadmap distinguishes between **Delivery Phases** (user-visible capabilities) and **Technical Debt** (engineering health and optimization).
+
+**Non-Goals (Intentional Scope Limits)**
+- No inbound policy engine
+- No runtime governance
+- No "smart proxy" behavior
+
+**Architectural Rationale (Why Convergence Precedes Expansion)**
+- xDS increases configuration surface area; convergence prevents that complexity from leaking into Relay or Runtime.
+- Explicit, typed, non-bypassable pipeline stages and strict Runtime/Relay/Codec/Ingest separation keep the relay thin, preserve correctness guarantees, and make external control-plane work safe to scale.
 
 ---
 
@@ -48,10 +57,22 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [x] **Identity**: Configurable bindings for Admin and Prometheus interfaces.
 - [ ] **Traceability**: `X-Pavis-Generated-At` headers for lineage tracking.
 
+## Phase 3.5: Architecture Convergence & Boundary Hardening
+> **Goal**: Harden pipeline stages and enforce strict component boundaries before xDS expansion. This introduces no new user-visible features.
+> **Status**: ⏳ Planned (Prerequisite for Phase 4)
+
+- [ ] **Typed Pipeline Stages**: Explicit, typed, non-bypassable stages (Artifact -> DTO -> RuntimeConfig -> PVS).
+- [ ] **Dependency Inversion**: `pavis-relay` depends on ingest/codec traits, not concrete implementations.
+- [ ] **Plugin-Style Composition**: Feature-gated ingest/codec modules to keep binaries small and extensible.
+- [ ] **Boundary Enforcement**: Relay remains an execution/distribution engine; no semantic config interpretation.
+- [ ] **Convergence Gate**: No Phase 4 expansion until the above are complete and validated.
+
 ## Phase 4: xDS & Service Mesh Integration
 > **Goal**: First-class integration with external control planes (Istio, Kuma).
-> **Status**: 🚧 In Progress (Codec Layer)
+> **Status**: 🚧 In Progress (Codec exploration only; blocked by Phase 3.5)
 
+- [ ] **Prerequisite Gate**: Phase 3.5 complete; TD-1 and TD-2 safety checks reviewed.
+- [ ] **Boundary Guardrail**: xDS complexity must not leak into Relay or Runtime.
 - [ ] **xDS Ingest**: gRPC-based ADS (Aggregated Discovery Service) implementation.
 - [ ] **xDS Codec**: Map LDS, RDS, CDS, and EDS into `RuntimeConfig`.
 - [ ] **State Synchronization**: Handle snapshot consistency and resource tracking.
@@ -110,7 +131,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 # B. Technical Debt Register
 
 > **Definition**: Deferred engineering work, optimizations, and architectural alignment tasks.
-> **Policy**: Must be reviewed before starting new Delivery Phases.
+> **Policy**: Must be reviewed before starting new Delivery Phases. TD-3 items are mandatory prerequisites (tracked in Phase 3.5).
 
 ### TD-1: Testing & Quality Assurance
 - [ ] **[Safety] Unit Testing Gaps**: Low confidence in edge cases for new features. (Trigger: Before Phase 4)
@@ -124,10 +145,8 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [ ] **[Safety] Strict Format Sniffing**: Verify file content type bytes, not just extension. (Trigger: Phase 5)
 
 ### TD-3: Architectural Coupling (Relay)
-- [ ] **[Arch] Monolithic Relay Build**: `pavis-relay` couples to all concrete ingests/codecs. (Trigger: Introduction of 3rd source type)
-- [ ] **[DX] Feature-Gate Backends**: Bloated binary size; slow compile times. (Trigger: Immediate/Short-term)
-- [ ] **[Arch] Pipeline Feature Flags**: Enforce `plugin-*` feature gates for ingest/codec. (Trigger: Immediate)
-- [ ] **[Arch] Inversion of Control**: Relay core depends on concrete types, violating Open/Closed. (Trigger: Before Phase 8 K8s)
+- [ ] **[Arch] Reclassified to Phase 3.5**: Architecture Convergence & Boundary Hardening is mandatory before Phase 4.
+- [ ] **[DX] Binary Size/Compile-Time Polish**: Optimize relay build after feature gating is in place. (Trigger: After Phase 3.5)
 
 ### TD-4: Performance Optimizations
 - [ ] **[Perf] Zero-Copy Loading (mmap)**: Config loading copies bytes to heap; increases startup RAM. (Trigger: Config sizes > 10MB)

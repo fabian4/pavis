@@ -17,10 +17,10 @@ mod tests {
         Upstream {
             id: None,
             name: "u1".to_string(),
-            discovery: Discovery::default(),
-            balancer: LoadBalancer::default(),
-            protocol: HttpVersion::default(),
-            pool: ConnectionPoolConfig::default(),
+            discovery: Some(Discovery::default()),
+            balancer: Some(LoadBalancer::default()),
+            protocol: Some(HttpVersion::default()),
+            pool: Some(ConnectionPoolConfig::default()),
             tls: None,
             circuit_breaker: None,
             health_check: None,
@@ -47,7 +47,7 @@ mod tests {
     fn to_runtime_validates_ip_address() {
         let upstream = Upstream {
             name: "u1".to_string(),
-            discovery: Discovery::Static,
+            discovery: Some(Discovery::Static),
             endpoints: vec![Endpoint {
                 address: "invalid-ip".to_string(),
                 port: 8080,
@@ -78,11 +78,11 @@ mod tests {
     fn to_runtime_validates_pool_limits() {
         let upstream = Upstream {
             name: "u1".to_string(),
-            pool: ConnectionPoolConfig {
-                idle: Duration::from_millis(u64::MAX),
-                connect: Duration::from_secs(1),
+            pool: Some(ConnectionPoolConfig {
+                idle: Some(Duration::from_millis(u64::MAX)),
+                connect: Some(Duration::from_secs(1)),
                 max: None,
-            },
+            }),
             ..base_upstream()
         };
         let err = to_runtime(vec![upstream]).unwrap_err();
@@ -94,7 +94,7 @@ mod tests {
         let upstream = Upstream {
             name: "u1".to_string(),
             tls: Some(UpstreamTlsConfig {
-                enabled: true,
+                enabled: Some(true),
                 verify_hostname: Some(false),
                 verify_cert: Some(true),
                 sni: Some("example.com".to_string()),
@@ -139,7 +139,72 @@ mod tests {
         assert_eq!(serde[0].endpoints[0].address, "example.com");
         assert_eq!(serde[0].endpoints[0].port, 443);
         assert_eq!(serde[0].endpoints[0].weight, Some(5));
-        assert_eq!(serde[0].protocol, HttpVersion::H2);
+        assert_eq!(serde[0].protocol, Some(HttpVersion::H2));
+    }
+
+    #[test]
+    fn to_runtime_handles_discovery_variants() {
+        let upstreams = vec![
+            Upstream {
+                name: "dns-logical".to_string(),
+                discovery: Some(Discovery::LogicalDns),
+                endpoints: vec![Endpoint {
+                    address: "example.com".to_string(),
+                    port: 80,
+                    weight: None,
+                }],
+                ..base_upstream()
+            },
+            Upstream {
+                name: "dns-strict".to_string(),
+                discovery: Some(Discovery::StrictDns),
+                endpoints: vec![Endpoint {
+                    address: "example.com".to_string(),
+                    port: 80,
+                    weight: None,
+                }],
+                ..base_upstream()
+            },
+        ];
+        let runtime = to_runtime(upstreams).unwrap();
+        assert!(matches!(runtime[0].discovery, Discovery::LogicalDns));
+        assert!(matches!(runtime[1].discovery, Discovery::StrictDns));
+    }
+
+    #[test]
+    fn to_runtime_handles_pool_max_and_id() {
+        let upstream = Upstream {
+            id: Some(42),
+            name: "u1".to_string(),
+            pool: Some(ConnectionPoolConfig {
+                idle: None,
+                connect: None,
+                max: Some(100),
+            }),
+            ..base_upstream()
+        };
+        let runtime = to_runtime(vec![upstream]).unwrap();
+        assert_eq!(runtime[0].id.0.get(), 42);
+        match runtime[0].pool.max {
+            pavis_core::ConnectionLimit::Limited(n) => assert_eq!(n.get(), 100),
+            _ => panic!("expected limited pool"),
+        }
+    }
+
+    #[test]
+    fn to_runtime_handles_tls_disabled_explicitly() {
+        let upstream = Upstream {
+            name: "u1".to_string(),
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(false),
+                verify_hostname: None,
+                verify_cert: None,
+                sni: None,
+            }),
+            ..base_upstream()
+        };
+        let runtime = to_runtime(vec![upstream]).unwrap();
+        assert!(matches!(runtime[0].tls, pavis_core::TlsPolicy::Disabled));
     }
 }
 
@@ -148,10 +213,11 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
 
     for (index, u) in upstreams.into_iter().enumerate() {
         let mut endpoints = Vec::new();
+        let discovery = u.discovery.unwrap_or_default();
         for e in u.endpoints {
             let port = NonZeroU16::new(e.port)
                 .ok_or_else(|| anyhow::anyhow!("endpoint port must be > 0"))?;
-            let address = match u.discovery {
+            let address = match discovery {
                 Discovery::Static => {
                     let ip: IpAddr = e.address.parse().with_context(|| {
                         format!(
@@ -180,9 +246,18 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
             });
         }
 
-        let idle = duration_to_policy(u.pool.idle)?;
-        let connect = duration_to_connect(u.pool.connect)?;
-        let max = match u.pool.max {
+        let pool_config = u.pool.unwrap_or_default();
+        let idle = duration_to_policy(
+            pool_config
+                .idle
+                .unwrap_or(std::time::Duration::from_secs(60)),
+        )?;
+        let connect = duration_to_connect(
+            pool_config
+                .connect
+                .unwrap_or(std::time::Duration::from_secs(5)),
+        )?;
+        let max = match pool_config.max {
             None | Some(0) => pavis_core::ConnectionLimit::Unlimited,
             Some(value) => {
                 let value = NonZeroU32::new(value)
@@ -196,7 +271,7 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
         let tls = match u.tls {
             None => pavis_core::TlsPolicy::Disabled,
             Some(t) => {
-                if !t.enabled {
+                if !t.enabled.unwrap_or(false) {
                     pavis_core::TlsPolicy::Disabled
                 } else {
                     let verify_cert = t.verify_cert.unwrap_or(true);
@@ -226,9 +301,9 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
         runtime_upstreams.push(pavis_core::Upstream {
             id: pavis_core::UpstreamId(id),
             name: pavis_core::UpstreamName(u.name),
-            discovery: u.discovery,
-            balancer: u.balancer,
-            protocol: u.protocol,
+            discovery,
+            balancer: u.balancer.unwrap_or_default(),
+            protocol: u.protocol.unwrap_or_default(),
             pool,
             tls,
             endpoints,
@@ -256,8 +331,12 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
         }
 
         let pool = crate::config::types::ConnectionPoolConfig {
-            idle: std::time::Duration::from_millis(idle_timeout_ms(&u.pool.idle)),
-            connect: std::time::Duration::from_millis(connect_timeout_ms(&u.pool.connect)),
+            idle: Some(std::time::Duration::from_millis(idle_timeout_ms(
+                &u.pool.idle,
+            ))),
+            connect: Some(std::time::Duration::from_millis(connect_timeout_ms(
+                &u.pool.connect,
+            ))),
             max: match u.pool.max {
                 pavis_core::ConnectionLimit::Unlimited => None,
                 pavis_core::ConnectionLimit::Limited(value) => Some(value.get()),
@@ -277,7 +356,7 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
                     pavis_core::SniName::Value(name) => Some(name.0),
                 };
                 Some(UpstreamTlsConfig {
-                    enabled: true,
+                    enabled: Some(true),
                     verify_hostname: Some(verify_hostname),
                     verify_cert: Some(verify_cert),
                     sni,
@@ -288,10 +367,10 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
         serde_upstreams.push(Upstream {
             id: Some(u.id.0.get()),
             name: u.name.0,
-            discovery: u.discovery,
-            balancer: u.balancer,
-            protocol: u.protocol,
-            pool,
+            discovery: Some(u.discovery),
+            balancer: Some(u.balancer),
+            protocol: Some(u.protocol),
+            pool: Some(pool),
             tls,
             circuit_breaker: None,
             health_check: None,

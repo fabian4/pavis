@@ -105,7 +105,7 @@ pub enum SniName {
     Value(Hostname),
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub struct Endpoint {
@@ -113,7 +113,7 @@ pub struct Endpoint {
     pub weight: Weight,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
 pub enum EndpointAddr {
