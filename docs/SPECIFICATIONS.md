@@ -69,12 +69,12 @@ The server uses `tokio::sync::Notify` to handle concurrent waiters without threa
 This section records the alignment plan for the configuration system.
 
 ### Short-term (Alignment & Safety)
-1.  **Explicit Pipeline Stages**: Model DTO stages explicitly in `pavis-codec-api`. (Status: Completed)
+1.  **Explicit Pipeline Boundary**: Enforce check → compile → materialize in `pavis-codec-api`. (Status: Completed)
 2.  **Remove Semantic Defaults from Parsing**: Ensure `#[serde(default)]` does not inject business logic. (Status: Completed)
-3.  **Isolate Structural Completion**: Separate shape normalization from semantic defaulting.
+3.  **Isolate Structural Completion**: Separate shape normalization from semantic defaulting inside codec `compile`.
 
 ### Medium-term (Structural Clarity)
-4.  **Constrain codec-api**: Ensure it only exports structural utilities, no semantics.
+4.  **Constrain codec-api**: Ensure it enforces the boundary and core validation, with no semantic defaults.
 5.  **Enforce RuntimeConfig Finality**: Runtime must reject configurations that haven't passed core validation.
 
 ### Long-term (Governor-readiness)

@@ -67,6 +67,11 @@ pub(crate) async fn get_config(
         options.checksum_alg_header,
         HeaderValue::from_str(&algorithm).unwrap_or_else(|_| HeaderValue::from_static("sha256")),
     );
+    let generated_at = chrono::DateTime::<chrono::Utc>::from(snapshot.updated_at).to_rfc3339();
+    headers.insert(
+        options.generated_at_header,
+        HeaderValue::from_str(&generated_at).unwrap_or_else(|_| HeaderValue::from_static("")),
+    );
     headers.insert(
         axum::http::header::CACHE_CONTROL,
         HeaderValue::from_static("no-store"),
@@ -230,6 +235,11 @@ pub(crate) async fn get_artifact(
     headers.insert(
         options.checksum_alg_header,
         HeaderValue::from_str(&algorithm).unwrap_or_else(|_| HeaderValue::from_static("sha256")),
+    );
+    let generated_at = chrono::DateTime::<chrono::Utc>::from(artifact.generated_at).to_rfc3339();
+    headers.insert(
+        options.generated_at_header,
+        HeaderValue::from_str(&generated_at).unwrap_or_else(|_| HeaderValue::from_static("")),
     );
     headers.insert(
         axum::http::header::CACHE_CONTROL,

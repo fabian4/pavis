@@ -444,6 +444,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -1924,6 +1925,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytes",
+ "chrono",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -1987,6 +1989,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "chrono",
  "clap 4.5.53",
  "futures-util",
  "http-body-util",

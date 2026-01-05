@@ -11,7 +11,7 @@ The codec follows a structured background transformation pipeline:
 1. **Decode**: Unmarshal Protobuf bytes into generated Envoy v3 structs using `prost`.
 2. **Normalize**: Map scattered xDS resources into a coherent internal representation.
 3. **Map**: Transform Envoy structs to `pavis-core` structs (Listeners, Upstreams, VirtualHosts).
-4. **Validate**: Invoke `pavis_core::validate_runtime` to ensure semantic correctness before artifact emission.
+4. **Validate**: Performed by the codec pipeline in `Codec::materialize` via `pavis_core::validate_runtime`.
 
 ### A. LDS -> Listener Mapping
 - **Input**: LDS `Listener` resources.

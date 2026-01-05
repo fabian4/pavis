@@ -33,7 +33,6 @@ jobs:
             --exclude-files 'crates/pavis-e2e/*' \
             --exclude-files 'crates/*/tests/*' \
             --exclude-files 'crates/**/*tests.rs' \
-            --timeout 120 \
             --out xml
 
       - name: Upload to codecov.io

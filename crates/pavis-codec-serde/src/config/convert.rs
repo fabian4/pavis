@@ -7,7 +7,9 @@ use anyhow::Result;
 
 use super::types::{SerdeConfig, StructurallyConfig};
 
-pub fn structural_complete(src: SerdeConfig) -> StructurallyConfig {
+/// Shape-only completion: fills empty containers and optional sub-objects.
+/// Does not apply core semantic validation.
+pub fn structural(src: SerdeConfig) -> StructurallyConfig {
     StructurallyConfig {
         listeners: src.listeners.unwrap_or_default(),
         telemetry: src.telemetry.unwrap_or_default(),

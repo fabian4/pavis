@@ -17,6 +17,7 @@ pavis-codec-serde = { path = "../pavis-codec-serde" }
 pavis-ingest-api = { path = "../pavis-ingest-api" }
 pavis-pvs = { path = "../pavis-pvs" }
 reqwest = { version = "0.12", features = ["json"] }
+chrono = "0.4"
 serde = { workspace = true }
 serde_json = "1.0"
 serde_yaml = "0.9"

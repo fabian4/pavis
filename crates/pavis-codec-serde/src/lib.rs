@@ -1,5 +1,6 @@
 //! Serde-backed codec that implements the check → compile pipeline.
 //! All source-specific defaults are applied during `compile` only.
+//! Core semantic validation happens in `Codec::materialize`, not in this crate.
 
 pub mod config;
 pub mod serde_helpers;
@@ -55,11 +56,9 @@ impl Codec for SerdeCodec {
         config
             .validate()
             .map_err(|err| CodecError::Compile(anyhow::anyhow!("Failed to validate: {err}")))?;
-        crate::config::structural_complete(config)
-            .try_into()
-            .map_err(|err| {
-                CodecError::Compile(anyhow::anyhow!("Failed to build RuntimeConfig: {err}"))
-            })
+        crate::config::structural(config).try_into().map_err(|err| {
+            CodecError::Compile(anyhow::anyhow!("Failed to build RuntimeConfig: {err}"))
+        })
     }
 }
 

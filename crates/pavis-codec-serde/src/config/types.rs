@@ -17,11 +17,13 @@ use serde::{Deserialize, Serialize};
 
 use pavis_core::RuntimeConfig;
 
-use super::convert::structural_complete;
+use super::convert::structural;
 use super::validation;
 use crate::SerdeFormat;
 use crate::serde_helpers::parse_with_format;
 
+/// Source-format DTO parsed from JSON/YAML.
+/// Optional fields remain sparse until structural completion.
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct SerdeConfig {
     pub listeners: Option<Vec<Listener>>,
@@ -30,6 +32,8 @@ pub struct SerdeConfig {
     pub routes: Option<Vec<VirtualHost>>,
 }
 
+/// Shape-complete DTO with containers present and explicit empty/disabled states.
+/// This is still a codec-level structure and is not core-validated.
 #[derive(Debug, Clone)]
 pub struct StructurallyConfig {
     pub listeners: Vec<Listener>,
@@ -51,10 +55,12 @@ impl SerdeConfig {
         validation::validate(self)
     }
 
+    /// Parse, validate, structurally complete, and convert into a `RuntimeConfig`.
+    /// Core semantic validation is handled by the codec pipeline, not here.
     pub fn build(self) -> AnyResult<RuntimeConfig> {
         let mut config = self;
         validation::validate(&mut config)?;
-        let complete = structural_complete(config);
+        let complete = structural(config);
         complete.try_into()
     }
 }

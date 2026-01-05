@@ -7,23 +7,23 @@ It ensures that code changes strictly adhere to the architectural invariants reg
 
 ### Step 1: Explicit Pipeline Stages
 
-**Goal:** Verify that the code strictly enforces the transition: `Source DTO` → `Partial Pavis DTO` → `Structurally Complete Pavis DTO` → `RuntimeConfig`.
+**Goal:** Verify that the code strictly enforces the transition: `SourceArtifact` → `CheckedArtifact` → `RuntimeConfig` → `ValidatedRuntimeConfig`.
 
 | Test ID | Type | Description | Acceptance Criteria |
 | :--- | :--- | :--- | :--- |
-| `T1.1` | Unit (Type) | **Verify Type Isolation**<br>Attempt to pass a `Source DTO` directly to a function expecting `RuntimeConfig`. | **Compilation Error** or explicit type mismatch. Direct conversion traits (`From`/`Into`) must not exist between these layers. |
-| `T1.2` | Integration | **Pipeline Flow Verification**<br>Trace a config object through the `pavis-codec-serde` pipeline. | The object must pass through explicit transformation functions/types for each stage. |
+| `T1.1` | Unit (Type) | **Verify Type Isolation**<br>Attempt to pass an `Artifact` directly into `compile` or obtain `ValidatedRuntimeConfig` without `materialize`. | **Compilation Error** or explicit type mismatch. `compile` accepts `CheckedArtifact`, and `materialize` is the only producer of validated configs. |
+| `T1.2` | Integration | **Pipeline Flow Verification**<br>Trace a config object through the `pavis-codec-serde` pipeline. | The object must pass through `check` → `compile` → `materialize` in order. |
 
 **Target Implementation:**
 - New tests in `crates/pavis-codec-serde/src/lib.rs` or `tests/pipeline.rs`.
 
-### Step 2: Remove Semantic Defaults from Source DTO
+### Step 2: Remove Semantic Defaults from Parsing
 
-**Goal:** Ensure `Source DTO` deserialization yields a sparse object (all `Option::None`) rather than injecting values like "5s" or "true".
+**Goal:** Ensure source deserialization yields a sparse object (all `Option::None`) rather than injecting values like "5s" or "true".
 
 | Test ID | Type | Description | Acceptance Criteria |
 | :--- | :--- | :--- | :--- |
-| `T2.1` | Unit | **Sparse Deserialization (Server)**<br>Deserialize `{}` (empty YAML/JSON) into `ServerConfig` DTO. | All fields (port, bind, etc.) must be `None`. `#[serde(default)]` must not inject values. |
+| `T2.1` | Unit | **Sparse Deserialization (Server)**<br>Deserialize `{}` (empty YAML/JSON) into the serde config type. | All fields (port, bind, etc.) must be `None`. `#[serde(default)]` must not inject values. |
 | `T2.2` | Unit | **Sparse Deserialization (Routes)**<br>Deserialize a route with minimal fields. | Optional fields like `timeout` or `retry_policy` must be `None`. |
 | `T2.3` | Unit | **Sparse Deserialization (Upstream)**<br>Deserialize an upstream cluster with minimal fields. | `connect_timeout`, `lb_policy` etc. must be `None`. |
 
@@ -32,7 +32,7 @@ It ensures that code changes strictly adhere to the architectural invariants reg
 
 ### Step 3: Isolate Structural Completion
 
-**Goal:** Verify that "Structural Completion" initializes containers (Vecs, Maps) and explicit "Disabled" enums but **does not** inject semantic policy defaults.
+**Goal:** Verify that structural completion lives in concrete codecs (not codec-api), initializes containers (Vecs, Maps) and explicit "Disabled" enums, and **does not** inject semantic policy defaults.
 
 | Test ID | Type | Description | Acceptance Criteria |
 | :--- | :--- | :--- | :--- |
@@ -45,11 +45,11 @@ It ensures that code changes strictly adhere to the architectural invariants reg
 
 ### Step 4: Constrain Codec-API
 
-**Goal:** Ensure `pavis-codec-api` provides only structural utilities and no semantic logic.
+**Goal:** Ensure `pavis-codec-api` only enforces the pipeline boundary and core validation, with no semantic logic.
 
 | Test ID | Type | Description | Acceptance Criteria |
 | :--- | :--- | :--- | :--- |
-| `T4.1` | Unit | **API Purity Check**<br>Review/Test `pavis-codec-api` helpers. | Helpers must operate on generic structures or raw bytes/types without inferring business logic (e.g., no default ports). |
+| `T4.1` | Unit | **API Purity Check**<br>Review/Test `pavis-codec-api` helpers. | Helpers must only enforce ordering and validation; no semantic defaults or source-specific behavior. |
 
 ### Step 5: Enforce RuntimeConfig Finality
 

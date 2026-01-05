@@ -96,6 +96,31 @@ mod tests {
         assert_eq!(state.last_error().await, Some("test error".to_string()));
     }
 
+    #[tokio::test]
+    async fn state_tracks_generated_at() {
+        let state = RelayState::new(0, Bytes::new()).expect("state");
+        let snapshot = state.snapshot().await;
+        // Verify generated_at is recent (within 5s)
+        let now = std::time::SystemTime::now();
+        // Handle case where now is slightly before updated_at due to granularity
+        let diff = now
+            .duration_since(snapshot.updated_at)
+            .unwrap_or(std::time::Duration::from_secs(0));
+        assert!(diff.as_secs() < 5);
+
+        let config = minimal_config();
+        let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
+        let version = state.publish_auto(pvs_bytes.into()).await.expect("publish");
+
+        let artifact = state.artifact(version).await.expect("artifact");
+        // Re-fetch now
+        let now = std::time::SystemTime::now();
+        let diff = now
+            .duration_since(artifact.generated_at)
+            .unwrap_or(std::time::Duration::from_secs(0));
+        assert!(diff.as_secs() < 5);
+    }
+
     #[test]
     fn relay_meta_empty_has_defaults() {
         let meta = RelayMeta::empty();

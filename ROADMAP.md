@@ -1,8 +1,8 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 17/67
-- **Core Features**: 17/50
+- **Total**: 18/67
+- **Core Features**: 18/50
 - **Technical Debt**: 0/17
 
 > **Status**: Active
@@ -55,13 +55,13 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [x] **Durability**: Last-Known-Good (LKG) persistence to disk (`/etc/pavis/config.pvs`) with fsync.
 - [x] **Recovery**: Boot from LKG if control plane is unreachable.
 - [x] **Identity**: Configurable bindings for Admin and Prometheus interfaces.
-- [ ] **Traceability**: `X-Pavis-Generated-At` headers for lineage tracking.
+- [x] **Traceability**: `X-Pavis-Generated-At` headers for lineage tracking.
 
 ## Phase 3.5: Architecture Convergence & Boundary Hardening
 > **Goal**: Harden pipeline stages and enforce strict component boundaries before xDS expansion. This introduces no new user-visible features.
 > **Status**: ⏳ Planned (Prerequisite for Phase 4)
 
-- [ ] **Typed Pipeline Stages**: Explicit, typed, non-bypassable stages (Artifact -> DTO -> RuntimeConfig -> PVS).
+- [ ] **Typed Pipeline Stages**: Explicit, non-bypassable stages (Artifact -> CheckedArtifact -> RuntimeConfig -> ValidatedRuntimeConfig -> PVS).
 - [ ] **Dependency Inversion**: `pavis-relay` depends on ingest/codec traits, not concrete implementations.
 - [ ] **Plugin-Style Composition**: Feature-gated ingest/codec modules to keep binaries small and extensible.
 - [ ] **Boundary Enforcement**: Relay remains an execution/distribution engine; no semantic config interpretation.
@@ -142,7 +142,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 ### TD-2: Release Engineering & Safety
 - [ ] **[Safety] CI Compatibility Fixtures**: Risk of breaking backward compatibility for older binaries. (Trigger: Before first public release)
 - [ ] **[Arch] Governance Ownership**: Relay currently owns migration logic; should move to Governor. (Trigger: When Governor component is introduced)
-- [ ] **[Safety] Strict Format Sniffing**: Verify file content type bytes, not just extension. (Trigger: Phase 5)
+- [ ] **[Safety] Strict Format Sniffing**: Verify file content type bytes, not just extension. (Trigger: Phase 4)
 
 ### TD-3: Architectural Coupling (Relay)
 - [ ] **[Arch] Reclassified to Phase 3.5**: Architecture Convergence & Boundary Hardening is mandatory before Phase 4.

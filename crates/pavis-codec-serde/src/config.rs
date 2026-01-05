@@ -1,7 +1,8 @@
 //! Configuration types for Pavis proxy (Codec Layer).
 //!
 //! These types are used for parsing serde-backed configuration and validating it
-//! before converting it to the efficient `pavis_core::RuntimeConfig`.
+//! before structural completion and conversion into `pavis_core::RuntimeConfig`.
+//! Core semantic validation happens in the codec pipeline.
 
 pub mod convert;
 pub mod types;

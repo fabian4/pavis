@@ -47,7 +47,7 @@ Inbound behavior must be treated as an explicit tradeoff and **must not** leak g
 | **`pavis-relay`**      | Relay – Versions `.pvs`, manages caches. **Pass-through** for validation; distributes artifacts.  |
 | **`pavis-ingest-*`**   | Ingest – Source connectivity (xDS, K8s, file watch): streams, auth, retries, resync.              |
 | **`pavis-ingest-api`** | Ingest API – SourceArtifact (raw bytes + metadata) and ingest trait boundary.                     |
-| **`pavis-codec-*`**    | Codec – DTO ↔ RuntimeConfig transforms, **default population**, and core validation.              |
+| **`pavis-codec-*`**    | Codec – SourceArtifact → RuntimeConfig transforms, **default population**, and core validation via codec-api. |
 | **`pavis-codec-api`**  | Codec API – Codec trait boundary for SourceArtifact ↔ RuntimeConfig transforms.                   |
 | **`pavis-pvs`**        | Binary Protocol – Integrity layer (Header + Checksum + Encoding).                                 |
 | **`pavctl`**           | CLI – Developer tool for manual generation, conversion, and runtime management.                   |
@@ -58,7 +58,7 @@ Inbound behavior must be treated as an explicit tradeoff and **must not** leak g
 *   **`pavis-pvs`**: Depends on `pavis-core`. Handles the binary lifecycle.
 *   **`pavis-codec-api`**: Defines the Codec boundary. Depends on `pavis-core` and ingest SourceArtifact types.
 *   **`pavis-ingest-api`**: Defines the Ingest boundary (SourceArtifact + metadata).
-*   **`pavis-codec-*`**: Pure logic crates. Depend on `pavis-core` and `pavis-codec-api` for DTO ↔ RuntimeConfig mapping and semantic validation.
+*   **`pavis-codec-*`**: Pure logic crates. Depend on `pavis-core` and `pavis-codec-api` for the codec boundary and canonical validation in `materialize`.
 *   **`pavis-ingest-*`**: Connectivity crates. Handle I/O and transport to upstream sources; emit SourceArtifacts (bytes + metadata) only.
 *   **`pavis-relay`**: Coordinates ingest/codec outputs, versions artifacts, and distributes `.pvs`. It does artifact-level header/payload handling only and does not decode DTOs or `RuntimeConfig`.
 *   **`pavctl`**: Depends on codecs and `pavis-pvs` to provide manual control and local tooling.
@@ -69,7 +69,7 @@ Inbound behavior must be treated as an explicit tradeoff and **must not** leak g
 | Responsibility     | Component        | Description                                                                                        |
 | :----------------- | :--------------- | :------------------------------------------------------------------------------------------------- |
 | **Ingest**         | `pavis-ingest-*` | Subscribes to configuration sources. Handles auth, watch/stream, retries, and resync.              |
-| **Codec**          | `pavis-codec-*`  | Maps source DTOs to `RuntimeConfig`. **Populates defaults** and **validates** configuration.       |
+| **Codec**          | `pavis-codec-*`  | Compiles SourceArtifacts into `RuntimeConfig`, **populates defaults**, and relies on codec-api for canonical validation. |
 | **Relay**          | `pavis-relay`    | Versions artifacts and distributes `.pvs`. **Pass-through** for logic; no validation or population.|
 | **Governor**       | `pavis-governor` | Admission, policy enforcement, and approval of change plans (future/optional).                     |
 | **Manual Tooling** | `pavctl`         | Reuses codecs for local file generation (`gen`), conversion (`convert`), and manual `apply`.       |
@@ -83,17 +83,16 @@ This section defines the Pavis configuration architecture, strictly separating *
 ### 3.1 Pipeline Stages
 Pavis configuration MUST pass through the following stages in order:
 
-1.  **Source Config → Source DTO**: Implemented by source-specific codec input layer. Ingest layers MUST NOT apply defaults or semantics.
-2.  **Source DTO → Partial Pavis DTO**: Implemented by source-specific codec. codec-api MUST NOT apply semantics here.
-3.  **Partial Pavis DTO → Structurally Complete Pavis DTO**: Implemented by codec-api structural completion utilities. Normalizes containers and presence (e.g., `Option<Vec>` -> `Vec`).
-4.  **Structurally Complete Pavis DTO → RuntimeConfig**: Implemented by source-specific codec. Applies **Source-Specific Semantic Defaults**.
-5.  **RuntimeConfig → Core Semantic Validation**: Implemented by `pavis-core`. Runtime and Relay MUST NOT compensate for missing intent.
+1.  **SourceArtifact → CheckedArtifact**: Implemented by codec `check`. Validates framing and basic integrity only.
+2.  **CheckedArtifact → RuntimeConfig**: Implemented by codec `compile`. Parses source bytes, normalizes quirks, performs structural completion, and applies **source-specific semantic defaults**.
+3.  **RuntimeConfig → Core Semantic Validation**: Implemented by codec-api `materialize` via `pavis-core`. Runtime and Relay MUST NOT compensate for missing intent.
 
-### 3.2 DTO Stages and Intent
+### 3.2 Codec-Internal DTOs (Optional)
+
+Codecs MAY use internal DTOs for parsing and shape normalization, but these are **codec-private** and not enforced or provided by codec-api:
 
 *   **Source DTO**: Represents the source format directly. MAY be sparse. MUST NOT include runtime-specific assumptions.
-*   **Partial Pavis DTO**: Source-agnostic normalization. MAY be sparse. MUST NOT be semantically defaulted.
-*   **Structurally Complete Pavis DTO**: Shape-complete (no missing containers). MUST NOT introduce semantic defaults beyond structural completion.
+*   **Structurally Complete DTO**: Shape-complete (no missing containers). MUST NOT introduce semantic defaults beyond structural completion.
 *   **RuntimeConfig**: Fully materialized. Semantically final and immutable.
 
 ### 3.3 Architectural Invariants
@@ -103,7 +102,7 @@ The following rules are absolute.
 #### Codec Layer (`pavis-codec-*`)
 *   **Role:** Owner of **Defaults** and **Policy**.
 *   **Responsibility:** MUST materialize all optional fields into explicit values.
-*   **Responsibility:** MUST normalize user input (YAML/JSON/xDS) into `ValidatedRuntimeConfig`.
+*   **Responsibility:** MUST normalize user input (YAML/JSON/xDS) into `RuntimeConfig` and rely on `Codec::materialize` for canonical validation.
 *   **Output:** A fully deterministic configuration. Implicit "magic" defaults MUST be resolved here.
 
 #### Runtime Layer (`pavis`)
@@ -157,7 +156,7 @@ The xDS Codec uses an **Intermediate Type Pattern**:
 1.  **Decode**: Unmarshal Protobuf bytes into generated Envoy v3 structs.
 2.  **Normalize**: Map scattered xDS resources into a coherent internal representation.
 3.  **Map**: Transform Envoy structs to `pavis-core` structs.
-4.  **Validate**: Invoke `pavis_core::validate_runtime`.
+4.  **Validate**: Performed by the codec pipeline in `Codec::materialize`.
 
 **Responsibility Matrix:**
 | Component | Responsibility | Boundary |

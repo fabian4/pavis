@@ -402,6 +402,31 @@ async fn custom_headers_override_defaults() {
 }
 
 #[tokio::test]
+async fn config_includes_generated_at_header() {
+    let app = router(test_state());
+
+    let response = app
+        .oneshot(
+            Request::get("/v1/config")
+                .header("x-pavis-version", "0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("config");
+    assert_eq!(response.status(), StatusCode::OK);
+    let headers = response.headers();
+    assert!(headers.contains_key("x-pavis-generated-at"));
+    let value = headers
+        .get("x-pavis-generated-at")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    // Verify it's valid RFC3339
+    chrono::DateTime::parse_from_rfc3339(value).expect("valid rfc3339");
+}
+
+#[tokio::test]
 async fn test_publish_updates_lkg_on_disk() {
     let dir = std::env::temp_dir().join("relay_publish_lkg");
     let _ = std::fs::remove_dir_all(&dir);

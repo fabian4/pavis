@@ -12,3 +12,5 @@ pub mod observability;
 pub mod persistence_recovery;
 #[path = "relay/publish_success.rs"]
 pub mod publish_success;
+#[path = "relay/traceability.rs"]
+pub mod traceability;

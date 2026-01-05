@@ -59,12 +59,14 @@ pub(crate) struct RelaySnapshotView {
 pub(crate) struct RelayArtifactView {
     pub bytes: Bytes,
     pub meta: RelayMeta,
+    pub generated_at: SystemTime,
 }
 
 #[derive(Debug, Clone)]
 struct RelayArtifact {
     bytes: Bytes,
     meta: RelayMeta,
+    generated_at: SystemTime,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +112,7 @@ pub(crate) struct RelayOptions {
     pub version_header: axum::http::HeaderName,
     pub checksum_header: axum::http::HeaderName,
     pub checksum_alg_header: axum::http::HeaderName,
+    pub generated_at_header: axum::http::HeaderName,
     pub long_poll_enabled: bool,
     pub identity_name: String,
     pub lkg_path: Option<PathBuf>,
@@ -124,6 +127,9 @@ impl Default for RelayOptions {
             checksum_header: axum::http::HeaderName::from_static(pavis_pvs::PAVIS_CHECKSUM_HEADER),
             checksum_alg_header: axum::http::HeaderName::from_static(
                 pavis_pvs::PAVIS_CHECKSUM_ALG_HEADER,
+            ),
+            generated_at_header: axum::http::HeaderName::from_static(
+                pavis_pvs::PAVIS_GENERATED_AT_HEADER,
             ),
             long_poll_enabled: true,
             identity_name: String::new(),
@@ -165,9 +171,11 @@ impl RelayState {
                 .map_err(|err| RelayError::Config(err.to_string()))?;
             RelayMeta::from_header(&header)
         };
+        let now = SystemTime::now();
         let artifact = RelayArtifact {
             bytes: pvs_bytes.clone(),
             meta: meta.clone(),
+            generated_at: now,
         };
         let mut history = HashMap::new();
         history.insert(version, artifact.clone());
@@ -190,7 +198,7 @@ impl RelayState {
             inner: Arc::new(RwLock::new(RelaySnapshot {
                 version,
                 artifact,
-                updated_at: SystemTime::now(),
+                updated_at: now,
             })),
             history: Arc::new(RwLock::new(history)),
             notify: Arc::new(Notify::new()),
@@ -235,6 +243,7 @@ impl RelayState {
 
         let mut inner = self.inner.write().await;
         let proposed_version = inner.version + 1;
+        let now = SystemTime::now();
 
         debug!(
             "Publishing auto-increment version: {} -> {}, checksum={}",
@@ -242,16 +251,18 @@ impl RelayState {
         );
 
         inner.version = proposed_version;
-        inner.artifact = RelayArtifact {
+        let artifact = RelayArtifact {
             bytes: bytes.clone(),
             meta: meta.clone(),
+            generated_at: now,
         };
-        inner.updated_at = SystemTime::now();
+        inner.artifact = artifact.clone();
+        inner.updated_at = now;
         drop(inner);
 
         let bytes_for_persist = bytes.clone();
         let mut history = self.history.write().await;
-        history.insert(proposed_version, RelayArtifact { bytes, meta });
+        history.insert(proposed_version, artifact);
         drop(history);
         self.notify.notify_waiters();
         self.metrics.inc_publish_ok();
@@ -273,17 +284,20 @@ impl RelayState {
         let mut inner = self.inner.write().await;
         execute_plan(inner.version, proposed_version)?;
 
+        let now = SystemTime::now();
         inner.version = proposed_version;
-        inner.artifact = RelayArtifact {
+        let artifact = RelayArtifact {
             bytes: bytes.clone(),
             meta: meta.clone(),
+            generated_at: now,
         };
-        inner.updated_at = SystemTime::now();
+        inner.artifact = artifact.clone();
+        inner.updated_at = now;
         drop(inner);
 
         let bytes_for_persist = bytes.clone();
         let mut history = self.history.write().await;
-        history.insert(proposed_version, RelayArtifact { bytes, meta });
+        history.insert(proposed_version, artifact);
         drop(history);
         self.notify.notify_waiters();
 
@@ -299,6 +313,7 @@ impl RelayState {
         history.get(&version).map(|artifact| RelayArtifactView {
             bytes: artifact.bytes.clone(),
             meta: artifact.meta.clone(),
+            generated_at: artifact.generated_at,
         })
     }
 

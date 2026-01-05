@@ -17,6 +17,7 @@ pub use write::{encode, write};
 pub const PAVIS_VERSION_HEADER: &str = "x-pavis-version";
 pub const PAVIS_CHECKSUM_HEADER: &str = "x-pavis-checksum";
 pub const PAVIS_CHECKSUM_ALG_HEADER: &str = "x-pavis-checksum-alg";
+pub const PAVIS_GENERATED_AT_HEADER: &str = "x-pavis-generated-at";
 
 #[cfg(test)]
 mod tests {

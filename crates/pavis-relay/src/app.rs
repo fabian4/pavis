@@ -61,6 +61,9 @@ fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
         checksum_alg_header: axum::http::HeaderName::from_static(
             pavis_pvs::PAVIS_CHECKSUM_ALG_HEADER,
         ),
+        generated_at_header: axum::http::HeaderName::from_static(
+            pavis_pvs::PAVIS_GENERATED_AT_HEADER,
+        ),
         long_poll_enabled: config.distribution.long_poll.enabled,
         identity_name: config.identity.name.clone(),
         lkg_path: None,
@@ -125,6 +128,10 @@ mod tests {
         assert_eq!(
             options.checksum_alg_header.as_str(),
             pavis_pvs::PAVIS_CHECKSUM_ALG_HEADER
+        );
+        assert_eq!(
+            options.generated_at_header.as_str(),
+            pavis_pvs::PAVIS_GENERATED_AT_HEADER
         );
         assert!(options.long_poll_enabled);
         assert_eq!(options.identity_name, "relay");
