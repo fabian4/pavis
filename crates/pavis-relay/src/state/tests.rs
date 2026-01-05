@@ -27,6 +27,10 @@ mod tests {
             routes: vec![],
         }
     }
+
+    fn validated_config() -> pavis_core::ValidatedRuntimeConfig {
+        pavis_core::validate_runtime(minimal_config()).expect("validate")
+    }
     #[test]
     fn execute_plan_rejects_non_monotonic_versions() {
         let err = execute_plan(5, 5).expect_err("non-monotonic");
@@ -64,8 +68,7 @@ mod tests {
     #[tokio::test]
     async fn publish_config_accepts_validated_config() {
         let state = RelayState::new(0, Bytes::new()).expect("state");
-        let config = minimal_config();
-        let validated = pavis_core::validate_runtime(config).expect("validate");
+        let validated = validated_config();
         let version = state
             .publish_config(&validated)
             .await
@@ -77,8 +80,8 @@ mod tests {
     #[tokio::test]
     async fn state_publish_auto_increments_version() {
         // Use a valid PVS for publish_auto as it inspects the header
-        let config = minimal_config();
-        let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
+        let validated = validated_config();
+        let pvs_bytes = pavis_pvs::encode(validated.as_ref()).expect("encode");
 
         let state = RelayState::new(10, Bytes::new()).expect("state");
         assert_eq!(state.version().await, 10);
@@ -108,8 +111,8 @@ mod tests {
             .unwrap_or(std::time::Duration::from_secs(0));
         assert!(diff.as_secs() < 5);
 
-        let config = minimal_config();
-        let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
+        let validated = validated_config();
+        let pvs_bytes = pavis_pvs::encode(validated.as_ref()).expect("encode");
         let version = state.publish_auto(pvs_bytes.into()).await.expect("publish");
 
         let artifact = state.artifact(version).await.expect("artifact");

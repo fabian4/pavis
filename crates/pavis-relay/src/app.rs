@@ -1,5 +1,8 @@
-use crate::config;
+use crate::codec::BoxedCodec;
 use crate::config::PersistenceOptions;
+use crate::config::{self, PipelineConfig, PipelineOptions};
+use crate::ingest::{BoxedIngest, boxed_ingest};
+use crate::pipeline::start_pipeline;
 use crate::routes::serve;
 use crate::state::{RelayOptions, RelayState};
 use anyhow::{Context, Result};
@@ -10,7 +13,14 @@ use std::time::Duration;
 
 pub async fn serve_from_config(config: &config::RelayConfig) -> Result<()> {
     let (listen_addr, state) = init_state(config)?;
-    crate::pipeline::start_pipeline(&config.pipeline, state.clone()).await?;
+    let label = format!(
+        "{:?}-{:?}",
+        config.pipeline.ingest.source, config.pipeline.codec
+    );
+    let options = PipelineOptions::from_config(&config.pipeline);
+    let ingest = build_ingest(&config.pipeline)?;
+    let codec = build_codec(&config.pipeline)?;
+    start_pipeline(label, ingest, codec, state.clone(), options).await?;
     serve(listen_addr, state)
         .await
         .context("relay server failed")
@@ -34,6 +44,43 @@ fn init_state(config: &config::RelayConfig) -> Result<(SocketAddr, RelayState)> 
     let state = RelayState::new_with_options(initial_version, Bytes::from(bytes), options)
         .context("failed to initialize relay state")?;
     Ok((listen_addr, state))
+}
+
+fn build_codec(config: &PipelineConfig) -> Result<BoxedCodec> {
+    match config.codec.kind {
+        config::CodecKind::Serde => {
+            #[cfg(feature = "codec-serde")]
+            {
+                Ok(Box::new(pavis_codec_serde::SerdeCodec {
+                    format: pavis_codec_serde::SerdeFormat::Yaml,
+                }))
+            }
+            #[cfg(not(feature = "codec-serde"))]
+            {
+                anyhow::bail!("codec-serde feature is disabled");
+            }
+        }
+    }
+}
+
+fn build_ingest(config: &PipelineConfig) -> Result<BoxedIngest> {
+    match &config.ingest.source {
+        config::IngestSource::File(file_config) => {
+            #[cfg(feature = "ingest-file")]
+            {
+                let debounce_ms = config.ingest.mode.debounce;
+                let ingest = pavis_ingest_file::FileIngest::new(
+                    &file_config.path,
+                    Duration::from_millis(debounce_ms),
+                );
+                Ok(boxed_ingest(ingest))
+            }
+            #[cfg(not(feature = "ingest-file"))]
+            {
+                anyhow::bail!("ingest-file feature is disabled");
+            }
+        }
+    }
 }
 
 fn resolve_lkg_path(config: &config::RelayConfig) -> PathBuf {
@@ -176,7 +223,8 @@ mod tests {
             routes: vec![],
         };
 
-        pavis_pvs::write(&lkg, &runtime_config).unwrap();
+        let validated = pavis_core::validate_runtime(runtime_config).expect("validate");
+        pavis_pvs::write(&lkg, validated.as_ref()).unwrap();
 
         let mut config = minimal_config();
 

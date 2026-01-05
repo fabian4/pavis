@@ -1,0 +1,4 @@
+{
+  "listeners": [
+    { "name": "default", "address": 123 }
+  ]

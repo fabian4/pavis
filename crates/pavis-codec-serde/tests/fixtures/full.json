@@ -1,0 +1,40 @@
+{
+  "listeners": [
+    { "name": "default", "address": "127.0.0.1:8080" }
+  ],
+  "telemetry": {},
+  "upstreams": [
+    {
+      "name": "backend",
+      "tls": { "enabled": true },
+      "endpoints": [
+        { "address": "127.0.0.1", "port": 8081 }
+      ]
+    }
+  ],
+  "routes": [
+    {
+      "host": "example.com",
+      "paths": [
+        {
+          "matcher": { "prefix": { "path": "/" } },
+          "timeout": "1s",
+          "request_headers": {
+            "set_headers": [["x-added", "1"]]
+          },
+          "response_headers": {
+            "remove_headers": ["x-remove"]
+          },
+          "retry": {
+            "attempts": 2,
+            "per_try_timeout": "250ms",
+            "retry_on": ["5xx", "connect_failure"]
+          },
+          "destinations": [
+            { "upstream": "backend", "weight": 1 }
+          ]
+        }
+      ]
+    }
+  ]
+}

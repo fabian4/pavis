@@ -1,30 +1,21 @@
-use crate::codec::{CodecImpl, create_codec};
-use crate::config::{
-    BackoffConfig, PipelineCompaction, PipelineConfig, PipelineOptions, RetryPolicy,
-};
-use crate::ingest::{IngestImpl, create_ingest};
+use crate::codec::BoxedCodec;
+use crate::config::{BackoffConfig, PipelineCompaction, PipelineOptions, RetryPolicy};
+use crate::ingest::BoxedIngest;
 use crate::state::RelayState;
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
-use pavis_codec_api::{Codec, CodecError, CompactionLevel};
-use pavis_ingest_api::{Artifact, Ingest, IngestError};
+use pavis_codec_api::{CodecError, CompactionLevel};
+use pavis_ingest_api::{Artifact, IngestError};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-pub async fn start_pipeline(config: &PipelineConfig, state: RelayState) -> Result<()> {
-    let ingest = match create_ingest(config)? {
-        Some(i) => i,
-        None => return Ok(()),
-    };
-
-    let codec = match create_codec(config)? {
-        Some(c) => c,
-        None => return Ok(()),
-    };
-
-    let label = format!("{:?}-{:?}", config.ingest.source, config.codec);
-    let options = PipelineOptions::from_config(config);
-
+pub async fn start_pipeline(
+    label: String,
+    ingest: BoxedIngest,
+    codec: BoxedCodec,
+    state: RelayState,
+    options: PipelineOptions,
+) -> Result<()> {
     tokio::spawn(async move {
         if let Err(e) = run_pipeline(label, ingest, codec, state, options).await {
             error!("Pipeline stopped with error: {}", e);
@@ -36,8 +27,8 @@ pub async fn start_pipeline(config: &PipelineConfig, state: RelayState) -> Resul
 
 async fn run_pipeline(
     label: String,
-    mut ingest: IngestImpl,
-    codec: CodecImpl,
+    mut ingest: BoxedIngest,
+    codec: BoxedCodec,
     state: RelayState,
     options: PipelineOptions,
 ) -> Result<()> {
@@ -47,16 +38,14 @@ async fn run_pipeline(
     let mut restart_backoff = Backoff::new(options.restart_backoff);
 
     loop {
-        let stream = match ingest {
-            IngestImpl::File(ref mut i) => match i.stream().await {
-                Ok(stream) => stream,
-                Err(err) => {
-                    warn!("[{}] Failed to start ingest stream: {}", label, err);
-                    let delay = restart_backoff.next_delay();
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-            },
+        let stream = match ingest.stream().await {
+            Ok(stream) => stream,
+            Err(err) => {
+                warn!("[{}] Failed to start ingest stream: {}", label, err);
+                let delay = restart_backoff.next_delay();
+                tokio::time::sleep(delay).await;
+                continue;
+            }
         };
 
         restart_backoff.reset();
@@ -90,7 +79,7 @@ async fn run_pipeline(
 async fn handle_artifact(
     label: &str,
     result: Result<Artifact, IngestError>,
-    codec: &CodecImpl,
+    codec: &BoxedCodec,
     state: &RelayState,
     compaction: PipelineCompaction,
     publish_retry: RetryPolicy,
@@ -108,34 +97,32 @@ async fn handle_artifact(
 
     // Delegate validation, default population, and compaction to the Codec layer.
     // The codec returns a fully validated configuration ready for runtime execution.
-    let validated_config = match codec {
-        CodecImpl::Serde(c) => match c.materialize(artifact, compaction_level(compaction)) {
-            Ok(config) => config,
-            Err(err) => {
-                match &err {
-                    CodecError::Check(_) => {
-                        warn!(
-                            "[{}] Codec check failed for source {}: {}",
-                            label, source, err
-                        );
-                    }
-                    CodecError::Compile(_) => {
-                        warn!(
-                            "[{}] Codec compile failed for source {}: {}",
-                            label, source, err
-                        );
-                    }
-                    CodecError::Core(_) => {
-                        warn!(
-                            "[{}] Codec core validation failed for source {}: {}",
-                            label, source, err
-                        );
-                    }
+    let validated_config = match codec.materialize(artifact, compaction_level(compaction)) {
+        Ok(config) => config,
+        Err(err) => {
+            match &err {
+                CodecError::Check(_) => {
+                    warn!(
+                        "[{}] Codec check failed for source {}: {}",
+                        label, source, err
+                    );
                 }
-                return Err(anyhow::Error::new(err))
-                    .context(format!("materialize config for source {}", source));
+                CodecError::Compile(_) => {
+                    warn!(
+                        "[{}] Codec compile failed for source {}: {}",
+                        label, source, err
+                    );
+                }
+                CodecError::Core(_) => {
+                    warn!(
+                        "[{}] Codec core validation failed for source {}: {}",
+                        label, source, err
+                    );
+                }
             }
-        },
+            return Err(anyhow::Error::new(err))
+                .context(format!("materialize config for source {}", source));
+        }
     };
 
     debug!("[{}] Materialized and validated config", label);
@@ -218,8 +205,8 @@ fn compaction_level(level: PipelineCompaction) -> CompactionLevel {
 #[cfg(test)]
 
 mod tests {
-
     use super::*;
+    use crate::config::PipelineConfig;
 
     #[test]
 
@@ -315,11 +302,12 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "codec-serde")]
     #[tokio::test]
     async fn handle_artifact_processes_valid_artifact() {
         use axum::body::Bytes;
         let state = RelayState::new(0, Bytes::new()).expect("state");
-        let codec = CodecImpl::Serde(pavis_codec_serde::SerdeCodec {
+        let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
             format: pavis_codec_serde::SerdeFormat::Yaml,
         });
 
@@ -356,11 +344,12 @@ routes: []
         assert_eq!(state.version().await, 1);
     }
 
+    #[cfg(feature = "codec-serde")]
     #[tokio::test]
     async fn handle_artifact_handles_invalid_artifact() {
         use axum::body::Bytes;
         let state = RelayState::new(0, Bytes::new()).expect("state");
-        let codec = CodecImpl::Serde(pavis_codec_serde::SerdeCodec {
+        let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
             format: pavis_codec_serde::SerdeFormat::Yaml,
         });
 
@@ -439,9 +428,11 @@ routes: []
         );
     }
 
+    #[cfg(all(feature = "codec-serde", feature = "ingest-file"))]
     #[tokio::test]
     async fn test_pipeline_integration() {
         use crate::config::{CodecKind, IngestMode, IngestSource};
+        use crate::ingest::boxed_ingest;
         use std::time::Duration;
 
         let dir = std::env::temp_dir().join("relay_pipeline_test");
@@ -478,7 +469,17 @@ routes: []
         let state =
             RelayState::new_with_options(0, axum::body::Bytes::new(), options).expect("state");
 
-        start_pipeline(&config, state.clone())
+        let label = format!("{:?}-{:?}", config.ingest.source, config.codec);
+        let options = PipelineOptions::from_config(&config);
+        let ingest = boxed_ingest(pavis_ingest_file::FileIngest::new(
+            config_path.to_string_lossy().as_ref(),
+            Duration::from_millis(config.ingest.mode.debounce),
+        ));
+        let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
+            format: pavis_codec_serde::SerdeFormat::Yaml,
+        });
+
+        start_pipeline(label, ingest, codec, state.clone(), options)
             .await
             .expect("start pipeline");
 
@@ -527,9 +528,11 @@ routes: []
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(all(feature = "ingest-file", feature = "codec-serde"))]
     #[tokio::test]
     async fn test_pipeline_restarts_on_stream_failure() {
         use crate::config::{FileSourceConfig, IngestSource};
+        use crate::ingest::boxed_ingest;
         use std::time::Duration;
 
         let mut config = PipelineConfig::default();
@@ -542,8 +545,21 @@ routes: []
 
         let state = RelayState::new(0, axum::body::Bytes::new()).expect("state");
 
+        let label = format!("{:?}-{:?}", config.ingest.source, config.codec);
+        let options = PipelineOptions::from_config(&config);
+        let ingest_path = match &config.ingest.source {
+            IngestSource::File(file) => file.path.as_str(),
+        };
+        let ingest = boxed_ingest(pavis_ingest_file::FileIngest::new(
+            ingest_path,
+            Duration::from_millis(config.ingest.mode.debounce),
+        ));
+        let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
+            format: pavis_codec_serde::SerdeFormat::Yaml,
+        });
+
         // start_pipeline spawns run_pipeline in background
-        start_pipeline(&config, state.clone())
+        start_pipeline(label, ingest, codec, state.clone(), options)
             .await
             .expect("start pipeline");
 

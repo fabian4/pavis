@@ -61,10 +61,10 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 > **Goal**: Harden pipeline stages and enforce strict component boundaries before xDS expansion. This introduces no new user-visible features.
 > **Status**: ⏳ Planned (Prerequisite for Phase 4)
 
-- [ ] **Typed Pipeline Stages**: Explicit, non-bypassable stages (Artifact -> CheckedArtifact -> RuntimeConfig -> ValidatedRuntimeConfig -> PVS).
-- [ ] **Dependency Inversion**: `pavis-relay` depends on ingest/codec traits, not concrete implementations.
-- [ ] **Plugin-Style Composition**: Feature-gated ingest/codec modules to keep binaries small and extensible.
-- [ ] **Boundary Enforcement**: Relay remains an execution/distribution engine; no semantic config interpretation.
+- [x] **Typed Pipeline Stages**: Explicit, non-bypassable stages (Artifact -> CheckedArtifact -> RuntimeConfig -> ValidatedRuntimeConfig -> PVS).
+- [x] **Dependency Inversion**: `pavis-relay` depends on ingest/codec traits, not concrete implementations.
+- [x] **Plugin-Style Composition**: Feature-gated ingest/codec modules to keep binaries small and extensible.
+- [x] **Boundary Enforcement**: Relay remains an execution/distribution engine; no semantic config interpretation.
 - [ ] **Convergence Gate**: No Phase 4 expansion until the above are complete and validated.
 
 ## Phase 4: xDS & Service Mesh Integration

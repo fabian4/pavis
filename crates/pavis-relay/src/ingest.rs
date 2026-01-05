@@ -1,31 +1,30 @@
-use crate::config::{IngestSource, PipelineConfig};
-use pavis_ingest_file::FileIngest;
-use std::time::Duration;
+use futures_util::Stream;
+use pavis_ingest_api::{Artifact, Ingest, IngestError};
+use std::pin::Pin;
 
-pub enum IngestImpl {
-    File(FileIngest),
-}
+pub type IngestStream = Pin<Box<dyn Stream<Item = Result<Artifact, IngestError>> + Send + 'static>>;
+pub type BoxedIngest = Box<dyn Ingest<Stream = IngestStream> + Send>;
 
-pub fn create_ingest(config: &PipelineConfig) -> anyhow::Result<Option<IngestImpl>> {
-    match &config.ingest.source {
-        IngestSource::File(file_config) => {
-            let debounce_ms = config.ingest.mode.debounce;
-            Ok(Some(IngestImpl::File(FileIngest::new(
-                &file_config.path,
-                Duration::from_millis(debounce_ms),
-            ))))
-        }
+struct IngestBox<T>(T);
+
+#[async_trait::async_trait]
+impl<T> Ingest for IngestBox<T>
+where
+    T: Ingest + Send,
+    T::Stream: Send + Unpin + 'static,
+{
+    type Stream = IngestStream;
+
+    async fn stream(&mut self) -> Result<Self::Stream, IngestError> {
+        let stream = self.0.stream().await?;
+        Ok(Box::pin(stream))
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn create_ingest_creates_file_ingest() {
-        let config = PipelineConfig::default();
-        let ingest = create_ingest(&config).expect("create ingest");
-        assert!(matches!(ingest, Some(IngestImpl::File(_))));
-    }
+pub fn boxed_ingest<T>(ingest: T) -> BoxedIngest
+where
+    T: Ingest + Send + 'static,
+    T::Stream: Send + Unpin + 'static,
+{
+    Box::new(IngestBox(ingest))
 }

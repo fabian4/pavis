@@ -310,6 +310,26 @@ async fn artifact_endpoint_returns_bytes() {
 }
 
 #[tokio::test]
+async fn artifact_endpoint_returns_exact_bytes() {
+    let bytes = valid_pvs_bytes("opaque");
+    let state = RelayState::new(7, bytes.clone()).expect("state");
+    let app = router(state);
+
+    let response = app
+        .oneshot(Request::get("/v1/artifacts/7").body(Body::empty()).unwrap())
+        .await
+        .expect("artifact");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("artifact body")
+        .to_bytes();
+    assert_eq!(body, bytes);
+}
+
+#[tokio::test]
 async fn artifact_endpoint_returns_404() {
     let app = router(test_state());
 

@@ -334,7 +334,8 @@ mod tests {
             upstreams: vec![],
             routes: vec![],
         };
-        let pvs_bytes = pavis_pvs::encode(&config).expect("encode");
+        let validated = pavis_core::validate_runtime(config).expect("validate");
+        let pvs_bytes = pavis_pvs::encode(validated.as_ref()).expect("encode");
         let valid_body = Bytes::from(pvs_bytes);
 
         // 2. Policy Failure (max_pvs_bytes)
