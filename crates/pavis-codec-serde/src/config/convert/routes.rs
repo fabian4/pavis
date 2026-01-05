@@ -5,6 +5,185 @@ use crate::config::types::{
     HeaderOperations, Matcher, RetryPolicy, RewritePolicy, Route, VirtualHost, WeightedDestination,
 };
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::types::{Matcher, RetryPolicy, Route, VirtualHost, WeightedDestination};
+    use std::time::Duration;
+
+    #[test]
+    fn to_runtime_validates_destination_weight() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Matcher::Prefix {
+                    path: "/".to_string(),
+                },
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                destinations: vec![WeightedDestination {
+                    upstream: "u1".to_string(),
+                    weight: 0,
+                }],
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("destination weight must be > 0"));
+    }
+
+    #[test]
+    fn to_runtime_validates_timeout_limits() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Matcher::Prefix {
+                    path: "/".to_string(),
+                },
+                timeout: Some(Duration::from_millis(u64::MAX)), // Exceeds u32
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                destinations: vec![],
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("timeout exceeds u32::MAX"));
+    }
+
+    #[test]
+    fn to_runtime_validates_retry_policy() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Matcher::Prefix {
+                    path: "/".to_string(),
+                },
+                timeout: None,
+                retry: Some(RetryPolicy {
+                    attempts: 0, // Invalid
+                    per_try_timeout: Duration::from_secs(1),
+                    retry_on: vec![],
+                }),
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                destinations: vec![],
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("retry.attempts must be > 0"));
+    }
+
+    #[test]
+    fn to_runtime_handles_retry_flags() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Matcher::Prefix {
+                    path: "/".to_string(),
+                },
+                timeout: None,
+                retry: Some(RetryPolicy {
+                    attempts: 1,
+                    per_try_timeout: Duration::from_secs(1),
+                    retry_on: vec![
+                        serde_json::Value::String("5xx".to_string()),
+                        serde_json::Value::String("connect_failure".to_string()),
+                        serde_json::Value::String("reset".to_string()),
+                        serde_json::Value::String("refused".to_string()),
+                    ],
+                }),
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                destinations: vec![],
+            }],
+        };
+        let runtime = to_runtime(vec![vhost]).unwrap();
+        let retry = match &runtime[0].paths[0].retry {
+            pavis_core::RetryPolicy::Enabled { on, .. } => on,
+            _ => panic!("expected enabled retry"),
+        };
+        assert_eq!(
+            retry.0,
+            pavis_core::RETRY_FIVE_XX
+                | pavis_core::RETRY_CONNECT_FAILURE
+                | pavis_core::RETRY_RESET
+                | pavis_core::RETRY_REFUSED
+        );
+    }
+
+    #[test]
+    fn to_runtime_rejects_invalid_retry_flags() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Matcher::Prefix {
+                    path: "/".to_string(),
+                },
+                timeout: None,
+                retry: Some(RetryPolicy {
+                    attempts: 1,
+                    per_try_timeout: Duration::from_secs(1),
+                    retry_on: vec![serde_json::Value::String("invalid".to_string())],
+                }),
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                destinations: vec![],
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("unsupported retry condition"));
+    }
+
+    #[test]
+    fn from_runtime_round_trips_retry_flags() {
+        use pavis_core::*;
+        let flags = RetryFlags(RETRY_FIVE_XX | RETRY_RESET);
+        let values = super::retry_flags_to_values(flags);
+        assert!(values.contains(&serde_json::Value::String("5xx".to_string())));
+        assert!(values.contains(&serde_json::Value::String("reset".to_string())));
+        assert_eq!(values.len(), 2);
+    }
+
+    #[test]
+    fn from_runtime_handles_rewrites() {
+        use pavis_core::*;
+        let runtime_vhost = VirtualHost {
+            host: Host("example.com".to_string()),
+            paths: vec![pavis_core::Route {
+                matcher: PathMatch::Prefix {
+                    path: Path("/".to_string()),
+                },
+                timeout: Timeout::Disabled,
+                retry: RetryPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled,
+                response_headers: HeadersPolicy::Disabled,
+                rewrite: Rewrite {
+                    path: RewritePath::Prefix {
+                        from: Path("/".to_string()),
+                        to: Path("/api".to_string()),
+                    },
+                    host: RewriteHost::Literal {
+                        host: Hostname("backend".to_string()),
+                    },
+                },
+                destinations: vec![],
+            }],
+        };
+
+        let serde_vhost = from_runtime(vec![runtime_vhost]);
+        let rewrite = serde_vhost[0].paths[0].rewrite.as_ref().unwrap();
+        assert_eq!(rewrite.path_prefix_rewrite.as_deref(), Some("/api"));
+        assert_eq!(rewrite.host_rewrite_literal.as_deref(), Some("backend"));
+    }
+}
+
 pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::VirtualHost>> {
     let mut runtime_routes = Vec::new();
 
@@ -293,7 +472,7 @@ fn from_runtime_headers(h: &pavis_core::HeadersPolicy) -> Option<HeaderOperation
     }
 }
 
-fn retry_flags_to_values(flags: pavis_core::RetryFlags) -> Vec<serde_json::Value> {
+pub(crate) fn retry_flags_to_values(flags: pavis_core::RetryFlags) -> Vec<serde_json::Value> {
     let mut values = Vec::new();
     let bits = flags.0;
     if bits & pavis_core::RETRY_FIVE_XX != 0 {

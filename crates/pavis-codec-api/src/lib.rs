@@ -257,4 +257,22 @@ mod tests {
         assert_eq!(cfg.upstreams.len(), 1);
         assert_eq!(cfg.routes.len(), 1);
     }
+
+    #[test]
+    fn codec_error_from_core_validation_error() {
+        let err: CodecError = CoreValidationError::EmptyUpstreamName.into();
+        assert!(matches!(
+            err,
+            CodecError::Core(CoreValidationError::EmptyUpstreamName)
+        ));
+    }
+
+    #[test]
+    fn checked_artifact_with_state() {
+        let artifact = test_artifact();
+        let checked = CheckedArtifact::with_state(artifact, 42u32);
+        assert!(checked.state.is_some());
+        let state = checked.state.unwrap().downcast_ref::<u32>().copied();
+        assert_eq!(state, Some(42));
+    }
 }

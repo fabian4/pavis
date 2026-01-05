@@ -83,27 +83,15 @@ impl Codec for SerdeCodec {
 mod tests {
     use super::{SerdeCodec, SerdeFormat};
     use bytes::Bytes;
-    use pavis_codec_api::Codec;
+    use pavis_codec_api::{CheckedArtifact, Codec};
     use pavis_ingest_api::{Artifact, Format, SourceInfo};
 
     #[test]
-    fn compile_surfaces_build_errors() {
+    fn compile_handles_missing_state() {
         let yaml = r#"
-server:
-  listen_addr: "127.0.0.1:8080"
-telemetry: {}
-upstreams:
-  - name: ""
-    endpoints:
-      - ip: "127.0.0.1"
-        port: 8081
-routes:
-  - host: "*"
-    paths:
-      - path: "/"
-        destinations:
-          - upstream: ""
-            weight: 1
+listeners:
+  - name: "default"
+    address: "127.0.0.1:8080"
 "#;
         let artifact = Artifact::new(
             Bytes::from_static(yaml.as_bytes()),
@@ -113,17 +101,32 @@ routes:
         let codec = SerdeCodec {
             format: SerdeFormat::Yaml,
         };
-        let checked = codec.check(artifact).expect("checked");
-        let err = codec.compile(&checked).expect_err("compile");
-        let msg = err.to_string();
-        let source = std::error::Error::source(&err)
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        assert!(msg.contains("codec compile failed"));
-        assert!(
-            source.contains("Failed to build RuntimeConfig")
-                || source.contains("EmptyUpstreamName"),
-            "{source}"
-        );
+        // Compile directly without state populated by check
+        let checked = CheckedArtifact::new(artifact);
+        let config = codec.compile(&checked).expect("compile");
+        assert_eq!(config.listeners[0].address.port(), 8080);
+    }
+
+    #[test]
+    fn pack_success() {
+        let config = pavis_core::RuntimeConfig {
+            listeners: vec![],
+            telemetry: pavis_core::Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: pavis_core::ServiceName("test".to_string()),
+                metrics: pavis_core::Metrics::Disabled,
+                access_log: pavis_core::AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            },
+            upstreams: vec![],
+            routes: vec![],
+        };
+        let codec = SerdeCodec {
+            format: SerdeFormat::Json,
+        };
+        let artifact = codec.pack(&config).expect("pack");
+        assert_eq!(artifact.format, Format::Json);
+        assert!(!artifact.bytes.is_empty());
     }
 }

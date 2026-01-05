@@ -6,6 +6,143 @@ use pavis_core::{ConnectTimeout, Discovery, EndpointAddr, TlsVerify};
 
 use crate::config::types::{Endpoint, Upstream, UpstreamTlsConfig};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::types::{ConnectionPoolConfig, Endpoint, Upstream, UpstreamTlsConfig};
+    use pavis_core::{Discovery, HttpVersion, LoadBalancer, TlsPolicy};
+    use std::time::Duration;
+
+    fn base_upstream() -> Upstream {
+        Upstream {
+            id: None,
+            name: "u1".to_string(),
+            discovery: Discovery::default(),
+            balancer: LoadBalancer::default(),
+            protocol: HttpVersion::default(),
+            pool: ConnectionPoolConfig::default(),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn to_runtime_validates_port() {
+        let upstream = Upstream {
+            name: "u1".to_string(),
+            endpoints: vec![Endpoint {
+                address: "127.0.0.1".to_string(),
+                port: 0,
+                weight: None,
+            }],
+            ..base_upstream()
+        };
+        let err = to_runtime(vec![upstream]).unwrap_err();
+        assert!(err.to_string().contains("endpoint port must be > 0"));
+    }
+
+    #[test]
+    fn to_runtime_validates_ip_address() {
+        let upstream = Upstream {
+            name: "u1".to_string(),
+            discovery: Discovery::Static,
+            endpoints: vec![Endpoint {
+                address: "invalid-ip".to_string(),
+                port: 8080,
+                weight: None,
+            }],
+            ..base_upstream()
+        };
+        let err = to_runtime(vec![upstream]).unwrap_err();
+        assert!(err.to_string().contains("Invalid endpoint IP"));
+    }
+
+    #[test]
+    fn to_runtime_validates_weight() {
+        let upstream = Upstream {
+            name: "u1".to_string(),
+            endpoints: vec![Endpoint {
+                address: "127.0.0.1".to_string(),
+                port: 8080,
+                weight: Some(0),
+            }],
+            ..base_upstream()
+        };
+        let err = to_runtime(vec![upstream]).unwrap_err();
+        assert!(err.to_string().contains("endpoint weight must be > 0"));
+    }
+
+    #[test]
+    fn to_runtime_validates_pool_limits() {
+        let upstream = Upstream {
+            name: "u1".to_string(),
+            pool: ConnectionPoolConfig {
+                idle: Duration::from_millis(u64::MAX),
+                connect: Duration::from_secs(1),
+                max: None,
+            },
+            ..base_upstream()
+        };
+        let err = to_runtime(vec![upstream]).unwrap_err();
+        assert!(err.to_string().contains("idle timeout exceeds u32::MAX"));
+    }
+
+    #[test]
+    fn to_runtime_handles_tls_config() {
+        let upstream = Upstream {
+            name: "u1".to_string(),
+            tls: Some(UpstreamTlsConfig {
+                enabled: true,
+                verify_hostname: Some(false),
+                verify_cert: Some(true),
+                sni: Some("example.com".to_string()),
+            }),
+            ..base_upstream()
+        };
+        let runtime = to_runtime(vec![upstream]).unwrap();
+        match &runtime[0].tls {
+            TlsPolicy::Enabled { verify_mode, sni } => {
+                assert!(matches!(verify_mode, pavis_core::TlsVerify::Cert));
+                assert!(matches!(sni, pavis_core::SniName::Value(h) if h.0 == "example.com"));
+            }
+            _ => panic!("expected enabled tls"),
+        }
+    }
+
+    #[test]
+    fn from_runtime_round_trips_full_config() {
+        use pavis_core::*;
+        let runtime = pavis_core::Upstream {
+            id: UpstreamId(std::num::NonZeroU16::new(10).unwrap()),
+            name: UpstreamName("u1".to_string()),
+            discovery: Discovery::StrictDns,
+            balancer: LoadBalancer::LeastRequest,
+            protocol: HttpVersion::H2,
+            pool: Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit::Unlimited,
+            },
+            tls: TlsPolicy::Disabled,
+            endpoints: vec![pavis_core::Endpoint {
+                address: EndpointAddr::Dns {
+                    host: Hostname("example.com".to_string()),
+                    port: Port(std::num::NonZeroU16::new(443).unwrap()),
+                },
+                weight: Weight(std::num::NonZeroU16::new(5).unwrap()),
+            }],
+        };
+
+        let serde = from_runtime(vec![runtime]);
+        assert_eq!(serde[0].endpoints[0].address, "example.com");
+        assert_eq!(serde[0].endpoints[0].port, 443);
+        assert_eq!(serde[0].endpoints[0].weight, Some(5));
+        assert_eq!(serde[0].protocol, HttpVersion::H2);
+    }
+}
+
 pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Upstream>> {
     let mut runtime_upstreams = Vec::new();
 

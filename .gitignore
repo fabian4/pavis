@@ -20,3 +20,4 @@ target
 # Benchmark results
 bench/output/
 /lcov.info
+/build_rs_cov.profraw

@@ -8,6 +8,123 @@ use pavis_core::{
 
 use crate::config::types::TelemetryConfig;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::types::{TelemetryConfig, TracingConfig};
+    use pavis_core::{
+        AccessLogPolicy, LogLevel, Metrics, SampleRate, ServiceName, Telemetry, TracingPolicy,
+        TracingProvider,
+    };
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    #[test]
+    fn parse_log_level_handles_variants() {
+        assert_eq!(
+            parse_log_level(Some("debug".to_string())),
+            Some(LogLevel::Debug)
+        );
+        assert_eq!(
+            parse_log_level(Some("DEBUG".to_string())),
+            Some(LogLevel::Debug)
+        );
+        assert_eq!(parse_log_level(Some("unknown".to_string())), None);
+        assert_eq!(parse_log_level(None), None);
+    }
+
+    #[test]
+    fn to_runtime_defaults() {
+        let config = TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            metrics: None,
+            access_log: AccessLogPolicy::Disabled,
+            tracing: None,
+        };
+        let runtime = to_runtime(config).unwrap();
+        assert_eq!(runtime.level, LogLevel::Info);
+        assert_eq!(runtime.service_name.0, "pavis");
+    }
+
+    #[test]
+    fn to_runtime_validates_metrics_addr() {
+        let config = TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            metrics: Some("invalid".to_string()),
+            access_log: AccessLogPolicy::Disabled,
+            tracing: None,
+        };
+        let err = to_runtime(config).unwrap_err();
+        assert!(err.to_string().contains("metrics must be a socket address"));
+    }
+
+    #[test]
+    fn to_runtime_handles_tracing_providers() {
+        let providers = vec![
+            ("otlp", TracingProvider::Otlp),
+            ("jaeger", TracingProvider::Jaeger),
+            ("zipkin", TracingProvider::Zipkin),
+            ("unknown", TracingProvider::Otlp), // Default
+        ];
+
+        for (input, expected) in providers {
+            let config = TelemetryConfig {
+                level: None,
+                pingora: None,
+                service_name: None,
+                metrics: None,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: Some(TracingConfig {
+                    provider: Some(input.to_string()),
+                    sampling: Some(100),
+                }),
+            };
+            let runtime = to_runtime(config).unwrap();
+            match runtime.tracing {
+                TracingPolicy::Enabled { provider, sampling } => {
+                    let provider_matches = match expected {
+                        TracingProvider::Otlp => matches!(provider, TracingProvider::Otlp),
+                        TracingProvider::Jaeger => matches!(provider, TracingProvider::Jaeger),
+                        TracingProvider::Zipkin => matches!(provider, TracingProvider::Zipkin),
+                    };
+                    assert!(provider_matches);
+                    assert_eq!(sampling.0, 100);
+                }
+                _ => panic!("expected enabled tracing"),
+            }
+        }
+    }
+
+    #[test]
+    fn from_runtime_round_trips_full_config() {
+        let runtime = Telemetry {
+            level: LogLevel::Debug,
+            pingora: LogLevel::Warn,
+            service_name: ServiceName("test-service".to_string()),
+            metrics: Metrics::Enabled {
+                addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9090),
+            },
+            access_log: AccessLogPolicy::Stdout,
+            tracing: TracingPolicy::Enabled {
+                provider: TracingProvider::Zipkin,
+                sampling: SampleRate(50),
+            },
+        };
+
+        let serde = from_runtime(runtime);
+        assert_eq!(serde.level.as_deref(), Some("debug"));
+        assert_eq!(serde.pingora.as_deref(), Some("warn"));
+        assert_eq!(serde.service_name.as_deref(), Some("test-service"));
+        assert_eq!(serde.metrics.as_deref(), Some("127.0.0.1:9090"));
+        let tracing = serde.tracing.unwrap();
+        assert_eq!(tracing.provider.as_deref(), Some("zipkin"));
+        assert_eq!(tracing.sampling, Some(50));
+    }
+}
+
 pub(super) fn to_runtime(telemetry: TelemetryConfig) -> Result<RuntimeTelemetry> {
     let level = parse_log_level(telemetry.level).unwrap_or(LogLevel::Info);
     let pingora = parse_log_level(telemetry.pingora).unwrap_or(LogLevel::Info);

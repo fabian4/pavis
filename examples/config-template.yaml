@@ -1,0 +1,79 @@
+# Pavis Configuration Template
+# Source Config / Source DTO: user-authored, sparse allowed.
+# Semantic defaults here are source-specific; other codecs (xDS/CRD) may differ.
+
+# listeners: optional (source); structural completion in codec-api; semantic defaults in source-specific codec.
+listeners:
+  - name: "default" # semantic default (source-specific codec)
+    address: "0.0.0.0:8080" # semantic default (source-specific codec)
+    workers: null # structural completion
+    tls: null # structural completion
+
+# telemetry: optional (source); structural completion in codec-api; semantic defaults in source-specific codec.
+telemetry:
+  level: "info" # semantic default (source-specific codec)
+  pingora: "info" # semantic default (source-specific codec)
+  service_name: "pavis" # semantic default (source-specific codec)
+  metrics: "0.0.0.0:9090" # semantic default (source-specific codec) or disabled
+  access_log: "stdout" # semantic default (source-specific codec)
+  tracing: # structural completion to disabled if omitted
+    provider: "otlp" # semantic default (source-specific codec)
+    sampling: 1000 # semantic default (source-specific codec)
+
+# upstreams: optional (source); empty list via structural completion.
+upstreams:
+  - id: 1 # semantic default (source-specific codec)
+    name: "backend" # no default
+    discovery: "static" # semantic default (source-specific codec)
+    balancer: "round-robin" # semantic default (source-specific codec)
+    protocol: "h1" # semantic default (source-specific codec)
+    pool: # structural completion
+      idle: "60s" # semantic default (source-specific codec)
+      connect: "5s" # semantic default (source-specific codec)
+      max: null # structural completion
+    tls: # structural completion to disabled if omitted
+      enabled: true # semantic default (source-specific codec)
+      verify_hostname: true # semantic default (source-specific codec)
+      verify_cert: true # semantic default (source-specific codec)
+      sni: "backend.local" # semantic default (source-specific codec)
+    circuit_breaker: null # structural completion
+    health_check: null # structural completion
+    endpoints: # optional (source); empty list via structural completion
+      - address: "127.0.0.1" # no default
+        port: 8081 # no default
+        weight: 1 # semantic default (source-specific codec)
+
+# routes: optional (source); empty list via structural completion.
+routes:
+  - host: "example.com" # semantic default (source-specific codec)
+    paths: # structural completion to empty if omitted
+      - matcher: !prefix # semantic default (source-specific codec)
+          path: "/" # no default
+        timeout: "1s" # semantic default (source-specific codec)
+        retry: # structural completion to disabled if omitted
+          attempts: 2 # semantic default (source-specific codec)
+          per_try_timeout: "250ms" # semantic default (source-specific codec)
+          retry_on: ["5xx", "connect_failure"] # semantic default (source-specific codec)
+        request_headers: # structural completion to disabled if omitted
+          set_headers:
+            - ["x-added", "1"]
+          append_headers: []
+          add_headers: []
+          remove_headers: ["x-remove"]
+        response_headers: # structural completion to disabled if omitted
+          set_headers: []
+          append_headers: []
+          add_headers: []
+          remove_headers: []
+        rewrite: # structural completion to disabled if omitted
+          path_prefix_rewrite: "/" # no default
+          host_rewrite_literal: "example.com" # no default
+        destinations: # structural completion to empty if omitted
+          - upstream: "backend" # no default
+            weight: 1 # semantic default (source-specific codec)
+
+# Summary of defaulting boundaries (applies to this template only):
+# - codec-api performs structural completion only (explicit empty/disabled, container normalization).
+# - source-specific codecs apply semantic defaults (timeouts, protocols, policies).
+# - runtime, relay, and core MUST NOT apply semantic defaults.
+# - other codecs (xDS/CRD) may apply different semantic defaults; they do not share defaults.

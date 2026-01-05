@@ -3,318 +3,142 @@
 > **Status:** Reference
 > **Role:** Canonical definition of the fully materialized runtime configuration and its YAML form.
 
-This document describes the `pavis_core::RuntimeConfig` structure consumed by the Pavis runtime and the YAML emitted/accepted by the serde codec.
+This document describes the `pavis_core::RuntimeConfig` structure consumed by the Pavis runtime. YAML is a codec-level representation emitted or accepted by source-specific codecs and is not the canonical model.
 
-## RuntimeConfig (Rust)
-```rust
-pub struct RuntimeConfig {
-    pub listeners: Vec<Listener>,
-    pub telemetry: Telemetry,
-    pub upstreams: Vec<Upstream>,
-    pub routes: Vec<VirtualHost>,
-}
+# Configuration Translation and Defaults
 
-pub struct Duration(pub NonZeroU32);
+This section defines the configuration translation pipeline, DTO stages, and defaulting boundaries for Pavis. It applies to YAML, xDS, and CRD sources.
 
-pub enum Timeout {
-    Disabled,
-    Enabled(Duration),
-}
+## Configuration Translation Pipeline
 
-pub enum ConnectTimeout {
-    Disabled,
-    Enabled(Duration),
-}
+Pavis configuration MUST pass through the following stages in order:
+- Source Config → Source DTO
+- Source DTO → Partial Pavis DTO
+- Partial Pavis DTO → Structurally Complete Pavis DTO
+- Structurally Complete Pavis DTO → RuntimeConfig
+- RuntimeConfig → core semantic validation
 
-pub enum IdleTimeout {
-    Disabled,
-    Enabled(Duration),
-}
+Source configurations are expected to be sparse. Sparse input is allowed and encouraged; it is not an error at the source layer.
 
-pub enum TryTimeout {
-    Inherit,
-    Disabled,
-    Enabled(Duration),
-}
+Pipeline responsibility mapping (mandatory):
+- Source Config → Source DTO: Implemented by the source-specific codec input layer. Ingest layers MUST NOT apply defaults or semantics.
+- Source DTO → Partial Pavis DTO: Implemented by the source-specific codec. codec-api MUST NOT apply semantics here.
+- Partial Pavis DTO → Structurally Complete Pavis DTO: Implemented by codec-api structural completion utilities, invoked by the source-specific codec.
+- Structurally Complete Pavis DTO → RuntimeConfig: Implemented by the source-specific codec, including source-specific semantic defaults.
+- RuntimeConfig → core semantic validation: Implemented by core validation; runtime and relay MUST NOT compensate for missing intent.
 
-pub struct Hostname(pub String);
-pub struct Host(pub String);
-pub struct Path(pub String);
-pub struct ServiceName(pub String);
-pub struct HeaderName(pub String);
-pub struct HeaderValue(pub String);
-pub struct UpstreamName(pub String);
-pub struct UpstreamId(pub NonZeroU16);
-pub struct ListenerName(pub String);
-pub struct Port(pub NonZeroU16);
-pub struct Weight(pub NonZeroU16);
-pub struct SampleRate(pub u32);
+## DTO Stages and Intent
 
-pub struct Listener {
-    pub name: ListenerName,
-    pub address: SocketAddr,
-    pub workers: WorkerCount,
-    pub tls: TlsConfig,
-}
+### Source DTO
+- Represents the source format directly.
+- MAY be sparse and incomplete.
+- MUST preserve source-specific fields and semantics.
+- MUST NOT include runtime-specific assumptions.
 
-pub enum WorkerCount {
-    Auto,
-    Count(NonZeroU16),
-}
+### Partial Pavis DTO
+- Represents a normalized, source-agnostic shape.
+- MAY still be sparse and incomplete.
+- MUST remove source quirks and normalize field naming.
+- MUST NOT be semantically defaulted.
 
-pub enum TlsConfig {
-    Disabled,
-    Enabled { cert_path: Path, key_path: Path },
-}
+### Structurally Complete Pavis DTO
+- Represents a complete shape with all required containers and fields present.
+- MUST eliminate structural absence via empty containers and explicit disabled states.
+- MUST NOT introduce semantic defaults beyond structural completion.
+- Exists to provide a stable, source-agnostic boundary for validation and conversion.
+- Is mandatory for all codecs, even if the source appears complete.
 
-pub struct Telemetry {
-    pub level: LogLevel,
-    pub pingora: LogLevel,
-    pub service_name: ServiceName,
-    pub metrics: Metrics,
-    pub access_log: AccessLogPolicy,
-    pub tracing: TracingPolicy,
-}
+### RuntimeConfig
+- Represents the fully materialized runtime configuration.
+- MUST be fully specified with all semantic defaults applied.
+- MUST be suitable for core semantic validation without additional inference.
+- Is semantically final and immutable in meaning; no later layer may infer, compensate, or repair intent.
 
-pub enum LogLevel {
-    Error,
-    Warn,
-    Info,
-    Debug,
-    Trace,
-}
+## Defaults: Structural vs Semantic
 
-pub enum AccessLogPolicy {
-    Disabled,
-    Stdout,
-    File(Path),
-}
+### Structural Completion
+Structural completion is about shape only:
+- Options are resolved to explicit empty or disabled states.
+- Containers are normalized to consistent presence.
+- Shape consistency is guaranteed across all fields.
 
-pub enum TracingPolicy {
-    Disabled,
-    Enabled {
-        provider: TracingProvider,
-        sampling: SampleRate,
-    },
-}
+Structural completion MAY occur in codec-api utilities and in concrete codecs. It MUST NOT introduce or imply runtime semantics.
 
-pub enum TracingProvider {
-    Otlp,
-    Jaeger,
-    Zipkin,
-}
+### Semantic Defaults
+Semantic defaults include, but are not limited to:
+- Timeouts
+- Retry policies
+- Protocol choices
+- Policy defaults
 
-pub enum Metrics {
-    Disabled,
-    Enabled { addr: SocketAddr },
-}
+Semantic defaults MUST be applied only by source-specific codecs. Runtime, relay, and core layers MUST NOT apply semantic defaults.
 
-pub struct Upstream {
-    pub id: UpstreamId,
-    pub name: UpstreamName,
-    pub discovery: Discovery,
-    pub balancer: LoadBalancer,
-    pub protocol: HttpVersion,
-    pub pool: Pool,
-    pub tls: TlsPolicy,
-    pub endpoints: Vec<Endpoint>,
-}
+## Codec API Responsibilities
 
-pub enum Discovery {
-    Static,
-    StrictDns,
-    LogicalDns,
-}
+codec-api MAY:
+- Define the transformation phases and their ordering.
+- Provide structural completion utilities.
+- Enforce that pipeline steps are executed in sequence.
 
-pub enum LoadBalancer {
-    RoundRobin,
-    Random,
-    LeastRequest,
-}
+codec-api MUST NOT:
+- Define default values for semantic fields.
+- Embed source-specific semantics.
+- Override or replace concrete codec behavior.
+- Perform semantic inference of any kind.
+- Apply “obvious” or “universal” defaults.
+- Derive values based on intent or meaning rather than structure.
 
-pub enum HttpVersion {
-    H1,
-    H2,
-    H2H1,
-}
+## Concrete Codec Responsibilities
 
-pub struct Pool {
-    pub idle: IdleTimeout,
-    pub connect: ConnectTimeout,
-    pub max: ConnectionLimit,
-}
+Concrete codecs MUST:
+- Apply source-specific semantic defaults.
+- Normalize source quirks into the partial Pavis DTO.
+- Derive any runtime-ready fields required to produce RuntimeConfig.
 
-pub enum ConnectionLimit {
-    Unlimited,
-    Limited(NonZeroU32),
-}
+Concrete codecs MUST NOT:
+- Share defaults across codecs.
+- Delegate semantic defaulting to runtime, relay, or core.
 
-pub enum TlsPolicy {
-    Disabled,
-    Enabled { verify_mode: TlsVerify, sni: SniName },
-}
+## Non-Goals and Forbidden Patterns
 
-pub enum TlsVerify {
-    Disabled,
-    Cert,
-    CertAndHost,
-}
+The following are forbidden:
+- Shared default tables across codecs.
+- Semantic defaulting in runtime, relay, or core.
+- Semantic decisions in codec-api or other API layers.
+- Semantic or policy-based compensation in relay.
+- “Safety defaults” or fallback behavior in relay.
 
-pub enum SniName {
-    Auto,
-    Value(Hostname),
-}
+## Invariants
 
-pub struct Endpoint {
-    pub address: EndpointAddr,
-    pub weight: Weight,
-}
+The following rules are mandatory for code review:
+- Source configs MUST be accepted as sparse inputs.
+- Source DTOs MUST preserve source semantics and MUST NOT embed runtime assumptions.
+- Partial Pavis DTOs MUST be source-agnostic and MUST NOT include semantic defaults.
+- Structurally Complete Pavis DTOs MUST be shape-complete and MUST NOT apply semantic defaults.
+- RuntimeConfig MUST be fully specified before core validation.
+- Core validation MUST treat RuntimeConfig as semantically complete.
+- codec-api MUST NOT define or apply semantic defaults.
+- Concrete codecs MUST apply semantic defaults that are scoped to their source.
 
-pub enum EndpointAddr {
-    Ip { address: IpAddr, port: Port },
-    Dns { host: Hostname, port: Port },
-}
+# RuntimeConfig (Rust)
 
-pub struct VirtualHost {
-    pub host: Host,
-    pub paths: Vec<Route>,
-}
+The canonical Rust schema lives in these files:
+- `crates/pavis-core/src/runtime/mod.rs`
+- `crates/pavis-core/src/runtime/types.rs`
+- `crates/pavis-core/src/runtime/server.rs`
+- `crates/pavis-core/src/runtime/telemetry.rs`
+- `crates/pavis-core/src/runtime/upstream.rs`
+- `crates/pavis-core/src/runtime/routing.rs`
+- `crates/pavis-core/src/runtime/headers.rs`
 
-pub struct Route {
-    pub matcher: PathMatch,
-    pub timeout: Timeout,
-    pub retry: RetryPolicy,
-    pub request_headers: HeadersPolicy,
-    pub response_headers: HeadersPolicy,
-    pub rewrite: Rewrite,
-    pub destinations: Vec<Destination>,
-}
-
-pub enum PathMatch {
-    Prefix { path: Path },
-    Exact { path: Path },
-    Regex { path: Path },
-}
-
-pub enum RetryPolicy {
-    Disabled,
-    Enabled {
-        attempts: NonZeroU16,
-        per_try: TryTimeout,
-        on: RetryFlags,
-    },
-}
-
-pub struct RetryFlags(pub u8);
-pub const RETRY_FIVE_XX: u8 = 0b0000_0001;
-pub const RETRY_CONNECT_FAILURE: u8 = 0b0000_0010;
-pub const RETRY_RESET: u8 = 0b0000_0100;
-pub const RETRY_REFUSED: u8 = 0b0000_1000;
-pub const RETRY_RESERVED: u8 = 0b1111_0000;
-
-pub enum HeadersPolicy {
-    Disabled,
-    Enabled { rules: Headers },
-}
-
-pub struct Headers {
-    pub set_headers: Vec<(HeaderName, HeaderValue)>,
-    pub append_headers: Vec<(HeaderName, HeaderValue)>,
-    pub add_headers: Vec<(HeaderName, HeaderValue)>,
-    pub remove_headers: Vec<HeaderName>,
-}
-
-pub struct Rewrite {
-    pub path: RewritePath,
-    pub host: RewriteHost,
-}
-
-pub enum RewritePath {
-    Disabled,
-    Prefix { from: Path, to: Path },
-}
-
-pub enum RewriteHost {
-    Disabled,
-    Literal { host: Hostname },
-}
-
-pub struct Destination {
-    pub upstream: UpstreamName,
-    pub weight: Weight,
-}
-```
-
-**Normative Semantics**
+## Normative Semantics
 - `HeadersPolicy::Disabled` means no header mutations are applied.
 - Regex compilation happens at runtime load/swap and is not stored in the schema.
 
-## YAML Reference (serde codec)
+# YAML Reference
 
-```yaml
-listeners:
-  - name: "default"
-    address: "0.0.0.0:8080"
-    workers: null
-    tls: null
-
-telemetry:
-  level: null
-  pingora: null
-  service_name: null
-  metrics: null
-  access_log: "stdout"   # "stdout", "false", or file path
-  tracing:
-    provider: "otlp"      # otlp, jaeger, zipkin
-    sampling: 1000
-
-upstreams:
-  - id: 1                # optional
-    name: "backend"
-    discovery: "static"        # static, strict-dns, logical-dns
-    balancer: "round-robin"    # round-robin, random, least-request
-    protocol: "h1"            # h1, h2, h2h1
-    pool:
-      idle: "60s"
-      connect: "5s"
-      max: null                # null = unlimited
-    tls:
-      enabled: true
-      verify_hostname: true
-      verify_cert: true
-      sni: "backend.local"
-    circuit_breaker: null
-    health_check: null
-    endpoints:
-      - address: "127.0.0.1"
-        port: 8081
-        weight: 1
-
-routes:
-  - host: "example.com"
-    paths:
-      - matcher:
-          prefix:
-            path: "/"
-        timeout: null          # duration string or null
-        retry:
-          attempts: 2
-          per_try_timeout: "250ms"
-          retry_on: ["5xx", "connect_failure"]
-        request_headers:
-          set_headers:
-            - ["x-added", "1"]
-          append_headers: []
-          add_headers: []
-          remove_headers: ["x-remove"]
-        response_headers: null
-        rewrite:
-          path_prefix_rewrite: "/v2"
-          host_rewrite_literal: "backend.local"
-        destinations:
-          - upstream: "backend"
-            weight: 1
-```
+The canonical annotated YAML template lives at:
+- `examples/config-template.yaml`
 
 Notes:
 - YAML durations (`idle`, `connect`, `timeout`, `per_try`) accept human-friendly strings and are materialized into milliseconds in `RuntimeConfig`.
