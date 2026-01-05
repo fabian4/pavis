@@ -120,5 +120,6 @@ start_backends
 echo "🧪 Running Integrated Tests via Rust Harness..."
 cd "$WORKSPACE_ROOT"
 cargo test -p pavis-e2e --test integrated -- --test-threads=1 --nocapture
+cargo test -p pavis-e2e --test chaos_reloads -- --test-threads=1 --nocapture
 
 echo "🎉 Integrated tests passed!"

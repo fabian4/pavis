@@ -19,11 +19,13 @@ This document tracks the completion of Phase 3.5 and required Technical Debt res
 ## Draft Execution Plan (Implementation Order)
 
 ### E. Testing & Quality
-**Objective:** Reduce correctness risk before Phase 4 without expanding scope.  
-**Expected Outcome:** Core routing/validation edges are covered and reload churn is exercised end-to-end.  
+**Objective:** Reduce correctness risk before Phase 4 without expanding scope or altering runtime/relay behavior.  
+**Expected Outcome:** Core routing/validation edges and codec pipeline invariants are covered, and reload churn is exercised end-to-end.  
 **DoD:**  
-- `pavis-core` tests cover routing precedence and regex/validation edge cases.  
-- `pavis-e2e/tests/chaos_reloads.rs` verifies convergence under rapid updates.
+- [x] `pavis-core` tests cover routing precedence and regex/validation edge cases.  
+- [x] Codec-serde integration tests (fixture-based) cover YAML and JSON defaults and conversion invariants.  
+- [x] `materialize` validation is covered by a codec-level test that exercises `compile` + `materialize` boundaries.  
+- [x] `pavis-e2e/tests/chaos_reloads.rs` verifies convergence under rapid updates.
 
 ### F. Release Engineering
 **Objective:** Block invalid artifacts as early as possible at ingest boundaries.  

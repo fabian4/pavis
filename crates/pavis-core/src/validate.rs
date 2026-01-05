@@ -394,6 +394,42 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_regex_route_fails() {
+        let mut cfg = base_config();
+        let mut route = cfg.routes[0].paths[0].clone();
+        route.matcher = PathMatch::Regex {
+            path: Path("^/api$".to_string()),
+        };
+        cfg.routes[0].paths = vec![route.clone(), route];
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::DuplicateRoute { .. }));
+    }
+
+    #[test]
+    fn prefix_and_exact_same_path_is_allowed() {
+        let mut cfg = base_config();
+        let mut exact = cfg.routes[0].paths[0].clone();
+        exact.matcher = PathMatch::Exact {
+            path: Path("/api".to_string()),
+        };
+        let mut prefix = exact.clone();
+        prefix.matcher = PathMatch::Prefix {
+            path: Path("/api".to_string()),
+        };
+        cfg.routes[0].paths = vec![exact, prefix];
+        validate_runtime(cfg).expect("prefix/exact allowed");
+    }
+
+    #[test]
+    fn regex_path_not_normalized_is_allowed() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
+            path: Path("api".to_string()),
+        };
+        validate_runtime(cfg).expect("regex normalization is not enforced");
+    }
+
+    #[test]
     fn regex_too_long_fails() {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].matcher = PathMatch::Regex {

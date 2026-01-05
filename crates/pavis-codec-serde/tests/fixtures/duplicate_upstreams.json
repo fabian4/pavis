@@ -1,0 +1,32 @@
+{
+  "listeners": [
+    { "name": "default", "address": "127.0.0.1:8080" }
+  ],
+  "upstreams": [
+    {
+      "name": "backend",
+      "endpoints": [
+        { "address": "127.0.0.1", "port": 8081 }
+      ]
+    },
+    {
+      "name": "backend",
+      "endpoints": [
+        { "address": "127.0.0.1", "port": 8082 }
+      ]
+    }
+  ],
+  "routes": [
+    {
+      "host": "*",
+      "paths": [
+        {
+          "matcher": { "prefix": { "path": "/" } },
+          "destinations": [
+            { "upstream": "backend", "weight": 1 }
+          ]
+        }
+      ]
+    }
+  ]
+}
