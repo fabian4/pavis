@@ -33,7 +33,7 @@ pub struct UpstreamTlsConfig {
 }
 
 /// Connection pool configuration for upstream connections
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ConnectionPoolConfig {
     /// Idle timeout for pooled connections. Default: 60s
     #[serde(default, with = "humantime_serde")]

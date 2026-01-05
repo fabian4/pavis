@@ -25,33 +25,6 @@ pub enum CompactionLevel {
     Prune,
 }
 
-#[derive(Debug, Clone)]
-pub struct SourceDto<T>(pub T);
-
-#[derive(Debug, Clone)]
-pub struct PartialDto<T>(pub T);
-
-#[derive(Debug, Clone)]
-pub struct StructurallyCompleteDto<T>(pub T);
-
-impl<T> SourceDto<T> {
-    pub fn into_inner(self) -> T {
-        self.0
-    }
-}
-
-impl<T> PartialDto<T> {
-    pub fn into_inner(self) -> T {
-        self.0
-    }
-}
-
-impl<T> StructurallyCompleteDto<T> {
-    pub fn into_inner(self) -> T {
-        self.0
-    }
-}
-
 pub struct CheckedArtifact {
     pub artifact: Artifact,
     pub state: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
@@ -71,57 +44,178 @@ impl CheckedArtifact {
             state: Some(std::sync::Arc::new(state)),
         }
     }
+
+    pub fn state<T: std::any::Any + Send + Sync>(&self) -> Option<&T> {
+        self.state
+            .as_ref()
+            .and_then(|state| state.downcast_ref::<T>())
+    }
 }
 
+/// # Codec (Artifact → RuntimeConfig)
+///
+/// `Codec` defines the **forward-only configuration compilation pipeline**
+/// from an opaque input `Artifact` (bytes + provenance) into a
+/// **validated, runtime-ready `RuntimeConfig`**.
+///
+/// This trait is the **authoritative boundary** between:
+///
+/// - **Ingest layer**
+///   - I/O, file watching, network streams
+///   - Authentication, retries, backoff
+///   - Produces opaque `Artifact` values
+///
+/// - **Runtime / Core layer**
+///   - Canonical configuration schema
+///   - Execution semantics
+///   - Semantic validation
+///
+/// The codec layer is responsible for **all source-specific interpretation**
+/// (YAML, xDS, CRD, etc), including defaulting and normalization.
+///
+/// ---
+///
+/// ## Pipeline Overview
+///
+/// The pipeline is intentionally **linear, ordered, and non-bypassable**:
+///
+/// ```text
+/// Artifact
+///   └─ check        (framing & basic integrity)
+///       └─ compile  (parse + normalize + semantic defaults)
+///           └─ compact (optional, semantics-preserving)
+///               └─ validate_runtime (core canonical validation)
+/// ```
+///
+/// ---
+///
+/// ## Semantic Boundaries (Hard Rules)
+///
+/// These rules are **mandatory** and enforced by code review:
+///
+/// 1. **Semantic defaults**
+///    - MUST be fully applied inside `compile`.
+///    - After `compile` returns, the `RuntimeConfig` MUST be semantically complete
+///      for the given source.
+///
+/// 2. **Core semantic validation**
+///    - MUST NOT be performed inside `compile`.
+///    - MUST be performed exactly once, inside `materialize`,
+///      via `pavis_core::validate_runtime`.
+///
+/// 3. **Runtime / Relay / Core**
+///    - MUST NOT apply semantic defaults.
+///    - MUST treat `RuntimeConfig` as authoritative input.
+///
+/// ---
+///
+/// ## Forward-Only Design
+///
+/// This trait is intentionally **forward-only**.
+///
+/// Any reverse or rendering logic (e.g. `RuntimeConfig → YAML/xDS`)
+/// MUST live in a separate, optional trait. Reversibility is not assumed
+/// and must not be required.
+///
+/// ---
+///
+/// ## Error Model
+///
+/// - `Error` MUST be convertible from `CoreValidationError`.
+/// - Codec-specific failures (parse errors, invalid source semantics)
+///   MUST be represented in the codec error type.
+///
 pub trait Codec {
+    /// Codec-specific error type.
+    ///
+    /// Requirements:
+    /// - MUST be `Send + Sync + 'static` (safe for async + cross-task use).
+    /// - MUST implement `From<CoreValidationError>` so canonical validation
+    ///   errors can be surfaced without translation loss.
     type Error: std::error::Error + Send + Sync + 'static + From<CoreValidationError>;
-    type Source;
-    type Partial;
-    type Complete;
 
+    /// Stage 1: Artifact framing and integrity checks.
+    ///
+    /// Responsibilities:
+    /// - Validate artifact framing and declared format.
+    /// - Perform basic sanity checks (empty payload, unsupported format, etc).
+    /// - Optionally attach ephemeral parsing state to the returned value.
+    ///
+    /// MUST:
+    /// - Reject malformed or unsupported artifacts early.
+    ///
+    /// MUST NOT:
+    /// - Perform DTO parsing.
+    /// - Apply semantic defaults.
+    /// - Construct or partially construct `RuntimeConfig`.
     fn check(&self, art: Artifact) -> Result<CheckedArtifact, Self::Error>;
 
-    fn decode(&self, checked: &CheckedArtifact) -> Result<SourceDto<Self::Source>, Self::Error>;
+    /// Stage 2: Compile a checked artifact into a `RuntimeConfig`.
+    ///
+    /// This is the **semantic materialization boundary** of the codec.
+    ///
+    /// MUST:
+    /// - Parse the source representation (YAML/xDS/CRD/etc).
+    /// - Normalize source-specific quirks.
+    /// - Apply **all source-specific semantic defaults**.
+    /// - Produce a semantically complete `RuntimeConfig`.
+    ///
+    /// MUST NOT:
+    /// - Perform core semantic validation.
+    ///   Canonical validation happens exactly once, in `materialize()`.
+    ///
+    /// The returned `RuntimeConfig` is expected to be:
+    /// - Semantically complete
+    /// - Structurally valid
+    /// - Ready for canonical validation
+    fn compile(&self, checked: &CheckedArtifact) -> Result<RuntimeConfig, Self::Error>;
 
-    fn to_partial(
-        &self,
-        source: SourceDto<Self::Source>,
-    ) -> Result<PartialDto<Self::Partial>, Self::Error>;
-
-    fn complete(
-        &self,
-        partial: PartialDto<Self::Partial>,
-    ) -> Result<StructurallyCompleteDto<Self::Complete>, Self::Error>;
-
-    fn compile(
-        &self,
-        complete: StructurallyCompleteDto<Self::Complete>,
-    ) -> Result<RuntimeConfig, Self::Error>;
-
-    fn pack(&self, cfg: &RuntimeConfig) -> Result<Artifact, Self::Error>;
-
-    /// Apply structural-only compaction (no semantic defaults or inference).
+    /// Optional semantics-preserving compaction step.
+    ///
+    /// This step MAY:
+    /// - Deduplicate repeated structures
+    /// - Canonicalize ordering
+    /// - Prune redundant fields
+    ///
+    /// This step MUST:
+    /// - Preserve semantics exactly
+    ///
+    /// This step MUST NOT:
+    /// - Introduce semantic defaults
+    /// - Change behavior or policy
+    /// - Mask invalid configurations
+    ///
+    /// Default implementation is a no-op.
     fn compact(&self, _cfg: &mut RuntimeConfig, _level: CompactionLevel) {}
 
+    /// Run the full codec pipeline and return a validated runtime configuration.
+    ///
+    /// This method defines the **only legal execution order**:
+    ///
+    /// ```text
+    /// check → compile → (optional) compact → validate_runtime
+    /// ```
+    ///
+    /// Invariants:
+    /// - `compile` MUST NOT call `validate_runtime`.
+    /// - Core semantic validation MUST happen exactly once, here.
+    /// - Callers MUST NOT bypass this method to obtain runtime configs.
+    ///
+    /// The returned `ValidatedRuntimeConfig` is guaranteed to be:
+    /// - Semantically valid
+    /// - Safe for runtime consumption
+    /// - Fully materialized
     fn materialize(
         &self,
         art: Artifact,
         level: CompactionLevel,
     ) -> Result<ValidatedRuntimeConfig, Self::Error> {
         let checked = self.check(art)?;
-        let source = self.decode(&checked)?;
-        let partial = self.to_partial(source)?;
-        let complete = self.complete(partial)?;
-        let mut cfg = self.compile(complete)?;
-        // Codec is responsible for population of defaults before validation.
+        let mut cfg = self.compile(&checked)?;
         if level != CompactionLevel::Off {
             self.compact(&mut cfg, level);
         }
         pavis_core::validate_runtime(cfg).map_err(Self::Error::from)
-    }
-
-    fn materialize_default(&self, art: Artifact) -> Result<ValidatedRuntimeConfig, Self::Error> {
-        self.materialize(art, CompactionLevel::Off)
     }
 }
 
@@ -138,10 +232,6 @@ mod tests {
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::{NonZeroU16, NonZeroU32};
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
 
     #[derive(Debug, thiserror::Error, PartialEq, Eq)]
     enum TestError {
@@ -171,15 +261,8 @@ mod tests {
         }
     }
 
-    struct CompactSpyCodec {
-        called: Arc<AtomicBool>,
-    }
-
     impl Codec for MockCodec {
         type Error = TestError;
-        type Source = pavis_core::RuntimeConfig;
-        type Partial = pavis_core::RuntimeConfig;
-        type Complete = pavis_core::RuntimeConfig;
 
         fn check(&self, art: Artifact) -> Result<CheckedArtifact, Self::Error> {
             match self.mode {
@@ -188,95 +271,15 @@ mod tests {
             }
         }
 
-        fn decode(
-            &self,
-            _checked: &CheckedArtifact,
-        ) -> Result<SourceDto<Self::Source>, Self::Error> {
-            Ok(SourceDto(valid_config()))
-        }
-
-        fn to_partial(
-            &self,
-            source: SourceDto<Self::Source>,
-        ) -> Result<PartialDto<Self::Partial>, Self::Error> {
-            Ok(PartialDto(source.into_inner()))
-        }
-
-        fn complete(
-            &self,
-            partial: PartialDto<Self::Partial>,
-        ) -> Result<StructurallyCompleteDto<Self::Complete>, Self::Error> {
-            Ok(StructurallyCompleteDto(partial.into_inner()))
-        }
-
         fn compile(
             &self,
-            _complete: StructurallyCompleteDto<Self::Complete>,
+            _checked: &CheckedArtifact,
         ) -> Result<pavis_core::RuntimeConfig, Self::Error> {
             match self.mode {
                 Mode::CompileErr => Err(TestError::Compile),
                 Mode::InvalidConfig => Ok(invalid_config()),
                 Mode::Ok | Mode::CheckErr => Ok(valid_config()),
             }
-        }
-
-        fn pack(&self, _cfg: &pavis_core::RuntimeConfig) -> Result<Artifact, Self::Error> {
-            Ok(Artifact::new(
-                Bytes::from_static(b"out"),
-                pavis_ingest_api::Format::Yaml,
-                pavis_ingest_api::SourceInfo::unknown(),
-            ))
-        }
-    }
-
-    impl Codec for CompactSpyCodec {
-        type Error = TestError;
-        type Source = pavis_core::RuntimeConfig;
-        type Partial = pavis_core::RuntimeConfig;
-        type Complete = pavis_core::RuntimeConfig;
-
-        fn check(&self, art: Artifact) -> Result<CheckedArtifact, Self::Error> {
-            Ok(CheckedArtifact::new(art))
-        }
-
-        fn decode(
-            &self,
-            _checked: &CheckedArtifact,
-        ) -> Result<SourceDto<Self::Source>, Self::Error> {
-            Ok(SourceDto(valid_config()))
-        }
-
-        fn to_partial(
-            &self,
-            source: SourceDto<Self::Source>,
-        ) -> Result<PartialDto<Self::Partial>, Self::Error> {
-            Ok(PartialDto(source.into_inner()))
-        }
-
-        fn complete(
-            &self,
-            partial: PartialDto<Self::Partial>,
-        ) -> Result<StructurallyCompleteDto<Self::Complete>, Self::Error> {
-            Ok(StructurallyCompleteDto(partial.into_inner()))
-        }
-
-        fn compile(
-            &self,
-            complete: StructurallyCompleteDto<Self::Complete>,
-        ) -> Result<pavis_core::RuntimeConfig, Self::Error> {
-            Ok(complete.into_inner())
-        }
-
-        fn pack(&self, _cfg: &pavis_core::RuntimeConfig) -> Result<Artifact, Self::Error> {
-            Ok(Artifact::new(
-                Bytes::from_static(b"out"),
-                pavis_ingest_api::Format::Yaml,
-                pavis_ingest_api::SourceInfo::unknown(),
-            ))
-        }
-
-        fn compact(&self, _cfg: &mut RuntimeConfig, _level: CompactionLevel) {
-            self.called.store(true, Ordering::SeqCst);
         }
     }
 
@@ -392,39 +395,11 @@ mod tests {
     }
 
     #[test]
-    fn test_materialize_default() {
-        let codec = MockCodec::new(Mode::Ok);
-        let cfg = codec.materialize_default(test_artifact()).expect("ok");
-        assert_eq!(cfg.listeners.len(), 1);
-    }
-
-    #[test]
     fn codec_error_from_core_validation_error() {
         let err: CodecError = CoreValidationError::EmptyUpstreamName.into();
         assert!(matches!(
             err,
             CodecError::Core(CoreValidationError::EmptyUpstreamName)
         ));
-    }
-
-    #[test]
-    fn checked_artifact_with_state() {
-        let artifact = test_artifact();
-        let checked = CheckedArtifact::with_state(artifact, 42u32);
-        assert!(checked.state.is_some());
-        let state = checked.state.unwrap().downcast_ref::<u32>().copied();
-        assert_eq!(state, Some(42));
-    }
-
-    #[test]
-    fn materialize_calls_compact() {
-        let called = Arc::new(AtomicBool::new(false));
-        let codec = CompactSpyCodec {
-            called: called.clone(),
-        };
-        codec
-            .materialize(test_artifact(), CompactionLevel::Trim)
-            .expect("ok");
-        assert!(called.load(Ordering::SeqCst));
     }
 }

@@ -62,6 +62,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publish_config_accepts_validated_config() {
+        let state = RelayState::new(0, Bytes::new()).expect("state");
+        let config = minimal_config();
+        let validated = pavis_core::validate_runtime(config).expect("validate");
+        let version = state
+            .publish_config(&validated)
+            .await
+            .expect("publish_config");
+        assert_eq!(version, 1);
+        assert_eq!(state.version().await, 1);
+    }
+
+    #[tokio::test]
     async fn state_publish_auto_increments_version() {
         // Use a valid PVS for publish_auto as it inspects the header
         let config = minimal_config();

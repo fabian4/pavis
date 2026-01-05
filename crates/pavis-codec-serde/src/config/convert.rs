@@ -5,14 +5,21 @@ mod upstreams;
 
 use anyhow::Result;
 
-use pavis_core::validate_runtime;
+use super::types::{SerdeConfig, StructurallyConfig};
 
-use super::types::{SerdeConfig, StructurallyCompleteConfig};
+pub fn structural_complete(src: SerdeConfig) -> StructurallyConfig {
+    StructurallyConfig {
+        listeners: src.listeners.unwrap_or_default(),
+        telemetry: src.telemetry.unwrap_or_default(),
+        upstreams: src.upstreams.unwrap_or_default(),
+        routes: src.routes.unwrap_or_default(),
+    }
+}
 
-impl TryFrom<StructurallyCompleteConfig> for pavis_core::RuntimeConfig {
+impl TryFrom<StructurallyConfig> for pavis_core::RuntimeConfig {
     type Error = anyhow::Error;
 
-    fn try_from(src: StructurallyCompleteConfig) -> Result<Self, Self::Error> {
+    fn try_from(src: StructurallyConfig) -> Result<Self, Self::Error> {
         let mut listeners = Vec::with_capacity(src.listeners.len());
         for l in src.listeners {
             listeners.push(server::to_runtime(l)?);
@@ -22,15 +29,12 @@ impl TryFrom<StructurallyCompleteConfig> for pavis_core::RuntimeConfig {
         let upstreams = upstreams::to_runtime(src.upstreams)?;
         let routes = routes::to_runtime(src.routes)?;
 
-        let runtime = pavis_core::RuntimeConfig {
+        Ok(pavis_core::RuntimeConfig {
             listeners,
             telemetry,
             upstreams,
             routes,
-        };
-
-        validate_runtime(runtime.clone()).map_err(anyhow::Error::from)?;
-        Ok(runtime)
+        })
     }
 }
 
@@ -230,30 +234,19 @@ routes:
         };
 
         let config: SerdeConfig = runtime.into();
-        assert_eq!(
-            config.listeners.as_ref().unwrap()[0].address,
-            "127.0.0.1:8080"
-        );
-        assert_eq!(config.listeners.as_ref().unwrap()[0].workers, Some(2));
-        assert_eq!(
-            config.telemetry.as_ref().unwrap().level,
-            Some("info".to_string())
-        );
-        assert_eq!(
-            config.telemetry.as_ref().unwrap().access_log,
-            Some(AccessLogPolicy::Disabled)
-        );
-        let upstream = &config.upstreams.as_ref().unwrap()[0];
+        let listeners = config.listeners.as_ref().expect("listeners");
+        let telemetry = config.telemetry.as_ref().expect("telemetry");
+        let upstreams = config.upstreams.as_ref().expect("upstreams");
+        assert_eq!(listeners[0].address, "127.0.0.1:8080");
+        assert_eq!(listeners[0].workers, Some(2));
+        assert_eq!(telemetry.level, Some("info".to_string()));
+        assert_eq!(telemetry.access_log, Some(AccessLogPolicy::Disabled));
+        let upstream = &upstreams[0];
         assert_eq!(upstream.balancer, Some(LoadBalancer::RoundRobin));
         assert_eq!(upstream.protocol, Some(HttpVersion::H2));
-        assert_eq!(
-            upstream.pool.as_ref().unwrap().idle,
-            Some(StdDuration::from_secs(10))
-        );
-        assert_eq!(
-            upstream.pool.as_ref().unwrap().connect,
-            Some(StdDuration::from_secs(2))
-        );
+        let pool = upstream.pool.as_ref().expect("pool");
+        assert_eq!(pool.idle, Some(StdDuration::from_secs(10)));
+        assert_eq!(pool.connect, Some(StdDuration::from_secs(2)));
         let tls = upstream.tls.as_ref().expect("tls config");
         assert_eq!(tls.enabled, Some(true));
         assert_eq!(tls.verify_hostname, Some(false));

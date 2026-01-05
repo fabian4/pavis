@@ -1,5 +1,6 @@
-use pavis_codec_api::Codec;
-use pavis_codec_serde::{SerdeCodec, SerdeFormat};
+use pavis_codec_serde::SerdeFormat;
+use pavis_codec_serde::config::SerdeConfig;
+use pavis_codec_serde::serde_helpers::emit_with_format;
 use pavis_core::{
     AccessLogPolicy, Listener, ListenerName, Metrics, RuntimeConfig, ServiceName, Telemetry,
     TracingPolicy, WorkerCount,
@@ -7,11 +8,9 @@ use pavis_core::{
 
 #[allow(dead_code)]
 pub fn to_yaml(config: &RuntimeConfig) -> String {
-    let codec = SerdeCodec {
-        format: SerdeFormat::Yaml,
-    };
-    let artifact = codec.pack(config).expect("pack config to yaml");
-    String::from_utf8(artifact.bytes.to_vec()).expect("utf8 config")
+    let config: SerdeConfig = config.clone().into();
+    let bytes = emit_with_format(SerdeFormat::Yaml, &config).expect("encode config to yaml");
+    String::from_utf8(bytes).expect("utf8 config")
 }
 
 pub fn build_pvs_bytes(label: &str) -> Vec<u8> {

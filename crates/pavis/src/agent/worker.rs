@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use pavis_core::ValidatedRuntimeConfig;
 use pingora::services::Service;
 use reqwest::Client;
 use std::path::PathBuf;
@@ -146,7 +145,7 @@ impl ConfigAgent {
                 return Err(err.into());
             }
         };
-        let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config) };
+        let validated = crate::load::assume_validated(config);
         let state = RuntimeState::from_config(&validated)?;
 
         tokio::fs::rename(&tmp_path, &self.lkg_path).await?;

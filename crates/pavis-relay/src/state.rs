@@ -1,6 +1,6 @@
 use crate::config::PersistenceOptions;
 use axum::body::Bytes;
-use pavis_core::RuntimeConfig;
+use pavis_core::ValidatedRuntimeConfig;
 use pavis_pvs::PvsHeaderView;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -216,8 +216,12 @@ impl RelayState {
         }
     }
 
-    pub(crate) async fn publish_config(&self, config: &RuntimeConfig) -> Result<u64, RelayError> {
-        let bytes = pavis_pvs::encode(config).map_err(|e| RelayError::Config(e.to_string()))?;
+    pub(crate) async fn publish_config(
+        &self,
+        config: &ValidatedRuntimeConfig,
+    ) -> Result<u64, RelayError> {
+        let bytes =
+            pavis_pvs::encode(config.as_ref()).map_err(|e| RelayError::Config(e.to_string()))?;
         let version = self.publish_auto(bytes.into()).await?;
         debug!("Published config from struct: version={}", version);
         Ok(version)

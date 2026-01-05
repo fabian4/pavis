@@ -6,7 +6,7 @@ use crate::ingest::{IngestImpl, create_ingest};
 use crate::state::RelayState;
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
-use pavis_codec_api::{Codec, CompactionLevel};
+use pavis_codec_api::{Codec, CodecError, CompactionLevel};
 use pavis_ingest_api::{Artifact, Ingest, IngestError};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -109,28 +109,41 @@ async fn handle_artifact(
     // Delegate validation, default population, and compaction to the Codec layer.
     // The codec returns a fully validated configuration ready for runtime execution.
     let validated_config = match codec {
-        CodecImpl::Serde(c) => c
-            .materialize(artifact, compaction_level(compaction))
-            .with_context(|| format!("materialize config for source {}", source))?,
+        CodecImpl::Serde(c) => match c.materialize(artifact, compaction_level(compaction)) {
+            Ok(config) => config,
+            Err(err) => {
+                match &err {
+                    CodecError::Check(_) => {
+                        warn!(
+                            "[{}] Codec check failed for source {}: {}",
+                            label, source, err
+                        );
+                    }
+                    CodecError::Compile(_) => {
+                        warn!(
+                            "[{}] Codec compile failed for source {}: {}",
+                            label, source, err
+                        );
+                    }
+                    CodecError::Core(_) => {
+                        warn!(
+                            "[{}] Codec core validation failed for source {}: {}",
+                            label, source, err
+                        );
+                    }
+                }
+                return Err(anyhow::Error::new(err))
+                    .context(format!("materialize config for source {}", source));
+            }
+        },
     };
 
-    debug!(
-        "[{}] Materialized and validated config: routes={}, upstreams={}",
-        label,
-        validated_config.routes.len(),
-        validated_config.upstreams.len()
-    );
+    debug!("[{}] Materialized and validated config", label);
 
     // Relay responsibility: Pure distribution.
     // We forward the validated configuration to the PVS publisher without further modification.
-    let version = publish_with_retry(
-        state,
-        validated_config.as_ref(),
-        publish_retry,
-        label,
-        &source,
-    )
-    .await?;
+    let version =
+        publish_with_retry(state, &validated_config, publish_retry, label, &source).await?;
 
     info!(
         "[{}] Automatically updated config to version: {}",
@@ -167,7 +180,7 @@ impl Backoff {
 
 async fn publish_with_retry(
     state: &RelayState,
-    config: &pavis_core::RuntimeConfig,
+    config: &pavis_core::ValidatedRuntimeConfig,
     policy: RetryPolicy,
     label: &str,
     source: &str,
@@ -410,8 +423,10 @@ routes: []
             max_delay: Duration::from_millis(1),
         };
 
+        let validated = pavis_core::validate_runtime(config).expect("validate");
+
         let result =
-            publish_with_retry(&state, &config, policy, "test-pipeline", "test-source").await;
+            publish_with_retry(&state, &validated, policy, "test-pipeline", "test-source").await;
 
         assert!(result.is_err());
         let err = format!("{:?}", result.unwrap_err());

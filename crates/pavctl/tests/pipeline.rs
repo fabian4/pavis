@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use pavis_codec_serde::SerdeFormat;
 use pavis_codec_serde::config::{
-    ConnectionPoolConfig, Listener, Matcher, Route, SerdeConfig, Upstream, VirtualHost,
-    WeightedDestination,
+    Listener, Matcher, Route, SerdeConfig, Upstream, VirtualHost, WeightedDestination,
 };
 use pavis_core::{Discovery, HttpVersion, LoadBalancer};
 use std::fs;
@@ -120,7 +119,7 @@ fn sample_config() -> SerdeConfig {
             discovery: Some(Discovery::Static),
             balancer: Some(LoadBalancer::Random),
             protocol: Some(HttpVersion::H1),
-            pool: Some(ConnectionPoolConfig::default()),
+            pool: None,
             tls: None,
             circuit_breaker: None,
             health_check: None,

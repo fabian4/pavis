@@ -2,8 +2,8 @@ use anyhow::Result;
 use std::net::SocketAddr;
 
 use pavis_core::{
-    LogLevel, Metrics, SampleRate, ServiceName, Telemetry as RuntimeTelemetry, TracingPolicy,
-    TracingProvider,
+    AccessLogPolicy, LogLevel, Metrics, SampleRate, ServiceName, Telemetry as RuntimeTelemetry,
+    TracingPolicy, TracingProvider,
 };
 
 use crate::config::types::TelemetryConfig;
@@ -45,7 +45,6 @@ mod tests {
         let runtime = to_runtime(config).unwrap();
         assert_eq!(runtime.level, LogLevel::Info);
         assert_eq!(runtime.service_name.0, "pavis");
-        assert_eq!(runtime.access_log, AccessLogPolicy::Disabled);
     }
 
     #[test]
@@ -167,9 +166,7 @@ pub(super) fn to_runtime(telemetry: TelemetryConfig) -> Result<RuntimeTelemetry>
         pingora,
         service_name,
         metrics,
-        access_log: telemetry
-            .access_log
-            .unwrap_or(pavis_core::AccessLogPolicy::Disabled),
+        access_log: telemetry.access_log.unwrap_or(AccessLogPolicy::Stdout),
         tracing,
     })
 }

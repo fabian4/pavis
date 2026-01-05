@@ -6,7 +6,6 @@ use axum::Router;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use pavis_core::ValidatedRuntimeConfig;
 use pavis_core::{
     AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery,
     Duration as RuntimeDuration, Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout, Listener,
@@ -135,7 +134,7 @@ fn worker_name_is_stable() {
     let dir = std::env::temp_dir().join("pavis_worker_name");
     let lkg = dir.join("config.pvs");
     let config = minimal_config("v1");
-    let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config) };
+    let validated = crate::load::assume_validated(config);
     let state = RuntimeState::from_config(&validated).expect("state");
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let agent = make_agent("http://127.0.0.1:1".to_string(), lkg, state_handle);
@@ -236,7 +235,7 @@ async fn apply_update_warns_on_version_write_failure() {
     write_pvs(&lkg, "v1");
 
     let config = minimal_config("v2");
-    let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config) };
+    let validated = crate::load::assume_validated(config);
     let state = RuntimeState::from_config(&validated).expect("state");
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
 

@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use pavis_core::RuntimeConfig;
 
+use super::convert::structural_complete;
 use super::validation;
 use crate::SerdeFormat;
 use crate::serde_helpers::parse_with_format;
@@ -30,20 +31,11 @@ pub struct SerdeConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct StructurallyCompleteConfig {
+pub struct StructurallyConfig {
     pub listeners: Vec<Listener>,
     pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
-}
-
-pub fn structural_complete(src: SerdeConfig) -> StructurallyCompleteConfig {
-    StructurallyCompleteConfig {
-        listeners: src.listeners.unwrap_or_default(),
-        telemetry: src.telemetry.unwrap_or_default(),
-        upstreams: src.upstreams.unwrap_or_default(),
-        routes: src.routes.unwrap_or_default(),
-    }
 }
 
 impl SerdeConfig {
@@ -74,12 +66,12 @@ mod tests {
 
     fn assert_sparse(config: SerdeConfig) {
         let upstream = &config.upstreams.as_ref().unwrap()[0];
-        assert!(upstream.balancer.is_none());
-        assert!(upstream.protocol.is_none());
+        assert_eq!(upstream.balancer, None);
+        assert_eq!(upstream.protocol, None);
         assert!(upstream.pool.is_none());
         let tls = upstream.tls.as_ref().expect("tls config");
-        assert!(tls.enabled.is_none());
-        assert!(config.telemetry.as_ref().unwrap().access_log.is_none());
+        assert_eq!(tls.enabled, None);
+        assert_eq!(config.telemetry.as_ref().unwrap().access_log, None);
     }
 
     #[test]

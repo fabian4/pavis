@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use pavis_codec_serde::config::{
-    AccessLogPolicy, ConnectionPoolConfig, Endpoint, HeaderOperations, HttpVersion, Listener,
-    LoadBalancer, Matcher, Route, SerdeConfig, TelemetryConfig, TlsConfig, TracingConfig, Upstream,
-    UpstreamTlsConfig, VirtualHost, WeightedDestination,
+    AccessLogPolicy, Endpoint, HeaderOperations, HttpVersion, Listener, LoadBalancer, Matcher,
+    Route, SerdeConfig, TelemetryConfig, TlsConfig, TracingConfig, Upstream, UpstreamTlsConfig,
+    VirtualHost, WeightedDestination,
 };
 use pavis_core::Discovery;
 use std::env;
@@ -702,7 +702,7 @@ fn upstream(
         discovery: Some(Discovery::Static),
         balancer: Some(lb),
         protocol: Some(http),
-        pool: Some(ConnectionPoolConfig::default()),
+        pool: None,
         tls,
         circuit_breaker: None,
         health_check: None,

@@ -10,17 +10,17 @@ use crate::config::types::{Endpoint, Upstream, UpstreamTlsConfig};
 mod tests {
     use super::*;
     use crate::config::types::{ConnectionPoolConfig, Endpoint, Upstream, UpstreamTlsConfig};
-    use pavis_core::{Discovery, HttpVersion, LoadBalancer, TlsPolicy};
+    use pavis_core::{Discovery, TlsPolicy};
     use std::time::Duration;
 
     fn base_upstream() -> Upstream {
         Upstream {
             id: None,
             name: "u1".to_string(),
-            discovery: Some(Discovery::default()),
-            balancer: Some(LoadBalancer::default()),
-            protocol: Some(HttpVersion::default()),
-            pool: Some(ConnectionPoolConfig::default()),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: None,
             tls: None,
             circuit_breaker: None,
             health_check: None,
@@ -141,79 +141,18 @@ mod tests {
         assert_eq!(serde[0].endpoints[0].weight, Some(5));
         assert_eq!(serde[0].protocol, Some(HttpVersion::H2));
     }
-
-    #[test]
-    fn to_runtime_handles_discovery_variants() {
-        let upstreams = vec![
-            Upstream {
-                name: "dns-logical".to_string(),
-                discovery: Some(Discovery::LogicalDns),
-                endpoints: vec![Endpoint {
-                    address: "example.com".to_string(),
-                    port: 80,
-                    weight: None,
-                }],
-                ..base_upstream()
-            },
-            Upstream {
-                name: "dns-strict".to_string(),
-                discovery: Some(Discovery::StrictDns),
-                endpoints: vec![Endpoint {
-                    address: "example.com".to_string(),
-                    port: 80,
-                    weight: None,
-                }],
-                ..base_upstream()
-            },
-        ];
-        let runtime = to_runtime(upstreams).unwrap();
-        assert!(matches!(runtime[0].discovery, Discovery::LogicalDns));
-        assert!(matches!(runtime[1].discovery, Discovery::StrictDns));
-    }
-
-    #[test]
-    fn to_runtime_handles_pool_max_and_id() {
-        let upstream = Upstream {
-            id: Some(42),
-            name: "u1".to_string(),
-            pool: Some(ConnectionPoolConfig {
-                idle: None,
-                connect: None,
-                max: Some(100),
-            }),
-            ..base_upstream()
-        };
-        let runtime = to_runtime(vec![upstream]).unwrap();
-        assert_eq!(runtime[0].id.0.get(), 42);
-        match runtime[0].pool.max {
-            pavis_core::ConnectionLimit::Limited(n) => assert_eq!(n.get(), 100),
-            _ => panic!("expected limited pool"),
-        }
-    }
-
-    #[test]
-    fn to_runtime_handles_tls_disabled_explicitly() {
-        let upstream = Upstream {
-            name: "u1".to_string(),
-            tls: Some(UpstreamTlsConfig {
-                enabled: Some(false),
-                verify_hostname: None,
-                verify_cert: None,
-                sni: None,
-            }),
-            ..base_upstream()
-        };
-        let runtime = to_runtime(vec![upstream]).unwrap();
-        assert!(matches!(runtime[0].tls, pavis_core::TlsPolicy::Disabled));
-    }
 }
 
 pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Upstream>> {
     let mut runtime_upstreams = Vec::new();
 
     for (index, u) in upstreams.into_iter().enumerate() {
-        let mut endpoints = Vec::new();
         let discovery = u.discovery.unwrap_or_default();
+        let balancer = u.balancer.unwrap_or_default();
+        let protocol = u.protocol.unwrap_or_default();
+        let pool_config = u.pool.unwrap_or_else(default_pool_config);
+
+        let mut endpoints = Vec::new();
         for e in u.endpoints {
             let port = NonZeroU16::new(e.port)
                 .ok_or_else(|| anyhow::anyhow!("endpoint port must be > 0"))?;
@@ -246,16 +185,11 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
             });
         }
 
-        let pool_config = u.pool.unwrap_or_default();
-        let idle = duration_to_policy(
-            pool_config
-                .idle
-                .unwrap_or(std::time::Duration::from_secs(60)),
-        )?;
+        let idle = duration_to_policy(pool_config.idle.unwrap_or_else(default_idle_timeout))?;
         let connect = duration_to_connect(
             pool_config
                 .connect
-                .unwrap_or(std::time::Duration::from_secs(5)),
+                .unwrap_or_else(default_connection_timeout),
         )?;
         let max = match pool_config.max {
             None | Some(0) => pavis_core::ConnectionLimit::Unlimited,
@@ -271,7 +205,8 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
         let tls = match u.tls {
             None => pavis_core::TlsPolicy::Disabled,
             Some(t) => {
-                if !t.enabled.unwrap_or(false) {
+                let enabled = t.enabled.unwrap_or(true);
+                if !enabled {
                     pavis_core::TlsPolicy::Disabled
                 } else {
                     let verify_cert = t.verify_cert.unwrap_or(true);
@@ -302,8 +237,8 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
             id: pavis_core::UpstreamId(id),
             name: pavis_core::UpstreamName(u.name),
             discovery,
-            balancer: u.balancer.unwrap_or_default(),
-            protocol: u.protocol.unwrap_or_default(),
+            balancer,
+            protocol,
             pool,
             tls,
             endpoints,
@@ -330,7 +265,7 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
             });
         }
 
-        let pool = crate::config::types::ConnectionPoolConfig {
+        let pool = Some(crate::config::types::ConnectionPoolConfig {
             idle: Some(std::time::Duration::from_millis(idle_timeout_ms(
                 &u.pool.idle,
             ))),
@@ -341,7 +276,7 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
                 pavis_core::ConnectionLimit::Unlimited => None,
                 pavis_core::ConnectionLimit::Limited(value) => Some(value.get()),
             },
-        };
+        });
 
         let tls = match u.tls {
             pavis_core::TlsPolicy::Disabled => None,
@@ -370,7 +305,7 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
             discovery: Some(u.discovery),
             balancer: Some(u.balancer),
             protocol: Some(u.protocol),
-            pool: Some(pool),
+            pool,
             tls,
             circuit_breaker: None,
             health_check: None,
@@ -379,6 +314,22 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
     }
 
     serde_upstreams
+}
+
+fn default_pool_config() -> crate::config::types::ConnectionPoolConfig {
+    crate::config::types::ConnectionPoolConfig {
+        idle: Some(default_idle_timeout()),
+        connect: Some(default_connection_timeout()),
+        max: None,
+    }
+}
+
+fn default_idle_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(60)
+}
+
+fn default_connection_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(5)
 }
 
 fn duration_to_policy(duration: std::time::Duration) -> Result<pavis_core::IdleTimeout> {

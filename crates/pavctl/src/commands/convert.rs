@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
-use pavis_codec_api::Codec;
-use pavis_codec_serde::{SerdeCodec, SerdeFormat};
+use pavis_codec_serde::SerdeFormat;
+use pavis_codec_serde::config::SerdeConfig;
+use pavis_codec_serde::serde_helpers::emit_with_format;
 use pavis_pvs as pvs;
 
 pub(crate) fn convert_to_config(
@@ -21,18 +22,16 @@ pub(crate) fn convert_to_config(
         Some(other) => anyhow::bail!("Unsupported output extension: {other}"),
         None => format,
     };
-    let codec = SerdeCodec { format };
-    let env = codec
-        .pack(&binary_config)
-        .context("Failed to encode config")?;
+    let config: SerdeConfig = binary_config.into();
+    let bytes = emit_with_format(format, &config).context("Failed to encode config")?;
 
     match output_path {
         Some(path) => {
-            fs::write(&path, &env.bytes).context("Failed to write output file")?;
+            fs::write(&path, &bytes).context("Failed to write output file")?;
             println!("✅ Successfully converted {:?} to {:?}", input_path, path);
         }
         None => {
-            let output = std::str::from_utf8(&env.bytes).context("Output not UTF-8")?;
+            let output = std::str::from_utf8(&bytes).context("Output not UTF-8")?;
             println!("{}", output);
         }
     }
