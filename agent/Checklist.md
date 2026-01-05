@@ -1,38 +1,54 @@
-# Code Change Checklist
+# Code Change & Readability Checklist
 
-This checklist is derived from the core audit tasks (1–11) defined in `agent/Tasks.md`. Use it to verify every code change before completion.
+Derived from Audit Tasks 1–11 and Rust Readability Standards. Verify before completion.
 
-### 1. Architecture & Layering (Tasks 1, 6, 10)
-- **Layering:** Does this change respect the strict dependency direction (e.g., `pavis-core` is foundational; runtime must not depend on codecs)?
-- **Boundaries:** Are responsibilities in the right crate (`pavis-core` for semantics, `pavis-pvs` for binary integrity, `pavis-codec-*` for DTOs)?
-- **Visibility:** Is the public API minimal? Use `pub(crate)` or `pub(super)` instead of `pub` where possible to avoid unnecessary coupling.
-- **Dependency Graph:** Ensure no new cross-layer dependencies or unnecessary heavy crates were added.
+### 1. Architecture & Layering
+- [ ] **Layering**: Dependency direction respected (Core -> PVS -> Runtime)?
+- [ ] **Boundaries**: Code in the correct crate (e.g., semantic logic in `core`, integrity in `pvs`)?
+- [ ] **Visibility**: Is the public API minimal? (`pub(crate)` preferred over `pub`).
+- [ ] **Abstraction**: Are type systems used effectively (enums/structs) without over-abstraction?
 
-### 2. Code Structure & Quality (Tasks 4, 7, 8)
-- **Single Responsibility:** Is the code split logically by feature?
-    - **Large Files:** Avoid production files exceeding 500 lines. Split by responsibility (types, business logic, I/O) into sub-modules within a directory (e.g., `agent/mod.rs` with `agent/worker.rs`).
-    - **Large Functions:** Are functions concise? Extract complex logic into private helpers if a function exceeds ~50 lines or performs multiple distinct steps.
-- **Testability:**
-    - **Unit Tests:** Does every non-trivial function or logic block have a corresponding unit test (either in a `tests` module or a sibling `tests.rs`)?
-    - **Seams:** Are there clear boundaries/traits for I/O and external state to allow for deterministic testing?
-- **Duplication:** Have I introduced repeated patterns that should be consolidated into shared utilities or test helpers?
-- **Comments:** Are comments technically accurate and meaningful (focusing on *why*, not *what*)? Are they free of grammar/spelling errors?
-- **Standards:** Have I run `make fmt` and `make lint`?
+### 2. File & Module Structure
+- [ ] **Module Division**: Does each module have a clear, single responsibility?
+- [ ] **Size**: Production files < 600 lines? (Review for split if approaching limit).
+- [ ] **Organization**: No `mod.rs` files (use Rust 2018+ layout: `module.rs` + `module/`).
+- [ ] **Consistency**: Unified naming conventions and hierarchical structure across the project?
 
-### 3. Testing & Verification (Task 5)
-- **Coverage:** Are there unit tests for core logic, edge cases, and error paths?
-- **Integration/E2E:** If this affects system behavior, have the relevant tests in `crates/pavis-e2e` or `tests/` been updated?
-- **CI Readiness:** Does `make ci-local` pass successfully?
+### 3. Functions & Methods
+- [ ] **Length**: Are functions concise? (Goal: < 30-50 lines).
+- [ ] **Naming**: Concise, descriptive names using `snake_case`?
+- [ ] **Parameters**: Manageable number of parameters? (Use structs for configuration).
+- [ ] **Nesting**: Avoided deep nesting? (Use early returns and helper functions).
+- [ ] **Ordering**: Logical method ordering (Constructors -> Operations -> Destructors)?
 
-### 4. Security & Safety (Task 9)
-- **Secrets:** Are there any hardcoded keys, tokens, or sensitive information?
-- **Unsafe:** If `unsafe` was used, is there a documented safety invariant?
-- **Input Validation:** Is external/binary data validated (e.g., `rkyv::check_bytes`, magic bytes, or checksums)?
+### 4. Variables & Constants
+- [ ] **Naming**: Variables are descriptive; constants are `UPPERCASE_WITH_UNDERSCORES`.
+- [ ] **Magic Numbers**: Replaced with descriptive constants or enums?
+- [ ] **Lifecycle**: Variable lifecycles are clear; unnecessary clones avoided.
 
-### 5. Performance & Allocations (Task 11)
-- **Allocations:** Have I avoided unnecessary `.clone()`, `.to_string()`, or temporary buffer allocations in hot paths?
-- **Async Efficiency:** Ensure no blocking operations are introduced in latency-sensitive async paths.
+### 5. Readability & Style
+- [ ] **Conciseness**: Avoided overly long or complex expressions?
+- [ ] **Formatting**: Adheres to `rustfmt` standards (`make fmt`)?
+- [ ] **Error Handling**: Minimal use of `unwrap()` or `expect()`? (Prefer `?` or explicit matching).
+- [ ] **Control Flow**: Kept simple (simple `if`, `match`, and `loop` structures)?
 
-### 6. Documentation & Roadmap (Tasks 2, 3)
-- **Roadmap Alignment:** Does this change conflict with planned items in `ROADMAP.md`?
-- **Status Updates:** Does `ROADMAP.md` or any audit report in `audit/report/` need a status update (with UTC timestamp)?
+### 6. Comments & Documentation
+- [ ] **Doc Comments**: Important functions, structs, and modules have `///` or `//!` docs.
+- [ ] **Value**: Do comments explain **why** (logic/intent) rather than **what** (obvious code)?
+- [ ] **Safety**: Every `unsafe` block has a `// Safety:` comment documenting invariants.
+- [ ] **Cleanup**: No lingering `TODO`, `FIXME`, or commented-out code blocks?
+
+### 7. Testing & Verification
+- [ ] **Coverage**: Core logic, edge cases, and error paths tested? (Target: 90%+).
+- [ ] **Responsibility**: Each test function tests only a single unit of logic?
+- [ ] **Placement**: Unit tests colocated; Integration tests in `tests/` directory?
+- [ ] **CI Readiness**: `make ci-local` or `make build test` passes cleanly?
+
+### 8. Performance & Safety
+- [ ] **Allocations**: No unnecessary `.clone()` or `.to_string()` in hot paths?
+- [ ] **Async**: No blocking operations (e.g., `std::fs`) in async contexts?
+- [ ] **Secrets**: No hardcoded keys, tokens, or sensitive information?
+
+### 9. Documentation & Roadmap
+- [ ] **Roadmap**: Change is aligned with `ROADMAP.md`?
+- [ ] **Audit Logs**: Relevant reports in `audit/report/` updated with UTC timestamp?

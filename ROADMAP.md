@@ -116,14 +116,17 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [ ] **[Safety] Unit Testing Gaps**: Low confidence in edge cases for new features. (Trigger: Before Phase 4)
 - [ ] **[Safety] Integration Testing**: Risk of state desync during reloads. (Trigger: Before Phase 4)
 - [ ] **[Safety] E2E Testing**: No validation against real network targets/kernels. (Trigger: Before v1.0 Release)
+- [ ] **[Safety] Symlink Verification**: Verify ingest correctly follows symbolic links. (Trigger: Next Release)
 
 ### TD-2: Release Engineering & Safety
 - [ ] **[Safety] CI Compatibility Fixtures**: Risk of breaking backward compatibility for older binaries. (Trigger: Before first public release)
 - [ ] **[Arch] Governance Ownership**: Relay currently owns migration logic; should move to Governor. (Trigger: When Governor component is introduced)
+- [ ] **[Safety] Strict Format Sniffing**: Verify file content type bytes, not just extension. (Trigger: Phase 5)
 
 ### TD-3: Architectural Coupling (Relay)
 - [ ] **[Arch] Monolithic Relay Build**: `pavis-relay` couples to all concrete ingests/codecs. (Trigger: Introduction of 3rd source type)
 - [ ] **[DX] Feature-Gate Backends**: Bloated binary size; slow compile times. (Trigger: Immediate/Short-term)
+- [ ] **[Arch] Pipeline Feature Flags**: Enforce `plugin-*` feature gates for ingest/codec. (Trigger: Immediate)
 - [ ] **[Arch] Inversion of Control**: Relay core depends on concrete types, violating Open/Closed. (Trigger: Before Phase 8 K8s)
 
 ### TD-4: Performance Optimizations

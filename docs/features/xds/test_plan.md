@@ -42,6 +42,12 @@ The testing strategy strictly follows the layered architecture of Pavis. We vali
 | **X-08** | `deterministic_output` | Two identical xDS snapshots | Identical `pavis-core` bytes | Transformation must be deterministic. |
 | **X-09** | `default_timeouts` | Route without timeouts | `timeout` populated with default | Codec must apply defaults. |
 | **X-10** | `default_retry_policy` | Route with partial retry config | Full `RetryPolicy` populated | Codec ensures completeness. |
+| **X-11** | `map_eds_endpoints` | CDS cluster + EDS assignment | `Upstream.endpoints` joined correctly | EDS association check. |
+| **X-12** | `health_status_filter` | EDS with `UNHEALTHY` endpoints | Unhealthy endpoints excluded | Regression: Health status filtering. |
+| **X-13** | `multi_weighted_cluster` | RDS with weighted clusters | `WeightedDestination` split accurate | Functional: Weight distribution. |
+| **X-14** | `map_access_log_stdout` | HCM with access log to Stdout | `Telemetry.access_log` set to `Stdout` | Functional: Telemetry mapping. |
+| **X-15** | `reject_inline_certs` | Cluster with inline certificate bytes | `CodecError::Compile` (Unsupported) | Negative: Security constraint. |
+| **X-16** | `mismatched_rds_name` | HCM referencing missing RDS name | `CodecError::Compile` | Negative: Linkage failure. |
 
 ### C. pavis runtime (Behavioral Tests)
 
@@ -130,7 +136,9 @@ This checklist tracks the full scope of unit, integration, and e2e tests for xDS
     *   Map `STATIC` -> `DiscoveryType::Static` (IP literals only).
     *   Map `LOGICAL_DNS` -> `DiscoveryType::LogicalDns` (hostname only).
     *   Map `STRICT_DNS` -> `DiscoveryType::StrictDns` (hostname only).
-    *   Reject EDS clusters.
+    *   Map `EDS` -> `DiscoveryType::Static` (flattened endpoints).
+    *   Map EDS endpoints via cluster name join.
+    *   Filter `UNHEALTHY` endpoints from result.
     *   Map supported load balancer values.
     *   Map HTTP protocol options + defaults.
 *   **RDS mapping**

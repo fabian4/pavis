@@ -1,110 +1,73 @@
-# 🧾 Project Status Summary — Open Findings & Health
+# Pavis Audit Dashboard
 
-> Single-glance view of **project health, progress, and risk**.
-> Last updated: 2026-01-01T03:11:42Z
-
----
-
-## ✅ Executive Summary
-
-- **Audit Health:** ⚠️ Attention (3 Open Findings)
-- **Project Progress:** 🚧 Core phases still in progress
-- **Primary Risks:** 1 Medium · 2 Low
-- **Action Required:** 3 Open Findings
+This dashboard provides a top-level summary of the codebase quality, architectural compliance, and roadmap progress.
 
 ---
 
-## 📊 Project Health Snapshot
+## 📊 Status Overview
 
-| Dimension | Status | Notes |
-|---------|--------|-------|
-| Architecture Compliance | ✅ Healthy | 0 open findings |
-| Roadmap Alignment | ✅ Healthy | 0 open findings |
-| Code Structure | ✅ Healthy | 0 open findings |
-| Public API Stability | ✅ Healthy | 0 open findings |
-| Test Coverage | ⚠️ Attention | 2 open findings (1 medium) |
-| Comment Quality | ✅ Healthy | 0 open findings |
-| Duplication | ✅ Healthy | 0 open findings |
-| Security | ✅ Healthy | 0 open findings |
-| Dependencies | ✅ Healthy | 0 open findings |
-| Performance | ⚠️ Attention | 1 open finding (low) |
-| Overall Audit | ⚠️ Attention | 3 open findings |
+| Metric | Status |
+|:---|:---|
+| **Architectural Integrity** | ✅ Compliant (Minor safety note) |
+| **Test Coverage** | ✅ 96.17% |
+| **Roadmap Progress** | 🚧 Phase 3 (Dynamic Config) |
+| **Open Findings** | 1 High, 2 Medium, 6 Low |
 
 ---
 
-## 🎯 Strategic Focus & Risks
+## 🚀 Roadmap Summary
+*Extracted from [ROADMAP.md](../ROADMAP.md)*
 
-### Current Strategic Focus
-- **Phase 3: Dynamic Configuration (Close the Loop)**
-- **Concurrency & Stability**
-- **Zero-copy / mmap optimization**
+- **Total Progress**: 17/59 (28%)
+- **Core Features**: 17/43 (39%)
+- **Technical Debt**: 0/16 (0%)
 
-### Key Risks
-- ⚠️ 1 medium risk and 2 low risks are open across E2E coverage and performance.
-
----
-
-## 🗺️ Roadmap Summary (From ROADMAP.md)
-
-| Phase | Focus | Status |
-| :---: | ----- | :----: |
-| Foundation | Core Setup | 🚧 18/23 |
-| Protocol | Binary Format | 🚧 12/13 |
-| Security | TLS & Auth | ⏳ 0/4 |
-| Observability | Metrics & Logs | ⏳ 0/4 |
-| Operations | Relay & Recovery | 🚧 7/21 |
-| Advanced | Concurrency & Optimization | ⏳ 0/14 |
-| Kubernetes | Operator & CRDs | ⏳ 0/2 |
-
-**Total Progress:** 37/81 items complete
-
-**Legend:** 🚧 In Progress · ⏳ Planned · ✅ Complete · ⏸️ Deferred
+**Current Focus**: Phase 3 (Dynamic Configuration) & Phase 9 (xDS)
 
 ---
 
-## 🧪 Coverage Health (From `audit/coverage.md`)
+## 🛑 Open Findings (Prioritized)
+*Aggregated from [audit/report/*.md](./report/)*
 
-- **Total Coverage:** 90.57%
-- **Branch Coverage:** Unavailable
-
-### 🚨 Notable Coverage Gaps (High Risk Paths)
-
-| File | Coverage | Risk |
-|------|:--------:|------|
-| `crates/pavis-relay/src/main.rs` | 0.00% | Startup path (binary) |
-| `crates/pavis-relay/src/pipeline.rs` | 15.73% | File ingest paths |
-| `crates/pavis/src/main.rs` | 73.61% | Runtime startup |
-| `crates/pavis-ingest-file/src/watch.rs` | 75.56% | Watcher callbacks |
-
-> Coverage percentage is **not** a gate, but missing coverage on startup paths represents elevated regression risk.
-
----
-
-## 📋 Audit Report Breakdown
-
-| Report | Open | Highest |
-|--------|:----:|:--------:|
-| ARCH_COMPLIANCE | 0 | — |
-| ARCH_ROADMAP_ALIGNMENT | 0 | — |
-| ROADMAP_REVIEW | 0 | — |
-| STRUCTURE_REVIEW | 0 | — |
-| TEST_COVERAGE_REVIEW | 2 | Medium |
-| PUBLIC_API_REVIEW | 0 | — |
-| COMMENT_REVIEW | 0 | — |
-| DUPLICATION_REVIEW | 0 | — |
-| SECURITY_REVIEW | 0 | — |
-| DEPENDENCY_BOUNDARY_REVIEW | 0 | — |
-| PERFORMANCE_REVIEW | 1 | Low |
+| ID | Severity | Report | Short Title |
+|:---|:---:|:---|:---|
+| F-2 | 🔥 High | [Performance](./report/PERFORMANCE_REVIEW.md) | Unnecessary path allocation in proxy hot path |
+| F-3 | ⚠️ Medium | [Performance](./report/PERFORMANCE_REVIEW.md) | Access log formatting on request path |
+| F-4 | ⚠️ Medium | [Performance](./report/PERFORMANCE_REVIEW.md) | O(N) linear scan for VirtualHost matching |
+| F-1 | 🧹 Low | [Performance](./report/PERFORMANCE_REVIEW.md) | PVS loading reads entire file into heap |
+| F-5 | 🧹 Low | [Performance](./report/PERFORMANCE_REVIEW.md) | Synchronous I/O in AccessLogWorker startup |
+| F-1 | 🧹 Low | [Arch Compliance](./report/ARCH_COMPLIANCE.md) | Runtime relies on `unsafe from_trusted` for config loading |
+| F-1 | 🧹 Low | [Structure](./report/STRUCTURE_REVIEW.md) | Legacy `mod.rs` usage in E2E tests |
+| F-2 | 🧹 Low | [Structure](./report/STRUCTURE_REVIEW.md) | `worker.rs` approaching split threshold |
+| F-1 | 🧹 Low | [Duplication](./report/DUPLICATION_REVIEW.md) | `minimal_config` boilerplate duplicated across crates |
 
 ---
 
-## 🧭 Open Items
+## 🧪 Test Coverage Summary
+*Extracted from [audit/coverage.md](./coverage.md)*
 
-| Report | ID | Severity | Title |
-|--------|----|:--------:|-------|
-| TEST_COVERAGE_REVIEW | T-1 | Medium | Integrated relay+pavis flows partially implemented |
-| TEST_COVERAGE_REVIEW | T-2 | Low | Relay artifact fetch success path untested in E2E |
-| PERFORMANCE_REVIEW | F-1 | Low | PVS loading reads entire file into heap |
+**Overall Coverage: 96.17%**
 
-> This summary is auto-generated from `audit/report/*` and `audit/coverage.md`.  
-> It reflects **current known risk**, not future scope.
+| Component | Coverage |
+|:---|:---:|
+| `pavis-core` | 98.4% |
+| `pavis-pvs` | 100.0% |
+| `pavis` runtime | 92.5% |
+| `pavis-relay` | 90.2% |
+| `pavctl` | 98.1% |
+
+---
+
+## 📂 Audit Reports
+
+- [Architecture Compliance](./report/ARCH_COMPLIANCE.md)
+- [Architecture vs Roadmap](./report/ARCH_ROADMAP_ALIGNMENT.md)
+- [Roadmap Review](./report/ROADMAP_REVIEW.md)
+- [Structure & Organization](./report/STRUCTURE_REVIEW.md)
+- [Test Coverage & Quality](./report/TEST_COVERAGE_REVIEW.md)
+- [Public API Stability](./report/PUBLIC_API_REVIEW.md)
+- [Security Review](./report/SECURITY_REVIEW.md)
+- [Dependency Boundaries](./report/DEPENDENCY_BOUNDARY_REVIEW.md)
+- [Performance & Allocations](./report/PERFORMANCE_REVIEW.md)
+- [Code Comment Quality](./report/COMMENT_REVIEW.md)
+- [Duplication & Redundancy](./report/DUPLICATION_REVIEW.md)

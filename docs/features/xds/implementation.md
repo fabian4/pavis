@@ -6,6 +6,13 @@ This document outlines the remaining work required to complete full compatibilit
 
 This section defines the concrete translation work required to map Envoy xDS snapshots into the current `pavis-core` schema.
 
+### Architecture Design: The Intermediate Type Pattern
+The codec follows a structured background transformation pipeline:
+1. **Decode**: Unmarshal Protobuf bytes into generated Envoy v3 structs using `prost`.
+2. **Normalize**: Map scattered xDS resources into a coherent internal representation.
+3. **Map**: Transform Envoy structs to `pavis-core` structs (Listeners, Upstreams, VirtualHosts).
+4. **Validate**: Invoke `pavis_core::validate_runtime` to ensure semantic correctness before artifact emission.
+
 ### A. LDS -> Listener Mapping
 - **Input**: LDS `Listener` resources.
 - **Output**: `RuntimeConfig.listeners: Vec<Listener>`.
@@ -18,8 +25,8 @@ This section defines the concrete translation work required to map Envoy xDS sna
     - Any dynamic listener matching features.
   - Error type: `CodecError::UnsupportedFeature` with explicit reason.
 
-### B. CDS -> Upstream Mapping
-- **Input**: CDS `Cluster` resources.
+### B. CDS + EDS -> Upstream Mapping
+- **Input**: CDS `Cluster` and EDS `ClusterLoadAssignment` resources.
 - **Output**: `RuntimeConfig.upstreams: Vec<Upstream>`.
 - **Rules**:
   - Cluster name maps to `Upstream::name`.
@@ -27,10 +34,12 @@ This section defines the concrete translation work required to map Envoy xDS sna
     - `STATIC` -> `Static`
     - `LOGICAL_DNS` -> `LogicalDns`
     - `STRICT_DNS` -> `StrictDns`
+    - `EDS` -> `Static` (In Pavis, EDS endpoints are flattened into the static upstream definition during transformation).
   - Endpoints:
     - `STATIC`: endpoints must be IP literals, map to `EndpointAddr::Ip`.
     - `LOGICAL_DNS`/`STRICT_DNS`: endpoints must be hostnames, map to `EndpointAddr::Dns`.
-  - Reject EDS clusters (unless explicitly planned) with `CodecError::UnsupportedFeature`.
+    - `EDS`: endpoints are extracted from `ClusterLoadAssignment` by joining on cluster name.
+  - Health Filtering: `UNHEALTHY` endpoints are excluded from the `Upstream` list.
   - `load_balancing_policy` maps to `LoadBalancer` using a strict supported subset (document supported values).
   - `http_protocol_options` map to `HttpVersion` with explicit defaults.
 
@@ -96,3 +105,16 @@ This section defines the concrete translation work required to map Envoy xDS sna
 
 1.  **DNS Latency**: Resolution is async, but initial resolution might delay startup or first request. The runtime should start "healthy" but fail requests to DNS upstreams until the first resolution completes.
 2.  **Rewrite Complexity**: `path_prefix_rewrite` depends heavily on accurate normalization of the request path. We must ensure the "matched prefix" is tracked accurately during routing.
+
+---
+
+## 5. Acceptance Criteria
+
+- **Functionality**: Successfully maps LDS, RDS, CDS, and EDS resources into a single `RuntimeConfig`.
+- **Completeness**:
+  - HCM linkage correctly finds Route Configurations by name.
+  - EDS endpoints are correctly associated with Clusters.
+  - Telemetry (Access Logs) is extracted from the HCM filter.
+- **Performance**: Compilation of a 10MB xDS snapshot must be efficient (zero-copy where feasible, minimal cloning).
+- **Security**: Rejects malformed Protobuf or `Any` types that do not match the expected schema.
+- **Compatibility**: Rejects protocol versions other than Envoy v3.
