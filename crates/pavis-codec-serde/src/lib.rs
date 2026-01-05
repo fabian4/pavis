@@ -37,15 +37,30 @@ impl Codec for SerdeCodec {
         config
             .validate()
             .map_err(|err| CodecError::Check(anyhow::anyhow!("Failed to validate: {err}")))?;
-        Ok(CheckedArtifact(artifact))
+        Ok(CheckedArtifact::with_state(artifact, config))
     }
 
     fn compile(&self, checked: &CheckedArtifact) -> Result<RuntimeConfig, CodecError> {
-        let mut config: SerdeConfig = parse_with_format(self.format, &checked.0.bytes)
-            .map_err(|err| CodecError::Compile(anyhow::anyhow!("Failed to parse: {err}")))?;
-        config
-            .validate()
-            .map_err(|err| CodecError::Compile(anyhow::anyhow!("Failed to validate: {err}")))?;
+        let config = checked
+            .state
+            .as_ref()
+            .and_then(|s| s.downcast_ref::<SerdeConfig>())
+            .cloned();
+
+        let config = match config {
+            Some(c) => c,
+            None => {
+                let mut c: SerdeConfig = parse_with_format(self.format, &checked.artifact.bytes)
+                    .map_err(|err| {
+                        CodecError::Compile(anyhow::anyhow!("Failed to parse: {err}"))
+                    })?;
+                c.validate().map_err(|err| {
+                    CodecError::Compile(anyhow::anyhow!("Failed to validate: {err}"))
+                })?;
+                c
+            }
+        };
+
         let runtime = config.build().map_err(|err| {
             CodecError::Compile(anyhow::anyhow!("Failed to build RuntimeConfig: {err}"))
         })?;

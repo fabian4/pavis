@@ -4,6 +4,7 @@ use crate::header::{
     algorithm_label, checksum_hex, compute_checksum,
 };
 use crate::read::parse_header;
+use memmap2::Mmap;
 use pavis_core::RuntimeConfig;
 use rkyv::Deserialize as _;
 use std::fs;
@@ -94,6 +95,15 @@ pub fn read_from_path(path: impl AsRef<Path>) -> PvsResult<VerifiedPvs> {
     verify_owned(bytes)
 }
 
+pub fn verify_file(path: impl AsRef<Path>) -> PvsResult<()> {
+    let file = fs::File::open(path).map_err(PvsError::Io)?;
+    let mmap = unsafe { Mmap::map(&file).map_err(PvsError::Io)? };
+    let (_, payload) = verify_bytes(&mmap)?;
+    rkyv::check_archived_root::<RuntimeConfig>(payload)
+        .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
+    Ok(())
+}
+
 fn verify_bytes(bytes: &[u8]) -> PvsResult<(PvsHeader, &[u8])> {
     if bytes.len() < HEADER_SIZE {
         return Err(PvsError::TooSmall {
@@ -136,8 +146,10 @@ fn verify_owned(bytes: Vec<u8>) -> PvsResult<VerifiedPvs> {
 }
 
 pub fn load(path: impl AsRef<Path>) -> PvsResult<RuntimeConfig> {
-    let bytes = fs::read(path).map_err(PvsError::Io)?;
-    let (_header, payload) = verify_bytes(&bytes)?;
+    let file = fs::File::open(path).map_err(PvsError::Io)?;
+    let mmap = unsafe { Mmap::map(&file).map_err(PvsError::Io)? };
+
+    let (_header, payload) = verify_bytes(&mmap)?;
     let archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
     let config: RuntimeConfig = archived.deserialize(&mut rkyv::Infallible)?;

@@ -25,8 +25,26 @@ pub enum CompactionLevel {
     Prune,
 }
 
-#[derive(Debug, Clone)]
-pub struct CheckedArtifact(pub Artifact);
+pub struct CheckedArtifact {
+    pub artifact: Artifact,
+    pub state: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl CheckedArtifact {
+    pub fn new(artifact: Artifact) -> Self {
+        Self {
+            artifact,
+            state: None,
+        }
+    }
+
+    pub fn with_state(artifact: Artifact, state: impl std::any::Any + Send + Sync) -> Self {
+        Self {
+            artifact,
+            state: Some(std::sync::Arc::new(state)),
+        }
+    }
+}
 
 pub trait Codec {
     type Error: std::error::Error + Send + Sync + 'static + From<CoreValidationError>;
@@ -105,7 +123,7 @@ mod tests {
         fn check(&self, art: Artifact) -> Result<CheckedArtifact, Self::Error> {
             match self.mode {
                 Mode::CheckErr => Err(TestError::Check),
-                _ => Ok(CheckedArtifact(art)),
+                _ => Ok(CheckedArtifact::new(art)),
             }
         }
 

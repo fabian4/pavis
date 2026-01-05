@@ -11,6 +11,7 @@ pub(crate) struct AlignedCounter(pub AtomicUsize);
 #[derive(Debug)]
 struct ClusterState {
     endpoints: Vec<Endpoint>,
+    cumulative_weights: Vec<u32>,
     total_weight: u32,
 }
 
@@ -24,13 +25,11 @@ pub struct Cluster {
 
 impl Cluster {
     pub fn new(config: Upstream) -> Self {
-        let total_weight = config
-            .endpoints
-            .iter()
-            .map(|e| e.weight.0.get() as u32)
-            .sum();
+        let (endpoints, cumulative_weights, total_weight) =
+            build_state_parts(config.endpoints.clone());
         let state = ClusterState {
-            endpoints: config.endpoints.clone(),
+            endpoints,
+            cumulative_weights,
             total_weight,
         };
         Self {
@@ -48,6 +47,7 @@ impl Cluster {
         let idx = load_balance::select_index(
             self.config.balancer,
             &state.endpoints,
+            &state.cumulative_weights,
             &self.rr_counter.0,
             state.total_weight,
         );
@@ -55,9 +55,10 @@ impl Cluster {
     }
 
     pub fn update_endpoints(&self, endpoints: Vec<Endpoint>) {
-        let total_weight = endpoints.iter().map(|e| e.weight.0.get() as u32).sum();
+        let (endpoints, cumulative_weights, total_weight) = build_state_parts(endpoints);
         let state = ClusterState {
             endpoints,
+            cumulative_weights,
             total_weight,
         };
         self.state.store(Arc::new(state));
@@ -66,6 +67,16 @@ impl Cluster {
     pub fn current_endpoints(&self) -> Vec<Endpoint> {
         self.state.load().endpoints.clone()
     }
+}
+
+fn build_state_parts(endpoints: Vec<Endpoint>) -> (Vec<Endpoint>, Vec<u32>, u32) {
+    let mut cumulative_weights = Vec::with_capacity(endpoints.len());
+    let mut sum = 0u32;
+    for e in &endpoints {
+        sum += e.weight.0.get() as u32;
+        cumulative_weights.push(sum);
+    }
+    (endpoints, cumulative_weights, sum)
 }
 
 #[cfg(test)]

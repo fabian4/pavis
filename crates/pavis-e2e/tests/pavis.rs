@@ -1,6 +1,6 @@
 #[path = "pavis/basic_routing.rs"]
 mod basic_routing;
-#[path = "pavis/common/mod.rs"]
+#[path = "pavis/common.rs"]
 mod common;
 #[path = "pavis/compaction.rs"]
 mod compaction;

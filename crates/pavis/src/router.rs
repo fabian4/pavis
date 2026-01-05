@@ -9,44 +9,113 @@
 use anyhow::{Context, Result};
 use pavis_core::{PathMatch, Route, VirtualHost};
 use regex::Regex;
+use std::collections::HashMap;
 
 pub mod matcher;
 
+#[derive(Clone, Debug)]
 pub(crate) struct CompiledRoute {
     pub index: usize,
     pub regex: Option<Regex>,
 }
 
+#[derive(Debug)]
+pub(crate) enum RouteZone {
+    Linear(Vec<CompiledRoute>),
+    ExactMap(HashMap<String, CompiledRoute>),
+}
+
 pub(crate) struct CompiledVirtualHost {
     pub config: VirtualHost,
-    pub routes: Vec<CompiledRoute>,
+    pub zones: Vec<RouteZone>,
 }
 
 pub struct Router {
-    routes: Vec<CompiledVirtualHost>,
+    pub(crate) exact_hosts: HashMap<String, CompiledVirtualHost>,
+    pub(crate) wildcard_hosts: Vec<CompiledVirtualHost>,
 }
 
 impl Router {
     pub fn new(routes: Vec<VirtualHost>) -> Result<Self> {
-        let mut compiled_routes = Vec::new();
+        let mut exact_hosts = HashMap::new();
+        let mut wildcard_hosts = Vec::new();
+
         for vhost in routes {
-            let mut compiled = Vec::new();
+            let mut zones = Vec::new();
+            let mut current_linear: Option<Vec<CompiledRoute>> = None;
+            let mut current_map: Option<HashMap<String, CompiledRoute>> = None;
+
             for (index, route) in vhost.paths.iter().enumerate() {
-                let regex = match &route.matcher {
-                    PathMatch::Regex { path } => Some(Regex::new(&path.0).with_context(|| {
-                        format!("Failed to compile regex for path: {}", path.0)
-                    })?),
-                    _ => None,
-                };
-                compiled.push(CompiledRoute { index, regex });
+                match &route.matcher {
+                    PathMatch::Exact { path } => {
+                        // Flush linear if exists
+                        if let Some(linear) = current_linear.take() {
+                            zones.push(RouteZone::Linear(linear));
+                        }
+                        // Add to map
+                        let compiled = CompiledRoute { index, regex: None };
+                        if let Some(map) = &mut current_map {
+                            // If key exists, we must NOT overwrite it because the FIRST match wins.
+                            // However, if we are in the SAME map zone, it means there are no intervening
+                            // regex/prefix routes.
+                            // So if we see duplicate Exact paths in sequence:
+                            // 1. Exact /a -> A
+                            // 2. Exact /a -> B
+                            // The map will store A (first insert wins).
+                            // This preserves the "First Match" semantics for Exact matches in a block.
+                            map.entry(path.0.clone()).or_insert(compiled);
+                        } else {
+                            let mut map = HashMap::new();
+                            map.insert(path.0.clone(), compiled);
+                            current_map = Some(map);
+                        }
+                    }
+                    PathMatch::Prefix { .. } | PathMatch::Regex { .. } => {
+                        // Flush map if exists
+                        if let Some(map) = current_map.take() {
+                            zones.push(RouteZone::ExactMap(map));
+                        }
+                        // Add to linear
+                        let regex = match &route.matcher {
+                            PathMatch::Regex { path } => {
+                                Some(Regex::new(&path.0).with_context(|| {
+                                    format!("Failed to compile regex for path: {}", path.0)
+                                })?)
+                            }
+                            _ => None,
+                        };
+                        let compiled = CompiledRoute { index, regex };
+                        if let Some(linear) = &mut current_linear {
+                            linear.push(compiled);
+                        } else {
+                            current_linear = Some(vec![compiled]);
+                        }
+                    }
+                }
             }
-            compiled_routes.push(CompiledVirtualHost {
+
+            // Flush remaining
+            if let Some(linear) = current_linear {
+                zones.push(RouteZone::Linear(linear));
+            }
+            if let Some(map) = current_map {
+                zones.push(RouteZone::ExactMap(map));
+            }
+
+            let compiled_vhost = CompiledVirtualHost {
                 config: vhost,
-                routes: compiled,
-            });
+                zones,
+            };
+
+            if compiled_vhost.config.host.0 == "*" || compiled_vhost.config.host.0.contains('*') {
+                wildcard_hosts.push(compiled_vhost);
+            } else {
+                exact_hosts.insert(compiled_vhost.config.host.0.clone(), compiled_vhost);
+            }
         }
         Ok(Self {
-            routes: compiled_routes,
+            exact_hosts,
+            wildcard_hosts,
         })
     }
 
@@ -55,7 +124,7 @@ impl Router {
         host_header: Option<&str>,
         uri_path: &str,
     ) -> Option<(&'a VirtualHost, &'a Route)> {
-        matcher::match_request(&self.routes, host_header, uri_path)
+        matcher::match_request(self, host_header, uri_path)
     }
 }
 
@@ -293,5 +362,77 @@ mod tests {
         let router = Router::new(routes).unwrap();
         let (_, route) = router.match_request(None, "/app").expect("match");
         matches!(route.matcher, PathMatch::Prefix { .. });
+    }
+
+    #[test]
+    fn test_exact_map_optimization_preserves_order() {
+        let routes = vec![VirtualHost {
+            host: Host("*".to_string()),
+            paths: vec![
+                // Zone 1: Linear (Prefix)
+                Route {
+                    matcher: PathMatch::Prefix {
+                        path: Path("/a".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled,
+                    response_headers: HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![],
+                },
+                // Zone 2: ExactMap (consecutive exacts)
+                Route {
+                    matcher: PathMatch::Exact {
+                        path: Path("/b".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled,
+                    response_headers: HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("b1".to_string()),
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
+                    }],
+                },
+                Route {
+                    matcher: PathMatch::Exact {
+                        path: Path("/b".to_string()),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled,
+                    response_headers: HeadersPolicy::Disabled,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    destinations: vec![Destination {
+                        upstream: UpstreamName("b2".to_string()),
+                        weight: Weight(NonZeroU16::new(1).unwrap()),
+                    }],
+                },
+            ],
+        }];
+
+        let router = Router::new(routes).unwrap();
+        // Check zones structure implicitly by matching
+        // /b should match the FIRST exact match in the map block
+        let (_, route) = router.match_request(None, "/b").expect("match");
+        assert_eq!(route.destinations[0].upstream.0, "b1");
+
+        // /a should match the prefix
+        let (_, route) = router.match_request(None, "/a/foo").expect("match");
+        match &route.matcher {
+            PathMatch::Prefix { path } => assert_eq!(path.0, "/a"),
+            _ => panic!("expected prefix"),
+        }
     }
 }

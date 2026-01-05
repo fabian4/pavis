@@ -2,7 +2,6 @@ use anyhow::Result;
 use pavis_e2e::support::PavisScenario;
 use pavis_e2e::support::relay::RelayOptions;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -28,7 +27,10 @@ async fn r10_startup_corrupted_lkg() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn r13_transient_permission_failure() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
     let scenario = PavisScenario::new(RelayOptions::default(), false, false).await?;
     let client = scenario.relay.client();
     let config_path = scenario.relay.ingest_path.as_ref().unwrap();

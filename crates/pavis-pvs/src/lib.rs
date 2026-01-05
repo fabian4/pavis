@@ -11,7 +11,7 @@ pub use header::{
 };
 
 pub use read::read_header;
-pub use verify::{PvsHeaderView, VerifiedPvs, inspect, load, read_from_path, verify};
+pub use verify::{PvsHeaderView, VerifiedPvs, inspect, load, read_from_path, verify, verify_file};
 pub use write::{encode, write};
 
 pub const PAVIS_VERSION_HEADER: &str = "x-pavis-version";

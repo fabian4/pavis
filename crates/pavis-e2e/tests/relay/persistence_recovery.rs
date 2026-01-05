@@ -6,7 +6,6 @@ use pavis_core::{
 use pavis_e2e::support::PavisScenario;
 use pavis_e2e::support::relay::RelayOptions;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 
 fn default_runtime_config() -> RuntimeConfig {
     RuntimeConfig {
@@ -48,7 +47,9 @@ async fn r7_persistence_recovery() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn r4_partial_write_protection() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
     let scenario = PavisScenario::new(RelayOptions::default(), false, false).await?;
     let v_start = scenario.relay.client().status().await?.version;
 

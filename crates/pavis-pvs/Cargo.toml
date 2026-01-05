@@ -10,5 +10,6 @@ pavis-core = { path = "../pavis-core" }
 rkyv = { version = "0.7", features = ["validation"] }
 sha2 = "0.10.9"
 thiserror = "1"
+memmap2 = "0.9"
 
 [dev-dependencies]

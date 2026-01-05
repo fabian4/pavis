@@ -26,28 +26,13 @@ fn apply_route_headers(ctx: &mut RouterContext, route: &pavis_core::Route) {
     ctx.response_headers = route.response_headers.clone();
 }
 
-fn apply_rewrite(
-    session: &mut Session,
-    ctx: &mut RouterContext,
+fn calculate_path_rewrite(
     route: &pavis_core::Route,
     uri_path: &str,
     uri_query: Option<&str>,
-) {
-    let req_header = session.as_downstream_mut().req_header_mut();
-
-    match &route.rewrite.host {
-        pavis_core::RewriteHost::Disabled => {}
-        pavis_core::RewriteHost::Literal { host } => {
-            if let Err(err) = req_header.insert_header("Host", host.0.as_str()) {
-                tracing::warn!(error = %err, host = %host.0, "Failed to apply host rewrite");
-            } else {
-                ctx.sni_override = Some(host.clone());
-            }
-        }
-    };
-
+) -> Option<Uri> {
     match &route.rewrite.path {
-        pavis_core::RewritePath::Disabled => {}
+        pavis_core::RewritePath::Disabled => None,
         pavis_core::RewritePath::Prefix { from: _, to } => {
             let new_path = match &route.matcher {
                 PathMatch::Prefix { path } => uri_path
@@ -65,13 +50,14 @@ fn apply_rewrite(
                     }
 
                     match Uri::builder().path_and_query(path.as_str()).build() {
-                        Ok(uri) => req_header.set_uri(uri),
+                        Ok(uri) => Some(uri),
                         Err(err) => {
                             tracing::warn!(
                                 error = %err,
                                 rewrite = %to.0,
                                 "Failed to apply path rewrite"
                             );
+                            None
                         }
                     }
                 }
@@ -88,10 +74,11 @@ fn apply_rewrite(
                             "Skipping path rewrite due to unmatched prefix"
                         );
                     }
+                    None
                 }
             }
         }
-    };
+    }
 }
 
 #[async_trait]
@@ -211,8 +198,8 @@ impl ProxyHttp for Proxy {
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
         let req_header = session.req_header();
         let host_header = req_header.headers.get("Host").and_then(|h| h.to_str().ok());
-        let uri_path = req_header.uri.path().to_string();
-        let uri_query = req_header.uri.query().map(str::to_string);
+        let uri_path = req_header.uri.path();
+        let uri_query = req_header.uri.query();
 
         tracing::debug!(
             method = %req_header.method,
@@ -222,11 +209,30 @@ impl ProxyHttp for Proxy {
         );
 
         let state = self.state.load();
-        if let Some((vhost, route)) = state.router.match_request(host_header, &uri_path) {
+        if let Some((vhost, route)) = state.router.match_request(host_header, uri_path) {
             tracing::trace!(host = %vhost.host.0, path = %route_path(route), "matched route");
 
             apply_route_headers(ctx, route);
-            apply_rewrite(session, ctx, route, &uri_path, uri_query.as_deref());
+
+            let host_rewrite = match &route.rewrite.host {
+                pavis_core::RewriteHost::Literal { host } => Some(host),
+                _ => None,
+            };
+
+            let path_rewrite = calculate_path_rewrite(route, uri_path, uri_query);
+
+            if let Some(host) = host_rewrite {
+                let req_header = session.as_downstream_mut().req_header_mut();
+                if let Err(err) = req_header.insert_header("Host", host.0.as_str()) {
+                    tracing::warn!(error = %err, host = %host.0, "Failed to apply host rewrite");
+                } else {
+                    ctx.sni_override = Some(host.clone());
+                }
+            }
+
+            if let Some(uri) = path_rewrite {
+                session.as_downstream_mut().req_header_mut().set_uri(uri);
+            }
 
             let total_weight: u32 = route
                 .destinations

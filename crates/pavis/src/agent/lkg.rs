@@ -2,7 +2,6 @@ use pavis_core::ValidatedRuntimeConfig;
 use std::path::{Path, PathBuf};
 
 pub fn load_lkg_config(path: &Path) -> anyhow::Result<(ValidatedRuntimeConfig, u64)> {
-    let _ = pavis_pvs::read_from_path(path)?;
     let config = pavis_pvs::load(path)?;
     let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config) };
     let version = lkg_version(path)?;
