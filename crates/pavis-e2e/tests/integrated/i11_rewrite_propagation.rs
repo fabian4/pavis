@@ -37,6 +37,7 @@ async fn integrated_rewrite_propagation() -> Result<()> {
                 retry: RetryPolicy::Disabled,
                 request_headers: HeadersPolicy::Disabled,
                 response_headers: HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Prefix {
                         from: Path("/rewrite".to_string()),
@@ -58,6 +59,7 @@ async fn integrated_rewrite_propagation() -> Result<()> {
                 retry: RetryPolicy::Disabled,
                 request_headers: HeadersPolicy::Disabled,
                 response_headers: HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,

@@ -106,16 +106,17 @@ fn test_upstream_tls_config() {
         LoadBalancer::Random,
         443,
         TlsPolicy::Enabled {
-            verify_mode: TlsVerify::Disabled,
+            mode: TlsVerify::Disabled,
             sni: pavis_core::SniName::Value(pavis_core::Hostname("secure.internal".to_string())),
+            cert: pavis_core::ClientCert::Disabled,
         },
     ));
 
     let upstream = &config.upstreams[0];
 
     match upstream.tls {
-        TlsPolicy::Enabled { verify_mode, .. } => {
-            assert_eq!(verify_mode, TlsVerify::Disabled);
+        TlsPolicy::Enabled { mode, .. } => {
+            assert_eq!(mode, TlsVerify::Disabled);
         }
         TlsPolicy::Disabled => panic!("tls not enabled"),
     }

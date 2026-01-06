@@ -68,6 +68,7 @@ fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
                 retry: RetryPolicy::Disabled,
                 request_headers: pavis_core::HeadersPolicy::Disabled,
                 response_headers: pavis_core::HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,

@@ -51,6 +51,7 @@ pub fn runtime_config(
                     upstream: UpstreamName(route_upstream.to_string()),
                     weight: Weight(NonZeroU16::new(1).expect("nonzero weight")),
                 }]),
+                principal: pavis_core::Principal::Any,
             }],
         }],
     }

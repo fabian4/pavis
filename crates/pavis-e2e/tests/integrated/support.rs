@@ -472,6 +472,7 @@ pub fn runtime_config(
                 retry: RetryPolicy::Disabled,
                 request_headers: HeadersPolicy::Disabled,
                 response_headers: HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,

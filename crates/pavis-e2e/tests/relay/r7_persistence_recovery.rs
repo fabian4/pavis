@@ -41,6 +41,11 @@ async fn r7_persistence_recovery() -> Result<()> {
     let storage_dir = temp_dir.path().join("artifacts");
     std::fs::create_dir(&storage_dir)?;
 
+    // Ensure clean state: remove any existing LKG file
+    if lkg_path.exists() {
+        std::fs::remove_file(&lkg_path)?;
+    }
+
     let mut options = RelayOptions::default();
     options.lkg_path = Some(lkg_path.clone());
     options.storage_root = Some(storage_dir.clone());
@@ -66,10 +71,17 @@ async fn r7_persistence_recovery() -> Result<()> {
             sleep(Duration::from_millis(100)).await;
         }
         assert!(flushed, "LKG file should have been flushed to disk");
+
+        // Explicitly drop to ensure clean shutdown and persistence
+        drop(scenario);
+
+        // Give the persistence task time to complete shutdown flush
+        sleep(Duration::from_millis(200)).await;
     } // Relay stops here
 
     // 2. Restart Relay with same storage.
-    // Note: Current implementation restarts at v1 if LKG exists.
+    // The relay should restart at version 1 because it reads the LKG file
+    // but always starts fresh at version 1 (LKG is just for recovery, not version tracking).
     {
         let scenario = PavisScenario::new(options, false, false).await?;
         let client = scenario.relay.client();

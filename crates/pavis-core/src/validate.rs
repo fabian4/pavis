@@ -69,13 +69,14 @@ pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<Validated
 mod tests {
     use super::*;
     use crate::runtime::{
-        AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration,
-        Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname,
-        HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel, Metrics, Path,
-        PathMatch, Pool, Port, RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost,
-        RewritePath, Route, RouteAction, SampleRate, ServiceName, SniName, Telemetry, Timeout,
-        TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, TryTimeout, Upstream,
-        UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
+        AccessLogPolicy, ClientAuth, ClientCert, ConnectTimeout, ConnectionLimit, Destination,
+        Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers,
+        HeadersPolicy, Host, Hostname, HttpVersion, IdleTimeout, Listener, ListenerName,
+        LoadBalancer, LogLevel, Metrics, Path, PathMatch, Pool, Port, Principal, RETRY_FIVE_XX,
+        RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction, SampleRate,
+        ServiceName, SniName, Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy,
+        TracingProvider, TryTimeout, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
+        WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::NonZeroU16;
@@ -115,8 +116,9 @@ mod tests {
                     max: ConnectionLimit::Unlimited,
                 },
                 tls: TlsPolicy::Enabled {
-                    verify_mode: TlsVerify::CertAndHost,
+                    mode: TlsVerify::CertAndHost,
                     sni: SniName::Value(Hostname("example.com".to_string())),
+                    cert: ClientCert::Disabled,
                 },
                 endpoints: vec![Endpoint {
                     address: EndpointAddr::Ip {
@@ -152,6 +154,7 @@ mod tests {
                         },
                     },
                     response_headers: HeadersPolicy::Disabled,
+                    principal: Principal::Any,
                     rewrite: Rewrite {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
@@ -177,6 +180,7 @@ mod tests {
         cfg.listeners[0].tls = TlsConfig::Enabled {
             cert_path: Path("".to_string()),
             key_path: Path("key.pem".to_string()),
+            client_auth: ClientAuth::Disabled,
         };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::MissingTlsFiles));
@@ -188,6 +192,7 @@ mod tests {
         cfg.listeners[0].tls = TlsConfig::Enabled {
             cert_path: Path("cert.pem".to_string()),
             key_path: Path("".to_string()),
+            client_auth: ClientAuth::Disabled,
         };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::MissingTlsFiles));

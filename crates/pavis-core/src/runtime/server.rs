@@ -28,5 +28,18 @@ pub enum WorkerCount {
 #[archive(check_bytes)]
 pub enum TlsConfig {
     Disabled,
-    Enabled { cert_path: Path, key_path: Path },
+    Enabled {
+        cert_path: Path,
+        key_path: Path,
+        client_auth: ClientAuth,
+    },
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub enum ClientAuth {
+    Disabled,
+    Optional { ca_path: Path },
+    Required { ca_path: Path },
 }

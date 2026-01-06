@@ -2,6 +2,12 @@
 mod i10_traffic_actions;
 #[path = "integrated/i11_rewrite_propagation.rs"]
 mod i11_rewrite_propagation;
+#[path = "integrated/i12_permissive_migration.rs"]
+mod i12_permissive_migration;
+#[path = "integrated/i13_outbound_mtls.rs"]
+mod i13_outbound_mtls;
+#[path = "integrated/i14_namespace_authorization.rs"]
+mod i14_namespace_authorization;
 #[path = "integrated/i1_publish_apply.rs"]
 mod i1_publish_apply;
 #[path = "integrated/i2_invalid_publish.rs"]

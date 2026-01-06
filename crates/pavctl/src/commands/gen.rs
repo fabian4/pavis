@@ -21,6 +21,7 @@ pub(crate) fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Resul
         if let pavis_core::TlsConfig::Enabled {
             cert_path,
             key_path,
+            ..
         } = &listener.tls
         {
             if !std::path::Path::new(&cert_path.0).exists() {

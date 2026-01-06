@@ -17,6 +17,7 @@ fn gen_warns_on_missing_cert_paths() -> Result<()> {
             tls: Some(TlsConfig {
                 cert_path: Some("/tmp/non-existent-cert.pem".to_string()),
                 key_path: Some("/tmp/non-existent-key.pem".to_string()),
+                client_auth: None,
             }),
         }]),
         ..Default::default()

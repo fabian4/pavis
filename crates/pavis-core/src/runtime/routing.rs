@@ -24,6 +24,16 @@ pub struct Route {
     pub response_headers: HeadersPolicy,
     pub rewrite: Rewrite,
     pub action: RouteAction,
+    pub principal: Principal,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub enum Principal {
+    Any,
+    Authenticated { spiffe: String },
+    Prefix { prefix: String },
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]

@@ -12,7 +12,9 @@
 
 pub mod context;
 pub mod header_ops;
+pub mod identity;
 pub mod service;
 
 pub use header_ops::{apply_request_headers, apply_response_headers};
+pub use identity::IdentityExtractor;
 pub use service::Proxy;

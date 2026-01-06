@@ -88,6 +88,7 @@ pub fn tls_support_config(
             tls: Some(TlsConfig {
                 cert_path: Some(cert_path.to_string()),
                 key_path: Some(key_path.to_string()),
+                client_auth: None,
             }),
         }]),
         telemetry: Some(TelemetryConfig {
@@ -148,6 +149,7 @@ pub fn upstream_tls_config(
                 verify_hostname: Some(false),
                 verify_cert: Some(false),
                 sni: None,
+                cert: None,
             }),
             vec![endpoint(upstream_host, upstream_port, 1)],
         )]),
@@ -667,6 +669,7 @@ fn build_config(
                             status: 301,
                             location: "https://example.com/new-location".to_string(),
                         },
+                        principal: None,
                     },
                     Route {
                         matcher: Some(Matcher::Exact {
@@ -681,6 +684,7 @@ fn build_config(
                             status: 302,
                             location: "https://example.com/temp".to_string(),
                         },
+                        principal: None,
                     },
                     Route {
                         matcher: Some(Matcher::Exact {
@@ -695,6 +699,7 @@ fn build_config(
                             status: 307,
                             location: "https://example.com/v2/api".to_string(),
                         },
+                        principal: None,
                     },
                     // Direct response routes
                     Route {
@@ -710,6 +715,7 @@ fn build_config(
                             status: 200,
                             body: "OK".to_string(),
                         },
+                        principal: None,
                     },
                     Route {
                         matcher: Some(Matcher::Exact {
@@ -724,6 +730,7 @@ fn build_config(
                             status: 404,
                             body: "Resource not found".to_string(),
                         },
+                        principal: None,
                     },
                     Route {
                         matcher: Some(Matcher::Exact {
@@ -738,6 +745,7 @@ fn build_config(
                             status: 503,
                             body: "Service is under maintenance".to_string(),
                         },
+                        principal: None,
                     },
                     Route {
                         matcher: Some(Matcher::Exact {
@@ -752,6 +760,7 @@ fn build_config(
                             status: 200,
                             body: r#"{"status":"healthy","version":"1.0.0"}"#.to_string(),
                         },
+                        principal: None,
                     },
                 ],
             }];
@@ -886,6 +895,7 @@ fn base_config(
             Some(TlsConfig {
                 cert_path: None,
                 key_path: None,
+                client_auth: None,
             })
         } else {
             None
@@ -961,6 +971,7 @@ fn route(
         response_headers,
         rewrite: None,
         action: RouteAction::Forward { destinations },
+        principal: None,
     }
 }
 
@@ -977,6 +988,7 @@ fn route_with_rewrite(
         response_headers: None,
         rewrite,
         action: RouteAction::Forward { destinations },
+        principal: None,
     }
 }
 

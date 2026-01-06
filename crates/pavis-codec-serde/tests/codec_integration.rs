@@ -75,8 +75,8 @@ fn full_yaml_and_json_apply_structural_and_semantic_defaults() {
             IdleTimeout::Disabled => panic!("idle timeout not populated"),
         }
         match upstream.tls {
-            TlsPolicy::Enabled { verify_mode, .. } => {
-                assert_eq!(verify_mode, TlsVerify::CertAndHost);
+            TlsPolicy::Enabled { mode, .. } => {
+                assert_eq!(mode, TlsVerify::CertAndHost);
             }
             TlsPolicy::Disabled => panic!("tls not enabled"),
         }

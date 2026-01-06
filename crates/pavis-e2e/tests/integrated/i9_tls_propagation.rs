@@ -78,6 +78,7 @@ async fn integrated_tls_propagation() -> Result<()> {
     config.listeners[0].tls = TlsConfig::Enabled {
         cert_path: RoutePath(cert_pavis_path),
         key_path: RoutePath(key_pavis_path),
+        client_auth: pavis_core::ClientAuth::Disabled,
     };
 
     // 3. Publish to Relay

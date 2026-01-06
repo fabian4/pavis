@@ -2,9 +2,11 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::num::NonZeroU16;
 
-use pavis_core::{Listener as RuntimeListener, ListenerName, Path, TlsConfig, WorkerCount};
+use pavis_core::{
+    ClientAuth, Listener as RuntimeListener, ListenerName, Path, TlsConfig, WorkerCount,
+};
 
-use crate::config::types::{Listener, TlsConfig as SerdeTls};
+use crate::config::types::{ClientAuthConfig, Listener, TlsConfig as SerdeTls};
 
 #[cfg(test)]
 mod tests {
@@ -47,6 +49,7 @@ mod tests {
             tls: Some(SerdeTls {
                 cert_path: None,
                 key_path: None,
+                client_auth: None,
             }),
         };
         let err = to_runtime(listener).unwrap_err();
@@ -62,6 +65,7 @@ mod tests {
             tls: TlsConfig::Enabled {
                 cert_path: Path("cert.pem".to_string()),
                 key_path: Path("key.pem".to_string()),
+                client_auth: pavis_core::ClientAuth::Disabled,
             },
         };
 
@@ -81,6 +85,7 @@ mod tests {
             tls: Some(SerdeTls {
                 cert_path: Some("cert.pem".to_string()),
                 key_path: Some("key.pem".to_string()),
+                client_auth: None,
             }),
         };
         let runtime = to_runtime(listener).unwrap();
@@ -118,9 +123,22 @@ pub(super) fn to_runtime(listener: Listener) -> Result<RuntimeListener> {
             let key = tls
                 .key_path
                 .ok_or_else(|| anyhow::anyhow!("tls.key_path is required when tls is set"))?;
+
+            let client_auth = match tls.client_auth {
+                None => ClientAuth::Disabled,
+                Some(ClientAuthConfig::Disabled) => ClientAuth::Disabled,
+                Some(ClientAuthConfig::Optional { ca_path }) => ClientAuth::Optional {
+                    ca_path: Path(ca_path),
+                },
+                Some(ClientAuthConfig::Required { ca_path }) => ClientAuth::Required {
+                    ca_path: Path(ca_path),
+                },
+            };
+
             TlsConfig::Enabled {
                 cert_path: Path(cert),
                 key_path: Path(key),
+                client_auth,
             }
         }
     };
@@ -144,10 +162,24 @@ pub(super) fn from_runtime(listener: RuntimeListener) -> Listener {
         TlsConfig::Enabled {
             cert_path,
             key_path,
-        } => Some(SerdeTls {
-            cert_path: Some(cert_path.0),
-            key_path: Some(key_path.0),
-        }),
+            client_auth,
+        } => {
+            let client_auth_config = match client_auth {
+                ClientAuth::Disabled => None,
+                ClientAuth::Optional { ca_path } => {
+                    Some(ClientAuthConfig::Optional { ca_path: ca_path.0 })
+                }
+                ClientAuth::Required { ca_path } => {
+                    Some(ClientAuthConfig::Required { ca_path: ca_path.0 })
+                }
+            };
+
+            Some(SerdeTls {
+                cert_path: Some(cert_path.0),
+                key_path: Some(key_path.0),
+                client_auth: client_auth_config,
+            })
+        }
     };
 
     Listener {

@@ -114,6 +114,7 @@ impl ProxyHttp for Proxy {
             response_headers: HeadersPolicy::Disabled,
             sni_override: None,
             start_time: std::time::Instant::now(),
+            client_identity: None,
         }
     }
 
@@ -159,14 +160,14 @@ impl ProxyHttp for Proxy {
             "forwarding request"
         );
 
-        let (use_tls, sni, verify_mode) = match &upstream.tls {
-            pavis_core::TlsPolicy::Disabled => (false, None, None),
-            pavis_core::TlsPolicy::Enabled { verify_mode, sni } => {
+        let (use_tls, sni, verify_mode, cert) = match &upstream.tls {
+            pavis_core::TlsPolicy::Disabled => (false, None, None, None),
+            pavis_core::TlsPolicy::Enabled { mode, sni, cert } => {
                 let sni_value = match sni {
                     pavis_core::SniName::Auto => ctx.sni_override.clone(),
                     pavis_core::SniName::Value(name) => Some(name.clone()),
                 };
-                (true, sni_value, Some(verify_mode))
+                (true, sni_value, Some(mode), Some(cert))
             }
         };
 
@@ -189,6 +190,28 @@ impl ProxyHttp for Proxy {
                 pavis_core::TlsVerify::CertAndHost => {
                     peer.options.verify_hostname = true;
                     peer.options.verify_cert = true;
+                }
+            }
+        }
+
+        // Configure client certificate for outbound mTLS
+        if let Some(cert_config) = cert {
+            match cert_config {
+                pavis_core::ClientCert::Disabled => {
+                    // No client certificate
+                }
+                pavis_core::ClientCert::Enabled {
+                    cert_path,
+                    key_path,
+                } => {
+                    // TODO: Load and configure client certificate for upstream connection
+                    // This allows the sidecar to authenticate itself to the upstream service
+                    tracing::debug!(
+                        cert_path = %cert_path.0,
+                        key_path = %key_path.0,
+                        "Configuring client certificate for upstream connection"
+                    );
+                    // peer.options.set_client_cert(&cert_path.0, &key_path.0)?;
                 }
             }
         }

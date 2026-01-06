@@ -99,6 +99,7 @@ mod tests {
                     }),
                     request_headers: None,
                     response_headers: None,
+                    principal: None,
                     rewrite: None,
                     action: RouteAction::Forward {
                         destinations: vec![],
@@ -129,6 +130,7 @@ mod tests {
                     }),
                     request_headers: None,
                     response_headers: None,
+                    principal: None,
                     rewrite: None,
                     action: RouteAction::Forward {
                         destinations: vec![],

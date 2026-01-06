@@ -53,6 +53,7 @@ fn test_routing_vhost_precedence() {
                 retry: RetryPolicy::Disabled,
                 request_headers: pavis_core::HeadersPolicy::Disabled,
                 response_headers: pavis_core::HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
@@ -73,6 +74,7 @@ fn test_routing_vhost_precedence() {
                 retry: RetryPolicy::Disabled,
                 request_headers: pavis_core::HeadersPolicy::Disabled,
                 response_headers: pavis_core::HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
@@ -93,6 +95,7 @@ fn test_routing_vhost_precedence() {
                 retry: RetryPolicy::Disabled,
                 request_headers: pavis_core::HeadersPolicy::Disabled,
                 response_headers: pavis_core::HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,

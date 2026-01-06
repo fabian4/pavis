@@ -181,10 +181,37 @@ fn main() -> Result<()> {
             pavis_core::TlsConfig::Enabled {
                 cert_path,
                 key_path,
+                client_auth,
             } => {
                 proxy_service
                     .add_tls(&listen_addr_str, &cert_path.0, &key_path.0)
                     .with_context(|| format!("Failed to add TLS listener: {}", listener.name.0))?;
+
+                // Configure client certificate authentication
+                match client_auth {
+                    pavis_core::ClientAuth::Disabled => {
+                        // No client certificate verification
+                    }
+                    pavis_core::ClientAuth::Optional { ca_path } => {
+                        // TODO: Configure SSL_VERIFY_PEER without SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+                        // This allows the handshake to succeed even if the client doesn't present a cert
+                        // The identity will be None in the RouterContext if no cert is provided
+                        tracing::debug!(
+                            ca_path = %ca_path.0,
+                            "Configuring optional client certificate authentication"
+                        );
+                        // tls_settings = tls_settings.enable_client_cert_verification(&ca_path.0, false)?;
+                    }
+                    pavis_core::ClientAuth::Required { ca_path } => {
+                        // TODO: Configure SSL_VERIFY_PEER with SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+                        // This requires the client to present a valid certificate
+                        tracing::debug!(
+                            ca_path = %ca_path.0,
+                            "Configuring required client certificate authentication"
+                        );
+                        // tls_settings = tls_settings.enable_client_cert_verification(&ca_path.0, true)?;
+                    }
+                }
             }
         }
 

@@ -48,7 +48,8 @@ listeners:
     address: "0.0.0.0:8080"
 telemetry: {{}}
 upstreams:
-  - name: "backend-v1"
+  - id: 1
+    name: "backend-v1"
     endpoints:
       - ip: "{host}"
         port: {port}

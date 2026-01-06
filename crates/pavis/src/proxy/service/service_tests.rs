@@ -50,6 +50,7 @@ fn apply_route_headers_populates_router_context() {
                 remove_headers: Vec::new(),
             },
         },
+        principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Disabled,
             host: RewriteHost::Disabled,
@@ -65,6 +66,7 @@ fn apply_route_headers_populates_router_context() {
         response_headers: HeadersPolicy::Disabled,
         sni_override: None,
         start_time: std::time::Instant::now(),
+        client_identity: None,
     };
 
     apply_route_headers(&mut ctx, &route);
@@ -153,6 +155,7 @@ async fn request_filter_selects_weighted_destination() {
             retry: RetryPolicy::Disabled,
             request_headers: HeadersPolicy::Disabled,
             response_headers: HeadersPolicy::Disabled,
+            principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
@@ -240,6 +243,7 @@ async fn request_filter_applies_rewrite_policy() {
             retry: RetryPolicy::Disabled,
             request_headers: HeadersPolicy::Disabled,
             response_headers: HeadersPolicy::Disabled,
+            principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Prefix {
                     from: Path("/api".to_string()),
@@ -300,6 +304,7 @@ async fn request_filter_skips_selection_when_no_destinations() {
             retry: RetryPolicy::Disabled,
             request_headers: HeadersPolicy::Disabled,
             response_headers: HeadersPolicy::Disabled,
+            principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
@@ -343,8 +348,9 @@ async fn upstream_peer_defaults_sni() {
             max: ConnectionLimit::Unlimited,
         },
         tls: TlsPolicy::Enabled {
-            verify_mode: pavis_core::TlsVerify::CertAndHost,
+            mode: pavis_core::TlsVerify::CertAndHost,
             sni: pavis_core::SniName::Auto,
+            cert: pavis_core::ClientCert::Disabled,
         },
         endpoints: vec![Endpoint {
             address: EndpointAddr::Ip {
@@ -442,6 +448,7 @@ fn test_calculate_path_rewrite() {
         retry: RetryPolicy::Disabled,
         request_headers: HeadersPolicy::Disabled,
         response_headers: HeadersPolicy::Disabled,
+        principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
                 from: Path("/api".to_string()),
@@ -470,6 +477,7 @@ fn test_calculate_path_rewrite() {
         retry: RetryPolicy::Disabled,
         request_headers: HeadersPolicy::Disabled,
         response_headers: HeadersPolicy::Disabled,
+        principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
                 from: Path("/api".to_string()),
@@ -495,6 +503,7 @@ fn test_calculate_path_rewrite() {
         retry: RetryPolicy::Disabled,
         request_headers: HeadersPolicy::Disabled,
         response_headers: HeadersPolicy::Disabled,
+        principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
                 from: Path("/api".to_string()),
@@ -519,6 +528,7 @@ fn test_route_path_helper() {
         retry: RetryPolicy::Disabled,
         request_headers: HeadersPolicy::Disabled,
         response_headers: HeadersPolicy::Disabled,
+        principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Disabled,
             host: RewriteHost::Disabled,
@@ -535,6 +545,7 @@ fn test_route_path_helper() {
         retry: RetryPolicy::Disabled,
         request_headers: HeadersPolicy::Disabled,
         response_headers: HeadersPolicy::Disabled,
+        principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Disabled,
             host: RewriteHost::Disabled,
@@ -551,6 +562,7 @@ fn test_route_path_helper() {
         retry: RetryPolicy::Disabled,
         request_headers: HeadersPolicy::Disabled,
         response_headers: HeadersPolicy::Disabled,
+        principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Disabled,
             host: RewriteHost::Disabled,
@@ -646,6 +658,7 @@ fn test_calculate_path_rewrite_unmatched_prefix() {
         retry: RetryPolicy::Disabled,
         request_headers: HeadersPolicy::Disabled,
         response_headers: HeadersPolicy::Disabled,
+        principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
                 from: Path("/api".to_string()),
@@ -688,6 +701,7 @@ async fn request_filter_handles_redirect_action() {
             retry: RetryPolicy::Disabled,
             request_headers: HeadersPolicy::Disabled,
             response_headers: HeadersPolicy::Disabled,
+            principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
@@ -738,6 +752,7 @@ async fn request_filter_handles_direct_action() {
             retry: RetryPolicy::Disabled,
             request_headers: HeadersPolicy::Disabled,
             response_headers: HeadersPolicy::Disabled,
+            principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
@@ -789,6 +804,7 @@ async fn request_filter_redirect_with_different_status_codes() {
             retry: RetryPolicy::Disabled,
             request_headers: HeadersPolicy::Disabled,
             response_headers: HeadersPolicy::Disabled,
+            principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
@@ -838,6 +854,7 @@ async fn request_filter_direct_with_custom_status() {
             retry: RetryPolicy::Disabled,
             request_headers: HeadersPolicy::Disabled,
             response_headers: HeadersPolicy::Disabled,
+            principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
@@ -884,6 +901,7 @@ fn test_calculate_path_rewrite_preserves_query_string() {
         retry: RetryPolicy::Disabled,
         request_headers: HeadersPolicy::Disabled,
         response_headers: HeadersPolicy::Disabled,
+        principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
                 from: Path("/api/v1".to_string()),
@@ -928,6 +946,7 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
             retry: RetryPolicy::Disabled,
             request_headers: HeadersPolicy::Disabled,
             response_headers: HeadersPolicy::Disabled,
+            principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Prefix {
                     from: Path("/old-api".to_string()),

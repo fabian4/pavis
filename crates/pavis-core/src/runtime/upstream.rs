@@ -1,5 +1,5 @@
 use crate::runtime::types::{
-    ConnectTimeout, Hostname, IdleTimeout, Port, UpstreamId, UpstreamName, Weight,
+    ConnectTimeout, Hostname, IdleTimeout, Path, Port, UpstreamId, UpstreamName, Weight,
 };
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
@@ -84,9 +84,18 @@ pub enum ConnectionLimit {
 pub enum TlsPolicy {
     Disabled,
     Enabled {
-        verify_mode: TlsVerify,
+        mode: TlsVerify,
         sni: SniName,
+        cert: ClientCert,
     },
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub enum ClientCert {
+    Disabled,
+    Enabled { cert_path: Path, key_path: Path },
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]

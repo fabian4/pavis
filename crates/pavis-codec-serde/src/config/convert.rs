@@ -121,8 +121,8 @@ routes:
             ConnectTimeout::Disabled => panic!("connect timeout not populated"),
         }
         match upstream.tls {
-            TlsPolicy::Enabled { verify_mode, .. } => {
-                assert_eq!(verify_mode, TlsVerify::CertAndHost);
+            TlsPolicy::Enabled { mode, .. } => {
+                assert_eq!(mode, TlsVerify::CertAndHost);
             }
             TlsPolicy::Disabled => panic!("tls not enabled"),
         }
@@ -197,10 +197,11 @@ routes:
                     max: ConnectionLimit::Limited(NonZeroU32::new(10).unwrap()),
                 },
                 tls: TlsPolicy::Enabled {
-                    verify_mode: TlsVerify::Cert,
+                    mode: TlsVerify::Cert,
                     sni: pavis_core::SniName::Value(pavis_core::Hostname(
                         "backend.local".to_string(),
                     )),
+                    cert: pavis_core::ClientCert::Disabled,
                 },
                 endpoints: vec![Endpoint {
                     address: EndpointAddr::Ip {
@@ -224,6 +225,7 @@ routes:
                     },
                     request_headers: pavis_core::HeadersPolicy::Disabled,
                     response_headers: pavis_core::HeadersPolicy::Disabled,
+                    principal: pavis_core::Principal::Any,
                     rewrite: Rewrite {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,

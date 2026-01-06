@@ -48,6 +48,7 @@ fn test_routing_prefix_match() {
             retry: RetryPolicy::Disabled,
             request_headers: pavis_core::HeadersPolicy::Disabled,
             response_headers: pavis_core::HeadersPolicy::Disabled,
+            principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
@@ -90,6 +91,7 @@ fn test_routing_exact_and_regex_match() {
                 retry: RetryPolicy::Disabled,
                 request_headers: pavis_core::HeadersPolicy::Disabled,
                 response_headers: pavis_core::HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
@@ -107,6 +109,7 @@ fn test_routing_exact_and_regex_match() {
                 retry: RetryPolicy::Disabled,
                 request_headers: pavis_core::HeadersPolicy::Disabled,
                 response_headers: pavis_core::HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,

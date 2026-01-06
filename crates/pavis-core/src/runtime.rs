@@ -7,11 +7,11 @@ mod upstream;
 
 pub use headers::{Headers, HeadersPolicy};
 pub use routing::{
-    Destination, PathMatch, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED, RETRY_RESERVED,
-    RETRY_RESET, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction,
-    VirtualHost,
+    Destination, PathMatch, Principal, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED,
+    RETRY_RESERVED, RETRY_RESET, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route,
+    RouteAction, VirtualHost,
 };
-pub use server::{Listener, TlsConfig, WorkerCount};
+pub use server::{ClientAuth, Listener, TlsConfig, WorkerCount};
 pub use telemetry::{
     AccessLogPolicy, LogLevel, Metrics, Telemetry, TracingPolicy, TracingProvider,
 };
@@ -20,8 +20,8 @@ pub use types::{
     Path, Port, SampleRate, ServiceName, Timeout, TryTimeout, UpstreamId, UpstreamName, Weight,
 };
 pub use upstream::{
-    ConnectionLimit, Discovery, Endpoint, EndpointAddr, HttpVersion, LoadBalancer, Pool, SniName,
-    TlsPolicy, TlsVerify, Upstream,
+    ClientCert, ConnectionLimit, Discovery, Endpoint, EndpointAddr, HttpVersion, LoadBalancer,
+    Pool, SniName, TlsPolicy, TlsVerify, Upstream,
 };
 
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
@@ -137,6 +137,7 @@ mod tests {
                     retry: RetryPolicy::Disabled,
                     request_headers: HeadersPolicy::Disabled,
                     response_headers: HeadersPolicy::Disabled,
+                    principal: Principal::Any,
                     rewrite: Rewrite {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,

@@ -41,8 +41,8 @@ async fn r12_symlink_updates() -> Result<()> {
     std::os::unix::fs::symlink(&v2_path, &tmp_link)?;
     fs::rename(&tmp_link, &link_path)?;
 
-    // Wait for either notify or polling fallback (2s)
-    sleep(Duration::from_millis(3500)).await;
+    // Wait for either notify or polling fallback (2s poll + 500ms debounce + 500ms buffer)
+    sleep(Duration::from_millis(4000)).await;
 
     let status = client.status().await?;
     assert!(

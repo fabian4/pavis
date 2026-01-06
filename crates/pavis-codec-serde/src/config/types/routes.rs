@@ -17,6 +17,15 @@ pub struct Route {
     pub rewrite: Option<RewritePolicy>,
     #[serde(flatten)]
     pub action: RouteAction,
+    pub principal: Option<PrincipalConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum PrincipalConfig {
+    Any,
+    Authenticated { spiffe: String },
+    Prefix { prefix: String },
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

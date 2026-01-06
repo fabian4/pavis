@@ -553,7 +553,7 @@ fn unique_work_dir(mode: &TestMode) -> Result<PathBuf> {
 
         // Fallback to docker cleanup if direct removal failed (permission issues in CI)
         if need_docker_cleanup {
-            let _ = Command::new("docker")
+            let status = Command::new("docker")
                 .args(["run", "--rm", "-v"])
                 .arg(format!("{}:/work", path.display()))
                 .args([
@@ -567,7 +567,28 @@ fn unique_work_dir(mode: &TestMode) -> Result<PathBuf> {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
+
+            // Wait for cleanup to complete
+            if let Ok(status) = status
+                && !status.success()
+            {
+                return Err(anyhow::anyhow!(
+                    "Docker cleanup failed with status: {}",
+                    status
+                ));
+            }
         }
+
+        // Ensure the cleanup actually happened before returning
+        let storage_path = path.join("storage");
+        let lkg_path = path.join("lkg");
+        if storage_path.exists() {
+            fs::remove_dir_all(&storage_path)?;
+        }
+        if lkg_path.exists() {
+            fs::remove_dir_all(&lkg_path)?;
+        }
+
         return Ok(path);
     }
 

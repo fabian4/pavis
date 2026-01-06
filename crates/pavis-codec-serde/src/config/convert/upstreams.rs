@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use std::net::IpAddr;
 use std::num::{NonZeroU16, NonZeroU32};
 
-use pavis_core::{ConnectTimeout, Discovery, EndpointAddr, TlsVerify};
+use pavis_core::{ClientCert, ConnectTimeout, Discovery, EndpointAddr, Path, TlsVerify};
 
-use crate::config::types::{Endpoint, Upstream, UpstreamTlsConfig};
+use crate::config::types::{ClientCertConfig, Endpoint, Upstream, UpstreamTlsConfig};
 
 #[cfg(test)]
 mod tests {
@@ -98,13 +98,14 @@ mod tests {
                 verify_hostname: Some(false),
                 verify_cert: Some(true),
                 sni: Some("example.com".to_string()),
+                cert: None,
             }),
             ..base_upstream()
         };
         let runtime = to_runtime(vec![upstream]).unwrap();
         match &runtime[0].tls {
-            TlsPolicy::Enabled { verify_mode, sni } => {
-                assert!(matches!(verify_mode, pavis_core::TlsVerify::Cert));
+            TlsPolicy::Enabled { mode, sni, .. } => {
+                assert!(matches!(mode, pavis_core::TlsVerify::Cert));
                 assert!(matches!(sni, pavis_core::SniName::Value(h) if h.0 == "example.com"));
             }
             _ => panic!("expected enabled tls"),
@@ -211,7 +212,7 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
                 } else {
                     let verify_cert = t.verify_cert.unwrap_or(true);
                     let verify_hostname = t.verify_hostname.unwrap_or(true);
-                    let verify_mode = match (verify_cert, verify_hostname) {
+                    let mode = match (verify_cert, verify_hostname) {
                         (false, _) => TlsVerify::Disabled,
                         (true, false) => TlsVerify::Cert,
                         (true, true) => TlsVerify::CertAndHost,
@@ -220,7 +221,14 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
                         Some(name) => pavis_core::SniName::Value(pavis_core::Hostname(name)),
                         None => pavis_core::SniName::Auto,
                     };
-                    pavis_core::TlsPolicy::Enabled { verify_mode, sni }
+                    let cert = match t.cert {
+                        None => ClientCert::Disabled,
+                        Some(cc) => ClientCert::Enabled {
+                            cert_path: Path(cc.cert_path),
+                            key_path: Path(cc.key_path),
+                        },
+                    };
+                    pavis_core::TlsPolicy::Enabled { mode, sni, cert }
                 }
             }
         };
@@ -280,8 +288,8 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
 
         let tls = match u.tls {
             pavis_core::TlsPolicy::Disabled => None,
-            pavis_core::TlsPolicy::Enabled { verify_mode, sni } => {
-                let (verify_cert, verify_hostname) = match verify_mode {
+            pavis_core::TlsPolicy::Enabled { mode, sni, cert } => {
+                let (verify_cert, verify_hostname) = match mode {
                     TlsVerify::Disabled => (false, false),
                     TlsVerify::Cert => (true, false),
                     TlsVerify::CertAndHost => (true, true),
@@ -290,11 +298,22 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
                     pavis_core::SniName::Auto => None,
                     pavis_core::SniName::Value(name) => Some(name.0),
                 };
+                let cert_config = match cert {
+                    ClientCert::Disabled => None,
+                    ClientCert::Enabled {
+                        cert_path,
+                        key_path,
+                    } => Some(ClientCertConfig {
+                        cert_path: cert_path.0,
+                        key_path: key_path.0,
+                    }),
+                };
                 Some(UpstreamTlsConfig {
                     enabled: Some(true),
                     verify_hostname: Some(verify_hostname),
                     verify_cert: Some(verify_cert),
                     sni,
+                    cert: cert_config,
                 })
             }
         };

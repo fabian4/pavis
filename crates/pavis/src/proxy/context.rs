@@ -6,6 +6,7 @@ pub struct RouterContext {
     pub response_headers: HeadersPolicy,
     pub sni_override: Option<Hostname>,
     pub start_time: std::time::Instant,
+    pub client_identity: Option<String>,
 }
 
 #[cfg(test)]
@@ -31,6 +32,7 @@ mod tests {
             response_headers: HeadersPolicy::Disabled,
             sni_override: None,
             start_time: std::time::Instant::now(),
+            client_identity: None,
         };
 
         assert_eq!(

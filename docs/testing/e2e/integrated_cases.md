@@ -95,3 +95,31 @@
 - Action: Send request `GET /api/v1/resource?query=true`.
 - Expect: Backend receives the request at path `/v2/resource?query=true`.
 - Rationale: Verifies that path manipulation logic remains consistent when configuration is delivered dynamically.
+
+### I12: Permissive Migration (Optional Client Auth)
+- Setup: Listener with `ClientAuth::Optional`.
+- Action: Connect WITHOUT client certificate.
+- Expect: Connection succeeds, Identity is None, traffic allowed.
+- Action: Connect WITH valid client certificate (contains SPIFFE ID in SAN).
+- Expect: Connection succeeds, Identity is extracted from certificate, traffic allowed.
+- Note: Full test requires client cert integration for identity extraction.
+- Location: `crates/pavis-e2e/tests/integrated/i12_permissive_migration.rs`
+- Rationale: Validates permissive mTLS mode for gradual migration to Zero-Trust security.
+
+### I13: Outbound mTLS
+- Setup: Upstream requiring client certificates, Pavis configured with `ClientCert::Enabled`.
+- Action: Runtime connects to upstream with client certificate.
+- Expect: mTLS handshake succeeds, upstream accepts connection, returns 200 OK.
+- Note: Skipped in Docker mode. Uses mock TLS upstream in binary mode.
+- Location: `crates/pavis-e2e/tests/integrated/i13_outbound_mtls.rs`
+- Rationale: Verifies Pavis can authenticate itself to upstreams using workload identity (client certificates).
+
+### I14: Namespace-Level Authorization (RBAC)
+- Setup: Route with `Principal::Prefix` matching `spiffe://cluster.local/ns/prod/`.
+- Action: Request with client cert containing SPIFFE ID `spiffe://cluster.local/ns/prod/sa/app-a`.
+- Expect: 200 OK (authorized - identity matches namespace prefix).
+- Action: Request with client cert containing SPIFFE ID `spiffe://cluster.local/ns/dev/sa/app-b`.
+- Expect: 403 Forbidden (unauthorized - identity does not match namespace prefix).
+- Note: Currently ignored. Requires client cert with SPIFFE IDs for full RBAC testing.
+- Location: `crates/pavis-e2e/tests/integrated/i14_namespace_authorization.rs`
+- Rationale: Validates namespace-level authorization using SPIFFE identity prefix matching for Zero-Trust RBAC.

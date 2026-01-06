@@ -4,13 +4,14 @@ mod telemetry;
 mod upstreams;
 
 pub use routes::{
-    HeaderOperations, Matcher, RetryPolicy, RewritePolicy, Route, RouteAction, VirtualHost,
-    WeightedDestination,
+    HeaderOperations, Matcher, PrincipalConfig, RetryPolicy, RewritePolicy, Route, RouteAction,
+    VirtualHost, WeightedDestination,
 };
-pub use server::{Listener, TlsConfig};
+pub use server::{ClientAuthConfig, Listener, TlsConfig};
 pub use telemetry::{TelemetryConfig, TracingConfig};
 pub use upstreams::{
-    CircuitBreaker, ConnectionPoolConfig, Endpoint, HealthCheck, Upstream, UpstreamTlsConfig,
+    CircuitBreaker, ClientCertConfig, ConnectionPoolConfig, Endpoint, HealthCheck, Upstream,
+    UpstreamTlsConfig,
 };
 
 use anyhow::Result as AnyResult;

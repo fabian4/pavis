@@ -3,8 +3,8 @@ use pavis_core::RouteAction as CoreRouteAction;
 use std::num::{NonZeroU16, NonZeroU32};
 
 use crate::config::types::{
-    HeaderOperations, Matcher, RetryPolicy, RewritePolicy, Route, RouteAction as CodecRouteAction,
-    VirtualHost, WeightedDestination,
+    HeaderOperations, Matcher, PrincipalConfig, RetryPolicy, RewritePolicy, Route,
+    RouteAction as CodecRouteAction, VirtualHost, WeightedDestination,
 };
 
 #[cfg(test)]
@@ -28,6 +28,7 @@ mod tests {
                 retry: None,
                 request_headers: None,
                 response_headers: None,
+                principal: None,
                 rewrite: None,
                 action: CodecRouteAction::Forward {
                     destinations: vec![WeightedDestination {
@@ -53,6 +54,7 @@ mod tests {
                 retry: None,
                 request_headers: None,
                 response_headers: None,
+                principal: None,
                 rewrite: None,
                 action: CodecRouteAction::Forward {
                     destinations: vec![],
@@ -79,6 +81,7 @@ mod tests {
                 }),
                 request_headers: None,
                 response_headers: None,
+                principal: None,
                 rewrite: None,
                 action: CodecRouteAction::Forward {
                     destinations: vec![],
@@ -110,6 +113,7 @@ mod tests {
                 }),
                 request_headers: None,
                 response_headers: None,
+                principal: None,
                 rewrite: None,
                 action: CodecRouteAction::Forward {
                     destinations: vec![],
@@ -146,6 +150,7 @@ mod tests {
                 }),
                 request_headers: None,
                 response_headers: None,
+                principal: None,
                 rewrite: None,
                 action: CodecRouteAction::Forward {
                     destinations: vec![],
@@ -179,6 +184,7 @@ mod tests {
                 retry: RetryPolicy::Disabled,
                 request_headers: HeadersPolicy::Disabled,
                 response_headers: HeadersPolicy::Disabled,
+                principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Prefix {
                         from: Path("/".to_string()),
@@ -309,6 +315,20 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 },
             };
 
+            let principal = match p.principal {
+                None => pavis_core::Principal::Any,
+                Some(PrincipalConfig::Any) => pavis_core::Principal::Any,
+                Some(PrincipalConfig::Authenticated { spiffe }) => {
+                    pavis_core::Principal::Authenticated { spiffe }
+                }
+                Some(PrincipalConfig::Prefix { prefix }) => {
+                    if prefix.is_empty() {
+                        anyhow::bail!("principal.prefix must not be empty");
+                    }
+                    pavis_core::Principal::Prefix { prefix }
+                }
+            };
+
             paths.push(pavis_core::Route {
                 matcher,
                 timeout,
@@ -317,6 +337,7 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 response_headers,
                 rewrite,
                 action,
+                principal,
             });
         }
 
@@ -410,6 +431,16 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 pavis_core::PathMatch::Regex { path } => Matcher::Regex { path: path.0 },
             };
 
+            let principal = match p.principal {
+                pavis_core::Principal::Any => None,
+                pavis_core::Principal::Authenticated { spiffe } => {
+                    Some(PrincipalConfig::Authenticated { spiffe })
+                }
+                pavis_core::Principal::Prefix { prefix } => {
+                    Some(PrincipalConfig::Prefix { prefix })
+                }
+            };
+
             paths.push(Route {
                 matcher: Some(matcher),
                 timeout,
@@ -418,6 +449,7 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 response_headers,
                 rewrite,
                 action,
+                principal,
             });
         }
 
