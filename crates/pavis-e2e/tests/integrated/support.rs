@@ -207,7 +207,7 @@ pub struct PavisEnv {
     compose_shared: bool,
     base_url: String,
     lkg_path: PathBuf,
-    work_dir: PathBuf,
+    pub work_dir: PathBuf,
     relay_url: String,
 }
 

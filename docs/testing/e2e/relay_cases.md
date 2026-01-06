@@ -109,5 +109,12 @@
 - Setup: Relay config `artifact.limits.max_pvs_bytes = 100`.
 - Action: Ingest valid config that compiles to > 100 bytes.
 - Expect:
-  - Relay logs "Artifact size exceeded" error.
-  - Version does not increment.
+    - Relay logs "Artifact size exceeded" error.
+    - Version does not increment.
+  
+  ### R16: Traceability
+  - Action: Fetch configuration or artifact.
+  - Expect:
+    - Header `X-Pavis-Generated-At` is present.
+    - Value is a valid RFC3339 timestamp.
+  

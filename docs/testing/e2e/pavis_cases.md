@@ -49,3 +49,51 @@
 - Action: Use upstreams with DNS hostnames.
 - Expect: Runtime resolves hostnames to IPs and forwards traffic.
 - Note: TTL-based rotation is verified via unit tests; E2E verifies basic connectivity to DNS-backed upstreams.
+
+### P9: Basic Routing
+- Action: Define multiple upstreams and route traffic to them using prefix matching.
+- Expect: Traffic is forwarded to the correct upstream.
+
+### P10: Route Matching (Exact vs Prefix)
+- Action: Define routes with exact and prefix matchers.
+- Expect: Exact matches take precedence or match specifically; prefix matches handle subpaths.
+
+### P11: Regex Matching
+- Action: Define routes using regex matchers.
+- Expect: Requests matching the regex patterns are forwarded correctly.
+
+### P12: Wildcard Host Matching
+- Action: Define virtual hosts with wildcard domains (e.g., `*.example.com`).
+- Expect: Requests with matching Host headers are routed to the wildcard vhost.
+
+### P13: Unmatched Routes
+- Action: Send a request that matches no defined route.
+- Expect: 404 Not Found.
+
+### P14: Header Manipulation (Request)
+- Action: Configure rules to add, set, or remove headers on requests.
+- Expect: Backend receives requests with modified headers.
+
+### P15: Response Header Manipulation
+- Action: Configure rules to add, set, or remove headers on responses.
+- Expect: Client receives responses with modified headers.
+
+### P16: Round Robin Load Balancing
+- Action: Configure an upstream with multiple endpoints and Round Robin balancer.
+- Expect: Traffic is distributed evenly across endpoints over multiple requests.
+
+### P17: Weighted Traffic Splitting
+- Action: Configure a route with multiple destinations and weights (e.g., 80/20).
+- Expect: Traffic distribution approximates the configured weights.
+
+### P18: Upstream Weights
+- Action: Configure upstream endpoints with different weights.
+- Expect: Load balancer respects endpoint weights when distributing traffic.
+
+### P19: HTTP Version
+- Action: Configure upstreams with different HTTP protocol versions (H1, H2).
+- Expect: Proxy communicates with upstreams using the specified protocol.
+
+### P20: Upstream TLS
+- Action: Configure upstream to require TLS (HTTPS).
+- Expect: Proxy initiates TLS connection to the upstream.

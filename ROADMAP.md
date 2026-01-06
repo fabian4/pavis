@@ -1,8 +1,8 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 27/70
-- **Core Features**: 22/53
+- **Total**: 31/70
+- **Core Features**: 26/53
 - **Technical Debt**: 5/17
 
 > **Status**: Active

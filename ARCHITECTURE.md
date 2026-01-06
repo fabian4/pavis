@@ -135,12 +135,14 @@ The Runtime consumes a configuration where all policy decisions are **explicit**
 Pavis operates as an L7 proxy capable of decrypting, inspecting, and re-encrypting traffic. The request lifecycle is as follows:
 
 1.  **Accept**: The listener accepts a raw TCP connection.
-2.  **Handshake (Optional)**: If `TlsConfig` is enabled, the runtime performs the server-side TLS handshake using OpenSSL/BoringSSL (via Pingora). Certificates are loaded from disk paths specified in the config.
+2.  **Handshake (Optional)**: If `TlsConfig` is enabled, the runtime performs the server-side TLS handshake using OpenSSL/BoringSSL (via Pingora). Certificates are loaded from disk paths specified in the config during bootstrap; invalid paths are fatal.
 3.  **Protocol Decode**: The stream is parsed as HTTP/1.1 or H2.
 4.  **L7 Match**: The `Router` inspects headers (`Host`, `Path`) against the configuration to select a VirtualHost and Route.
-5.  **Action**:
-    *   **Proxy**: The request is load-balanced to an upstream.
-    *   **Direct**: (If configured) A synthetic response or redirect is generated immediately.
+5.  **Action & Mutation**: The selected route executes its `RouteAction`:
+    *   **Forward**: The request is load-balanced to an upstream.
+    *   **Redirect**: A synthetic response with a `Location` header is generated immediately (3xx).
+    *   **Direct**: A synthetic response with a custom status and body is generated immediately (e.g., 200 "OK").
+    *   **Rewrite (Applied before Forward)**: Route rewrites apply host and prefix path changes before upstream selection; prefix rewrites preserve query strings.
 
 ### 4.2 Runtime Memory Lifecycle (RCU)
 
@@ -158,7 +160,9 @@ Pavis supports three distinct discovery modes for upstream clusters, balancing p
 
 1.  **Static**: Fixed IP addresses and ports. Zero runtime overhead. Used for stable infrastructure or when an external control plane (like the Pavis Relay) performs the resolution and pushes updated configs.
 2.  **StrictDns**: The proxy resolves the hostname via DNS and uses the returned A records. It honors TTLs and updates the pool accordingly. Ideal for Kubernetes Headless Services.
-3.  **LogicalDns**: The proxy resolves the hostname lazily. Connections are made to the resolved IP, but the pool is not strictly synchronized with all A records. Useful for AWS ALBs or services where the DNS name resolves to a rotating set of functional IPs.
+3.  **LogicalDns**: The proxy resolves the hostname to a single IP (favoring existing IPs when possible) and updates the pool. Useful for AWS ALBs or services where the DNS name resolves to a rotating set of functional IPs.
+
+Resolution is performed by a background `UpstreamResolver` service using `hickory-resolver`. It periodically refreshes DNS for `Strict` and `Logical` clusters and atomically replaces cluster endpoints. The hot path consumes IP endpoints only; DNS endpoints are treated as a misconfiguration if they reach `peer()`.
 
 ### 4.4 Routing Algorithm (Hot Path)
 

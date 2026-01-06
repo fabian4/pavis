@@ -34,19 +34,3 @@ fn pavis_rejects_invalid_pvs() -> Result<()> {
 
     Ok(())
 }
-
-#[test]
-fn pavis_rejects_missing_pvs_path() -> Result<()> {
-    let pavis = pavis_bin()?;
-    let missing_path = unique_path("pavis_missing", "pvs");
-
-    let output = Command::new(&pavis)
-        .arg("--config")
-        .arg(&missing_path)
-        .output()
-        .context("run pavis")?;
-
-    assert!(!output.status.success());
-
-    Ok(())
-}

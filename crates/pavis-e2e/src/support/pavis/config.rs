@@ -27,6 +27,7 @@ pub enum PavisConfigScenario {
     WildcardHost,
     RedirectDirect,
     PathRewriteQuery,
+    DnsDiscovery,
 }
 
 impl PavisConfigScenario {
@@ -45,6 +46,7 @@ impl PavisConfigScenario {
             Self::WildcardHost => "wildcard_host",
             Self::RedirectDirect => "redirect_direct",
             Self::PathRewriteQuery => "path_rewrite_query",
+            Self::DnsDiscovery => "dns_discovery",
         }
     }
 }
@@ -824,6 +826,47 @@ fn build_config(
                 Some(false),
                 telemetry,
                 upstreams,
+                routes,
+            )
+        }
+        PavisConfigScenario::DnsDiscovery => {
+            let telemetry = telemetry_with_tracing("pavis-e2e-dns-discovery");
+
+            // Determine host based on environment (similar to resolve_backend_hosts logic)
+            // But here we need a hostname for DNS resolution.
+            // In binary mode, 'localhost' works. In docker mode, 'backend-v1' works.
+            let host = if backend_v1 == "127.0.0.1" {
+                "localhost"
+            } else {
+                "backend-v1"
+            };
+
+            let mut up = upstream(
+                "backend-dns",
+                LoadBalancer::RoundRobin,
+                HttpVersion::H1,
+                None,
+                vec![endpoint(host, 8081, 1)],
+            );
+            up.discovery = Some(Discovery::Logical);
+
+            let routes = vec![VirtualHost {
+                host: "*".to_string(),
+                paths: vec![route(
+                    Matcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    None,
+                    None,
+                    vec![destination("backend-dns", 100)],
+                )],
+            }];
+            base_config(
+                "0.0.0.0:8080",
+                Some(2),
+                Some(false),
+                telemetry,
+                vec![up],
                 routes,
             )
         }

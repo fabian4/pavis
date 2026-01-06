@@ -20,6 +20,7 @@ pub struct RelayOptions {
     pub ingest_debounce_ms: u64,
     pub ingest_path: Option<PathBuf>,
     pub lkg_path: Option<PathBuf>,
+    pub storage_root: Option<PathBuf>,
     pub max_pvs_bytes: Option<u64>,
 }
 
@@ -30,6 +31,7 @@ impl Default for RelayOptions {
             ingest_debounce_ms: 500,
             ingest_path: None,
             lkg_path: None,
+            storage_root: None,
             max_pvs_bytes: None,
         }
     }
@@ -103,6 +105,7 @@ impl RelayInstance {
     }
 }
 
+#[derive(Clone)]
 pub struct RelayClient {
     base_url: String,
     inner: Client,
@@ -338,7 +341,11 @@ impl RelayEnv {
         let (bind, storage_root, config_lkg_path) = match mode {
             TestMode::Binary => {
                 let bind = format!("127.0.0.1:{port}");
-                let storage_root = work_dir.join("storage");
+                let storage_root = if let Some(path) = &options.storage_root {
+                    path.clone()
+                } else {
+                    work_dir.join("storage")
+                };
                 fs::create_dir_all(&storage_root)?;
                 if let Some(parent) = lkg_path.parent() {
                     fs::create_dir_all(parent)?;
@@ -347,7 +354,11 @@ impl RelayEnv {
             }
             TestMode::Docker => {
                 let bind = format!("0.0.0.0:{container_port}");
-                let storage_root_host = work_dir.join("storage");
+                let storage_root_host = if let Some(path) = &options.storage_root {
+                    path.clone()
+                } else {
+                    work_dir.join("storage")
+                };
                 let lkg_dir_host = work_dir.join("lkg");
 
                 create_dir_all_open(&storage_root_host)?;
