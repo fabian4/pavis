@@ -1,4 +1,4 @@
-use crate::runtime::{PathMatch, Route, Upstream, VirtualHost};
+use crate::runtime::{PathMatch, RewritePath, Route, RouteAction, Upstream, VirtualHost};
 use regex::Regex;
 use std::collections::HashSet;
 
@@ -48,6 +48,14 @@ pub(super) fn validate_routes(
                         route: path.0.clone(),
                         error: e.to_string(),
                     })?;
+
+                // Constraint Check: Reject Rewrite configurations if PathMatch::Regex is used.
+                if !matches!(route.rewrite.path, RewritePath::Disabled) {
+                    return Err(CoreValidationError::RewriteRegexConflict(
+                        path.0.clone(),
+                        vhost.host.0.clone(),
+                    ));
+                }
             }
 
             validate_headers(
@@ -59,25 +67,37 @@ pub(super) fn validate_routes(
                 &format!("Route '{}' response headers", path.0),
             )?;
 
-            validate_destinations(route, vhost, &upstream_names)?;
+            validate_action(&route.action, route, vhost, &upstream_names)?;
         }
     }
     Ok(())
 }
 
-fn validate_destinations(
+fn validate_action(
+    action: &RouteAction,
     route: &Route,
     vhost: &VirtualHost,
     upstream_names: &HashSet<&str>,
 ) -> CoreValidationResult<()> {
-    for dest in &route.destinations {
-        if !upstream_names.contains(dest.upstream.0.as_str()) {
-            return Err(CoreValidationError::UnknownDestination(
-                route_path(route),
-                vhost.host.0.clone(),
-                dest.upstream.0.clone(),
-            ));
+    match action {
+        RouteAction::Forward(destinations) => {
+            if destinations.is_empty() {
+                return Err(CoreValidationError::ForwardHasNoDestinations(
+                    route_path(route),
+                    vhost.host.0.clone(),
+                ));
+            }
+            for dest in destinations {
+                if !upstream_names.contains(dest.upstream.0.as_str()) {
+                    return Err(CoreValidationError::UnknownDestination(
+                        route_path(route),
+                        vhost.host.0.clone(),
+                        dest.upstream.0.clone(),
+                    ));
+                }
+            }
         }
+        RouteAction::Redirect { .. } | RouteAction::Direct { .. } => {}
     }
     Ok(())
 }

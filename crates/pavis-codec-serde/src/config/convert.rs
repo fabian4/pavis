@@ -64,9 +64,10 @@ mod tests {
         AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint,
         EndpointAddr, Host, HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer,
         LogLevel, Metrics, Path, PathMatch, Pool, Port, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX,
-        RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, RuntimeConfig, ServiceName,
-        Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider,
-        TryTimeout, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
+        RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction, RuntimeConfig,
+        ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy,
+        TracingProvider, TryTimeout, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
+        WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::{NonZeroU16, NonZeroU32};
@@ -227,10 +228,10 @@ routes:
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: UpstreamName("backend".to_string()),
                         weight: Weight(NonZeroU16::new(2).unwrap()),
-                    }],
+                    }]),
                 }],
             }],
         };

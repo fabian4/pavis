@@ -16,13 +16,13 @@ pub fn format_header(header: &pavis_pvs::PvsHeader) -> String {
 pub fn format_config(config: &binary::RuntimeConfig) -> String {
     let mut out = String::new();
     writeln!(&mut out, "--- Config Tree ---").ok();
-    writeln!(&mut out, "Listeners ({}):", config.listeners.len()).ok();
+    writeln!(&mut out, "Listeners ({})", config.listeners.len()).ok();
     for listener in &config.listeners {
         writeln!(&mut out, "- Name: {}", listener.name.0).ok();
         writeln!(&mut out, "  Address: {}", listener.address).ok();
     }
 
-    writeln!(&mut out, "Upstreams ({}):", config.upstreams.len()).ok();
+    writeln!(&mut out, "Upstreams ({})", config.upstreams.len()).ok();
     for upstream in &config.upstreams {
         let lb_str = match upstream.balancer {
             binary::LoadBalancer::RoundRobin => "RoundRobin",
@@ -54,7 +54,7 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
         }
     }
 
-    writeln!(&mut out, "Routes ({}):", config.routes.len()).ok();
+    writeln!(&mut out, "Routes ({})", config.routes.len()).ok();
     for vhost in &config.routes {
         writeln!(&mut out, "Host: {}", vhost.host.0).ok();
         for route in &vhost.paths {
@@ -64,13 +64,23 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
                 binary::PathMatch::Regex { path } => ("regex", path.0.as_str()),
             };
             writeln!(&mut out, "  - [{match_type}] {}", path).ok();
-            for dest in &route.destinations {
-                writeln!(
-                    &mut out,
-                    "      -> {} (weight {})",
-                    dest.upstream.0, dest.weight.0
-                )
-                .ok();
+            match &route.action {
+                binary::RouteAction::Forward(destinations) => {
+                    for dest in destinations {
+                        writeln!(
+                            &mut out,
+                            "      -> {} (weight {})",
+                            dest.upstream.0, dest.weight.0
+                        )
+                        .ok();
+                    }
+                }
+                binary::RouteAction::Redirect { status, location } => {
+                    writeln!(&mut out, "      -> Redirect {} to {}", status, location).ok();
+                }
+                binary::RouteAction::Direct { status, body: _ } => {
+                    writeln!(&mut out, "      -> Direct {}", status).ok();
+                }
             }
         }
     }
@@ -88,7 +98,10 @@ pub fn format_stats(config: &binary::RuntimeConfig, total_bytes: u64) -> String 
         .routes
         .iter()
         .flat_map(|v| &v.paths)
-        .map(|r| r.destinations.len())
+        .map(|r| match &r.action {
+            binary::RouteAction::Forward(destinations) => destinations.len(),
+            _ => 0,
+        })
         .sum();
 
     writeln!(&mut out, "--- Binary Stats ---").ok();
@@ -115,8 +128,8 @@ mod tests {
         AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint,
         EndpointAddr, Host, HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer,
         Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost, RewritePath,
-        RuntimeConfig, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, Upstream, UpstreamId,
-        UpstreamName, VirtualHost, Weight, WorkerCount,
+        RouteAction, RuntimeConfig, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy,
+        Upstream, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use pavis_pvs::{PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -195,10 +208,10 @@ mod tests {
                             path: RewritePath::Disabled,
                             host: RewriteHost::Disabled,
                         },
-                        destinations: vec![Destination {
+                        action: RouteAction::Forward(vec![Destination {
                             upstream: UpstreamName("backend".to_string()),
                             weight: Weight(NonZeroU16::new(1).unwrap()),
-                        }],
+                        }]),
                     },
                     pavis_core::Route {
                         matcher: PathMatch::Regex {
@@ -212,10 +225,10 @@ mod tests {
                             path: RewritePath::Disabled,
                             host: RewriteHost::Disabled,
                         },
-                        destinations: vec![Destination {
+                        action: RouteAction::Forward(vec![Destination {
                             upstream: UpstreamName("backend-h2h1".to_string()),
                             weight: Weight(NonZeroU16::new(1).unwrap()),
-                        }],
+                        }]),
                     },
                 ],
             }],
@@ -244,7 +257,7 @@ mod tests {
         let config = sample_config();
 
         let output = format_config(&config);
-        assert!(output.contains("Listeners (1):"));
+        assert!(output.contains("Listeners (1)"));
         assert!(output.contains("- Name: default"));
         assert!(output.contains("Address: 127.0.0.1:8080"));
         assert!(output.contains("- Upstream: backend, LB: RoundRobin, HTTP: H2"));

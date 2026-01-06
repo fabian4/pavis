@@ -110,7 +110,7 @@ mod tests {
     use crate::router::CompiledRoute;
     use pavis_core::{
         Destination, HeadersPolicy, Host, Path, PathMatch, RetryPolicy, Rewrite, RewriteHost,
-        RewritePath, Route, Timeout, Weight,
+        RewritePath, Route, RouteAction, Timeout, Weight,
     };
     use std::collections::HashMap;
     use std::num::NonZeroU16;
@@ -141,10 +141,10 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: pavis_core::UpstreamName("u".to_string()),
                         weight: Weight(NonZeroU16::new(1).unwrap()),
-                    }],
+                    }]),
                 }],
             },
             zones: vec![RouteZone::Linear(vec![CompiledRoute {

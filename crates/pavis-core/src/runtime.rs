@@ -8,7 +8,8 @@ mod upstream;
 pub use headers::{Headers, HeadersPolicy};
 pub use routing::{
     Destination, PathMatch, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED, RETRY_RESERVED,
-    RETRY_RESET, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, VirtualHost,
+    RETRY_RESET, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction,
+    VirtualHost,
 };
 pub use server::{Listener, TlsConfig, WorkerCount};
 pub use telemetry::{
@@ -140,10 +141,10 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: UpstreamName("upstream1".to_string()),
                         weight: Weight(unsafe { NonZeroU16::new_unchecked(1) }),
-                    }],
+                    }]),
                 }],
             }],
         };

@@ -16,6 +16,25 @@ pub(crate) fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Resul
     };
     let pavis_config = parse_runtime_from_bytes(format, &bytes)?;
 
+    // Validate local paths for TLS certificates
+    for listener in &pavis_config.listeners {
+        if let pavis_core::TlsConfig::Enabled {
+            cert_path,
+            key_path,
+        } = &listener.tls
+        {
+            if !std::path::Path::new(&cert_path.0).exists() {
+                eprintln!(
+                    "⚠️  Warning: Certificate file not found locally: {}",
+                    cert_path.0
+                );
+            }
+            if !std::path::Path::new(&key_path.0).exists() {
+                eprintln!("⚠️  Warning: Key file not found locally: {}", key_path.0);
+            }
+        }
+    }
+
     // 3. Write to Disk with explicit header
     pvs::write(&output_path, &pavis_config)?;
 

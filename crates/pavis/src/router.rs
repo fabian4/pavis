@@ -146,7 +146,7 @@ mod tests {
     use super::*;
     use pavis_core::{
         Destination, HeadersPolicy, Host, Path, PathMatch, RetryPolicy, Rewrite, RewriteHost,
-        RewritePath, Timeout, UpstreamName, Weight,
+        RewritePath, RouteAction, Timeout, UpstreamName, Weight,
     };
     use std::num::NonZeroU16;
 
@@ -167,10 +167,10 @@ mod tests {
                             path: RewritePath::Disabled,
                             host: RewriteHost::Disabled,
                         },
-                        destinations: vec![Destination {
+                        action: RouteAction::Forward(vec![Destination {
                             upstream: UpstreamName("backend-1".to_string()),
                             weight: Weight(NonZeroU16::new(1).unwrap()),
-                        }],
+                        }]),
                     },
                     Route {
                         matcher: PathMatch::Prefix {
@@ -184,10 +184,10 @@ mod tests {
                             path: RewritePath::Disabled,
                             host: RewriteHost::Disabled,
                         },
-                        destinations: vec![Destination {
+                        action: RouteAction::Forward(vec![Destination {
                             upstream: UpstreamName("backend-1".to_string()),
                             weight: Weight(NonZeroU16::new(1).unwrap()),
-                        }],
+                        }]),
                     },
                 ],
             },
@@ -205,10 +205,10 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: UpstreamName("backend-2".to_string()),
                         weight: Weight(NonZeroU16::new(1).unwrap()),
-                    }],
+                    }]),
                 }],
             },
         ]
@@ -230,7 +230,7 @@ mod tests {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![],
+                action: RouteAction::Forward(vec![]),
             }],
         }];
 
@@ -306,10 +306,10 @@ mod tests {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![Destination {
+                action: RouteAction::Forward(vec![Destination {
                     upstream: UpstreamName("backend".to_string()),
                     weight: Weight(NonZeroU16::new(1).unwrap()),
-                }],
+                }]),
             }],
         }];
 
@@ -347,10 +347,10 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: UpstreamName("backend-1".to_string()),
                         weight: Weight(NonZeroU16::new(1).unwrap()),
-                    }],
+                    }]),
                 },
                 Route {
                     matcher: PathMatch::Exact {
@@ -364,10 +364,10 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: UpstreamName("backend-2".to_string()),
                         weight: Weight(NonZeroU16::new(1).unwrap()),
-                    }],
+                    }]),
                 },
             ],
         }];
@@ -395,7 +395,7 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![],
+                    action: RouteAction::Forward(vec![]),
                 },
                 // Zone 2: ExactMap (consecutive exacts)
                 Route {
@@ -410,10 +410,10 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: UpstreamName("b1".to_string()),
                         weight: Weight(NonZeroU16::new(1).unwrap()),
-                    }],
+                    }]),
                 },
                 Route {
                     matcher: PathMatch::Exact {
@@ -427,10 +427,10 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: UpstreamName("b2".to_string()),
                         weight: Weight(NonZeroU16::new(1).unwrap()),
-                    }],
+                    }]),
                 },
             ],
         }];
@@ -439,7 +439,12 @@ mod tests {
         // Check zones structure implicitly by matching
         // /b should match the FIRST exact match in the map block
         let (_, route) = router.match_request(None, "/b").expect("match");
-        assert_eq!(route.destinations[0].upstream.0, "b1");
+        match &route.action {
+            RouteAction::Forward(destinations) => {
+                assert_eq!(destinations[0].upstream.0, "b1");
+            }
+            _ => panic!("expected Forward action"),
+        }
 
         // /a should match the prefix
         let (_, route) = router.match_request(None, "/a/foo").expect("match");

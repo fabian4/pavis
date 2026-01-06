@@ -8,17 +8,25 @@
 # - Runtime, relay, and core never apply defaults.
 
 listeners:
-  - name: "default"            # default listener name
-    address: "0.0.0.0:8080"    # listen address
-    workers: null              # null = use runtime default
-    tls: null                  # null = TLS disabled
+  - name: "http"               # HTTP listener
+    address: "0.0.0.0:80"
+    workers: 2
+    tls: null                  # Disabled
+
+  - name: "https"              # TLS listener
+    address: "0.0.0.0:443"
+    workers: auto              # auto | number
+    tls:
+      cert_path: "/etc/pavis/certs/server.crt"
+      key_path: "/etc/pavis/certs/server.key"
 
 telemetry:
   level: "info"
   pingora: "info"
   service_name: "pavis"
   metrics: "0.0.0.0:9090"      # omit or null to disable
-  access_log: "stdout"         # stdout | false | file path
+  access_log: "stdout"         # stdout | false | "/var/log/pavis/access.log"
+
   tracing:
     provider: "otlp"
     sampling: 1000
@@ -46,32 +54,43 @@ upstreams:
         weight: 1
 
 routes:
-  - host: "example.com"
+  - host: "api.example.com"
+    paths:
+      # Example 1: Forwarding with Rewrite
+      - matcher: !prefix
+          path: "/v1"
+        rewrite:
+          path: "/v2"
+          host: "internal-api.local"
+        destinations:
+          - upstream: "backend"
+            weight: 1
+
+      # Example 2: Redirect
+      - matcher: !exact
+          path: "/old-docs"
+        action:
+          redirect:
+            status: 301
+            location: "https://docs.example.com"
+
+      # Example 3: Direct Response (e.g. Maintenance or Health)
+      - matcher: !exact
+          path: "/healthz"
+        action:
+          direct:
+            status: 200
+            body: "OK"
+
+  - host: "*"
     paths:
       - matcher: !prefix
           path: "/"
-
         timeout: "1s"
-
         retry:
           attempts: 2
           per_try_timeout: "250ms"
-          retry_on:
-            - "5xx"
-            - "connect_failure"
-
-        request_headers:
-          set_headers:
-            - ["x-added", "1"]
-          remove_headers:
-            - "x-remove"
-
-        response_headers: {}
-
-        rewrite:
-          path_prefix_rewrite: "/"
-          host_rewrite_literal: "example.com"
-
+          retry_on: ["5xx", "connect_failure"]
         destinations:
           - upstream: "backend"
             weight: 1

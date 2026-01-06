@@ -16,3 +16,5 @@ mod recovery;
 mod safety;
 #[path = "integrated/support.rs"]
 mod support;
+#[path = "integrated/traffic_modifiers.rs"]
+mod traffic_modifiers;

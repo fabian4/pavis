@@ -4,7 +4,9 @@ use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
 use async_trait::async_trait;
 use http::Uri;
-use pavis_core::{ConnectTimeout, EndpointAddr, HeadersPolicy, Hostname, HttpVersion, PathMatch};
+use pavis_core::{
+    ConnectTimeout, EndpointAddr, HeadersPolicy, Hostname, HttpVersion, PathMatch, RouteAction,
+};
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
@@ -254,28 +256,52 @@ impl ProxyHttp for Proxy {
                 session.as_downstream_mut().req_header_mut().set_uri(uri);
             }
 
-            let total_weight: u32 = route
-                .destinations
-                .iter()
-                .map(|d| d.weight.0.get() as u32)
-                .sum();
-            if total_weight == 0 {
-                return Ok(false);
-            }
+            match &route.action {
+                RouteAction::Forward(destinations) => {
+                    let total_weight: u32 =
+                        destinations.iter().map(|d| d.weight.0.get() as u32).sum();
+                    if total_weight == 0 {
+                        return Ok(false);
+                    }
 
-            let mut rng = rand::rng();
-            let mut pick = rng.random_range(0..total_weight);
+                    let mut rng = rand::rng();
+                    let mut pick = rng.random_range(0..total_weight);
 
-            for dest in &route.destinations {
-                let weight = dest.weight.0.get() as u32;
-                if pick < weight {
-                    ctx.upstream_name = Some(dest.upstream.clone());
-                    break;
+                    for dest in destinations {
+                        let weight = dest.weight.0.get() as u32;
+                        if pick < weight {
+                            ctx.upstream_name = Some(dest.upstream.clone());
+                            break;
+                        }
+                        pick -= weight;
+                    }
+                    return Ok(false);
                 }
-                pick -= weight;
-            }
+                RouteAction::Redirect { status, location } => {
+                    let status_code = *status;
+                    let location_url = location.clone();
+                    drop(state);
 
-            return Ok(false);
+                    let mut resp = ResponseHeader::build(status_code, None)?;
+                    resp.insert_header("Location", location_url.as_str())?;
+                    session.write_response_header(Box::new(resp), true).await?;
+                    return Ok(true);
+                }
+                RouteAction::Direct { status, body } => {
+                    let status_code = *status;
+                    let body_content = body.clone();
+                    drop(state);
+
+                    let mut resp = ResponseHeader::build(status_code, None)?;
+                    resp.insert_header("Content-Type", "text/plain")?;
+                    resp.insert_header("Content-Length", body_content.len().to_string())?;
+                    session.write_response_header(Box::new(resp), false).await?;
+                    session
+                        .write_response_body(Some(body_content.into_bytes().into()), true)
+                        .await?;
+                    return Ok(true);
+                }
+            }
         }
 
         let _ = session.respond_error(404).await;

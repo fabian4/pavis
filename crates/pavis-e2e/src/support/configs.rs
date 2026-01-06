@@ -1,9 +1,9 @@
 use pavis_core::{
     AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint,
     EndpointAddr, Host, HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, Metrics,
-    Path, PathMatch, Pool, RetryPolicy, Rewrite, RewriteHost, RewritePath, RuntimeConfig,
-    ServiceName, Telemetry, Timeout, TracingPolicy, Upstream, UpstreamId, UpstreamName, Weight,
-    WorkerCount,
+    Path, PathMatch, Pool, RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction,
+    RuntimeConfig, ServiceName, Telemetry, Timeout, TracingPolicy, Upstream, UpstreamId,
+    UpstreamName, Weight, WorkerCount,
 };
 use std::net::SocketAddr;
 use std::num::{NonZeroU16, NonZeroU32};
@@ -47,10 +47,10 @@ pub fn runtime_config(
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![Destination {
+                action: RouteAction::Forward(vec![Destination {
                     upstream: UpstreamName(route_upstream.to_string()),
                     weight: Weight(NonZeroU16::new(1).expect("nonzero weight")),
-                }],
+                }]),
             }],
         }],
     }

@@ -37,6 +37,10 @@ pub enum CoreValidationError {
         route: String,
         match_type: String,
     },
+    #[error("route '{0}' (host '{1}') has Forward action with no destinations")]
+    ForwardHasNoDestinations(String, String),
+    #[error("route '{0}' (host '{1}') has rewrite enabled with regex matcher (unsupported)")]
+    RewriteRegexConflict(String, String),
     #[error(
         "path '{0}' is not normalized (must start with / and not have trailing slashes unless it is /)"
     )]
@@ -69,9 +73,9 @@ mod tests {
         Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname,
         HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel, Metrics, Path,
         PathMatch, Pool, Port, RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost,
-        RewritePath, Route, SampleRate, ServiceName, SniName, Telemetry, Timeout, TlsConfig,
-        TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, TryTimeout, Upstream, UpstreamId,
-        UpstreamName, VirtualHost, Weight, WorkerCount,
+        RewritePath, Route, RouteAction, SampleRate, ServiceName, SniName, Telemetry, Timeout,
+        TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, TryTimeout, Upstream,
+        UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::NonZeroU16;
@@ -152,10 +156,10 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: UpstreamName("test".to_string()),
                         weight: Weight(unsafe { NonZeroU16::new_unchecked(1) }),
-                    }],
+                    }]),
                 }],
             }],
         }
@@ -338,7 +342,9 @@ mod tests {
     #[test]
     fn unknown_destination_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].destinations[0].upstream = UpstreamName("missing".to_string());
+        if let RouteAction::Forward(destinations) = &mut cfg.routes[0].paths[0].action {
+            destinations[0].upstream = UpstreamName("missing".to_string());
+        }
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(
             err,
@@ -437,5 +443,33 @@ mod tests {
         };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::RegexTooLong { .. }));
+    }
+
+    #[test]
+    fn rewrite_regex_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
+            path: Path("^/api/.*".to_string()),
+        };
+        cfg.routes[0].paths[0].rewrite = Rewrite {
+            path: RewritePath::Prefix {
+                from: Path("/api".to_string()),
+                to: Path("/v2".to_string()),
+            },
+            host: RewriteHost::Disabled,
+        };
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::RewriteRegexConflict(..)));
+    }
+
+    #[test]
+    fn forward_empty_destinations_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].action = RouteAction::Forward(Vec::new());
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreValidationError::ForwardHasNoDestinations(..)
+        ));
     }
 }

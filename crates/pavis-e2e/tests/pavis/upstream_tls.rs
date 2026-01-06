@@ -231,24 +231,7 @@ async fn test_upstream_tls() {
 
     let resp = client.get(&url).send().await;
 
-    // 6. Cleanup
-    if let Some(mut child) = pavis_process {
-        let _ = child.kill();
-    }
-    if let Some(mut child) = backend_process {
-        let _ = child.kill();
-        if let Some(mut out) = child.stdout.take() {
-            let mut s = String::new();
-            use std::io::Read;
-            out.read_to_string(&mut s).unwrap_or_default();
-            println!("OpenSSL Stdout: {}", s);
-        }
-    }
-    if mode == "binary" {
-        let _ = fs::remove_dir_all(config_path.parent().unwrap());
-    }
-
-    // Assert
+    // Assert & Consume before cleanup
     match resp {
         Ok(r) => {
             assert!(
@@ -266,5 +249,22 @@ async fn test_upstream_tls() {
         Err(e) => {
             panic!("Request failed: {}", e);
         }
+    }
+
+    // 6. Cleanup
+    if let Some(mut child) = pavis_process {
+        let _ = child.kill();
+    }
+    if let Some(mut child) = backend_process {
+        let _ = child.kill();
+        if let Some(mut out) = child.stdout.take() {
+            let mut s = String::new();
+            use std::io::Read;
+            out.read_to_string(&mut s).unwrap_or_default();
+            println!("OpenSSL Stdout: {}", s);
+        }
+    }
+    if mode == "binary" {
+        let _ = fs::remove_dir_all(config_path.parent().unwrap());
     }
 }

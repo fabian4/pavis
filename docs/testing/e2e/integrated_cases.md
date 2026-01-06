@@ -72,3 +72,26 @@
   - Runtime **rejects** the update (logs warning about non-monotonic version).
   - Runtime continues serving v10.
 - Rationale: Prevents accidental rollbacks or data loss if control plane is reset without restoration.
+
+### I9: TLS Configuration Propagation
+- Setup: Relay + Runtime.
+- Action: Publish config with a TLS listener enabled (cert/key paths).
+- Expect:
+  - Runtime applies config and opens the TLS port.
+  - Client can successfully establish a TLS connection and receive a response.
+- Rationale: Verifies that security configurations are correctly distributed and applied.
+
+### I10: Traffic Management Action Propagation (Redirect/Direct)
+- Setup: Relay + Runtime.
+- Action: Publish v1 with a redirect rule (`/old` -> 301 `/new`).
+- Expect: Runtime returns 301 Moved Permanently with the correct location.
+- Action: Publish v2 with a direct response rule (`/status` -> 200 "OK").
+- Expect: Runtime returns 200 OK with the configured body immediately.
+- Rationale: Ensures L7 actions are correctly interpreted after delivery through the control plane.
+
+### I11: Rewrite Propagation (with Query Preservation)
+- Setup: Relay + Runtime.
+- Action: Publish config with prefix rewrite (`/api/v1` -> `/v2`).
+- Action: Send request `GET /api/v1/resource?query=true`.
+- Expect: Backend receives the request at path `/v2/resource?query=true`.
+- Rationale: Verifies that path manipulation logic remains consistent when configuration is delivered dynamically.

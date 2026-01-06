@@ -4,7 +4,8 @@ mod telemetry;
 mod upstreams;
 
 pub use routes::{
-    HeaderOperations, Matcher, RetryPolicy, RewritePolicy, Route, VirtualHost, WeightedDestination,
+    HeaderOperations, Matcher, RetryPolicy, RewritePolicy, Route, RouteAction, VirtualHost,
+    WeightedDestination,
 };
 pub use server::{Listener, TlsConfig};
 pub use telemetry::{TelemetryConfig, TracingConfig};

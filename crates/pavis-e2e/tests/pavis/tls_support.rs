@@ -159,15 +159,7 @@ async fn test_tls_support() {
 
     let resp = client.get("https://localhost:8443/").send().await;
 
-    // 5. Cleanup
-    if let Some(mut child) = process {
-        let _ = child.kill();
-    }
-    if mode == "binary" {
-        let _ = fs::remove_dir_all(config_path.parent().unwrap());
-    }
-
-    // Assert
+    // Assert & Consume before cleanup
     match resp {
         Ok(r) => {
             assert!(r.status().is_success(), "Response: {:?}", r.status());
@@ -181,5 +173,13 @@ async fn test_tls_support() {
         Err(e) => {
             panic!("Request failed: {}", e);
         }
+    }
+
+    // 5. Cleanup
+    if let Some(mut child) = process {
+        let _ = child.kill();
+    }
+    if mode == "binary" {
+        let _ = fs::remove_dir_all(config_path.parent().unwrap());
     }
 }

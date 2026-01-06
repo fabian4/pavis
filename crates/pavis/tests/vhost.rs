@@ -5,7 +5,8 @@ use pavis::router::Router;
 use pavis_core::{
     ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint, EndpointAddr, Host,
     HttpVersion, IdleTimeout, LoadBalancer, Path, PathMatch, Pool, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, Timeout, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
+    RewriteHost, RewritePath, RouteAction, Timeout, Upstream, UpstreamId, UpstreamName,
+    VirtualHost, Weight,
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU16, NonZeroU32};
@@ -56,10 +57,10 @@ fn test_routing_vhost_precedence() {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![Destination {
+                action: RouteAction::Forward(vec![Destination {
                     upstream: UpstreamName("wildcard-upstream".to_string()),
                     weight: Weight(NonZeroU16::new(1).unwrap()),
-                }],
+                }]),
             }],
         },
         VirtualHost {
@@ -76,10 +77,10 @@ fn test_routing_vhost_precedence() {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![Destination {
+                action: RouteAction::Forward(vec![Destination {
                     upstream: UpstreamName("api-upstream".to_string()),
                     weight: Weight(NonZeroU16::new(1).unwrap()),
-                }],
+                }]),
             }],
         },
         VirtualHost {
@@ -96,10 +97,10 @@ fn test_routing_vhost_precedence() {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![Destination {
+                action: RouteAction::Forward(vec![Destination {
                     upstream: UpstreamName("web-upstream".to_string()),
                     weight: Weight(NonZeroU16::new(1).unwrap()),
-                }],
+                }]),
             }],
         },
     ];

@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use pavis_codec_serde::config::{
     AccessLogPolicy, Endpoint, HeaderOperations, HttpVersion, Listener, LoadBalancer, Matcher,
-    Route, SerdeConfig, TelemetryConfig, TlsConfig, TracingConfig, Upstream, UpstreamTlsConfig,
-    VirtualHost, WeightedDestination,
+    RewritePolicy, Route, RouteAction, SerdeConfig, TelemetryConfig, TlsConfig, TracingConfig,
+    Upstream, UpstreamTlsConfig, VirtualHost, WeightedDestination,
 };
 use pavis_core::Discovery;
 use std::env;
@@ -25,6 +25,8 @@ pub enum PavisConfigScenario {
     UpstreamWeight,
     WeightedSplitting,
     WildcardHost,
+    RedirectDirect,
+    PathRewriteQuery,
 }
 
 impl PavisConfigScenario {
@@ -41,6 +43,8 @@ impl PavisConfigScenario {
             Self::UpstreamWeight => "upstream_weight",
             Self::WeightedSplitting => "weighted_splitting",
             Self::WildcardHost => "wildcard_host",
+            Self::RedirectDirect => "redirect_direct",
+            Self::PathRewriteQuery => "path_rewrite_query",
         }
     }
 }
@@ -641,6 +645,188 @@ fn build_config(
                 routes,
             )
         }
+        PavisConfigScenario::RedirectDirect => {
+            let telemetry = telemetry_with_tracing("pavis-e2e-redirect-direct");
+            let upstreams = vec![];
+            let routes = vec![VirtualHost {
+                host: "*".to_string(),
+                paths: vec![
+                    // Redirect routes
+                    Route {
+                        matcher: Some(Matcher::Exact {
+                            path: "/redirect-permanent".to_string(),
+                        }),
+                        timeout: None,
+                        retry: None,
+                        request_headers: None,
+                        response_headers: None,
+                        rewrite: None,
+                        action: RouteAction::Redirect {
+                            status: 301,
+                            location: "https://example.com/new-location".to_string(),
+                        },
+                    },
+                    Route {
+                        matcher: Some(Matcher::Exact {
+                            path: "/redirect-temporary".to_string(),
+                        }),
+                        timeout: None,
+                        retry: None,
+                        request_headers: None,
+                        response_headers: None,
+                        rewrite: None,
+                        action: RouteAction::Redirect {
+                            status: 302,
+                            location: "https://example.com/temp".to_string(),
+                        },
+                    },
+                    Route {
+                        matcher: Some(Matcher::Exact {
+                            path: "/redirect-preserve-method".to_string(),
+                        }),
+                        timeout: None,
+                        retry: None,
+                        request_headers: None,
+                        response_headers: None,
+                        rewrite: None,
+                        action: RouteAction::Redirect {
+                            status: 307,
+                            location: "https://example.com/v2/api".to_string(),
+                        },
+                    },
+                    // Direct response routes
+                    Route {
+                        matcher: Some(Matcher::Exact {
+                            path: "/health".to_string(),
+                        }),
+                        timeout: None,
+                        retry: None,
+                        request_headers: None,
+                        response_headers: None,
+                        rewrite: None,
+                        action: RouteAction::Direct {
+                            status: 200,
+                            body: "OK".to_string(),
+                        },
+                    },
+                    Route {
+                        matcher: Some(Matcher::Exact {
+                            path: "/not-found".to_string(),
+                        }),
+                        timeout: None,
+                        retry: None,
+                        request_headers: None,
+                        response_headers: None,
+                        rewrite: None,
+                        action: RouteAction::Direct {
+                            status: 404,
+                            body: "Resource not found".to_string(),
+                        },
+                    },
+                    Route {
+                        matcher: Some(Matcher::Exact {
+                            path: "/maintenance".to_string(),
+                        }),
+                        timeout: None,
+                        retry: None,
+                        request_headers: None,
+                        response_headers: None,
+                        rewrite: None,
+                        action: RouteAction::Direct {
+                            status: 503,
+                            body: "Service is under maintenance".to_string(),
+                        },
+                    },
+                    Route {
+                        matcher: Some(Matcher::Exact {
+                            path: "/status".to_string(),
+                        }),
+                        timeout: None,
+                        retry: None,
+                        request_headers: None,
+                        response_headers: None,
+                        rewrite: None,
+                        action: RouteAction::Direct {
+                            status: 200,
+                            body: r#"{"status":"healthy","version":"1.0.0"}"#.to_string(),
+                        },
+                    },
+                ],
+            }];
+            base_config(
+                "0.0.0.0:8080",
+                Some(2),
+                Some(false),
+                telemetry,
+                upstreams,
+                routes,
+            )
+        }
+        PavisConfigScenario::PathRewriteQuery => {
+            let telemetry = telemetry_with_tracing("pavis-e2e-path-rewrite-query");
+            let upstreams = vec![
+                upstream(
+                    "backend-v1",
+                    LoadBalancer::RoundRobin,
+                    HttpVersion::H1,
+                    None,
+                    vec![endpoint(&backend_v1, 8081, 1)],
+                ),
+                upstream(
+                    "backend-v2",
+                    LoadBalancer::RoundRobin,
+                    HttpVersion::H1,
+                    None,
+                    vec![endpoint(&backend_v2, 8082, 1)],
+                ),
+            ];
+            let routes = vec![VirtualHost {
+                host: "*".to_string(),
+                paths: vec![
+                    // Prefix rewrite route
+                    route_with_rewrite(
+                        Matcher::Prefix {
+                            path: "/api/v1".to_string(),
+                        },
+                        Some(RewritePolicy {
+                            path: Some("/v2".to_string()),
+                            host: None,
+                        }),
+                        vec![destination("backend-v1", 100)],
+                    ),
+                    // Exact match rewrite route
+                    route_with_rewrite(
+                        Matcher::Exact {
+                            path: "/old-path".to_string(),
+                        },
+                        Some(RewritePolicy {
+                            path: Some("/new-path".to_string()),
+                            host: None,
+                        }),
+                        vec![destination("backend-v2", 100)],
+                    ),
+                    // Host rewrite route
+                    route_with_rewrite(
+                        Matcher::Prefix {
+                            path: "/rewrite-host".to_string(),
+                        },
+                        Some(RewritePolicy {
+                            path: None,
+                            host: Some("backend.internal".to_string()),
+                        }),
+                        vec![destination("backend-v1", 100)],
+                    ),
+                ],
+            }];
+            base_config(
+                "0.0.0.0:8080",
+                Some(2),
+                Some(false),
+                telemetry,
+                upstreams,
+                routes,
+            )
+        }
     }
 }
 
@@ -731,7 +917,23 @@ fn route(
         request_headers,
         response_headers,
         rewrite: None,
-        destinations,
+        action: RouteAction::Forward { destinations },
+    }
+}
+
+fn route_with_rewrite(
+    matcher: Matcher,
+    rewrite: Option<RewritePolicy>,
+    destinations: Vec<WeightedDestination>,
+) -> Route {
+    Route {
+        matcher: Some(matcher),
+        timeout: None,
+        retry: None,
+        request_headers: None,
+        response_headers: None,
+        rewrite,
+        action: RouteAction::Forward { destinations },
     }
 }
 

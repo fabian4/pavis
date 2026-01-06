@@ -227,8 +227,8 @@ mod tests {
         AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration,
         Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout, Listener, ListenerName,
         LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost,
-        RewritePath, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, Upstream, UpstreamId,
-        UpstreamName, VirtualHost, Weight, WorkerCount,
+        RewritePath, RouteAction, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, Upstream,
+        UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::{NonZeroU16, NonZeroU32};
@@ -333,10 +333,10 @@ mod tests {
                         path: RewritePath::Disabled,
                         host: RewriteHost::Disabled,
                     },
-                    destinations: vec![Destination {
+                    action: RouteAction::Forward(vec![Destination {
                         upstream: UpstreamName("upstream1".to_string()),
                         weight: Weight(NonZeroU16::new(1).unwrap()),
-                    }],
+                    }]),
                 }],
             }],
         }

@@ -26,13 +26,15 @@ pub fn validate(config: &mut SerdeConfig) -> Result<()> {
     if let Some(routes) = &config.routes {
         for vhost in routes {
             for route in &vhost.paths {
-                for dest in &route.destinations {
-                    if !upstream_names.contains(dest.upstream.as_str()) {
-                        return Err(anyhow::anyhow!(
-                            "Route '{}' references unknown upstream '{}'",
-                            matcher_path(route.matcher.as_ref()),
-                            dest.upstream
-                        ));
+                if let RouteAction::Forward { destinations } = &route.action {
+                    for dest in destinations {
+                        if !upstream_names.contains(dest.upstream.as_str()) {
+                            return Err(anyhow::anyhow!(
+                                "Route '{}' references unknown upstream '{}'",
+                                matcher_path(route.matcher.as_ref()),
+                                dest.upstream
+                            ));
+                        }
                     }
                 }
             }
@@ -98,7 +100,9 @@ mod tests {
                     request_headers: None,
                     response_headers: None,
                     rewrite: None,
-                    destinations: vec![],
+                    action: RouteAction::Forward {
+                        destinations: vec![],
+                    },
                 }],
             }]),
         };
@@ -126,7 +130,9 @@ mod tests {
                     request_headers: None,
                     response_headers: None,
                     rewrite: None,
-                    destinations: vec![],
+                    action: RouteAction::Forward {
+                        destinations: vec![],
+                    },
                 }],
             }]),
         };

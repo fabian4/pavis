@@ -1,9 +1,9 @@
 use anyhow::Result;
 use pavis_e2e::support::PavisScenario;
 use pavis_e2e::support::expected_body;
-use pavis_e2e::support::to_yaml;
 use pavis_e2e::support::relay::RelayOptions;
 use pavis_e2e::support::runtime_config;
+use pavis_e2e::support::to_yaml;
 use std::time::Duration;
 use tokio::time::sleep;
 

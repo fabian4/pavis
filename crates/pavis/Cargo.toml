@@ -22,6 +22,7 @@ arc-swap = "1.7.1"
 reqwest = { version = "0.12", default-features = true }
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
+hickory-resolver = "0.25.2"
 
 [dev-dependencies]
 pavis-core = { path = "../pavis-core" }

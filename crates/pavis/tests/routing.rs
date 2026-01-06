@@ -5,7 +5,8 @@ use pavis::router::Router;
 use pavis_core::{
     ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint, EndpointAddr, Host,
     HttpVersion, IdleTimeout, LoadBalancer, Path, PathMatch, Pool, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, Timeout, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
+    RewriteHost, RewritePath, RouteAction, Timeout, Upstream, UpstreamId, UpstreamName,
+    VirtualHost, Weight,
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU16, NonZeroU32};
@@ -51,10 +52,10 @@ fn test_routing_prefix_match() {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
             },
-            destinations: vec![Destination {
+            action: RouteAction::Forward(vec![Destination {
                 upstream: UpstreamName("backend-a".to_string()),
                 weight: Weight(NonZeroU16::new(1).unwrap()),
-            }],
+            }]),
         }],
     });
 
@@ -63,7 +64,12 @@ fn test_routing_prefix_match() {
     let (_vhost, route) = router
         .match_request(None, "/api/users")
         .expect("Should match");
-    assert_eq!(route.destinations[0].upstream.0, "backend-a");
+    match &route.action {
+        RouteAction::Forward(destinations) => {
+            assert_eq!(destinations[0].upstream.0, "backend-a");
+        }
+        _ => panic!("expected Forward action"),
+    }
 
     assert!(router.match_request(None, "/other").is_none());
 }
@@ -88,10 +94,10 @@ fn test_routing_exact_and_regex_match() {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![Destination {
+                action: RouteAction::Forward(vec![Destination {
                     upstream: UpstreamName("backend-exact".to_string()),
                     weight: Weight(NonZeroU16::new(1).unwrap()),
-                }],
+                }]),
             },
             pavis_core::Route {
                 matcher: PathMatch::Regex {
@@ -105,10 +111,10 @@ fn test_routing_exact_and_regex_match() {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![Destination {
+                action: RouteAction::Forward(vec![Destination {
                     upstream: UpstreamName("backend-regex".to_string()),
                     weight: Weight(NonZeroU16::new(1).unwrap()),
-                }],
+                }]),
             },
         ],
     });
@@ -118,12 +124,22 @@ fn test_routing_exact_and_regex_match() {
     let (_vhost, route) = router
         .match_request(None, "/health")
         .expect("Should match exact");
-    assert_eq!(route.destinations[0].upstream.0, "backend-exact");
+    match &route.action {
+        RouteAction::Forward(destinations) => {
+            assert_eq!(destinations[0].upstream.0, "backend-exact");
+        }
+        _ => panic!("expected Forward action"),
+    }
 
     let (_vhost, route) = router
         .match_request(None, "/items/42")
         .expect("Should match regex");
-    assert_eq!(route.destinations[0].upstream.0, "backend-regex");
+    match &route.action {
+        RouteAction::Forward(destinations) => {
+            assert_eq!(destinations[0].upstream.0, "backend-regex");
+        }
+        _ => panic!("expected Forward action"),
+    }
 
     assert!(router.match_request(None, "/items/abc").is_none());
 }

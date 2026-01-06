@@ -10,8 +10,8 @@ use pavis_core::{
     AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery,
     Duration as RuntimeDuration, Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout, Listener,
     ListenerName, LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, Upstream,
-    UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
+    RewriteHost, RewritePath, RouteAction, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy,
+    Upstream, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
 };
 use pavis_pvs::PAVIS_VERSION_HEADER;
 use pingora::services::Service;
@@ -72,10 +72,10 @@ fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![Destination {
+                action: RouteAction::Forward(vec![Destination {
                     upstream: UpstreamName("backend".to_string()),
                     weight: Weight(NonZeroU16::new(1).unwrap()),
-                }],
+                }]),
             }],
         }],
     }
@@ -84,7 +84,9 @@ fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
 fn config_with_upstream(service_name: &str, upstream_name: &str) -> pavis_core::RuntimeConfig {
     let mut config = minimal_config(service_name);
     config.upstreams[0].name = UpstreamName(upstream_name.to_string());
-    config.routes[0].paths[0].destinations[0].upstream = UpstreamName(upstream_name.to_string());
+    if let RouteAction::Forward(destinations) = &mut config.routes[0].paths[0].action {
+        destinations[0].upstream = UpstreamName(upstream_name.to_string());
+    }
     config
 }
 

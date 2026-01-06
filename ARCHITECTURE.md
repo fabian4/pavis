@@ -130,27 +130,47 @@ The Runtime consumes a configuration where all policy decisions are **explicit**
 
 ## 4. Implementation Internals
 
-### 4.1 Runtime Memory Lifecycle (RCU)
+### 4.1 Runtime Engine Internals
+
+Pavis operates as an L7 proxy capable of decrypting, inspecting, and re-encrypting traffic. The request lifecycle is as follows:
+
+1.  **Accept**: The listener accepts a raw TCP connection.
+2.  **Handshake (Optional)**: If `TlsConfig` is enabled, the runtime performs the server-side TLS handshake using OpenSSL/BoringSSL (via Pingora). Certificates are loaded from disk paths specified in the config.
+3.  **Protocol Decode**: The stream is parsed as HTTP/1.1 or H2.
+4.  **L7 Match**: The `Router` inspects headers (`Host`, `Path`) against the configuration to select a VirtualHost and Route.
+5.  **Action**:
+    *   **Proxy**: The request is load-balanced to an upstream.
+    *   **Direct**: (If configured) A synthetic response or redirect is generated immediately.
+
+### 4.2 Runtime Memory Lifecycle (RCU)
 
 Pavis achieves lock-free hot reloading using a Read-Copy-Update (RCU) pattern via `arc-swap`.
 
-1.  **Stage:** The **Pavis Runtime** downloads the new `.pvs` file to a temporary location.
-2.  **Verify:** Validate Magic Bytes, Checksum, and perform `rkyv::check_archived_root`.
-3.  **Map:** Call `mmap` on the valid file.
-4.  **Swap:** Atomic pointer swap of the config guard.
-5.  **Reclaim:** The old guard is dropped. When the last request RefCount hits 0, `munmap` is invoked.
+1.  **Stage**: The **Pavis Runtime** downloads the new `.pvs` file to a temporary location.
+2.  **Verify**: Validate Magic Bytes, Checksum, and perform `rkyv::check_archived_root`.
+3.  **Map**: Call `mmap` on the valid file.
+4.  **Swap**: Atomic pointer swap of the config guard.
+5.  **Reclaim**: The old guard is dropped. When the last request RefCount hits 0, `munmap` is invoked.
 
-### 4.2 Routing Algorithm (Hot Path)
+### 4.3 Networking & Discovery
+
+Pavis supports three distinct discovery modes for upstream clusters, balancing performance with flexibility:
+
+1.  **Static**: Fixed IP addresses and ports. Zero runtime overhead. Used for stable infrastructure or when an external control plane (like the Pavis Relay) performs the resolution and pushes updated configs.
+2.  **StrictDns**: The proxy resolves the hostname via DNS and uses the returned A records. It honors TTLs and updates the pool accordingly. Ideal for Kubernetes Headless Services.
+3.  **LogicalDns**: The proxy resolves the hostname lazily. Connections are made to the resolved IP, but the pool is not strictly synchronized with all A records. Useful for AWS ALBs or services where the DNS name resolves to a rotating set of functional IPs.
+
+### 4.4 Routing Algorithm (Hot Path)
 
 Routing is hierarchical to minimize CPU cycles.
 
-1.  **Exact Match Table:** O(1) lookup for `(Host, Path)`.
-2.  **Prefix Tree:** O(log N) radix tree.
-3.  **Regex Pattern List:** Ordered list of regex patterns.
+1.  **Exact Match Table**: O(1) lookup for `(Host, Path)`.
+2.  **Prefix Tree**: O(log N) radix tree.
+3.  **Regex Pattern List**: Ordered list of regex patterns.
     *   Regex compilation occurs **once** during the "Swap" phase.
     *   Compiled regex state lives in runtime-only wrappers, not the `.pvs` file.
 
-### 4.3 xDS Codec Architecture
+### 4.5 xDS Codec Architecture
 
 The xDS Codec uses an **Intermediate Type Pattern**:
 1.  **Decode**: Unmarshal Protobuf bytes into generated Envoy v3 structs.

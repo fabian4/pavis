@@ -8,6 +8,10 @@ mod compaction;
 mod header_manipulation;
 #[path = "pavis/http_version.rs"]
 mod http_version;
+#[path = "pavis/path_rewrite_query.rs"]
+mod path_rewrite_query;
+#[path = "pavis/redirect_direct.rs"]
+mod redirect_direct;
 #[path = "pavis/regex_matching.rs"]
 mod regex_matching;
 #[path = "pavis/response_headers.rs"]

@@ -22,16 +22,17 @@ pub struct Upstream {
     pub endpoints: Vec<Endpoint>,
 }
 
-#[repr(u8)]
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
 pub enum Discovery {
     #[default]
-    Static = 0,
-    StrictDns = 1,
-    LogicalDns = 2,
+    Static,
+    Strict {
+        ttl: u32,
+    },
+    Logical,
 }
 
 #[repr(u8)]

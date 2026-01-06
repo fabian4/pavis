@@ -27,3 +27,25 @@
   `/unknown`, and identical status for health/ready.
 - Allowed differences: artifact size and byte content; routing semantics MUST
   match for all tested requests.
+
+### P5: TLS Termination
+- Setup: Generate self-signed certificates.
+- Action: Start runtime with TLS listener enabled using generated certs.
+- Client: Use HTTPS client (dangerously accepting invalid certs).
+- Expect: 200 OK from backend; traffic is decrypted correctly.
+
+### P6: Redirect & Direct Responses
+- Action: Configure exact routes for redirects (301, 302, 307) and direct responses.
+- Expect (Redirect): Client receives the correct 3xx status and `Location` header.
+- Expect (Direct): Client receives the configured status and body without upstream forwarding.
+
+### P7: Path & Host Rewrites
+- Action: Configure prefix rewrite and host rewrite.
+- Request: `GET /api/v1/users?id=123`.
+- Expect (Path): Backend receives `/v2/users?id=123` (prefix replaced, query preserved).
+- Expect (Host): `Host` header updated to match the configured literal.
+
+### P8: DNS Discovery (Logical & Strict)
+- Action: Use upstreams with DNS hostnames.
+- Expect: Runtime resolves hostnames to IPs and forwards traffic.
+- Note: TTL-based rotation is verified via unit tests; E2E verifies basic connectivity to DNS-backed upstreams.

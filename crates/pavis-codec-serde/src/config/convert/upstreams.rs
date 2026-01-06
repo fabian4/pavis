@@ -117,7 +117,7 @@ mod tests {
         let runtime = pavis_core::Upstream {
             id: UpstreamId(std::num::NonZeroU16::new(10).unwrap()),
             name: UpstreamName("u1".to_string()),
-            discovery: Discovery::StrictDns,
+            discovery: Discovery::Strict { ttl: 30 },
             balancer: LoadBalancer::LeastRequest,
             protocol: HttpVersion::H2,
             pool: Pool {
@@ -169,7 +169,7 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
                         port: pavis_core::Port(port),
                     }
                 }
-                Discovery::LogicalDns | Discovery::StrictDns => EndpointAddr::Dns {
+                Discovery::Logical | Discovery::Strict { .. } => EndpointAddr::Dns {
                     host: pavis_core::Hostname(e.address),
                     port: pavis_core::Port(port),
                 },

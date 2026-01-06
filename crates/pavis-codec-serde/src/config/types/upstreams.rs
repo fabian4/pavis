@@ -5,21 +5,35 @@ use pavis_core::{Discovery, HttpVersion, LoadBalancer};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Upstream {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<u16>,
     pub name: String,
-    #[serde(alias = "discovery_type")]
+    #[serde(alias = "discovery_type", skip_serializing_if = "Option::is_none")]
     pub discovery: Option<Discovery>,
-    #[serde(rename = "balancer", alias = "load_balancer", alias = "lb")]
+    #[serde(
+        rename = "balancer",
+        alias = "load_balancer",
+        alias = "lb",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub balancer: Option<LoadBalancer>,
     /// HTTP version for upstream connections (h1, h2, h2h1). Default: h1
-    #[serde(rename = "protocol", alias = "http_version", alias = "http")]
+    #[serde(
+        rename = "protocol",
+        alias = "http_version",
+        alias = "http",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub protocol: Option<HttpVersion>,
     /// Connection pool settings
-    #[serde(alias = "connection_pool")]
+    #[serde(alias = "connection_pool", skip_serializing_if = "Option::is_none")]
     pub pool: Option<ConnectionPoolConfig>,
     /// TLS configuration for upstream connections
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<UpstreamTlsConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub circuit_breaker: Option<CircuitBreaker>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub health_check: Option<HealthCheck>,
     pub endpoints: Vec<Endpoint>,
 }

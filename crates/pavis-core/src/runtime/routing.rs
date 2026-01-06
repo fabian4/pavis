@@ -23,7 +23,16 @@ pub struct Route {
     pub request_headers: HeadersPolicy,
     pub response_headers: HeadersPolicy,
     pub rewrite: Rewrite,
-    pub destinations: Vec<Destination>,
+    pub action: RouteAction,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub enum RouteAction {
+    Forward(Vec<Destination>),
+    Redirect { status: u16, location: String },
+    Direct { status: u16, body: String },
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]

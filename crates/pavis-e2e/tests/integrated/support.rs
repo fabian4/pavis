@@ -3,9 +3,9 @@ use pavis_core::{
     AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery,
     Duration as RuntimeDuration, Endpoint, EndpointAddr, HeadersPolicy, Host, HttpVersion,
     IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel, Metrics, Path as RoutePath,
-    PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RuntimeConfig,
-    ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, TracingPolicy, Upstream, UpstreamId,
-    UpstreamName, VirtualHost, Weight, WorkerCount,
+    PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction,
+    RuntimeConfig, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, TracingPolicy, Upstream,
+    UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
 };
 use pavis_e2e::support::relay::RelayOptions;
 use pavis_e2e::support::{RelayEnv, find_binary, find_project_root, resolve_docker_service_ip};
@@ -476,10 +476,10 @@ pub fn runtime_config(
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,
                 },
-                destinations: vec![Destination {
+                action: RouteAction::Forward(vec![Destination {
                     upstream: UpstreamName(route_upstream.to_string()),
                     weight: Weight(NonZeroU16::new(1).unwrap()),
-                }],
+                }]),
             }],
         }],
     }

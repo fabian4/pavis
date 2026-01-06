@@ -15,7 +15,24 @@ pub struct Route {
     pub request_headers: Option<HeaderOperations>,
     pub response_headers: Option<HeaderOperations>,
     pub rewrite: Option<RewritePolicy>,
-    pub destinations: Vec<WeightedDestination>,
+    #[serde(flatten)]
+    pub action: RouteAction,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(untagged, rename_all = "snake_case")]
+pub enum RouteAction {
+    Forward {
+        destinations: Vec<WeightedDestination>,
+    },
+    Redirect {
+        status: u16,
+        location: String,
+    },
+    Direct {
+        status: u16,
+        body: String,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -28,8 +45,8 @@ pub enum Matcher {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RewritePolicy {
-    pub path_prefix_rewrite: Option<String>,
-    pub host_rewrite_literal: Option<String>,
+    pub path: Option<String>,
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

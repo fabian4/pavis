@@ -7,8 +7,8 @@ use pavis_core::{
     AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint,
     EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname, HttpVersion,
     IdleTimeout, LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, ServiceName, Telemetry as RuntimeTelemetry, Timeout, TlsPolicy,
-    Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
+    RewriteHost, RewritePath, RouteAction, ServiceName, Telemetry as RuntimeTelemetry, Timeout,
+    TlsPolicy, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::ProxyHttp;
@@ -54,10 +54,10 @@ fn apply_route_headers_populates_router_context() {
             path: RewritePath::Disabled,
             host: RewriteHost::Disabled,
         },
-        destinations: vec![Destination {
+        action: RouteAction::Forward(vec![Destination {
             upstream: UpstreamName("backend".to_string()),
             weight: Weight(NonZeroU16::new(1).unwrap()),
-        }],
+        }]),
     };
     let mut ctx = RouterContext {
         upstream_name: None,
@@ -157,7 +157,7 @@ async fn request_filter_selects_weighted_destination() {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
             },
-            destinations: vec![
+            action: RouteAction::Forward(vec![
                 Destination {
                     upstream: UpstreamName("blue".to_string()),
                     weight: Weight(NonZeroU16::new(1).unwrap()),
@@ -166,7 +166,7 @@ async fn request_filter_selects_weighted_destination() {
                     upstream: UpstreamName("green".to_string()),
                     weight: Weight(NonZeroU16::new(2).unwrap()),
                 },
-            ],
+            ]),
         }],
     }];
     let manager = Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]);
@@ -249,10 +249,10 @@ async fn request_filter_applies_rewrite_policy() {
                     host: Hostname("rewrite.example.com".to_string()),
                 },
             },
-            destinations: vec![Destination {
+            action: RouteAction::Forward(vec![Destination {
                 upstream: UpstreamName("backend".to_string()),
                 weight: Weight(NonZeroU16::new(1).unwrap()),
-            }],
+            }]),
         }],
     }];
     let manager = Manager::new(&[upstream("backend", 1, 8081)]);
@@ -304,7 +304,7 @@ async fn request_filter_skips_selection_when_no_destinations() {
                 path: RewritePath::Disabled,
                 host: RewriteHost::Disabled,
             },
-            destinations: Vec::new(),
+            action: RouteAction::Forward(Vec::new()),
         }],
     }];
     let manager = Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]);
@@ -449,7 +449,7 @@ fn test_calculate_path_rewrite() {
             },
             host: RewriteHost::Disabled,
         },
-        destinations: vec![],
+        action: RouteAction::Forward(vec![]),
     };
 
     // Prefix match
@@ -477,7 +477,7 @@ fn test_calculate_path_rewrite() {
             },
             host: RewriteHost::Disabled,
         },
-        destinations: vec![],
+        action: RouteAction::Forward(vec![]),
     };
 
     // Exact match
@@ -502,7 +502,7 @@ fn test_calculate_path_rewrite() {
             },
             host: RewriteHost::Disabled,
         },
-        destinations: vec![],
+        action: RouteAction::Forward(vec![]),
     };
 
     // Regex match (currently returns None for rewrite)
@@ -523,7 +523,7 @@ fn test_route_path_helper() {
             path: RewritePath::Disabled,
             host: RewriteHost::Disabled,
         },
-        destinations: vec![],
+        action: RouteAction::Forward(vec![]),
     };
     assert_eq!(route_path(&r1), "/p");
 
@@ -539,7 +539,7 @@ fn test_route_path_helper() {
             path: RewritePath::Disabled,
             host: RewriteHost::Disabled,
         },
-        destinations: vec![],
+        action: RouteAction::Forward(vec![]),
     };
     assert_eq!(route_path(&r2), "/e");
 
@@ -555,7 +555,7 @@ fn test_route_path_helper() {
             path: RewritePath::Disabled,
             host: RewriteHost::Disabled,
         },
-        destinations: vec![],
+        action: RouteAction::Forward(vec![]),
     };
     assert_eq!(route_path(&r3), "/r");
 }
@@ -653,7 +653,7 @@ fn test_calculate_path_rewrite_unmatched_prefix() {
             },
             host: RewriteHost::Disabled,
         },
-        destinations: vec![],
+        action: RouteAction::Forward(vec![]),
     };
 
     // Path does not start with /api
@@ -673,4 +673,297 @@ async fn test_proxy_logging_with_upstream() {
     let mut ctx = proxy.new_ctx();
     ctx.upstream_name = Some(UpstreamName("backend".to_string()));
     proxy.logging(&mut session, None, &mut ctx).await;
+}
+
+#[tokio::test]
+async fn request_filter_handles_redirect_action() {
+    // Test that RouteAction::Redirect returns proper redirect response
+    let routes = vec![VirtualHost {
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Exact {
+                path: Path("/old".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled,
+            response_headers: HeadersPolicy::Disabled,
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
+            action: RouteAction::Redirect {
+                status: 301,
+                location: "https://example.com/new".to_string(),
+            },
+        }],
+    }];
+
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).unwrap()),
+        upstream_manager: Manager::new(&[]),
+    };
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(state)),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, mut client) =
+        session_for_request(b"GET /old HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    let result = proxy.request_filter(&mut session, &mut ctx).await;
+
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), true); // Should stop processing
+
+    // Read the response
+    let mut buf = vec![0u8; 1024];
+    let n = client.read(&mut buf).await.unwrap();
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    assert!(response.contains("301"));
+    assert!(response.contains("Location: https://example.com/new"));
+}
+
+#[tokio::test]
+async fn request_filter_handles_direct_action() {
+    // Test that RouteAction::Direct returns custom response
+    let routes = vec![VirtualHost {
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Exact {
+                path: Path("/health".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled,
+            response_headers: HeadersPolicy::Disabled,
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
+            action: RouteAction::Direct {
+                status: 200,
+                body: "OK".to_string(),
+            },
+        }],
+    }];
+
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).unwrap()),
+        upstream_manager: Manager::new(&[]),
+    };
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(state)),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, mut client) =
+        session_for_request(b"GET /health HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    let result = proxy.request_filter(&mut session, &mut ctx).await;
+
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), true); // Should stop processing
+
+    // Read the response
+    let mut buf = vec![0u8; 1024];
+    let n = client.read(&mut buf).await.unwrap();
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    assert!(response.contains("200"));
+    assert!(response.contains("Content-Type: text/plain"));
+    assert!(response.contains("OK"));
+}
+
+#[tokio::test]
+async fn request_filter_redirect_with_different_status_codes() {
+    // Test 302 redirect
+    let routes = vec![VirtualHost {
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Prefix {
+                path: Path("/temp".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled,
+            response_headers: HeadersPolicy::Disabled,
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
+            action: RouteAction::Redirect {
+                status: 302,
+                location: "https://temporary.com".to_string(),
+            },
+        }],
+    }];
+
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).unwrap()),
+        upstream_manager: Manager::new(&[]),
+    };
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(state)),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, mut client) =
+        session_for_request(b"GET /temp HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    let result = proxy.request_filter(&mut session, &mut ctx).await;
+
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), true);
+
+    let mut buf = vec![0u8; 1024];
+    let n = client.read(&mut buf).await.unwrap();
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    assert!(response.contains("302"));
+    assert!(response.contains("Location: https://temporary.com"));
+}
+
+#[tokio::test]
+async fn request_filter_direct_with_custom_status() {
+    // Test direct response with 404 status
+    let routes = vec![VirtualHost {
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Prefix {
+                path: Path("/gone".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled,
+            response_headers: HeadersPolicy::Disabled,
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
+            action: RouteAction::Direct {
+                status: 404,
+                body: "Not Found".to_string(),
+            },
+        }],
+    }];
+
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).unwrap()),
+        upstream_manager: Manager::new(&[]),
+    };
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(state)),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, mut client) =
+        session_for_request(b"GET /gone HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    let result = proxy.request_filter(&mut session, &mut ctx).await;
+
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), true);
+
+    let mut buf = vec![0u8; 1024];
+    let n = client.read(&mut buf).await.unwrap();
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    assert!(response.contains("404"));
+    assert!(response.contains("Not Found"));
+}
+
+#[test]
+fn test_calculate_path_rewrite_preserves_query_string() {
+    let route = pavis_core::Route {
+        matcher: PathMatch::Prefix {
+            path: Path("/api/v1".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled,
+        response_headers: HeadersPolicy::Disabled,
+        rewrite: Rewrite {
+            path: RewritePath::Prefix {
+                from: Path("/api/v1".to_string()),
+                to: Path("/v2".to_string()),
+            },
+            host: RewriteHost::Disabled,
+        },
+        action: RouteAction::Forward(vec![]),
+    };
+
+    // Test with complex query string
+    let uri = calculate_path_rewrite(
+        &route,
+        "/api/v1/users",
+        Some("id=123&filter=active&sort=name"),
+    )
+    .unwrap();
+    assert_eq!(uri.path(), "/v2/users");
+    assert_eq!(uri.query(), Some("id=123&filter=active&sort=name"));
+
+    // Test with empty query string
+    let uri = calculate_path_rewrite(&route, "/api/v1/users", Some("")).unwrap();
+    assert_eq!(uri.path(), "/v2/users");
+    assert_eq!(uri.query(), Some(""));
+
+    // Test with special characters in query
+    let uri =
+        calculate_path_rewrite(&route, "/api/v1/search", Some("q=hello%20world&page=1")).unwrap();
+    assert_eq!(uri.path(), "/v2/search");
+    assert_eq!(uri.query(), Some("q=hello%20world&page=1"));
+}
+
+#[tokio::test]
+async fn request_filter_applies_rewrite_and_preserves_query() {
+    let routes = vec![VirtualHost {
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Prefix {
+                path: Path("/old-api".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled,
+            response_headers: HeadersPolicy::Disabled,
+            rewrite: Rewrite {
+                path: RewritePath::Prefix {
+                    from: Path("/old-api".to_string()),
+                    to: Path("/new-api".to_string()),
+                },
+                host: RewriteHost::Disabled,
+            },
+            action: RouteAction::Forward(vec![Destination {
+                upstream: UpstreamName("backend".to_string()),
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            }]),
+        }],
+    }];
+    let manager = Manager::new(&[upstream("backend", 1, 8081)]);
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).expect("routes")),
+        upstream_manager: manager,
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, _client) = session_for_request(
+        b"GET /old-api/resource?filter=active&limit=10 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    )
+    .await;
+    let mut ctx = proxy.new_ctx();
+    let should_respond = proxy
+        .request_filter(&mut session, &mut ctx)
+        .await
+        .expect("request filter");
+    assert!(!should_respond);
+
+    let header = session.as_downstream().req_header();
+    assert_eq!(header.uri.path(), "/new-api/resource");
+    assert_eq!(header.uri.query(), Some("filter=active&limit=10"));
 }

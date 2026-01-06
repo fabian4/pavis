@@ -1,0 +1,72 @@
+# Pavis Feature Matrix & Envoy Comparison
+
+## Introduction
+
+Pavis is designed as a **Pragmatic & Lightweight Sidecar** for microservices. It is NOT a clone of Envoy and does not aim to support every feature of a general-purpose edge gateway.
+
+Our philosophy focuses on:
+*   **Predictable Performance:** Avoiding features that introduce high variance (e.g., regex rewriting, Wasm).
+*   **Operational Simplicity:** Reducing the configuration surface area.
+*   **Security First:** Enforcing strict defaults for modern service mesh environments.
+
+This document outlines the current and planned feature set, explicitly calling out features that are intentionally dropped to maintain our design goals.
+
+**Legend:**
+*   ✅ **Supported**: Implementation is complete and available.
+*   ⏳ **Planned**: Currently on the critical path for upcoming releases.
+*   ⚠️ **Deferred**: Recognized as valuable but prioritized below critical path items.
+*   ❌ **Dropped**: Explicitly out of scope; effectively "WontFix" by design.
+
+---
+
+## 1. Traffic Management
+
+| Feature | Status | Note / Alternative |
+| :--- | :---: | :--- |
+| **L7 Routing** (Path/Header/Method) | ✅ | Based on Pingora engine (Prefix/Exact/Regex). |
+| **Traffic Splitting** (Canary) | ✅ | Weighted round-robin supported. |
+| **Header Manipulation** | ✅ | Add/Remove headers supported. |
+| **Redirect & DirectResponse** | ✅ | Supported. For HTTP->HTTPS or security blocking. |
+| **Rewrite** (Host/Path) | ✅ | Prefix & Host literal supported. (No Regex rewrite). |
+| **Retries & Timeouts** | ⏳ | Planned. Critical for network stability. |
+| **Traffic Mirroring** (Shadowing) | ⚠️ | Deferred. Not critical for MVP. |
+| **Global Rate Limiting** | ❌ | **Dropped**. Too heavy (requires ext Redis/gRPC). Use Ingress. |
+| **Local Rate Limiting** | ⚠️ | Deferred. |
+
+## 2. Security (Critical Path)
+
+| Feature | Status | Note / Alternative |
+| :--- | :---: | :--- |
+| **Server TLS** (Termination) | ✅ | Single cert per listener supported. |
+| **Upstream TLS** (Origination) | ✅ | Supported. |
+| **mTLS** (Mutual TLS) | ⏳ | **Critical Gap**. Client Cert Validation + SPIFFE ID. |
+| **RBAC** (Path/Method Auth) | ⏳ | **Critical Gap**. Deny-by-default policies. |
+| **SNI Multi-Cert** | ❌ | **Dropped**. Sidecars usually have 1 identity. Use Ingress for multi-domain. |
+| **External Auth** (OIDC/OAuth) | ❌ | **Dropped**. Sidecar handles Service-to-Service, not End-User Login. |
+| **WAF** (ModSecurity) | ❌ | **Dropped**. Performance killer. Use dedicated firewall. |
+
+## 3. Resilience
+
+| Feature | Status | Note / Alternative |
+| :--- | :---: | :--- |
+| **Active Health Check** | ⏳ | Planned. Ping `/healthz`. |
+| **Outlier Detection** (Passive) | ⏳ | **Critical Gap**. Eject 5xx pods. Key for SLA. |
+| **Circuit Breaking** | ⏳ | Planned. Connection limits. |
+| **Fault Injection** | ⚠️ | Deferred. For chaos engineering only. |
+
+## 4. Observability
+
+| Feature | Status | Note / Alternative |
+| :--- | :---: | :--- |
+| **Prometheus Metrics** | ⏳ | Planned. Critical for Ops. |
+| **Access Logs** (JSON) | ⏳ | Planned. |
+| **Distributed Tracing** (OTLP) | ⏳ | Planned. |
+| **Tap / Packet Capture** | ❌ | **Dropped**. Use system tools (`tcpdump` / `eBPF`). |
+
+## 5. Extensibility
+
+| Feature | Status | Note / Alternative |
+| :--- | :---: | :--- |
+| **Wasm Plugins** | ❌ | **Dropped**. High complexity/overhead. |
+| **Lua Scripting** | ❌ | **Dropped**. Unpredictable latency. |
+| **gRPC Transcoding** | ❌ | **Dropped**. Use a dedicated gateway or generated clients. |
