@@ -11,6 +11,7 @@ pub struct Duration(pub NonZeroU32);
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum Timeout {
     Disabled,
     Enabled(Duration),
@@ -19,6 +20,7 @@ pub enum Timeout {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum ConnectTimeout {
     Disabled,
     Enabled(Duration),
@@ -27,6 +29,7 @@ pub enum ConnectTimeout {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum IdleTimeout {
     Disabled,
     Enabled(Duration),
@@ -35,6 +38,7 @@ pub enum IdleTimeout {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum TryTimeout {
     Inherit,
     Disabled,

@@ -174,6 +174,7 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
                     host: pavis_core::Hostname(e.address),
                     port: pavis_core::Port(port),
                 },
+                _ => return Err(anyhow::anyhow!("unknown discovery variant")),
             };
 
             let weight = e.weight.unwrap_or(1);
@@ -265,6 +266,10 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
             let (address, port) = match e.address {
                 EndpointAddr::Ip { address, port } => (address.to_string(), port.0.get()),
                 EndpointAddr::Dns { host, port } => (host.0, port.0.get()),
+                #[allow(unreachable_patterns)]
+                _ => {
+                    panic!("unknown endpoint address variant");
+                }
             };
             endpoints.push(Endpoint {
                 address,
@@ -283,6 +288,11 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
             max: match u.pool.max {
                 pavis_core::ConnectionLimit::Unlimited => None,
                 pavis_core::ConnectionLimit::Limited(value) => Some(value.get()),
+                #[allow(unreachable_patterns)]
+                _ => {
+                    // Sensible default: treat as unlimited if variant is unknown
+                    None
+                }
             },
         });
 
@@ -293,10 +303,20 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
                     TlsVerify::Disabled => (false, false),
                     TlsVerify::Cert => (true, false),
                     TlsVerify::CertAndHost => (true, true),
+                    #[allow(unreachable_patterns)]
+                    _ => {
+                        // Sensible default: treat as CertAndHost if variant is unknown
+                        (true, true)
+                    }
                 };
                 let sni = match sni {
                     pavis_core::SniName::Auto => None,
                     pavis_core::SniName::Value(name) => Some(name.0),
+                    #[allow(unreachable_patterns)]
+                    _ => {
+                        // Sensible default: treat as Auto if variant is unknown
+                        None
+                    }
                 };
                 let cert_config = match cert {
                     ClientCert::Disabled => None,
@@ -307,6 +327,11 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
                         cert_path: cert_path.0,
                         key_path: key_path.0,
                     }),
+                    #[allow(unreachable_patterns)]
+                    _ => {
+                        // Sensible default: treat as Disabled if variant is unknown
+                        None
+                    }
                 };
                 Some(UpstreamTlsConfig {
                     enabled: Some(true),
@@ -316,6 +341,8 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
                     cert: cert_config,
                 })
             }
+            #[allow(unreachable_patterns)]
+            _ => None,
         };
 
         serde_upstreams.push(Upstream {
@@ -373,6 +400,7 @@ fn idle_timeout_ms(timeout: &pavis_core::IdleTimeout) -> u64 {
     match timeout {
         pavis_core::IdleTimeout::Disabled => 0,
         pavis_core::IdleTimeout::Enabled(d) => d.0.get() as u64,
+        _ => 0,
     }
 }
 
@@ -380,5 +408,6 @@ fn connect_timeout_ms(timeout: &pavis_core::ConnectTimeout) -> u64 {
     match timeout {
         pavis_core::ConnectTimeout::Disabled => 0,
         pavis_core::ConnectTimeout::Enabled(d) => d.0.get() as u64,
+        _ => 0,
     }
 }

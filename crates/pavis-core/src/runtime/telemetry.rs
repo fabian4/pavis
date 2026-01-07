@@ -21,6 +21,7 @@ pub struct Telemetry {
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[archive(check_bytes)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum LogLevel {
     Error = 0,
     Warn = 1,
@@ -31,6 +32,7 @@ pub enum LogLevel {
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq, Default)]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum AccessLogPolicy {
     Disabled,
     #[default]
@@ -41,6 +43,7 @@ pub enum AccessLogPolicy {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum TracingPolicy {
     Disabled,
     Enabled {
@@ -52,6 +55,7 @@ pub enum TracingPolicy {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum TracingProvider {
     Otlp,
     Jaeger,
@@ -61,6 +65,7 @@ pub enum TracingProvider {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum Metrics {
     Disabled,
     Enabled { addr: SocketAddr },

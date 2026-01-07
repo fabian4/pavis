@@ -26,6 +26,7 @@ pub struct Upstream {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum Discovery {
     #[default]
     Static,
@@ -40,6 +41,7 @@ pub enum Discovery {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum LoadBalancer {
     RoundRobin = 0,
     #[default]
@@ -52,6 +54,7 @@ pub enum LoadBalancer {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum HttpVersion {
     #[default]
     #[cfg_attr(feature = "serde", serde(alias = "1", alias = "1.1", alias = "http1"))]
@@ -73,6 +76,7 @@ pub struct Pool {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum ConnectionLimit {
     Unlimited,
     Limited(NonZeroU32),
@@ -81,6 +85,7 @@ pub enum ConnectionLimit {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum TlsPolicy {
     Disabled,
     Enabled {
@@ -93,6 +98,7 @@ pub enum TlsPolicy {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum ClientCert {
     Disabled,
     Enabled { cert_path: Path, key_path: Path },
@@ -101,6 +107,7 @@ pub enum ClientCert {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum TlsVerify {
     Disabled,
     Cert,
@@ -110,6 +117,7 @@ pub enum TlsVerify {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum SniName {
     Auto,
     Value(Hostname),
@@ -126,6 +134,7 @@ pub struct Endpoint {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum EndpointAddr {
     Ip { address: IpAddr, port: Port },
     Dns { host: Hostname, port: Port },

@@ -12,7 +12,7 @@ pub(super) fn validate_routes(
     let upstream_names: HashSet<&str> = upstreams.iter().map(|u| u.name.0.as_str()).collect();
 
     for vhost in routes {
-        let mut seen_routes = HashSet::new();
+        let mut seen_routes: HashSet<(&str, &str)> = HashSet::new();
         for route in &vhost.paths {
             let (match_type, path) = match &route.matcher {
                 PathMatch::Prefix { path } => ("prefix", path),
@@ -28,7 +28,7 @@ pub(super) fn validate_routes(
             }
 
             // Duplicate Route Detection
-            if !seen_routes.insert((match_type, path.0.clone())) {
+            if !seen_routes.insert((match_type, path.0.as_str())) {
                 return Err(CoreValidationError::DuplicateRoute {
                     host: vhost.host.0.clone(),
                     route: path.0.clone(),

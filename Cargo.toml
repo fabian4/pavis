@@ -16,7 +16,7 @@ resolver = "2"
 [workspace.dependencies]
 tokio = { version = "1.37", features = ["full"] }
 anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"

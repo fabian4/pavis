@@ -115,22 +115,26 @@ routes:
         match upstream.pool.idle {
             IdleTimeout::Enabled(d) => assert_eq!(d.0.get(), 60_000),
             IdleTimeout::Disabled => panic!("idle timeout not populated"),
+            _ => panic!("unknown idle timeout"),
         }
         match upstream.pool.connect {
             ConnectTimeout::Enabled(d) => assert_eq!(d.0.get(), 5_000),
             ConnectTimeout::Disabled => panic!("connect timeout not populated"),
+            _ => panic!("unknown connect timeout"),
         }
         match upstream.tls {
             TlsPolicy::Enabled { mode, .. } => {
                 assert_eq!(mode, TlsVerify::CertAndHost);
             }
             TlsPolicy::Disabled => panic!("tls not enabled"),
+            _ => panic!("unknown tls policy"),
         }
 
         let route = &runtime.routes[0].paths[0];
         match route.timeout {
             Timeout::Enabled(d) => assert_eq!(d.0.get(), 1000),
             Timeout::Disabled => panic!("route timeout not populated"),
+            _ => panic!("unknown route timeout"),
         }
         match &route.retry {
             RetryPolicy::Enabled {
@@ -147,8 +151,9 @@ routes:
                 assert_eq!(on.0 & RETRY_CONNECT_FAILURE, RETRY_CONNECT_FAILURE);
             }
             RetryPolicy::Disabled => panic!("retry policy not enabled"),
+            &_ => panic!("unknown retry policy"),
         }
-        match &route.request_headers {
+        match &*route.request_headers {
             pavis_core::HeadersPolicy::Enabled { rules } => {
                 assert_eq!(rules.set_headers.len(), 1);
                 assert_eq!(rules.set_headers[0].0.0, "x-added");
@@ -156,7 +161,7 @@ routes:
             }
             _ => panic!("request headers not enabled"),
         }
-        match &route.response_headers {
+        match &*route.response_headers {
             pavis_core::HeadersPolicy::Enabled { rules } => {
                 assert_eq!(rules.remove_headers.len(), 1);
                 assert_eq!(rules.remove_headers[0].0, "x-remove");
@@ -223,8 +228,8 @@ routes:
                         per_try: TryTimeout::Enabled(Duration(NonZeroU32::new(500).unwrap())),
                         on: RetryFlags(RETRY_FIVE_XX),
                     },
-                    request_headers: pavis_core::HeadersPolicy::Disabled,
-                    response_headers: pavis_core::HeadersPolicy::Disabled,
+                    request_headers: pavis_core::HeadersPolicy::Disabled.into(),
+                    response_headers: pavis_core::HeadersPolicy::Disabled.into(),
                     principal: pavis_core::Principal::Any,
                     rewrite: Rewrite {
                         path: RewritePath::Disabled,

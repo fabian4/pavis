@@ -28,11 +28,13 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
             binary::LoadBalancer::RoundRobin => "RoundRobin",
             binary::LoadBalancer::Random => "Random",
             binary::LoadBalancer::LeastRequest => "LeastRequest",
+            _ => "Unknown",
         };
         let hv_str = match upstream.protocol {
             binary::HttpVersion::H1 => "H1",
             binary::HttpVersion::H2 => "H2",
             binary::HttpVersion::H2H1 => "H2H1",
+            _ => "Unknown",
         };
         writeln!(
             &mut out,
@@ -49,6 +51,7 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
                     format!("{}:{}", address, port.0)
                 }
                 binary::EndpointAddr::Dns { host, port } => format!("{}:{}", host.0, port.0),
+                _ => "Unknown".to_string(),
             };
             writeln!(&mut out, "  - {} weight={}", addr_str, endpoint.weight.0).ok();
         }
@@ -62,6 +65,7 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
                 binary::PathMatch::Prefix { path } => ("prefix", path.0.as_str()),
                 binary::PathMatch::Exact { path } => ("exact", path.0.as_str()),
                 binary::PathMatch::Regex { path } => ("regex", path.0.as_str()),
+                _ => ("unknown", "??"),
             };
             writeln!(&mut out, "  - [{match_type}] {}", path).ok();
             match &route.action {
@@ -80,6 +84,9 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
                 }
                 binary::RouteAction::Direct { status, body: _ } => {
                     writeln!(&mut out, "      -> Direct {}", status).ok();
+                }
+                _ => {
+                    writeln!(&mut out, "      -> Unknown Action").ok();
                 }
             }
         }
@@ -134,6 +141,7 @@ mod tests {
     use pavis_pvs::{PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::{NonZeroU16, NonZeroU32};
+    use std::sync::Arc;
 
     fn sample_config() -> RuntimeConfig {
         RuntimeConfig {
@@ -202,8 +210,8 @@ mod tests {
                         },
                         timeout: Timeout::Disabled,
                         retry: RetryPolicy::Disabled,
-                        request_headers: pavis_core::HeadersPolicy::Disabled,
-                        response_headers: pavis_core::HeadersPolicy::Disabled,
+                        request_headers: Arc::new(pavis_core::HeadersPolicy::Disabled),
+                        response_headers: Arc::new(pavis_core::HeadersPolicy::Disabled),
                         principal: pavis_core::Principal::Any,
                         rewrite: Rewrite {
                             path: RewritePath::Disabled,
@@ -220,8 +228,8 @@ mod tests {
                         },
                         timeout: Timeout::Disabled,
                         retry: RetryPolicy::Disabled,
-                        request_headers: pavis_core::HeadersPolicy::Disabled,
-                        response_headers: pavis_core::HeadersPolicy::Disabled,
+                        request_headers: Arc::new(pavis_core::HeadersPolicy::Disabled),
+                        response_headers: Arc::new(pavis_core::HeadersPolicy::Disabled),
                         principal: pavis_core::Principal::Any,
                         rewrite: Rewrite {
                             path: RewritePath::Disabled,

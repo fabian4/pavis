@@ -119,5 +119,6 @@ fn test_upstream_tls_config() {
             assert_eq!(mode, TlsVerify::Disabled);
         }
         TlsPolicy::Disabled => panic!("tls not enabled"),
+        _ => panic!("unknown tls policy"),
     }
 }

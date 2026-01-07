@@ -89,6 +89,7 @@ mod tests {
                         TracingProvider::Otlp => matches!(provider, TracingProvider::Otlp),
                         TracingProvider::Jaeger => matches!(provider, TracingProvider::Jaeger),
                         TracingProvider::Zipkin => matches!(provider, TracingProvider::Zipkin),
+                        _ => false,
                     };
                     assert!(provider_matches);
                     assert_eq!(sampling.0, 100);
@@ -179,6 +180,8 @@ pub(super) fn from_runtime(telemetry: RuntimeTelemetry) -> TelemetryConfig {
         metrics: match telemetry.metrics {
             Metrics::Disabled => None,
             Metrics::Enabled { addr } => Some(addr.to_string()),
+            #[allow(unreachable_patterns)]
+            _ => None,
         },
         access_log: Some(telemetry.access_log),
         tracing: match telemetry.tracing {
@@ -189,10 +192,14 @@ pub(super) fn from_runtime(telemetry: RuntimeTelemetry) -> TelemetryConfig {
                         TracingProvider::Otlp => "otlp".to_string(),
                         TracingProvider::Jaeger => "jaeger".to_string(),
                         TracingProvider::Zipkin => "zipkin".to_string(),
+                        #[allow(unreachable_patterns)]
+                        _ => "otlp".to_string(),
                     }),
                     sampling: Some(sampling.0),
                 })
             }
+            #[allow(unreachable_patterns)]
+            _ => None,
         },
     }
 }
@@ -215,5 +222,7 @@ fn log_level_to_string(level: LogLevel) -> Option<String> {
         LogLevel::Info => "info".to_string(),
         LogLevel::Debug => "debug".to_string(),
         LogLevel::Trace => "trace".to_string(),
+        #[allow(unreachable_patterns)]
+        _ => "info".to_string(),
     })
 }

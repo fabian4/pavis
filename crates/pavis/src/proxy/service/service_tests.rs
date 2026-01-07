@@ -38,7 +38,8 @@ fn apply_route_headers_populates_router_context() {
                 add_headers: Vec::new(),
                 remove_headers: vec![HeaderName("x-remove".to_string())],
             },
-        },
+        }
+        .into(),
         response_headers: HeadersPolicy::Enabled {
             rules: Headers {
                 set_headers: vec![(
@@ -49,7 +50,8 @@ fn apply_route_headers_populates_router_context() {
                 add_headers: Vec::new(),
                 remove_headers: Vec::new(),
             },
-        },
+        }
+        .into(),
         principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Disabled,
@@ -62,8 +64,8 @@ fn apply_route_headers_populates_router_context() {
     };
     let mut ctx = RouterContext {
         upstream_name: None,
-        request_headers: HeadersPolicy::Disabled,
-        response_headers: HeadersPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
         sni_override: None,
         start_time: std::time::Instant::now(),
         client_identity: None,
@@ -71,9 +73,12 @@ fn apply_route_headers_populates_router_context() {
 
     apply_route_headers(&mut ctx, &route);
 
-    assert!(matches!(ctx.request_headers, HeadersPolicy::Enabled { .. }));
     assert!(matches!(
-        ctx.response_headers,
+        *ctx.request_headers,
+        HeadersPolicy::Enabled { .. }
+    ));
+    assert!(matches!(
+        *ctx.response_headers,
         HeadersPolicy::Enabled { .. }
     ));
 }
@@ -106,8 +111,8 @@ fn new_ctx_defaults_are_empty() {
     let before = Instant::now();
     let ctx = proxy.new_ctx();
     assert!(ctx.upstream_name.is_none());
-    assert!(matches!(ctx.request_headers, HeadersPolicy::Disabled));
-    assert!(matches!(ctx.response_headers, HeadersPolicy::Disabled));
+    assert!(matches!(*ctx.request_headers, HeadersPolicy::Disabled));
+    assert!(matches!(*ctx.response_headers, HeadersPolicy::Disabled));
     assert!(ctx.sni_override.is_none());
     assert!(ctx.start_time >= before);
 }
@@ -153,8 +158,8 @@ async fn request_filter_selects_weighted_destination() {
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
-            request_headers: HeadersPolicy::Disabled,
-            response_headers: HeadersPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
             principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
@@ -241,8 +246,8 @@ async fn request_filter_applies_rewrite_policy() {
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
-            request_headers: HeadersPolicy::Disabled,
-            response_headers: HeadersPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
             principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Prefix {
@@ -302,8 +307,8 @@ async fn request_filter_skips_selection_when_no_destinations() {
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
-            request_headers: HeadersPolicy::Disabled,
-            response_headers: HeadersPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
             principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
@@ -406,7 +411,8 @@ async fn upstream_response_filter_applies_headers() {
             add_headers: Vec::new(),
             remove_headers: vec![HeaderName("x-drop".to_string())],
         },
-    };
+    }
+    .into();
 
     let (mut session, _client) =
         session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
@@ -446,8 +452,8 @@ fn test_calculate_path_rewrite() {
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
-        request_headers: HeadersPolicy::Disabled,
-        response_headers: HeadersPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
         principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
@@ -475,8 +481,8 @@ fn test_calculate_path_rewrite() {
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
-        request_headers: HeadersPolicy::Disabled,
-        response_headers: HeadersPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
         principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
@@ -501,8 +507,8 @@ fn test_calculate_path_rewrite() {
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
-        request_headers: HeadersPolicy::Disabled,
-        response_headers: HeadersPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
         principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
@@ -526,8 +532,8 @@ fn test_route_path_helper() {
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
-        request_headers: HeadersPolicy::Disabled,
-        response_headers: HeadersPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
         principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Disabled,
@@ -543,8 +549,8 @@ fn test_route_path_helper() {
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
-        request_headers: HeadersPolicy::Disabled,
-        response_headers: HeadersPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
         principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Disabled,
@@ -560,8 +566,8 @@ fn test_route_path_helper() {
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
-        request_headers: HeadersPolicy::Disabled,
-        response_headers: HeadersPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
         principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Disabled,
@@ -656,8 +662,8 @@ fn test_calculate_path_rewrite_unmatched_prefix() {
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
-        request_headers: HeadersPolicy::Disabled,
-        response_headers: HeadersPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
         principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
@@ -699,8 +705,8 @@ async fn request_filter_handles_redirect_action() {
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
-            request_headers: HeadersPolicy::Disabled,
-            response_headers: HeadersPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
             principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
@@ -750,8 +756,8 @@ async fn request_filter_handles_direct_action() {
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
-            request_headers: HeadersPolicy::Disabled,
-            response_headers: HeadersPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
             principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
@@ -802,8 +808,8 @@ async fn request_filter_redirect_with_different_status_codes() {
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
-            request_headers: HeadersPolicy::Disabled,
-            response_headers: HeadersPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
             principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
@@ -852,8 +858,8 @@ async fn request_filter_direct_with_custom_status() {
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
-            request_headers: HeadersPolicy::Disabled,
-            response_headers: HeadersPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
             principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
@@ -899,8 +905,8 @@ fn test_calculate_path_rewrite_preserves_query_string() {
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
-        request_headers: HeadersPolicy::Disabled,
-        response_headers: HeadersPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
         principal: pavis_core::Principal::Any,
         rewrite: Rewrite {
             path: RewritePath::Prefix {
@@ -944,8 +950,8 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
-            request_headers: HeadersPolicy::Disabled,
-            response_headers: HeadersPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
             principal: pavis_core::Principal::Any,
             rewrite: Rewrite {
                 path: RewritePath::Prefix {

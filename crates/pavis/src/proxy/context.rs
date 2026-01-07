@@ -1,9 +1,10 @@
 use pavis_core::{HeadersPolicy, Hostname, UpstreamName};
+use std::sync::Arc;
 
 pub struct RouterContext {
     pub upstream_name: Option<UpstreamName>,
-    pub request_headers: HeadersPolicy,
-    pub response_headers: HeadersPolicy,
+    pub request_headers: Arc<HeadersPolicy>,
+    pub response_headers: Arc<HeadersPolicy>,
     pub sni_override: Option<Hostname>,
     pub start_time: std::time::Instant,
     pub client_identity: Option<String>,
@@ -13,12 +14,13 @@ pub struct RouterContext {
 mod tests {
     use super::RouterContext;
     use pavis_core::{HeaderName, HeaderValue, Headers, HeadersPolicy, UpstreamName};
+    use std::sync::Arc;
 
     #[test]
     fn router_context_holds_fields() {
         let ctx = RouterContext {
             upstream_name: Some(UpstreamName("backend".to_string())),
-            request_headers: HeadersPolicy::Enabled {
+            request_headers: Arc::new(HeadersPolicy::Enabled {
                 rules: Headers {
                     set_headers: vec![(
                         HeaderName("x-test".to_string()),
@@ -28,8 +30,8 @@ mod tests {
                     add_headers: Vec::new(),
                     remove_headers: Vec::new(),
                 },
-            },
-            response_headers: HeadersPolicy::Disabled,
+            }),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
             sni_override: None,
             start_time: std::time::Instant::now(),
             client_identity: None,

@@ -1,6 +1,6 @@
 # Pavis
 
-**An Experimental Service Mesh Data Plane in Rust**
+**A Frozen Data Plane Implementation in Rust**
 
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](./LICENSE)
 [![Language](https://img.shields.io/badge/language-Rust-orange.svg)](https://www.rust-lang.org/)
@@ -9,25 +9,30 @@
 [![Crates.io](https://img.shields.io/crates/v/pavis.svg)](https://crates.io/crates/pavis)
 [![codecov](https://codecov.io/gh/fabian4/pavis/branch/main/graph/badge.svg?token=C1DRZN5YDL)](https://codecov.io/gh/fabian4/pavis)
 
-**Pavis** is an experimental **service mesh sidecar proxy** implemented in **Rust**, built on top of **Cloudflare Pingora**.
+**Pavis** is a **Frozen Data Plane** implemented in **Rust**, built on top of **Cloudflare Pingora**.
 
-The project explores a **split data plane** design aimed at improving **memory safety**, **operational robustness**, and **resource efficiency** compared to traditional monolithic sidecar architectures.
+It enforces a strict separation between policy resolution and packet forwarding. Unlike dynamic proxies that evaluate complex logic at runtime, Pavis executes **only** validated, immutable artifacts. All routing, security, and policy semantics are resolved, compiled, and finalized **before** deployment.
 
-Pavis is primarily a **research and prototyping effort**, intended to validate architectural ideas rather than provide a production-ready replacement for existing proxies.
+This architectural model guarantees **determinism**, **operational safety**, and **bounded resource usage** by rejecting runtime programmability.
 
-## Motivation
+## Architecture: Frozen Data Plane
 
-Modern service mesh sidecars are powerful but often come with significant complexity and resource overhead.  
-Pavis investigates whether a Rust-based, memory-safe implementation with a more modular data plane can offer:
+Pavis fundamentally differs from programmable data planes (like Envoy or Nginx with Lua/WASM).
 
-| Focus               | Notes                                                  |
-| ------------------- | ------------------------------------------------------ |
-| 🛡️ Memory safety    | Leveraging Rust to avoid common classes of memory bugs |
-| 🪶 Reduced footprint | Designed with sidecar constraints in mind              |
-| 🔀 Split data plane  | Separating control-heavy logic from the hot path       |
-| ⚙️ Pingora runtime  | Reusing proven async networking infrastructure         |
+*   **Immutable Execution**: The runtime executes a static `.pvs` artifact. It does not load plugins, scripts, or WASM modules.
+*   **Compile-Time Resolution**: Complex decisions (regex compilation, policy evaluation, schema validation) occur in the **Codec** stage, not on the request path.
+*   **Bounded Behavior**: By removing runtime extensibility, the proxy's memory footprint and CPU latency are predictable and stable.
 
-These goals are exploratory and subject to change as the project evolves.
+## Consequences of the Model
+
+The "Frozen Data Plane" architecture dictates the feature set and operational characteristics of Pavis:
+
+| Consequence         | Reasoning                                                                 |
+| ------------------- | ------------------------------------------------------------------------- |
+| 🛡️ **Memory Safety** | Logic is implemented in Rust and fixed at compile time; no JIT or unsafe script runtimes. |
+| 🪶 **Minimal Footprint**| The runtime engine strips out all policy evaluation engines (Lua, WASM), retaining only forwarding logic. |
+| ⚡ **Zero-Cost Abstractions** | Configuration is compiled to a zero-copy binary format (`.pvs`) optimized for direct memory mapping. |
+| 🔒 **Hardened Security** | Attack surface is reduced by eliminating dynamic code execution and runtime reconfiguration logic. |
 
 ## Status
 

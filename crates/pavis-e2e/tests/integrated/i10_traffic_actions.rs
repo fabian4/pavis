@@ -36,8 +36,8 @@ async fn integrated_traffic_actions_redirect_direct() -> Result<()> {
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: HeadersPolicy::Disabled,
-                response_headers: HeadersPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled.into(),
+                response_headers: HeadersPolicy::Disabled.into(),
                 principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
@@ -55,8 +55,8 @@ async fn integrated_traffic_actions_redirect_direct() -> Result<()> {
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: HeadersPolicy::Disabled,
-                response_headers: HeadersPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled.into(),
+                response_headers: HeadersPolicy::Disabled.into(),
                 principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
@@ -74,8 +74,8 @@ async fn integrated_traffic_actions_redirect_direct() -> Result<()> {
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: HeadersPolicy::Disabled,
-                response_headers: HeadersPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled.into(),
+                response_headers: HeadersPolicy::Disabled.into(),
                 principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,

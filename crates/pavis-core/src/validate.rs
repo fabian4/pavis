@@ -9,6 +9,10 @@ use crate::runtime::{RuntimeConfig, ValidatedRuntimeConfig};
 pub enum CoreValidationError {
     #[error("duplicate upstream name: {0}")]
     DuplicateUpstream(String),
+    #[error("duplicate listener name: {0}")]
+    DuplicateListener(String),
+    #[error("duplicate virtual host domain: {0}")]
+    DuplicateVirtualHost(String),
     #[error("empty upstream name")]
     EmptyUpstreamName,
     #[error("upstream {0} has endpoint with weight 0")]
@@ -57,9 +61,29 @@ pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
 /// # Errors
 /// Returns `CoreValidationError` if any semantic invariants are violated.
 pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<ValidatedRuntimeConfig> {
+    use std::collections::HashSet;
+
+    // Validate listener name uniqueness
+    let mut listener_names: HashSet<&str> = HashSet::new();
     for listener in &config.listeners {
+        if !listener_names.insert(listener.name.0.as_str()) {
+            return Err(CoreValidationError::DuplicateListener(
+                listener.name.0.clone(),
+            ));
+        }
         server::validate_server(listener.address, &listener.tls)?;
     }
+
+    // Validate virtual host domain uniqueness
+    let mut vhost_domains: HashSet<&str> = HashSet::new();
+    for vhost in &config.routes {
+        if !vhost_domains.insert(vhost.host.0.as_str()) {
+            return Err(CoreValidationError::DuplicateVirtualHost(
+                vhost.host.0.clone(),
+            ));
+        }
+    }
+
     upstreams::validate_upstreams(&config.upstreams)?;
     routes::validate_routes(&config.routes, &config.upstreams)?;
     Ok(ValidatedRuntimeConfig::new(config))
@@ -80,6 +104,7 @@ mod tests {
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::NonZeroU16;
+    use std::sync::Arc;
 
     fn base_config() -> RuntimeConfig {
         RuntimeConfig {
@@ -142,7 +167,7 @@ mod tests {
                         })),
                         on: RetryFlags(RETRY_FIVE_XX),
                     },
-                    request_headers: HeadersPolicy::Enabled {
+                    request_headers: Arc::new(HeadersPolicy::Enabled {
                         rules: Headers {
                             set_headers: vec![(
                                 HeaderName("x-foo".to_string()),
@@ -152,8 +177,8 @@ mod tests {
                             add_headers: Vec::new(),
                             remove_headers: vec![HeaderName("x-remove".to_string())],
                         },
-                    },
-                    response_headers: HeadersPolicy::Disabled,
+                    }),
+                    response_headers: Arc::new(HeadersPolicy::Disabled),
                     principal: Principal::Any,
                     rewrite: Rewrite {
                         path: RewritePath::Disabled,
@@ -227,7 +252,8 @@ mod tests {
                 add_headers: Vec::new(),
                 remove_headers: Vec::new(),
             },
-        };
+        }
+        .into();
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
@@ -245,7 +271,8 @@ mod tests {
                 add_headers: Vec::new(),
                 remove_headers: Vec::new(),
             },
-        };
+        }
+        .into();
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
@@ -260,7 +287,8 @@ mod tests {
                 add_headers: Vec::new(),
                 remove_headers: vec![HeaderName(String::new())],
             },
-        };
+        }
+        .into();
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::EmptyHeaderName { .. }));
     }
@@ -275,7 +303,8 @@ mod tests {
                 add_headers: Vec::new(),
                 remove_headers: vec![HeaderName("bad header".to_string())],
             },
-        };
+        }
+        .into();
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }
@@ -293,7 +322,8 @@ mod tests {
                 add_headers: Vec::new(),
                 remove_headers: Vec::new(),
             },
-        };
+        }
+        .into();
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(
             err,
@@ -314,7 +344,8 @@ mod tests {
                 add_headers: Vec::new(),
                 remove_headers: Vec::new(),
             },
-        };
+        }
+        .into();
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
     }

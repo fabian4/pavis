@@ -9,6 +9,7 @@ use pavis_core::RuntimeConfig;
 use rkyv::Deserialize as _;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct PvsHeaderView {
@@ -41,34 +42,16 @@ impl PvsHeaderView {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VerifiedPvs {
     header: PvsHeader,
-    bytes: VerifiedBytes,
+    bytes: Arc<VerifiedBytes>,
 }
 
 #[derive(Debug)]
 enum VerifiedBytes {
     Owned(Vec<u8>),
     Mapped(Mmap),
-}
-
-impl Clone for VerifiedBytes {
-    fn clone(&self) -> Self {
-        match self {
-            VerifiedBytes::Owned(bytes) => VerifiedBytes::Owned(bytes.clone()),
-            VerifiedBytes::Mapped(mmap) => VerifiedBytes::Owned(mmap.to_vec()),
-        }
-    }
-}
-
-impl Clone for VerifiedPvs {
-    fn clone(&self) -> Self {
-        Self {
-            header: self.header,
-            bytes: self.bytes.clone(),
-        }
-    }
 }
 
 impl VerifiedPvs {
@@ -97,16 +80,22 @@ impl VerifiedPvs {
     }
 
     pub fn bytes(&self) -> &[u8] {
-        match &self.bytes {
+        match &*self.bytes {
             VerifiedBytes::Owned(bytes) => bytes,
             VerifiedBytes::Mapped(mmap) => mmap,
         }
     }
 
     pub fn into_bytes(self) -> Vec<u8> {
-        match self.bytes {
-            VerifiedBytes::Owned(bytes) => bytes,
-            VerifiedBytes::Mapped(mmap) => mmap.to_vec(),
+        match Arc::try_unwrap(self.bytes) {
+            Ok(inner) => match inner {
+                VerifiedBytes::Owned(bytes) => bytes,
+                VerifiedBytes::Mapped(mmap) => mmap.to_vec(),
+            },
+            Err(arc) => match &*arc {
+                VerifiedBytes::Owned(bytes) => bytes.clone(),
+                VerifiedBytes::Mapped(mmap) => mmap.to_vec(),
+            },
         }
     }
 }
@@ -175,7 +164,7 @@ fn verify_owned(bytes: Vec<u8>) -> PvsResult<VerifiedPvs> {
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
     Ok(VerifiedPvs {
         header,
-        bytes: VerifiedBytes::Owned(bytes),
+        bytes: Arc::new(VerifiedBytes::Owned(bytes)),
     })
 }
 
@@ -185,7 +174,7 @@ fn verify_mapped(mmap: Mmap) -> PvsResult<VerifiedPvs> {
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
     Ok(VerifiedPvs {
         header,
-        bytes: VerifiedBytes::Mapped(mmap),
+        bytes: Arc::new(VerifiedBytes::Mapped(mmap)),
     })
 }
 
@@ -196,7 +185,10 @@ pub fn load(path: impl AsRef<Path>) -> PvsResult<RuntimeConfig> {
     let (_header, payload) = verify_bytes(&mmap)?;
     let archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
-    let config: RuntimeConfig = archived.deserialize(&mut rkyv::Infallible)?;
+    let mut deserializer = rkyv::de::deserializers::SharedDeserializeMap::new();
+    let config: RuntimeConfig = archived
+        .deserialize(&mut deserializer)
+        .map_err(|e| PvsError::CorruptArchive(format!("Deserialization error: {:?}", e)))?;
     Ok(config)
 }
 

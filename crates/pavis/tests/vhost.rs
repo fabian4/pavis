@@ -51,8 +51,8 @@ fn test_routing_vhost_precedence() {
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: pavis_core::HeadersPolicy::Disabled,
-                response_headers: pavis_core::HeadersPolicy::Disabled,
+                request_headers: pavis_core::HeadersPolicy::Disabled.into(),
+                response_headers: pavis_core::HeadersPolicy::Disabled.into(),
                 principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
@@ -72,8 +72,8 @@ fn test_routing_vhost_precedence() {
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: pavis_core::HeadersPolicy::Disabled,
-                response_headers: pavis_core::HeadersPolicy::Disabled,
+                request_headers: pavis_core::HeadersPolicy::Disabled.into(),
+                response_headers: pavis_core::HeadersPolicy::Disabled.into(),
                 principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
@@ -93,8 +93,8 @@ fn test_routing_vhost_precedence() {
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: pavis_core::HeadersPolicy::Disabled,
-                response_headers: pavis_core::HeadersPolicy::Disabled,
+                request_headers: pavis_core::HeadersPolicy::Disabled.into(),
+                response_headers: pavis_core::HeadersPolicy::Disabled.into(),
                 principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,

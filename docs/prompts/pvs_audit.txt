@@ -1,0 +1,316 @@
+# Comprehensive Rust Crate Audit Protocol: `crates/pavis-pvs`
+
+You are the Lead Code Auditor for the Rust crate `crates/pavis-pvs`.
+Your task is to perform a strict, evidence-based, multi-phase audit
+to certify the `.pvs` artifact format and handling logic
+for production lock-in.
+
+This is an AUDIT, not a code review.
+
+============================================================
+GLOBAL RULES (NON-NEGOTIABLE)
+============================================================
+
+1. Scope:
+   - Analyze ONLY code inside `crates/pavis-pvs`.
+   - Do NOT assume behavior of other crates (runtime, relay, adapters).
+
+2. Evidence:
+   - EVERY finding MUST cite concrete evidence:
+     - file path
+     - symbol name
+     - short snippet (≤15 lines)
+
+3. No Refactors:
+   - Do NOT suggest code changes, rewrites, or redesigns.
+   - Focus strictly on assessing the CURRENT STATE.
+
+4. Output:
+   - Generate ONE Markdown report per phase.
+   - Write outputs to the exact paths specified below.
+
+5. Phase Isolation (CRITICAL):
+   - Each phase MUST address ONLY its stated goal.
+   - Do NOT comment on topics that belong to later phases.
+   - Do NOT “preview” fixes or conclusions early.
+
+6. Output Overwrite Rule (CRITICAL):
+   - If any target output file already exists,
+     you MUST ignore its existing contents entirely.
+   - Treat the file as EMPTY and generate a complete replacement.
+   - Do NOT merge, append to, reference, or preserve any existing text.
+
+7. Report Metadata Requirement (CRITICAL):
+   - EVERY generated report MUST begin with a metadata header containing:
+     - Audit phase name
+     - Target crate (`crates/pavis-pvs`)
+     - Generation timestamp (ISO 8601 format, UTC)
+     - AI model identifier (exact model name if known; otherwise "unknown")
+   - This metadata MUST appear at the very top of the file.
+
+============================================================
+EXECUTION ORDER (MANDATORY)
+============================================================
+
+Execute ALL phases strictly in order:
+
+Phase 0 → Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Final Summary
+
+You MUST conceptually complete each phase before moving to the next.
+
+============================================================
+PVS-SPECIFIC HARD BOUNDARIES
+============================================================
+
+`pavis-pvs` MUST:
+- define the `.pvs` binary artifact format
+- define headers, magic bytes, versioning, and layout
+- perform integrity and safety validation (lengths, checksums, version checks)
+- safely deserialize / archive data (e.g., rkyv-based)
+
+`pavis-pvs` MUST NOT:
+- perform business or routing semantics
+- apply defaults or policy decisions
+- assume runtime behavior or environment
+- perform network or filesystem I/O beyond reading raw bytes when explicitly required
+- parse YAML, xDS, or high-level config formats
+
+The artifact MUST be treatable as OPAQUE by relay and runtime
+after validation (i.e., no semantic interpretation required downstream).
+
+============================================================
+PHASE 0: Inventory & Artifact Surface
+============================================================
+
+Goal: Map the `.pvs` crate territory. No judgment.
+
+Tasks:
+1. File Inventory:
+   - List EVERY Rust file in `crates/pavis-pvs`
+   - Classify responsibility:
+     - format/layout
+     - header/versioning
+     - integrity checks
+     - serialization/deserialization
+     - helpers
+     - tests
+     - other
+
+2. Module Structure:
+   - Describe high-level organization of the crate.
+
+3. Public API Surface:
+   - Enumerate ALL public:
+     - structs
+     - enums
+     - traits
+     - functions
+     - constants (e.g., magic bytes, versions)
+
+Rules:
+- Do NOT evaluate correctness or quality.
+- Do NOT flag issues or risks.
+- Do NOT skip files.
+
+Output:
+docs/audit/pvs.phase0.inventory.md
+
+============================================================
+PHASE 1: Boundary & Responsibility Audit
+============================================================
+
+Goal: Enforce `.pvs` responsibility purity.
+
+Tasks:
+1. Verify the crate:
+   - does NOT perform business semantic inspection
+   - does NOT apply defaults or routing logic
+   - does NOT depend on runtime-specific concepts
+
+2. Dependency Audit:
+   - Inspect Cargo.toml dependencies.
+   - A dependency is a VIOLATION ONLY IF:
+     it enables semantic logic, runtime behavior,
+     or breaks the “binary-format-only” boundary.
+
+3. Opaque Artifact Property:
+   - Verify that `.pvs` artifacts can be:
+     - validated
+     - distributed
+     - consumed
+     WITHOUT requiring semantic understanding by relay/runtime.
+
+Rules:
+- This is a HARD GATE.
+- Do NOT propose fixes.
+- Ambiguous cases MUST be labeled “Boundary Risk”.
+
+Output:
+docs/audit/pvs.phase1.boundary.md
+
+============================================================
+PHASE 2: Format Invariants & Correctness
+============================================================
+
+Goal: Verify `.pvs` format invariants and correctness.
+
+Tasks:
+1. Invariant Inventory:
+   - Enumerate ALL format-level invariants, such as:
+     - magic bytes correctness
+     - version compatibility
+     - header/payload length consistency
+     - checksum / hash correctness
+     - archive alignment and safety
+
+2. Enforcement Matrix:
+   For each invariant:
+   - where it is enforced
+   - how it is enforced (pre-check, decode-time, type-level)
+   - bypass risk
+   - failure mode
+
+3. Gaps:
+   - Identify invariants that are implied but NOT enforced
+     (e.g., payload size upper bounds).
+
+Rules:
+- Do NOT discuss errors, safety, or performance.
+- Do NOT discuss runtime usage.
+
+Output:
+docs/audit/pvs.phase2.invariants.md
+
+============================================================
+PHASE 3: Error Model & Diagnostics
+============================================================
+
+Goal: Ensure `.pvs` validation failures are diagnosable.
+
+Tasks:
+1. Error Inventory:
+   - Enumerate all error types and Result aliases.
+
+2. Context Quality:
+   - Do errors specify:
+     - offset / section
+     - expected vs actual values
+     - version / magic mismatches
+     - checksum mismatches
+
+3. Panic Policy:
+   - Identify ALL uses of unwrap, expect, panic!, todo!, unreachable!.
+   - These are STRICTLY FORBIDDEN in `.pvs` validation paths.
+
+Rules:
+- Do NOT discuss format invariants (already covered).
+- Do NOT discuss performance or compatibility.
+
+Output:
+docs/audit/pvs.phase3.errors.md
+
+============================================================
+PHASE 4: Safety & Malformed Input Resistance
+============================================================
+
+Goal: Ensure `.pvs` handling is safe under hostile or corrupted input.
+
+Tasks:
+1. Unsafe Code:
+   - Identify and justify all unsafe blocks (especially around zero-copy / rkyv).
+
+2. Panic & Crash Risks:
+   - Check slice indexing, integer overflow, unchecked length arithmetic.
+
+3. Memory Safety:
+   - Check for:
+     - out-of-bounds reads
+     - aliasing violations
+     - lifetime issues with mapped or archived data
+
+4. DoS Vectors:
+   - Identify potential:
+     - oversized allocation
+     - crafted payload causing quadratic behavior
+
+Rules:
+- Do NOT discuss API evolution.
+- Do NOT suggest mitigations outside this crate.
+
+Output:
+docs/audit/pvs.phase4.safety.md
+
+============================================================
+PHASE 5: Compatibility & Performance Signals
+============================================================
+
+Goal: Assess version evolution and validation cost signals.
+
+Tasks:
+1. Versioning Strategy:
+   - Identify explicit versioning mechanisms.
+   - Assess forward/backward compatibility expectations.
+
+2. Schema Evolution Risks:
+   - Identify areas where small format changes
+     could break compatibility.
+
+3. Performance Signals:
+   - Identify validation or decode paths that:
+     - allocate
+     - copy
+     - scan large buffers repeatedly
+
+4. Bench Plan:
+   - Propose 3–5 concrete benchmarks:
+     - validation of small/medium/large artifacts
+     - checksum / hash cost
+     - decode cost
+
+Rules:
+- Do NOT propose optimizations.
+- Identify risks and signals only.
+
+Output:
+docs/audit/pvs.phase5.compat-perf.md
+
+============================================================
+FINAL SUMMARY: Executive Verdict
+============================================================
+
+Goal: Decision-level synthesis.
+
+STRICT INPUT RULE:
+- Base this summary STRICTLY AND EXCLUSIVELY
+  on findings documented in Phases 0–5.
+- Do NOT introduce new findings, risks, or ideas.
+
+OUTPUT OVERWRITE CONFIRMATION:
+- This summary MUST be a full, standalone replacement.
+- Any existing content in docs/audit/pvs.audit.summary.md
+  MUST be completely ignored.
+
+Must Answer:
+1. Verdict (choose ONE):
+   - "Sound"
+   - "Mostly Sound (Needs Fixes)"
+   - "Structural Issues"
+
+2. Top 3–5 System Risks:
+   - Referencing originating phases.
+
+3. Readiness Assessment (Yes / No):
+   - Format invariants enforced?
+   - Diagnosable validation errors?
+   - Safe under malformed input?
+   - Versioning strategy acceptable?
+
+4. Next Steps:
+   - Concrete actions derived ONLY from existing findings.
+
+Output:
+docs/audit/pvs.audit.summary.md
+
+============================================================
+BEGIN AUDIT.
+============================================================

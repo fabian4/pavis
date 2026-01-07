@@ -41,8 +41,8 @@ pub fn runtime_config(
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: pavis_core::HeadersPolicy::Disabled,
-                response_headers: pavis_core::HeadersPolicy::Disabled,
+                request_headers: pavis_core::HeadersPolicy::Disabled.into(),
+                response_headers: pavis_core::HeadersPolicy::Disabled.into(),
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,
                     host: RewriteHost::Disabled,

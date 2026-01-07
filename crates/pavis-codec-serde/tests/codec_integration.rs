@@ -73,12 +73,14 @@ fn full_yaml_and_json_apply_structural_and_semantic_defaults() {
         match upstream.pool.idle {
             IdleTimeout::Enabled(d) => assert_eq!(d.0.get(), 60_000),
             IdleTimeout::Disabled => panic!("idle timeout not populated"),
+            _ => panic!("unknown idle timeout"),
         }
         match upstream.tls {
             TlsPolicy::Enabled { mode, .. } => {
                 assert_eq!(mode, TlsVerify::CertAndHost);
             }
             TlsPolicy::Disabled => panic!("tls not enabled"),
+            _ => panic!("unknown tls policy"),
         }
         let route = &cfg.routes[0].paths[0];
         assert!(matches!(route.timeout, pavis_core::Timeout::Enabled(_)));

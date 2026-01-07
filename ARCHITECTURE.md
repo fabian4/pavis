@@ -1,10 +1,12 @@
-# Architecture
+# Architecture: Frozen Data Plane
 
 ## 1. Overview
 
-Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data Plane** architecture. Heavy lifting like parsing, defaulting, and semantic validation is offloaded to the ingest + codec pipeline, keeping the sidecar proxy lightweight and binary-focused while the relay focuses on artifact distribution.
+Pavis implements the **Frozen Data Plane** architecture. This model rejects the traditional "Smart Proxy" approach where the data plane performs complex parsing, validation, and policy inference at runtime.
 
-### 1.1 End-to-End Configuration Flow
+Instead, Pavis treats configuration as a compilation target. All routing logic, security policies, and defaults are resolved **Ahead-of-Time (AOT)** by a Codec pipeline. The runtime executes a binary artifact (`.pvs`) that is guaranteed to be valid, complete, and immutable.
+
+### 1.1 Compile-Time Resolution Pipeline
 
 ```text
   Source Type         Connectivity (Ingest)      Transformation (Codec)      Distribution & Tools           Data Plane
@@ -22,170 +24,126 @@ Pavis replaces the traditional "Smart Proxy" model (Envoy) with a **Split Data P
 └──────────────┘      └───────────────────┘      └───────────────────┘      └────────────────────┘
 ```
 
-All arrows represent data or artifact flow, not call graphs or control flow.
-Fixed dataflow: **Ingest → SourceArtifact → Codec → RuntimeConfig → Relay → PVS Artifact → Runtime**.
-Type-level validation flow: **SourceArtifact → CheckedArtifact → RuntimeConfig → ValidatedRuntimeConfig → Relay**.
+The data flow is unidirectional and strictly typed:
+**Ingest → SourceArtifact → Codec → RuntimeConfig → Relay → PVS Artifact → Runtime**.
 
-### 1.2 Sidecar Scope (Outbound-first)
+This pipeline enforces the Frozen model:
+*   **Ingest**: Raw I/O. No interpretation.
+*   **Codec**: Compilation. Resolves defaults, validates semantics, and freezes policy.
+*   **Runtime**: Execution. Pure mechanism; no policy capability.
 
-Pavis is **outbound-first**: it primarily targets service-to-service proxying (Linkerd-style).
-Inbound use is possible but **optional/future** and tends to pull the runtime toward gateway/policy-engine concerns.
-Inbound behavior must be treated as an explicit tradeoff and **must not** leak gateway-style policy logic into the runtime by default.
+### 1.2 Outbound-First Scope
 
-### 1.3 Terminology (Artifacts and Boundaries)
+The Frozen Data Plane model aligns naturally with **sidecar (outbound)** deployments where the configuration scope is bounded (local application dependencies).
+Inbound (Gateway) deployments often require dynamic policy evaluation (OIDC, Rate Limiting via Redis) which violates the strict determinism of the Frozen model. While Pavis supports inbound traffic, it refuses to embed dynamic policy engines to support complex gateway use-cases.
 
-- **SourceArtifact**: raw source bytes + metadata emitted by ingest (this is `Artifact` in `pavis-ingest-api`).
-- **PVS Artifact**: the `.pvs` binary produced from a validated `RuntimeConfig` by `pavis-pvs`.
-- **Envelope** (deprecated): avoid this term; use **SourceArtifact** instead.
+### 1.3 Terminology
+
+- **SourceArtifact**: Raw input bytes (YAML, xDS Protobuf) + metadata.
+- **PVS Artifact**: The frozen, zero-copy binary artifact executed by the runtime.
+- **RuntimeConfig**: The fully materialized, in-memory representation of the frozen state.
 
 ## 2. Components & Boundaries
 
 | Component              | Description                                                                                       |
 | :--------------------- | :------------------------------------------------------------------------------------------------ |
-| **`pavis`**            | Proxy – Runtime Engine. Reads optimized `.pvs` binary files only. Executes fully prepared configs.|
-| **`pavis-core`**       | Protocol – Canonical types, semantic validation, and memory layout.                               |
-| **`pavis-relay`**      | Relay – Versions `.pvs`, manages caches. **Pass-through** for validation; distributes artifacts.  |
-| **`pavis-ingest-*`**   | Ingest – Source connectivity (xDS, K8s, file watch): streams, auth, retries, resync.              |
-| **`pavis-ingest-api`** | Ingest API – SourceArtifact (raw bytes + metadata) and ingest trait boundary.                     |
-| **`pavis-codec-*`**    | Codec – SourceArtifact → RuntimeConfig transforms, **default population**, and core validation via codec-api. |
-| **`pavis-codec-api`**  | Codec API – Codec trait boundary for SourceArtifact ↔ RuntimeConfig transforms.                   |
-| **`pavis-pvs`**        | Binary Protocol – Integrity layer (Header + Checksum + Encoding).                                 |
-| **`pavctl`**           | CLI – Developer tool for manual generation, conversion, and runtime management.                   |
+| **`pavis`**            | **Runtime Engine**. Executes frozen `.pvs` artifacts. **Cannot** validate or infer policy.      |
+| **`pavis-core`**       | **Protocol**. Defines the frozen schema and memory layout.                                        |
+| **`pavis-relay`**      | **Distribution**. Distributes frozen artifacts. **Pass-through** only; no logic modification.     |
+| **`pavis-codec-*`**    | **Compilers**. Transform source intent into frozen `RuntimeConfig`. Owns all policy decisions.    |
+| **`pavis-ingest-*`**   | **Ingest**. Handles connectivity to dynamic sources (xDS, K8s API).                               |
+| **`pavis-pvs`**        | **Integrity**. Ensures the artifact has not been mutated since compilation.                       |
 
-### 2.1 Dependency Graph
+### 2.1 Responsibilities
 
-*   **`pavis-core` (Root)**: The foundation. Canonical types and semantic validation. No I/O.
-*   **`pavis-pvs`**: Depends on `pavis-core`. Handles the binary lifecycle.
-*   **`pavis-codec-api`**: Defines the Codec boundary. Depends on `pavis-core` and ingest SourceArtifact types.
-*   **`pavis-ingest-api`**: Defines the Ingest boundary (SourceArtifact + metadata).
-*   **`pavis-codec-*`**: Pure logic crates. Depend on `pavis-core` and `pavis-codec-api` for the codec boundary and canonical validation in `materialize`.
-*   **`pavis-ingest-*`**: Connectivity crates. Handle I/O and transport to upstream sources; emit SourceArtifacts (bytes + metadata) only.
-*   **`pavis-relay`**: Coordinates ingest/codec outputs, versions artifacts, and distributes `.pvs`. It does artifact-level header/payload handling only and does not decode DTOs or `RuntimeConfig`.
-*   **`pavctl`**: Depends on codecs and `pavis-pvs` to provide manual control and local tooling.
-*   **`pavis` (Runtime)**: Depends on `pavis-core` and `pavis-pvs` only. **Must not** depend on ingest/codec/relay/governor.
-
-### 2.2 Responsibilities
+The architecture enforces strict separation of concerns to maintain the "Frozen" invariant.
 
 | Responsibility     | Component        | Description                                                                                        |
 | :----------------- | :--------------- | :------------------------------------------------------------------------------------------------- |
-| **Ingest**         | `pavis-ingest-*` | Subscribes to configuration sources. Handles auth, watch/stream, retries, and resync.              |
-| **Codec**          | `pavis-codec-*`  | Compiles SourceArtifacts into `RuntimeConfig`, **populates defaults**, and relies on codec-api for canonical validation. |
-| **Relay**          | `pavis-relay`    | Versions artifacts and distributes `.pvs`. **Pass-through** for logic; no validation or population.|
-| **Governor**       | `pavis-governor` | Admission, policy enforcement, and approval of change plans (future/optional).                     |
-| **Manual Tooling** | `pavctl`         | Reuses codecs for local file generation (`gen`), conversion (`convert`), and manual `apply`.       |
-| **Integrity**      | `pavis-pvs`      | Computes checksums and adds protocol headers to encoded payloads.                                  |
-| **Execution**      | `pavis`          | Zero-copy execution of the binary config. **No validation or default population**.                 |
+| **Compilation**    | `pavis-codec-*`  | Compiles vague source intent into explicit, deterministic configuration. Populates all defaults.   |
+| **Distribution**   | `pavis-relay`    | Versions and distributes artifacts. **Must not** validate or modify the payload.                   |
+| **Execution**      | `pavis`          | Zero-copy execution. **Rejected by Design**: Logic for defaults, inference, or partial validity.   |
 
-## 3. Configuration Architecture & Invariants
+## 3. Configuration Architecture: Frozen State
 
-This section defines the Pavis configuration architecture, strictly separating **Policy** (Codec) from **Mechanism** (Runtime).
+This section defines how the Frozen Data Plane model is enforced through the configuration pipeline.
 
 ### 3.1 Pipeline Stages
-Pavis configuration MUST pass through the following stages in order:
+Configuration **MUST** proceed through these stages. The Runtime cannot accept input from earlier stages.
 
-1.  **SourceArtifact → CheckedArtifact**: Implemented by codec `check`. Validates framing and basic integrity only.
-2.  **CheckedArtifact → RuntimeConfig**: Implemented by codec `compile`. Parses source bytes, normalizes quirks, performs structural completion, and applies **source-specific semantic defaults**.
-3.  **RuntimeConfig → Core Semantic Validation**: Implemented by codec-api `materialize` via `pavis-core`. Runtime and Relay MUST NOT compensate for missing intent.
+1.  **SourceArtifact → CheckedArtifact** (Codec): Verify framing.
+2.  **CheckedArtifact → RuntimeConfig** (Codec): **Compilation Phase**. Parse, normalize, and populate semantic defaults. The output is a complete, explicit policy.
+3.  **RuntimeConfig → ValidatedRuntimeConfig** (Codec): **Validation Phase**. Enforce invariants (e.g., regex safety) before the artifact is sealed.
 
-### 3.2 Codec-Internal DTOs (Optional)
+### 3.2 Architectural Invariants
 
-Codecs MAY use internal DTOs for parsing and shape normalization, but these are **codec-private** and not enforced or provided by codec-api:
-
-*   **Source DTO**: Represents the source format directly. MAY be sparse. MUST NOT include runtime-specific assumptions.
-*   **Structurally Complete DTO**: Shape-complete (no missing containers). MUST NOT introduce semantic defaults beyond structural completion.
-*   **RuntimeConfig**: Fully materialized. Semantically final and immutable.
-
-### 3.3 Architectural Invariants
-
-The following rules are absolute.
+The following rules are absolute consequences of the Frozen Data Plane.
 
 #### Codec Layer (`pavis-codec-*`)
-*   **Role:** Owner of **Defaults** and **Policy**.
-*   **Responsibility:** MUST materialize all optional fields into explicit values.
-*   **Responsibility:** MUST normalize user input (YAML/JSON/xDS) into `RuntimeConfig` and rely on `Codec::materialize` for canonical validation.
-*   **Output:** A fully deterministic configuration. Implicit "magic" defaults MUST be resolved here.
+*   **Role:** Compiler.
+*   **Responsibility:** **Materialize Policy**. All "magic" (implicit behaviors) must be converted to explicit configuration instructions.
+*   **Output:** A deterministic `RuntimeConfig`.
 
 #### Runtime Layer (`pavis`)
-*   **Role:** Executor of **Explicit Configuration**.
+*   **Role:** Executor.
 *   **Input:** STRICTLY `ValidatedRuntimeConfig` (via `.pvs`).
-*   **Invariant:** MUST NOT apply semantic defaults (e.g., "missing timeout means 5s"). `None` implies "Disabled" or "System Choice" (e.g., auto-threads), never "Business Default".
-*   **Invariant:** MUST NOT mutate configuration after load.
-*   **Failure:** MUST fail immediately on invalid structural state (e.g., missing cert files).
-
-#### Relay Layer
-*   **Role:** Distribution Pipeline.
-*   **Invariant:** MUST treat `.pvs` blobs as opaque, immutable, and versioned.
+*   **Invariant:** **Frozen Logic**. The runtime has no logic to apply semantic defaults (e.g., "missing timeout means 5s"). `None` means "Disabled", never "Default".
+*   **Invariant:** **Immutable State**. Configuration cannot be mutated after load.
+*   **Failure:** The runtime fails immediately if the artifact is structurally invalid; it does not attempt recovery or compensation.
 
 #### .pvs Artifacts
-*   **Nature:** Fully materialized and frozen.
-*   **Guarantee:** A `.pvs` compiled today MUST execute identically on future runtime versions. Policy changes (defaults) affect only *newly compiled* artifacts.
+*   **Nature:** Frozen.
+*   **Guarantee:** A `.pvs` compiled today will execute identically on future runtime versions. Policy evolution happens in the Codec, not the Runtime.
 
-### 3.4 Zero-Option Runtime
+### 3.4 Frozen Runtime State
 
-The Runtime consumes a configuration where all policy decisions are **explicit** and **materialized**. `Option<T>` fields are forbidden for policy configuration.
+The Runtime consumes a configuration where all policy decisions are **frozen**.
 
-*   **Explicit State**: Optional features must be represented by explicit enums (e.g., `TlsMode::Disabled` vs `TlsMode::Enabled`) or empty collections.
-*   **No Inference**: The Runtime MUST NOT infer defaults from missing values.
-*   **Time Semantics**: Durations are materialized as `u32` milliseconds. `0` has specific, normative semantics per field.
+*   **Explicit State**: Features are `Enabled` or `Disabled`. There is no `Auto` state at runtime (except for system resources like threads).
+*   **No Inference**: The Runtime executes instructions; it does not interpret intent.
+*   **Deterministic Time**: Timeouts are materialized as fixed `u32` milliseconds.
 
 ## 4. Implementation Internals
 
 ### 4.1 Runtime Engine Internals
 
-Pavis operates as an L7 proxy capable of decrypting, inspecting, and re-encrypting traffic. The request lifecycle is as follows:
+Pavis operates as an L7 proxy. Its pipeline is fixed and optimized for the frozen model:
 
-1.  **Accept**: The listener accepts a raw TCP connection.
-2.  **Handshake (Optional)**: If `TlsConfig` is enabled, the runtime performs the server-side TLS handshake using OpenSSL/BoringSSL (via Pingora). Certificates are loaded from disk paths specified in the config during bootstrap; invalid paths are fatal.
-3.  **Protocol Decode**: The stream is parsed as HTTP/1.1 or H2.
-4.  **L7 Match**: The `Router` inspects headers (`Host`, `Path`) against the configuration to select a VirtualHost and Route.
-5.  **Action & Mutation**: The selected route executes its `RouteAction`:
-    *   **Forward**: The request is load-balanced to an upstream.
-    *   **Redirect**: A synthetic response with a `Location` header is generated immediately (3xx).
-    *   **Direct**: A synthetic response with a custom status and body is generated immediately (e.g., 200 "OK").
-    *   **Rewrite (Applied before Forward)**: Route rewrites apply host and prefix path changes before upstream selection; prefix rewrites preserve query strings.
+1.  **Accept**: TCP accept.
+2.  **Handshake**: TLS handshake using explicit certificates from the frozen config.
+3.  **Decode**: HTTP/1.1 or H2 parsing.
+4.  **Match**: `Router` executes O(1) or O(log N) lookups against the frozen routing table.
+5.  **Action**: Executes the pre-compiled `RouteAction`.
 
 ### 4.2 Runtime Memory Lifecycle (RCU)
 
-Pavis achieves lock-free hot reloading using a Read-Copy-Update (RCU) pattern via `arc-swap`.
+Hot reloading is achieved via atomic pointer swaps of the frozen state.
 
-1.  **Stage**: The **Pavis Runtime** downloads the new `.pvs` file to a temporary location.
-2.  **Verify**: Validate Magic Bytes, Checksum, and perform `rkyv::check_archived_root`.
-3.  **Map**: Call `mmap` on the valid file.
-4.  **Swap**: Atomic pointer swap of the config guard.
-5.  **Reclaim**: The old guard is dropped. When the last request RefCount hits 0, `munmap` is invoked.
+1.  **Stage**: Download `.pvs`.
+2.  **Verify**: Cryptographic verification of the frozen artifact.
+3.  **Map**: Memory-map the artifact.
+4.  **Swap**: Atomic replacement of the configuration pointer.
+5.  **Reclaim**: Old state is dropped when refcount hits zero.
 
 ### 4.3 Networking & Discovery
 
-Pavis supports three distinct discovery modes for upstream clusters, balancing performance with flexibility:
+Discovery is the *only* mutable aspect of the runtime, strictly bounded to endpoint selection.
 
-1.  **Static**: Fixed IP addresses and ports. Zero runtime overhead. Used for stable infrastructure or when an external control plane (like the Pavis Relay) performs the resolution and pushes updated configs.
-2.  **StrictDns**: The proxy resolves the hostname via DNS and uses the returned A records. It honors TTLs and updates the pool accordingly. Ideal for Kubernetes Headless Services.
-3.  **LogicalDns**: The proxy resolves the hostname to a single IP (favoring existing IPs when possible) and updates the pool. Useful for AWS ALBs or services where the DNS name resolves to a rotating set of functional IPs.
-
-Resolution is performed by a background `UpstreamResolver` service using `hickory-resolver`. It periodically refreshes DNS for `Strict` and `Logical` clusters and atomically replaces cluster endpoints. The hot path consumes IP endpoints only; DNS endpoints are treated as a misconfiguration if they reach `peer()`.
+1.  **Static**: Fixed IPs compiled into the artifact.
+2.  **StrictDns / LogicalDns**: The runtime updates endpoint lists based on TTL. This is **mechanism**, not policy. The *decision* to use DNS and the TTL parameters are frozen in the config.
 
 ### 4.4 Routing Algorithm (Hot Path)
 
-Routing is hierarchical to minimize CPU cycles.
-
-1.  **Exact Match Table**: O(1) lookup for `(Host, Path)`.
-2.  **Prefix Tree**: O(log N) radix tree.
-3.  **Regex Pattern List**: Ordered list of regex patterns.
-    *   Regex compilation occurs **once** during the "Swap" phase.
-    *   Compiled regex state lives in runtime-only wrappers, not the `.pvs` file.
+Routing uses static, optimized structures built during the artifact compilation phase (or mapped directly).
+*   Regexes are compiled once during the "Swap" phase.
+*   No runtime script evaluation (Lua/WASM) occurs during routing.
 
 ### 4.5 xDS Codec Architecture
 
-The xDS Codec uses an **Intermediate Type Pattern**:
-1.  **Decode**: Unmarshal Protobuf bytes into generated Envoy v3 structs.
-2.  **Normalize**: Map scattered xDS resources into a coherent internal representation.
-3.  **Map**: Transform Envoy structs to `pavis-core` structs.
-4.  **Validate**: Performed by the codec pipeline in `Codec::materialize`.
+The xDS Codec functions as a **Compiler**:
+1.  **Decode**: Unmarshal Envoy Protobuf.
+2.  **Normalize**: Flatten disparate xDS resources into a coherent model.
+3.  **Map**: Transform Envoy semantics into Pavis frozen semantics.
+4.  **Validate**: Final pass before artifact generation.
 
-**Responsibility Matrix:**
-| Component | Responsibility | Boundary |
-| :--- | :--- | :--- |
-| **Ingest** | Network I/O with xDS server. | Passes raw xDS Protobuf -> Codec. |
-| **Codec** | Pure translation. | Maps Proto enums -> Core enums. 1:1 mapping. No DNS resolution. |
-| **Core** | Domain definitions. | Defines *what* a DNS upstream is (the type), but NOT *how* it resolves or refreshes. |
-| **Runtime** | Execution & IO. | Handles DNS refresh intervals, TTL, and address family selection. |
+The Runtime **never** connects to xDS directly; this would violate the Frozen Data Plane model by introducing runtime complexity and non-determinism.

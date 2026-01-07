@@ -131,8 +131,8 @@ async fn integrated_namespace_authorization() -> Result<()> {
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: HeadersPolicy::Disabled,
-                response_headers: HeadersPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled.into(),
+                response_headers: HeadersPolicy::Disabled.into(),
                 principal: Principal::Prefix {
                     prefix: "spiffe://cluster.local/ns/prod/".to_string(),
                 },
@@ -152,8 +152,8 @@ async fn integrated_namespace_authorization() -> Result<()> {
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: HeadersPolicy::Disabled,
-                response_headers: HeadersPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled.into(),
+                response_headers: HeadersPolicy::Disabled.into(),
                 principal: Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Disabled,

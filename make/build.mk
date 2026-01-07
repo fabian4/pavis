@@ -66,7 +66,12 @@ run-pavis:
 run-relay:
 	RUST_LOG=debug cargo run -p pavis-relay -- --config $(ROOT_DIR)/crates/pavis-relay/relay.yaml
 
-# Run the Pavis xDS controller
+audit:
+	cargo audit
+
+udeps:
+	cargo +nightly udeps --workspace --all-targets
+
 # Format all code in the workspace
 fmt:
 	cargo fmt
@@ -77,7 +82,7 @@ fmt-check:
 
 # Lint all code using Clippy
 lint:
-	cargo clippy --workspace -- -D warnings
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Generate coverage markdown (requires cargo-tarpaulin + grcov)
 coverage-report:

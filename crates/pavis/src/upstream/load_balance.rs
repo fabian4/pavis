@@ -24,6 +24,13 @@ pub fn select_index(
             let pick = rng.random_range(0..total_weight);
             find_index(cumulative_weights, pick)
         }
+        #[allow(unreachable_patterns)]
+        _ => {
+            // Default to Random behavior for unknown load balancers
+            let mut rng = rand::rng();
+            let pick = rng.random_range(0..total_weight);
+            find_index(cumulative_weights, pick)
+        }
     }
 }
 

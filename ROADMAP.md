@@ -11,14 +11,8 @@
 
 This roadmap distinguishes between **Delivery Phases** (user-visible capabilities) and **Technical Debt** (engineering health and optimization).
 
-**Non-Goals (Intentional Scope Limits)**
-- No inbound policy engine
-- No runtime governance
-- No "smart proxy" behavior
-
-**Architectural Rationale (Why Convergence Precedes Expansion)**
-- xDS increases configuration surface area; convergence prevents that complexity from leaking into Relay or Runtime.
-- Explicit, typed, non-bypassable pipeline stages and strict Runtime/Relay/Codec/Ingest separation keep the relay thin, preserve correctness guarantees, and make external control-plane work safe to scale.
+**Architectural Constraint: Frozen Data Plane**
+This roadmap is strictly bounded by the Frozen Data Plane architecture. Features that require runtime code generation, interpretation, or non-deterministic policy evaluation (e.g., WASM, Lua, global rate limiting) are **structurally excluded**. All capabilities must be resolvable at compile-time (Codec stage).
 
 ---
 
@@ -29,7 +23,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 > **Status**: ✅ Complete
 
 - [x] **Core Engine**: Implementation of `ProxyHttp` trait (Pingora integration).
-- [x] **Routing**: Prefix, exact, regex, and wildcard matching.
+- [x] **Routing**: Prefix, exact, regex, and wildcard matching (Compiled ahead-of-time).
 - [x] **Traffic Management**: Weighted splitting and Round-robin load balancing.
 - [x] **Headers**: Request/Response manipulation (Insert/Overwrite).
 - [x] **TLS**: Single-listener support with file-based certificates.
@@ -47,12 +41,12 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [ ] [MUST] **Versioning Policy**: Define strict forward/backward compatibility rules for .pvs artifacts.
 
 ## Phase 3: Dynamic Configuration (The Control Loop)
-> **Goal**: Live, hitless reconfiguration from external sources.
+> **Goal**: Live, hitless reconfiguration via atomic artifact swapping.
 > **Status**: 🚧 In Progress
 
 - [x] **Pipeline**: Source ingestion (File) -> Codec transformation -> Artifact generation.
 - [x] **Distribution API**: Long-polling endpoints (`GET /v1/config`, `POST /v1/publish`).
-- [x] **Hot Reload**: Atomic `ArcSwap` of runtime state without dropping connections.
+- [x] **Hot Reload**: Atomic `ArcSwap` of frozen runtime state without dropping connections.
 - [x] **Durability**: Last-Known-Good (LKG) persistence to disk (`/etc/pavis/config.pvs`) with fsync.
 - [x] **Recovery**: Boot from LKG if control plane is unreachable.
 - [x] **Identity**: Configurable bindings for Admin and Prometheus interfaces.
@@ -60,7 +54,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [ ] [MUST] **CI/CD Pipeline**: Automated Multi-arch Docker builds (linux/amd64, linux/arm64) and Cargo publishing.
 
 ## Phase 3.5: Architecture Convergence & Boundary Hardening
-> **Goal**: Harden pipeline stages and enforce strict component boundaries before xDS expansion. This introduces no new user-visible features.
+> **Goal**: Enforce strict separation between Codec (Compiler) and Runtime (Executor).
 > **Status**: ✅ Complete (Prerequisite for Phase 4)
 
 - [x] **Typed Pipeline Stages**: Explicit, non-bypassable stages (Artifact -> CheckedArtifact -> RuntimeConfig -> ValidatedRuntimeConfig -> PVS).
@@ -71,12 +65,12 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [x] [MUST] **Test Harness**: Standardized integration test bed (Relay + Proxy + Mock Backend + Traffic Gen) for regression testing.
 
 ## Phase 4: Security & Identity (Critical Path)
-> **Goal**: Enterprise-grade security capabilities essential for Zero-Trust environments.
+> **Goal**: Enterprise-grade security via frozen policies.
 > **Status**: ⏳ Planned (Promoted from Phase 6)
 
 - [x] **TLS Termination**: Server-side TLS with single certificate per listener (No SNI).
 - [ ] **mTLS (Mutual TLS)**: Client certificate validation + SPIFFE ID extraction.
-- [ ] **Authorization (RBAC)**: Path/Method based policies (Deny-by-default).
+- [ ] **Authorization (RBAC)**: Static Path/Method based policies (Deny-by-default).
 - [ ] **Identity**: Integration with SPIRE/SPIFFE workload identities.
 
 ## Phase 5: Observability (Critical Path)
@@ -89,7 +83,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [ ] **Runtime Stats**: Internal telemetry (config version, reload counts, payload size).
 
 ## Phase 6: Resilience & Discovery
-> **Goal**: ensuring reliability in dynamic environments.
+> **Goal**: Bounded dynamic behavior for reliability.
 > **Status**: ⏳ Planned
 
 - [ ] **Outlier Detection**: Passive health checks (eject 5xx pods).
@@ -106,11 +100,11 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [ ] **Tuning**: Configurable poll intervals and timeouts.
 
 ## Phase 8: xDS & Service Mesh Integration
-> **Goal**: First-class integration with external control planes (Istio, Kuma).
+> **Goal**: Compile-time adaptation of external control planes.
 > **Status**: ⚠️ Deferred (Blocked by Security & Observability)
 
 - [ ] **xDS Ingest**: gRPC-based ADS (Aggregated Discovery Service) implementation.
-- [ ] **xDS Codec**: Map LDS, RDS, CDS, and EDS into `RuntimeConfig`.
+- [ ] **xDS Codec**: Map LDS, RDS, CDS, and EDS into `RuntimeConfig` (Compiler pass).
 - [ ] **State Synchronization**: Handle snapshot consistency and resource tracking.
 
 ## Phase 9: Kubernetes Integration

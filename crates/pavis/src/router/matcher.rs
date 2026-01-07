@@ -23,6 +23,8 @@ pub(crate) fn match_request<'a>(
                                 .as_ref()
                                 .map(|re| re.is_match(uri_path))
                                 .unwrap_or(false),
+                            #[allow(unreachable_patterns)]
+                            &_ => false,
                         };
 
                         if is_match {
@@ -135,8 +137,8 @@ mod tests {
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,
-                    request_headers: HeadersPolicy::Disabled,
-                    response_headers: HeadersPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled.into(),
+                    response_headers: HeadersPolicy::Disabled.into(),
                     principal: pavis_core::Principal::Any,
                     rewrite: Rewrite {
                         path: RewritePath::Disabled,

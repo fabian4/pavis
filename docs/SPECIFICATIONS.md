@@ -2,11 +2,19 @@
 
 > **Role:** Normative Protocols and File Formats.
 
-## 1. PVS Binary Protocol
+## 1. Frozen Artifact Specification (PVS Protocol)
 
-The `.pvs` file is a rigid, byte-aligned binary artifact designed for direct memory mapping (`mmap`). It allows the data plane to access configuration data with minimal overhead.
+The `.pvs` file is the embodiment of the **Frozen Data Plane**. It is a rigid, byte-aligned binary artifact designed for direct memory mapping (`mmap`).
 
-### 1.1 Binary Layout (Little Endian)
+**Purpose**: To provide the runtime with a zero-copy, pre-validated memory image of the configuration.
+
+### 1.1 Artifact Invariants
+
+1.  **Immutability**: Once written, a `.pvs` file is cryptographically sealed.
+2.  **Completeness**: The artifact contains ALL information required for execution. No external file references (except TLS keys), no environment variables, no dynamic lookups.
+3.  **Validity**: A valid PVS artifact implies that the configuration has passed all semantic validation checks in the Codec.
+
+### 1.2 Binary Layout (Little Endian)
 
 ```text
       0               4               8               12              16      
@@ -39,7 +47,7 @@ The `.pvs` file is a rigid, byte-aligned binary artifact designed for direct mem
 | **0x2C** | 20 | `[u8; 20]` | **Reserved/Padding:** Must be `0x00`. Ensures Payload starts at 64-byte alignment. |
 | **0x40** | N | `Bytes` | **Payload:** The archived `RuntimeConfig` root object. |
 
-### 1.2 The Rkyv Payload
+### 1.3 The Rkyv Payload
 The payload utilizes `rkyv`'s relative pointer architecture.
 *   **[INVARIANT]** The `RuntimeConfig` root object is guaranteed to be located at `PAYLOAD_OFFSET` (`0x40`).
 
@@ -47,7 +55,7 @@ The payload utilizes `rkyv`'s relative pointer architecture.
 
 ## 2. Relay Distribution Protocol
 
-The Relay ensures configuration propagation via HTTP Long-Polling.
+The Relay distributes **Frozen Artifacts** via HTTP Long-Polling. It does not inspect the artifact content, serving only as a distribution mechanism.
 
 ### 2.1 State Machine (Server)
 
@@ -64,9 +72,9 @@ The server uses `tokio::sync::Notify` to handle concurrent waiters without threa
 
 ---
 
-## 3. Configuration Alignment Plan
+## 3. Configuration Alignment Plan (Frozen Purity)
 
-This section records the alignment plan for the configuration system.
+This section records the alignment plan for enforcing the Frozen Data Plane model in the configuration pipeline.
 
 ### Short-term (Alignment & Safety)
 1.  **Explicit Pipeline Boundary**: Enforce check → compile → materialize in `pavis-codec-api`. (Status: Completed)

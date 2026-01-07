@@ -92,6 +92,7 @@ mod tests {
 
     #[test]
     fn test_config_structure() {
+        use std::sync::Arc;
         let config = RuntimeConfig {
             listeners: vec![Listener {
                 name: ListenerName("default".to_string()),
@@ -135,8 +136,8 @@ mod tests {
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,
-                    request_headers: HeadersPolicy::Disabled,
-                    response_headers: HeadersPolicy::Disabled,
+                    request_headers: Arc::new(HeadersPolicy::Disabled),
+                    response_headers: Arc::new(HeadersPolicy::Disabled),
                     principal: Principal::Any,
                     rewrite: Rewrite {
                         path: RewritePath::Disabled,

@@ -68,6 +68,8 @@ impl Service for AccessLogWorker {
                                     }
                                 }
                                 AccessLogPolicy::Disabled => {}
+                                #[allow(unreachable_patterns)]
+                                &_ => {}
                             }
                         }
                         None => break,

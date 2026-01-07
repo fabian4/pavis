@@ -128,6 +128,8 @@ async fn resolve_upstream(
         Discovery::Logical => resolve_logical_dns(&config, &current, &resolver).await,
         Discovery::Strict { .. } => resolve_strict_dns(&config, &resolver).await,
         Discovery::Static => return None,
+        #[allow(unreachable_patterns)]
+        _ => return None,
     };
 
     match result {
@@ -226,6 +228,8 @@ async fn resolve_strict_dns(
                     });
                 }
             }
+            #[allow(unreachable_patterns)]
+            &_ => {}
         }
     }
 

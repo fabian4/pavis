@@ -18,6 +18,7 @@ pub struct Listener {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum WorkerCount {
     Auto,
     Count(NonZeroU16),
@@ -26,6 +27,7 @@ pub enum WorkerCount {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum TlsConfig {
     Disabled,
     Enabled {
@@ -38,6 +40,7 @@ pub enum TlsConfig {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum ClientAuth {
     Disabled,
     Optional { ca_path: Path },

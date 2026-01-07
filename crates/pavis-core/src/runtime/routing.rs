@@ -4,6 +4,7 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU16;
+use std::sync::Arc;
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -20,8 +21,8 @@ pub struct Route {
     pub matcher: PathMatch,
     pub timeout: Timeout,
     pub retry: RetryPolicy,
-    pub request_headers: HeadersPolicy,
-    pub response_headers: HeadersPolicy,
+    pub request_headers: Arc<HeadersPolicy>,
+    pub response_headers: Arc<HeadersPolicy>,
     pub rewrite: Rewrite,
     pub action: RouteAction,
     pub principal: Principal,
@@ -30,6 +31,7 @@ pub struct Route {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum Principal {
     Any,
     Authenticated { spiffe: String },
@@ -39,6 +41,7 @@ pub enum Principal {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum RouteAction {
     Forward(Vec<Destination>),
     Redirect { status: u16, location: String },
@@ -56,6 +59,7 @@ pub struct Rewrite {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum RetryPolicy {
     Disabled,
     Enabled {
@@ -70,6 +74,7 @@ pub enum RetryPolicy {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum PathMatch {
     Prefix { path: Path },
     Exact { path: Path },
@@ -103,6 +108,7 @@ pub struct Destination {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum RewritePath {
     Disabled,
     Prefix { from: Path, to: Path },
@@ -111,6 +117,7 @@ pub enum RewritePath {
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum RewriteHost {
     Disabled,
     Literal { host: Hostname },

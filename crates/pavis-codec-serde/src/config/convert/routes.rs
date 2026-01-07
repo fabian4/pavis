@@ -182,8 +182,8 @@ mod tests {
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
-                request_headers: HeadersPolicy::Disabled,
-                response_headers: HeadersPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled.into(),
+                response_headers: HeadersPolicy::Disabled.into(),
                 principal: pavis_core::Principal::Any,
                 rewrite: Rewrite {
                     path: RewritePath::Prefix {
@@ -333,8 +333,8 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 matcher,
                 timeout,
                 retry,
-                request_headers,
-                response_headers,
+                request_headers: request_headers.into(),
+                response_headers: response_headers.into(),
                 rewrite,
                 action,
                 principal,
@@ -378,6 +378,10 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 CoreRouteAction::Direct { status, body } => {
                     CodecRouteAction::Direct { status, body }
                 }
+                #[allow(unreachable_patterns)]
+                _ => {
+                    panic!("unknown route action variant");
+                }
             };
 
             let timeout = match p.timeout {
@@ -385,6 +389,8 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 pavis_core::Timeout::Enabled(d) => {
                     Some(std::time::Duration::from_millis(d.0.get() as u64))
                 }
+                #[allow(unreachable_patterns)]
+                _ => None,
             };
 
             let retry = match p.retry {
@@ -406,6 +412,8 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                         retry_on: retry_flags_to_values(on),
                     })
                 }
+                #[allow(unreachable_patterns)]
+                _ => None,
             };
 
             let rewrite = match p.rewrite {
@@ -417,10 +425,14 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                     path: match path {
                         pavis_core::RewritePath::Prefix { to, .. } => Some(to.0),
                         pavis_core::RewritePath::Disabled => None,
+                        #[allow(unreachable_patterns)]
+                        _ => None,
                     },
                     host: match host {
                         pavis_core::RewriteHost::Literal { host } => Some(host.0),
                         pavis_core::RewriteHost::Disabled => None,
+                        #[allow(unreachable_patterns)]
+                        _ => None,
                     },
                 }),
             };
@@ -429,6 +441,10 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 pavis_core::PathMatch::Prefix { path } => Matcher::Prefix { path: path.0 },
                 pavis_core::PathMatch::Exact { path } => Matcher::Exact { path: path.0 },
                 pavis_core::PathMatch::Regex { path } => Matcher::Regex { path: path.0 },
+                #[allow(unreachable_patterns)]
+                _ => {
+                    panic!("unknown path match variant");
+                }
             };
 
             let principal = match p.principal {
@@ -439,6 +455,8 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 pavis_core::Principal::Prefix { prefix } => {
                     Some(PrincipalConfig::Prefix { prefix })
                 }
+                #[allow(unreachable_patterns)]
+                _ => None,
             };
 
             paths.push(Route {
@@ -546,6 +564,8 @@ fn from_runtime_headers(h: &pavis_core::HeadersPolicy) -> Option<HeaderOperation
                 .collect(),
             remove_headers: rules.remove_headers.iter().map(|k| k.0.clone()).collect(),
         }),
+        #[allow(unreachable_patterns)]
+        _ => None,
     }
 }
 

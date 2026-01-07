@@ -155,6 +155,8 @@ pub(super) fn from_runtime(listener: RuntimeListener) -> Listener {
     let workers = match listener.workers {
         WorkerCount::Auto => None,
         WorkerCount::Count(count) => Some(count.get()),
+        #[allow(unreachable_patterns)]
+        _ => None,
     };
 
     let tls = match listener.tls {
@@ -172,6 +174,8 @@ pub(super) fn from_runtime(listener: RuntimeListener) -> Listener {
                 ClientAuth::Required { ca_path } => {
                     Some(ClientAuthConfig::Required { ca_path: ca_path.0 })
                 }
+                #[allow(unreachable_patterns)]
+                _ => None,
             };
 
             Some(SerdeTls {
@@ -180,6 +184,8 @@ pub(super) fn from_runtime(listener: RuntimeListener) -> Listener {
                 client_auth: client_auth_config,
             })
         }
+        #[allow(unreachable_patterns)]
+        _ => None,
     };
 
     Listener {

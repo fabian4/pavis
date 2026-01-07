@@ -31,6 +31,8 @@ fn log_level_to_str(level: LogLevel) -> &'static str {
         LogLevel::Info => "info",
         LogLevel::Debug => "debug",
         LogLevel::Trace => "trace",
+        #[allow(unreachable_patterns)]
+        _ => "info", // Default to info for unknown log levels
     }
 }
 
@@ -59,6 +61,7 @@ mod tests {
             AccessLogPolicy::Disabled => "off".to_string(),
             AccessLogPolicy::Stdout => "stdout".to_string(),
             AccessLogPolicy::File(path) => format!("file:{}", path.0),
+            _ => "off".to_string(),
         };
         assert_eq!(desc, "off");
 
@@ -66,6 +69,7 @@ mod tests {
             AccessLogPolicy::Disabled => "off".to_string(),
             AccessLogPolicy::Stdout => "stdout".to_string(),
             AccessLogPolicy::File(path) => format!("file:{}", path.0),
+            _ => "off".to_string(),
         };
         assert_eq!(desc, "stdout");
 
@@ -73,6 +77,7 @@ mod tests {
             AccessLogPolicy::Disabled => "off".to_string(),
             AccessLogPolicy::Stdout => "stdout".to_string(),
             AccessLogPolicy::File(path) => format!("file:{}", path.0),
+            _ => "off".to_string(),
         };
         assert_eq!(desc, "file:/tmp/test");
     }
@@ -110,6 +115,8 @@ fn main() -> Result<()> {
         AccessLogPolicy::Disabled => "off".to_string(),
         AccessLogPolicy::Stdout => "stdout".to_string(),
         AccessLogPolicy::File(path) => format!("file:{}", path.0),
+        #[allow(unreachable_patterns)]
+        &_ => "off".to_string(),
     };
 
     // Listener selection logic
@@ -123,6 +130,8 @@ fn main() -> Result<()> {
         .filter_map(|l| match l.workers {
             WorkerCount::Count(count) => Some(count.get() as u64),
             WorkerCount::Auto => None,
+            #[allow(unreachable_patterns)]
+            _ => None,
         })
         .max();
 
@@ -211,7 +220,15 @@ fn main() -> Result<()> {
                         );
                         // tls_settings = tls_settings.enable_client_cert_verification(&ca_path.0, true)?;
                     }
+                    #[allow(unreachable_patterns)]
+                    &_ => {
+                        // Unknown client auth configuration
+                    }
                 }
+            }
+            #[allow(unreachable_patterns)]
+            &_ => {
+                proxy_service.add_tcp(&listen_addr_str);
             }
         }
 

@@ -160,6 +160,8 @@ pub fn apply_request_headers(req: &mut RequestHeader, headers: &HeadersPolicy) -
     let rules = match headers {
         HeadersPolicy::Disabled => return Ok(()),
         HeadersPolicy::Enabled { rules } => rules,
+        #[allow(unreachable_patterns)]
+        &_ => return Ok(()),
     };
 
     for (name, value) in &rules.set_headers {
@@ -185,6 +187,8 @@ pub fn apply_response_headers(resp: &mut ResponseHeader, headers: &HeadersPolicy
     let rules = match headers {
         HeadersPolicy::Disabled => return Ok(()),
         HeadersPolicy::Enabled { rules } => rules,
+        #[allow(unreachable_patterns)]
+        &_ => return Ok(()),
     };
 
     for (name, value) in &rules.set_headers {

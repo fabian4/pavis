@@ -50,6 +50,8 @@ fn calculate_path_rewrite(
                     (uri_path == path.0.as_str()).then_some(Cow::Borrowed(to.0.as_str()))
                 }
                 PathMatch::Regex { .. } => None,
+                #[allow(unreachable_patterns)]
+                &_ => None,
             };
 
             match new_path {
@@ -100,6 +102,8 @@ fn calculate_path_rewrite(
                 }
             }
         }
+        #[allow(unreachable_patterns)]
+        &_ => None,
     }
 }
 
@@ -110,8 +114,8 @@ impl ProxyHttp for Proxy {
     fn new_ctx(&self) -> Self::CTX {
         RouterContext {
             upstream_name: None,
-            request_headers: HeadersPolicy::Disabled,
-            response_headers: HeadersPolicy::Disabled,
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
             sni_override: None,
             start_time: std::time::Instant::now(),
             client_identity: None,
@@ -150,6 +154,10 @@ impl ProxyHttp for Proxy {
                     format!("DNS upstream {}:{} not supported yet", host.0, port.0),
                 );
             }
+            #[allow(unreachable_patterns)]
+            &_ => {
+                return Error::e_explain(InternalError, "Unknown endpoint address type");
+            }
         };
 
         tracing::debug!(
@@ -166,9 +174,13 @@ impl ProxyHttp for Proxy {
                 let sni_value = match sni {
                     pavis_core::SniName::Auto => ctx.sni_override.clone(),
                     pavis_core::SniName::Value(name) => Some(name.clone()),
+                    #[allow(unreachable_patterns)]
+                    &_ => None,
                 };
                 (true, sni_value, Some(mode), Some(cert))
             }
+            #[allow(unreachable_patterns)]
+            &_ => (false, None, None, None),
         };
 
         let sni_value = sni
@@ -190,6 +202,12 @@ impl ProxyHttp for Proxy {
                 pavis_core::TlsVerify::CertAndHost => {
                     peer.options.verify_hostname = true;
                     peer.options.verify_cert = true;
+                }
+                #[allow(unreachable_patterns)]
+                &_ => {
+                    // Default to disabled for unknown verify modes
+                    peer.options.verify_hostname = false;
+                    peer.options.verify_cert = false;
                 }
             }
         }
@@ -213,6 +231,10 @@ impl ProxyHttp for Proxy {
                     );
                     // peer.options.set_client_cert(&cert_path.0, &key_path.0)?;
                 }
+                #[allow(unreachable_patterns)]
+                &_ => {
+                    // Unknown client cert configuration
+                }
             }
         }
 
@@ -221,6 +243,8 @@ impl ProxyHttp for Proxy {
             HttpVersion::H1 => peer.options.set_http_version(1, 1),
             HttpVersion::H2 => peer.options.set_http_version(2, 2),
             HttpVersion::H2H1 => peer.options.set_http_version(2, 1),
+            #[allow(unreachable_patterns)]
+            _ => peer.options.set_http_version(1, 1), // Default to H1
         }
 
         // Configure connection pooling
@@ -229,12 +253,16 @@ impl ProxyHttp for Proxy {
             pavis_core::IdleTimeout::Enabled(duration) => {
                 Some(Duration::from_millis(duration.0.get() as u64))
             }
+            #[allow(unreachable_patterns)]
+            _ => None,
         };
         peer.options.connection_timeout = match upstream.pool.connect {
             ConnectTimeout::Disabled => None,
             ConnectTimeout::Enabled(duration) => {
                 Some(Duration::from_millis(duration.0.get() as u64))
             }
+            #[allow(unreachable_patterns)]
+            _ => None,
         };
 
         Ok(Box::new(peer))
@@ -261,6 +289,8 @@ impl ProxyHttp for Proxy {
 
             let host_rewrite = match &route.rewrite.host {
                 pavis_core::RewriteHost::Literal { host } => Some(host),
+                pavis_core::RewriteHost::Disabled => None,
+                #[allow(unreachable_patterns)]
                 _ => None,
             };
 
@@ -324,6 +354,8 @@ impl ProxyHttp for Proxy {
                         .await?;
                     return Ok(true);
                 }
+                #[allow(unreachable_patterns)]
+                _ => {}
             }
         }
 
@@ -366,6 +398,8 @@ fn route_path(route: &pavis_core::Route) -> &str {
         PathMatch::Prefix { path } => path.0.as_str(),
         PathMatch::Exact { path } => path.0.as_str(),
         PathMatch::Regex { path } => path.0.as_str(),
+        #[allow(unreachable_patterns)]
+        &_ => "",
     }
 }
 

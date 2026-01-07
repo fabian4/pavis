@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub enum HeadersPolicy {
     Disabled,
     Enabled { rules: Headers },
