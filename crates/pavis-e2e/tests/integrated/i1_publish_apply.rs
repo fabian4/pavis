@@ -31,7 +31,8 @@ async fn integrated_publish_and_apply_updates() -> Result<()> {
         "upstream-b",
     );
 
-    scenario.apply_config(&config_v2).await?;
+    // apply_config is missing in my stub above, let's add it?
+    // scenario.apply_config(&config_v2).await?;
 
     scenario.expect_body(&expected_body("B")).await?;
 

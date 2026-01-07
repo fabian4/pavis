@@ -116,7 +116,12 @@ wait_for_service() {
 start_containers() {
     local cpu_cores=$1
     local memory_mib=$2
-    
+
+    if [ "$BENCHMARK_TARGET" = "pavis" ]; then
+        echo "Compiling Pavis configuration..."
+        cargo run -p pavctl -- gen "$BENCH_DIR/config/pavis.yaml" "$BENCH_DIR/config/pavis.pvs"
+    fi
+
     echo "Starting ${BENCHMARK_TARGET}: CPU=${cpu_cores}, Memory=${memory_mib}MiB"
     
     cd "$BENCH_DIR"

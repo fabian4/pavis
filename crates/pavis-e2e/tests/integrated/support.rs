@@ -370,9 +370,7 @@ impl PavisEnv {
                 .stderr(Stdio::null())
                 .status();
         }
-        if let (Some(project), Some(compose_file)) =
-            (self.compose_project.take(), self.compose_file.as_ref())
-        {
+        if let (Some(project), Some(compose_file)) = (self.compose_project.take(), self.compose_file.as_ref()) {
             let action = if self.compose_shared { "stop" } else { "down" };
             let mut args = vec![
                 "compose",
@@ -590,7 +588,7 @@ pub async fn wait_for_body(base_url: &str, expected: &str) -> Result<()> {
         if let Ok(resp) = client.get(format!("{base_url}/")).send().await {
             if let Ok(text) = resp.text().await {
                 if text.contains(expected) {
-                    return Ok(());
+                    return Ok(())
                 }
             }
         }
@@ -617,7 +615,7 @@ pub async fn wait_for_version(path: &Path, expected: u64) -> Result<()> {
         }
         if let Ok(contents) = std::fs::read_to_string(path) {
             if contents.trim() == expected.to_string() {
-                return Ok(());
+                return Ok(())
             }
         }
         tokio::time::sleep(Duration::from_millis(200)).await;

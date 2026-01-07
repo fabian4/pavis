@@ -1,30 +1,19 @@
 [package]
 name = "pavis-e2e"
 version = "0.0.0"
-edition = "2024"
+edition = "2021"
 publish = false
 
 [dependencies]
 anyhow = { workspace = true }
-async-trait = { workspace = true }
-axum = "0.7"
-hyper = { version = "1", features = ["full"] }
-hyper-util = { version = "0.1", features = ["client", "http1", "client-legacy"] }
-http-body-util = "0.1"
-pavis-core = { path = "../pavis-core", features = ["serde"] }
-pavis-codec-api = { path = "../pavis-codec-api" }
-pavis-codec-serde = { path = "../pavis-codec-serde" }
-pavis-ingest-api = { path = "../pavis-ingest-api" }
-pavis-pvs = { path = "../pavis-pvs" }
-reqwest = { version = "0.12", features = ["json", "native-tls"] }
-chrono = "0.4"
-serde = { workspace = true }
-serde_json = "1.0"
-serde_yaml = "0.9"
 tokio = { workspace = true, features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { workspace = true }
+serde_yaml = "0.9"
+pavis-core = { path = "../pavis-core" }
+pavis-pvs = { path = "../pavis-pvs" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-tempfile = "3"
-bytes = "1"
 
 [dev-dependencies]
+tokio = { workspace = true }

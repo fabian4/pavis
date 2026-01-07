@@ -1,23 +1,27 @@
-server:
-  listen_addr: "0.0.0.0:8080"
+listeners:
+  - name: "benchmark"
+    address: "0.0.0.0:8080"
+    workers: 4
 
 telemetry:
   level: "warn"
   pingora: "error"
-  access_log: "false"
+  access_log: "off"
 
 upstreams:
   - name: "backend"
-    load_balancer: "round-robin"
+    discovery: "logical"
+    balancer: "round-robin"
+    protocol: "h1"
     endpoints:
-      - ip: "backend"
+      - address: "backend"
         port: 80
 
 routes:
   - host: "*"
     paths:
-      - match_type: "prefix"
-        path: "/"
+      - matcher: !prefix
+          path: "/"
         destinations:
           - upstream: "backend"
             weight: 100

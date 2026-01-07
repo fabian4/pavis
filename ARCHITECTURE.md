@@ -8,20 +8,30 @@ Instead, Pavis treats configuration as a compilation target. All routing logic, 
 
 ### 1.1 Compile-Time Resolution Pipeline
 
-```text
-  Source Type         Connectivity (Ingest)      Transformation (Codec)      Distribution & Tools           Data Plane
-┌──────────────┐      ┌──────────────────┐                                  ┌────────────────────┐      ┌──────────────────┐
-│ Mesh (Istio) │─────▶│ pavis-ingest-xds │──┐   ┌────────────────────┐  ┌──▶│    pavis-relay     │─────▶│    pavis-pvs     │
-└──────────────┘      └──────────────────┘  ├──▶│  pavis-codec-xds   │──│   │ (Artifact Engine)  │  ┌──▶│ (Binary Protocol)│
-┌──────────────┐      ┌──────────────────┐  │   └────────────────────┘  │   └──────────▲─────────┘  │   └──────────────────┘
-│ Mesh (Kuma)  │─────▶│ pavis-ingest-xds │──┘                           │              │            │             
-└──────────────┘      └──────────────────┘                              │              │            │             
-┌──────────────┐      ┌──────────────────┐      ┌────────────────────┐  │              │ (apply)    │   ┌──────────────────┐
-│ Kubernetes   │─────▶│ pavis-ingest-k8s │─────▶│  pavis-codec-crd   │──│              │            └──▶│      pavis       │
-└──────────────┘      └──────────────────┘      └────────────────────┘  │   ┌──────────┴─────────┐      │    (Runtime)     │
-┌──────────────┐      ┌──────────────────┐      ┌───────────────────┐  │   │       pavctl       │      └────────▲─────────┘
-│ Static Files │─────▶│ pavis-ingest-file │─────▶│   pavis-codec-*   │──┘   │   (Tool / CLI)     │──────(debug)──┘
-└──────────────┘      └───────────────────┘      └───────────────────┘      └────────────────────┘
+```mermaid
+flowchart LR
+  Source
+  Pavctl
+
+  subgraph Relay
+    direction LR
+      direction LR
+      Ingest
+      Codec
+      Ingest --> Codec
+  end
+
+  PVS
+  
+  subgraph Data Plane
+      Runtime
+  end
+
+  Source <--> Ingest
+  Codec --> PVS
+  PVS --> Runtime
+  Pavctl --> Source
+  Pavctl --> PVS
 ```
 
 The data flow is unidirectional and strictly typed:
@@ -32,16 +42,27 @@ This pipeline enforces the Frozen model:
 *   **Codec**: Compilation. Resolves defaults, validates semantics, and freezes policy.
 *   **Runtime**: Execution. Pure mechanism; no policy capability.
 
-### 1.2 Outbound-First Scope
+### 1.2 Inbound & Outbound Scope
 
-The Frozen Data Plane model aligns naturally with **sidecar (outbound)** deployments where the configuration scope is bounded (local application dependencies).
-Inbound (Gateway) deployments often require dynamic policy evaluation (OIDC, Rate Limiting via Redis) which violates the strict determinism of the Frozen model. While Pavis supports inbound traffic, it refuses to embed dynamic policy engines to support complex gateway use-cases.
+The Frozen Data Plane model unifies Inbound (Ingress) and Outbound (Sidecar) traffic under a single deterministic constraint.
+
+*   **Outbound (Sidecar)**: The primary deployment model. Configuration scope is bounded to local application dependencies.
+*   **Inbound (Ingress)**: Fully supported within the Frozen Data Plane model. Use-cases requiring dynamic state (e.g., OIDC flows, Redis-backed Rate Limiting) are explicitly rejected by design. All Inbound policies must be resolvable Ahead-of-Time.
 
 ### 1.3 Terminology
 
 - **SourceArtifact**: Raw input bytes (YAML, xDS Protobuf) + metadata.
 - **PVS Artifact**: The frozen, zero-copy binary artifact executed by the runtime.
 - **RuntimeConfig**: The fully materialized, in-memory representation of the frozen state.
+
+### 1.4 Non-Goals
+
+Pavis is strictly scoped to enforce architectural discipline. It intentionally avoids features that compromise the Frozen Data Plane model.
+
+*   **Not a General-Purpose L7 Gateway**: Pavis does not support arbitrary L7 manipulation, OIDC flows, or complex ingress logic that requires dynamic state.
+*   **No Runtime Extensibility**: There is no support for WASM, Lua, or other runtime scripting. All policy logic must be compiled into the native Rust binary.
+*   **No Partial Recovery**: Configuration is atomic. If any part of a `.pvs` artifact is invalid, the entire artifact is rejected. There is no "best-effort" loading.
+*   **No Envoy Parity**: Pavis consumes xDS as an input format but does not aim for behavioral parity with Envoy. It implements its own opinionated semantics.
 
 ## 2. Components & Boundaries
 
@@ -92,15 +113,18 @@ The following rules are absolute consequences of the Frozen Data Plane.
 *   **Failure:** The runtime fails immediately if the artifact is structurally invalid; it does not attempt recovery or compensation.
 
 #### .pvs Artifacts
-*   **Nature:** Frozen.
-*   **Guarantee:** A `.pvs` compiled today will execute identically on future runtime versions. Policy evolution happens in the Codec, not the Runtime.
+*   **Nature:** Sealed Execution Contract.
+*   **Guarantee:** The `.pvs` artifact is a self-contained, versioned binary.
+    *   **Forward Compatibility:** Explicitly unsupported. The Runtime **MUST** reject artifacts with a newer schema version than it understands.
+    *   **Backward Compatibility:** Handled exclusively in the Codec. The Runtime is kept simple and does not contain compatibility shims for older artifact versions.
+    *   **Immutability:** Once generated, the artifact represents a final, unchangeable state.
 
 ### 3.4 Frozen Runtime State
 
-The Runtime consumes a configuration where all policy decisions are **frozen**.
+The Runtime consumes a configuration where all policy decisions have been made at **compile time**.
 
 *   **Explicit State**: Features are `Enabled` or `Disabled`. There is no `Auto` state at runtime (except for system resources like threads).
-*   **No Inference**: The Runtime executes instructions; it does not interpret intent.
+*   **No Inference**: The Runtime executes instructions; it does not infer intent. "Missing" configuration is a compile-time error, not a runtime default.
 *   **Deterministic Time**: Timeouts are materialized as fixed `u32` milliseconds.
 
 ## 4. Implementation Internals
@@ -110,20 +134,23 @@ The Runtime consumes a configuration where all policy decisions are **frozen**.
 Pavis operates as an L7 proxy. Its pipeline is fixed and optimized for the frozen model:
 
 1.  **Accept**: TCP accept.
-2.  **Handshake**: TLS handshake using explicit certificates from the frozen config.
+2.  **Handshake**: TLS/mTLS handshake using explicit certificates defined in the frozen config.
 3.  **Decode**: HTTP/1.1 or H2 parsing.
-4.  **Match**: `Router` executes O(1) or O(log N) lookups against the frozen routing table.
-5.  **Action**: Executes the pre-compiled `RouteAction`.
+4.  **Policy**: Enforce frozen RBAC and validation rules immediately after decoding.
+5.  **Match**: `Router` executes O(1) or O(log N) lookups against the frozen routing table.
+6.  **Action**: Executes the pre-compiled `RouteAction` (Load Balance, Forward, or Reject).
 
 ### 4.2 Runtime Memory Lifecycle (RCU)
 
-Hot reloading is achieved via atomic pointer swaps of the frozen state.
+Hot reloading is strictly defined as **atomic state replacement, not mutation**. The Runtime never modifies the active configuration structure.
 
 1.  **Stage**: Download `.pvs`.
 2.  **Verify**: Cryptographic verification of the frozen artifact.
 3.  **Map**: Memory-map the artifact.
-4.  **Swap**: Atomic replacement of the configuration pointer.
-5.  **Reclaim**: Old state is dropped when refcount hits zero.
+4.  **Swap**: Atomic replacement of the configuration pointer (ArcSwap).
+5.  **Reclaim**: Old state is dropped when the last active request completes.
+
+Throughout this process, the `RuntimeConfig` remains immutable.
 
 ### 4.3 Networking & Discovery
 
@@ -145,5 +172,7 @@ The xDS Codec functions as a **Compiler**:
 2.  **Normalize**: Flatten disparate xDS resources into a coherent model.
 3.  **Map**: Transform Envoy semantics into Pavis frozen semantics.
 4.  **Validate**: Final pass before artifact generation.
+
+**Note:** Pavis treats xDS as an input language, not a behavioral contract. It does **NOT** aim for semantic equivalence with Envoy. Where xDS concepts conflict with the Frozen Data Plane (e.g., dynamic scripting), they are rejected or mapped to deterministic equivalents.
 
 The Runtime **never** connects to xDS directly; this would violate the Frozen Data Plane model by introducing runtime complexity and non-determinism.

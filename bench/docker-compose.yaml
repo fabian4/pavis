@@ -32,7 +32,7 @@ services:
       dockerfile: crates/pavis/Dockerfile
     container_name: bench-pavis
     volumes:
-      - ./config/pavis.yaml:/etc/pavis/config.yaml:ro
+      - ./config/pavis.pvs:/etc/pavis/config.pvs:ro
     ports:
       - "8080:8080"
     depends_on:
