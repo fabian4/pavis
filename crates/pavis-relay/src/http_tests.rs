@@ -1,6 +1,3 @@
-#[path = "../../pavis-e2e/src/support/pvs.rs"]
-mod pvs_support;
-
 use crate::routes::router;
 use crate::state::{RelayOptions, RelayState};
 use axum::body::{Body, Bytes};
@@ -8,6 +5,42 @@ use axum::http::HeaderName;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::util::ServiceExt;
+
+fn build_pvs_bytes(label: &str) -> Vec<u8> {
+    use pavis_core::{
+        AccessLogPolicy, Listener, ListenerName, Metrics, RuntimeConfig, ServiceName, Telemetry,
+        TlsConfig, TracingPolicy, WorkerCount,
+    };
+
+    let config = RuntimeConfig {
+        listeners: vec![Listener {
+            name: ListenerName("default".to_string()),
+            address: "127.0.0.1:8080".parse().expect("addr"),
+            workers: WorkerCount::Auto,
+            tls: TlsConfig::Disabled,
+        }],
+        telemetry: Telemetry {
+            level: pavis_core::LogLevel::Info,
+            pingora: pavis_core::LogLevel::Info,
+            service_name: ServiceName(label.to_string()),
+            metrics: Metrics::Disabled,
+            access_log: AccessLogPolicy::Stdout,
+            tracing: TracingPolicy::Disabled,
+        },
+        upstreams: Vec::new(),
+        routes: Vec::new(),
+    };
+
+    let dir = std::env::temp_dir();
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = std::process::id();
+    let path = dir.join(format!("pavis_pvs_helper_{label}_{pid}_{id}.pvs"));
+    pavis_pvs::write(&path, &config).expect("write config");
+    let bytes = std::fs::read(&path).expect("read config");
+    let _ = std::fs::remove_file(&path);
+    bytes
+}
 
 fn test_state() -> RelayState {
     RelayState::new(7, valid_pvs_bytes("seed")).expect("state")
@@ -18,7 +51,7 @@ fn test_state_with_options(options: RelayOptions) -> RelayState {
 }
 
 fn valid_pvs_bytes(label: &str) -> Bytes {
-    Bytes::from(pvs_support::build_pvs_bytes(label))
+    Bytes::from(build_pvs_bytes(label))
 }
 
 #[tokio::test]
@@ -399,10 +432,12 @@ async fn publish_updates_metrics() {
 
 #[tokio::test]
 async fn custom_headers_override_defaults() {
-    let mut options = RelayOptions::default();
-    options.version_header = HeaderName::from_static("x-test-version");
-    options.checksum_header = HeaderName::from_static("x-test-checksum");
-    options.checksum_alg_header = HeaderName::from_static("x-test-checksum-alg");
+    let options = RelayOptions {
+        version_header: HeaderName::from_static("x-test-version"),
+        checksum_header: HeaderName::from_static("x-test-checksum"),
+        checksum_alg_header: HeaderName::from_static("x-test-checksum-alg"),
+        ..Default::default()
+    };
     let app = router(test_state_with_options(options));
 
     let response = app
@@ -453,8 +488,10 @@ async fn test_publish_updates_lkg_on_disk() {
     std::fs::create_dir_all(&dir).unwrap();
     let lkg_path = dir.join("config.pvs");
 
-    let mut options = RelayOptions::default();
-    options.lkg_path = Some(lkg_path.clone());
+    let options = RelayOptions {
+        lkg_path: Some(lkg_path.clone()),
+        ..Default::default()
+    };
     let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
     let app = router(state);
 

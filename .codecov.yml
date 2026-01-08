@@ -3,7 +3,6 @@ coverage:
   round: down
   precision: 2
   ignore:
-    - "crates/pavis-e2e"
     - "crates/*/tests"
     - "crates/**/*tests.rs"
   status:

@@ -296,10 +296,11 @@ async fn start_header_stub(
         let mut map = HeaderMap::new();
         if let Some(h) = headers {
             for (k, v) in h {
-                if let Ok(name) = axum::http::HeaderName::from_bytes(k.as_bytes()) {
-                    if let Ok(val) = axum::http::HeaderValue::from_str(&v) {
-                        map.insert(name, val);
-                    }
+                if let (Ok(name), Ok(val)) = (
+                    axum::http::HeaderName::from_bytes(k.as_bytes()),
+                    axum::http::HeaderValue::from_str(&v),
+                ) {
+                    map.insert(name, val);
                 }
             }
         }

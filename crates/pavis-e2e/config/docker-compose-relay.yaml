@@ -1,8 +1,0 @@
-services:
-  relay:
-    image: ${RELAY_IMAGE:-pavis-relay:ci}
-    ports:
-      - "${RELAY_PORT:-8080}:8080"
-    volumes:
-      - ${RELAY_WORK_DIR:-./relay_tmp}:/relay
-    command: ["--config", "/relay/relay.yaml"]

@@ -203,7 +203,6 @@ fn compaction_level(level: PipelineCompaction) -> CompactionLevel {
 }
 
 #[cfg(test)]
-
 mod tests {
     use super::*;
     use crate::config::PipelineConfig;
@@ -382,8 +381,10 @@ routes: []
     async fn publish_with_retry_fails_eventually() {
         use axum::body::Bytes;
         // Create state with a very small size limit to force failure
-        let mut options = crate::state::RelayOptions::default();
-        options.max_pvs_bytes = 10; // Very small limit
+        let options = crate::state::RelayOptions {
+            max_pvs_bytes: 10, // Very small limit
+            ..Default::default()
+        };
         let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
 
         let config = pavis_core::RuntimeConfig {
@@ -462,9 +463,7 @@ routes: []
         };
         config.codec.kind = CodecKind::Serde;
 
-        let mut options = crate::state::RelayOptions::default();
-        // Disable persistence to simplify
-        options.persistence.enabled = false;
+        let options = crate::state::RelayOptions::default();
 
         let state =
             RelayState::new_with_options(0, axum::body::Bytes::new(), options).expect("state");

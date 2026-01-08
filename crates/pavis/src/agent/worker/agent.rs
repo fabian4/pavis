@@ -43,6 +43,7 @@ impl Service for ConfigAgentWorker {
                     match result {
                         Ok(PollOutcome::Updated) | Ok(PollOutcome::NoChange) => {
                             attempt = 0;
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                         Err(err) => {
                             tracing::warn!(error = %err, "config poll failed");

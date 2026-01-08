@@ -82,7 +82,7 @@ fmt-check:
 
 # Lint all code using Clippy
 lint:
-	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::all
 
 # Generate coverage markdown (requires cargo-tarpaulin + grcov)
 coverage-report:

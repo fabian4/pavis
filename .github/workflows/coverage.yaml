@@ -29,8 +29,6 @@ jobs:
           cargo +nightly tarpaulin \
             --all-features \
             --workspace \
-            --exclude pavis-e2e \
-            --exclude-files 'crates/pavis-e2e/*' \
             --exclude-files 'crates/*/tests/*' \
             --exclude-files 'crates/**/*tests.rs' \
             --out xml

@@ -52,38 +52,19 @@ pub(crate) fn match_request<'a>(
     }
 
     // 2. Try wildcard host matches (order preserved from config)
-    let wildcard_exact = normalized_host
-        .and_then(|host| router.wildcard_exact.get(host))
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    let wildcard_all = router.wildcard_all.as_slice();
-
-    let mut exact_index = 0;
-    let mut all_index = 0;
-
-    while exact_index < wildcard_exact.len() || all_index < wildcard_all.len() {
-        let next = match (wildcard_exact.get(exact_index), wildcard_all.get(all_index)) {
-            (Some(&exact), Some(&all)) => {
-                if exact <= all {
-                    exact_index += 1;
-                    exact
-                } else {
-                    all_index += 1;
-                    all
-                }
-            }
-            (Some(&exact), None) => {
-                exact_index += 1;
-                exact
-            }
-            (None, Some(&all)) => {
-                all_index += 1;
-                all
-            }
-            (None, None) => break,
+    for vhost in &router.wildcard_hosts {
+        let pattern = &vhost.config.host.0;
+        let is_match = if pattern == "*" {
+            true
+        } else if let Some(suffix) = pattern.strip_prefix("*.") {
+            normalized_host.is_some_and(|h| h.ends_with(suffix))
+        } else if let Some(prefix) = pattern.strip_suffix(".*") {
+            normalized_host.is_some_and(|h| h.starts_with(prefix))
+        } else {
+            normalized_host.is_some_and(|h| h == pattern)
         };
 
-        if let Some(vhost) = router.wildcard_hosts.get(next) {
+        if is_match {
             if let Some(found) = try_match(vhost) {
                 return Some(found);
             }
@@ -159,8 +140,6 @@ mod tests {
         let router = Router {
             exact_hosts: HashMap::new(),
             wildcard_hosts: vec![vhost],
-            wildcard_exact: HashMap::new(),
-            wildcard_all: vec![0],
         };
 
         let (_, res) = match_request(&router, None, "/exact").unwrap();

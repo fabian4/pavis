@@ -151,6 +151,9 @@ pub(crate) async fn post_publish(
     };
 
     let (payload, meta) = verified_payload(verified);
+    state.metrics().inc_publish_ok();
+    state.set_last_error(None).await;
+
     if let Err(err) = state
         .publish(proposed_version, payload.clone(), meta.clone())
         .await
@@ -160,28 +163,9 @@ pub(crate) async fn post_publish(
         let status = match err {
             crate::state::RelayError::Policy(_) => StatusCode::PAYLOAD_TOO_LARGE,
             crate::state::RelayError::VersionMonotonicity { .. } => StatusCode::CONFLICT,
-            _ => StatusCode::CONFLICT,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         return (status, format!("{err}\n")).into_response();
-    }
-    state.metrics().inc_publish_ok();
-    state.set_last_error(None).await;
-    if let Some(path) = options.lkg_path.as_ref() {
-        if let Some(parent) = path.parent() {
-            match tokio::fs::create_dir_all(parent).await {
-                Ok(()) => {}
-                Err(err) => {
-                    state.metrics().inc_publish_fail();
-                    state.set_last_error(Some(err.to_string())).await;
-                    return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response();
-                }
-            }
-        }
-        if let Err(err) = tokio::fs::write(path, &payload).await {
-            state.metrics().inc_publish_fail();
-            state.set_last_error(Some(err.to_string())).await;
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}\n")).into_response();
-        }
     }
 
     let checksum = meta.checksum;
@@ -299,9 +283,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let lkg = dir.join("config.pvs");
 
-        let mut options = RelayOptions::default();
-        options.lkg_path = Some(lkg.clone());
-        options.max_pvs_bytes = 1000; // ample limit initially
+        let options = RelayOptions {
+            lkg_path: Some(lkg.clone()),
+            max_pvs_bytes: 1000,
+            ..Default::default()
+        };
 
         let state = Arc::new(
             RelayState::new_with_options(10, Bytes::new(), options.clone()).expect("state"),

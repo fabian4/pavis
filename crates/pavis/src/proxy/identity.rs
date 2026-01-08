@@ -73,6 +73,6 @@ mod tests {
         let _extractor = IdentityExtractor::new();
         // Basic smoke test - actual certificate testing would require
         // setting up real certificates and SSL contexts
-        assert!(true);
+        // Placeholder test
     }
 }

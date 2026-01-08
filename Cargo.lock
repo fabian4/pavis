@@ -2031,21 +2031,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pavis-e2e"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "pavis-core",
- "pavis-pvs",
- "reqwest",
- "serde",
- "serde_yaml 0.9.34+deprecated",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "pavis-ingest-api"
 version = "0.0.0"
 dependencies = [

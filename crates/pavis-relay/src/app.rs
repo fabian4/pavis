@@ -1,5 +1,4 @@
 use crate::codec::BoxedCodec;
-use crate::config::PersistenceOptions;
 use crate::config::{self, PipelineConfig, PipelineOptions};
 use crate::ingest::{BoxedIngest, boxed_ingest};
 use crate::pipeline::start_pipeline;
@@ -114,13 +113,6 @@ fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
         long_poll_enabled: config.distribution.long_poll.enabled,
         identity_name: config.identity.name.clone(),
         lkg_path: None,
-        persistence: PersistenceOptions {
-            enabled: config.persistence.enabled,
-            flush_interval: Duration::from_millis(config.persistence.flush_interval),
-            retry_max: config.persistence.retry.max,
-            retry_backoff: Duration::from_millis(config.persistence.retry.backoff.min),
-            retry_backoff_max: Duration::from_millis(config.persistence.retry.backoff.max),
-        },
         max_pvs_bytes: config.artifact.limits.max_pvs_bytes,
     })
 }

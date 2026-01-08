@@ -14,34 +14,34 @@ e2e-pavis: e2e-pavis-binary
 
 # Run Pavis E2E tests in binary mode (local proxy, dockerized backends)
 e2e-pavis-binary:
-	TEST_MODE=binary bash ./crates/pavis-e2e/scripts/e2e-pavis.sh
+	TEST_MODE=binary bash tests/run.sh pavis
 
 # Run Pavis E2E tests in docker mode (all components dockerized)
 e2e-pavis-docker:
-	TEST_MODE=docker bash ./crates/pavis-e2e/scripts/e2e-pavis.sh
+	TEST_MODE=docker bash tests/run.sh pavis
 
 # Run Relay E2E tests (defaults to binary mode)
 e2e-relay: e2e-relay-binary
 
 # Run Relay E2E tests in binary mode
 e2e-relay-binary:
-	TEST_MODE=binary bash ./crates/pavis-e2e/scripts/e2e-relay.sh
+	TEST_MODE=binary bash tests/run.sh relay
 
 # Run Relay E2E tests in docker mode
 e2e-relay-docker:
-	TEST_MODE=docker bash ./crates/pavis-e2e/scripts/e2e-relay.sh
+	TEST_MODE=docker bash tests/run.sh relay
 
 # Run Integrated E2E tests (defaults to binary mode)
 e2e-integrated: e2e-integrated-binary
 
 # Run Integrated E2E tests in binary mode
 e2e-integrated-binary:
-	TEST_MODE=binary bash ./crates/pavis-e2e/scripts/e2e-integrated.sh
+	TEST_MODE=binary bash tests/run.sh integrated
 
 # Run Integrated E2E tests in docker mode
 e2e-integrated-docker:
-	TEST_MODE=docker bash ./crates/pavis-e2e/scripts/e2e-integrated.sh
+	TEST_MODE=docker bash tests/run.sh integrated
 
-# Stop and cleanup the E2E environment
+# Stop and cleanup the shared E2E environment (upstreams)
 e2e-down:
-	cd crates/pavis-e2e/config && docker compose down
+	docker compose -f tests/config/upstreams.yaml down -v

@@ -33,16 +33,12 @@ pub(crate) struct CompiledVirtualHost {
 pub struct Router {
     pub(crate) exact_hosts: HashMap<String, CompiledVirtualHost>,
     pub(crate) wildcard_hosts: Vec<CompiledVirtualHost>,
-    pub(crate) wildcard_exact: HashMap<String, Vec<usize>>,
-    pub(crate) wildcard_all: Vec<usize>,
 }
 
 impl Router {
     pub fn new(routes: Vec<VirtualHost>) -> Result<Self> {
         let mut exact_hosts = HashMap::new();
         let mut wildcard_hosts = Vec::new();
-        let mut wildcard_exact: HashMap<String, Vec<usize>> = HashMap::new();
-        let mut wildcard_all = Vec::new();
 
         for vhost in routes {
             let mut zones = Vec::new();
@@ -117,14 +113,7 @@ impl Router {
             };
 
             if compiled_vhost.config.host.0 == "*" || compiled_vhost.config.host.0.contains('*') {
-                let index = wildcard_hosts.len();
-                let host = compiled_vhost.config.host.0.clone();
                 wildcard_hosts.push(compiled_vhost);
-                if host == "*" {
-                    wildcard_all.push(index);
-                } else {
-                    wildcard_exact.entry(host).or_default().push(index);
-                }
             } else {
                 exact_hosts.insert(compiled_vhost.config.host.0.clone(), compiled_vhost);
             }
@@ -132,8 +121,6 @@ impl Router {
         Ok(Self {
             exact_hosts,
             wildcard_hosts,
-            wildcard_exact,
-            wildcard_all,
         })
     }
 

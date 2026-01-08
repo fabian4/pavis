@@ -734,7 +734,7 @@ async fn request_filter_handles_redirect_action() {
     let result = proxy.request_filter(&mut session, &mut ctx).await;
 
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), true); // Should stop processing
+    assert!(result.unwrap()); // Should stop processing
 
     // Read the response
     let mut buf = vec![0u8; 1024];
@@ -785,7 +785,7 @@ async fn request_filter_handles_direct_action() {
     let result = proxy.request_filter(&mut session, &mut ctx).await;
 
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), true); // Should stop processing
+    assert!(result.unwrap()); // Should stop processing
 
     // Read the response
     let mut buf = vec![0u8; 1024];
@@ -837,7 +837,7 @@ async fn request_filter_redirect_with_different_status_codes() {
     let result = proxy.request_filter(&mut session, &mut ctx).await;
 
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), true);
+    assert!(result.unwrap());
 
     let mut buf = vec![0u8; 1024];
     let n = client.read(&mut buf).await.unwrap();
@@ -887,7 +887,7 @@ async fn request_filter_direct_with_custom_status() {
     let result = proxy.request_filter(&mut session, &mut ctx).await;
 
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), true);
+    assert!(result.unwrap());
 
     let mut buf = vec![0u8; 1024];
     let n = client.read(&mut buf).await.unwrap();

@@ -115,7 +115,7 @@ relay:
         let normalized = normalize_root(value).expect("normalize");
         let map = normalized.as_mapping().expect("map");
         assert!(
-            map.get(&serde_yaml::Value::String("security".to_string()))
+            map.get(serde_yaml::Value::String("security".to_string()))
                 .is_none()
         );
     }

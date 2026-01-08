@@ -1,4 +1,3 @@
-use crate::config::PersistenceOptions;
 use axum::body::Bytes;
 use pavis_core::ValidatedRuntimeConfig;
 use pavis_pvs::PvsHeaderView;
@@ -7,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
-use tokio::sync::{Notify, RwLock, watch};
+use tokio::sync::{Notify, RwLock};
 use tracing::{debug, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -104,7 +103,6 @@ pub(crate) struct RelayState {
     metrics: Arc<RelayMetrics>,
     last_error: Arc<RwLock<Option<String>>>,
     started_at: SystemTime,
-    persistence: Option<PersistenceHandle>,
 }
 
 #[derive(Clone, Debug)]
@@ -116,7 +114,6 @@ pub(crate) struct RelayOptions {
     pub long_poll_enabled: bool,
     pub identity_name: String,
     pub lkg_path: Option<PathBuf>,
-    pub persistence: PersistenceOptions,
     pub max_pvs_bytes: u64,
 }
 
@@ -134,21 +131,8 @@ impl Default for RelayOptions {
             long_poll_enabled: true,
             identity_name: String::new(),
             lkg_path: None,
-            persistence: PersistenceOptions::default(),
             max_pvs_bytes: 0,
         }
-    }
-}
-
-#[derive(Clone)]
-struct PersistenceHandle {
-    tx: watch::Sender<Bytes>,
-    shutdown: watch::Sender<bool>,
-}
-
-impl Drop for PersistenceHandle {
-    fn drop(&mut self) {
-        let _ = self.shutdown.send(true);
     }
 }
 
@@ -179,21 +163,7 @@ impl RelayState {
         };
         let mut history = HashMap::new();
         history.insert(version, artifact.clone());
-        let persistence =
-            if let (Some(path), true) = (options.lkg_path.clone(), options.persistence.enabled) {
-                if tokio::runtime::Handle::try_current().is_ok() {
-                    Some(start_persistence(
-                        path,
-                        options.persistence,
-                        last_error.clone(),
-                    ))
-                } else {
-                    warn!("Persistence disabled (no Tokio runtime available)");
-                    None
-                }
-            } else {
-                None
-            };
+
         Ok(Self {
             inner: Arc::new(RwLock::new(RelaySnapshot {
                 version,
@@ -206,7 +176,6 @@ impl RelayState {
             metrics: Arc::new(RelayMetrics::default()),
             last_error,
             started_at: SystemTime::now(),
-            persistence,
         })
     }
 
@@ -250,6 +219,16 @@ impl RelayState {
             inner.version, proposed_version, meta.checksum
         );
 
+        if let Some(path) = self.options.lkg_path.as_ref() {
+            if let Some(parent) = path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            if let Err(err) = tokio::fs::write(path, &bytes).await {
+                warn!("Failed to write LKG during publish_auto: {}", err);
+                return Err(RelayError::Storage(err));
+            }
+        }
+
         inner.version = proposed_version;
         let artifact = RelayArtifact {
             bytes: bytes.clone(),
@@ -260,16 +239,11 @@ impl RelayState {
         inner.updated_at = now;
         drop(inner);
 
-        let bytes_for_persist = bytes.clone();
         let mut history = self.history.write().await;
         history.insert(proposed_version, artifact);
         drop(history);
         self.notify.notify_waiters();
         self.metrics.inc_publish_ok();
-
-        if let Some(persistence) = self.persistence.as_ref() {
-            let _ = persistence.tx.send_replace(bytes_for_persist);
-        }
 
         Ok(proposed_version)
     }
@@ -284,6 +258,16 @@ impl RelayState {
         let mut inner = self.inner.write().await;
         execute_plan(inner.version, proposed_version)?;
 
+        if let Some(path) = self.options.lkg_path.as_ref() {
+            if let Some(parent) = path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            if let Err(err) = tokio::fs::write(path, &bytes).await {
+                warn!("Failed to write LKG during publish: {}", err);
+                return Err(RelayError::Storage(err));
+            }
+        }
+
         let now = SystemTime::now();
         inner.version = proposed_version;
         let artifact = RelayArtifact {
@@ -295,15 +279,10 @@ impl RelayState {
         inner.updated_at = now;
         drop(inner);
 
-        let bytes_for_persist = bytes.clone();
         let mut history = self.history.write().await;
         history.insert(proposed_version, artifact);
         drop(history);
         self.notify.notify_waiters();
-
-        if let Some(persistence) = self.persistence.as_ref() {
-            let _ = persistence.tx.send_replace(bytes_for_persist);
-        }
 
         Ok(())
     }
@@ -352,110 +331,6 @@ impl RelayState {
             )));
         }
         Ok(())
-    }
-}
-
-fn start_persistence(
-    path: PathBuf,
-    options: PersistenceOptions,
-    last_error: Arc<RwLock<Option<String>>>,
-) -> PersistenceHandle {
-    let (tx, mut rx) = watch::channel(Bytes::new());
-    let (shutdown, mut shutdown_rx) = watch::channel(false);
-
-    tokio::spawn(async move {
-        let mut pending: Option<Bytes> = None;
-        let mut interval = tokio::time::interval(options.flush_interval);
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    if rx.has_changed().unwrap_or(false) {
-                        let latest = rx.borrow_and_update().clone();
-                        pending = Some(latest);
-                    }
-                }
-                _ = rx.changed() => {
-                    let latest = rx.borrow_and_update().clone();
-                    pending = Some(latest);
-                }
-                _ = shutdown_rx.changed() => {
-                    if *shutdown_rx.borrow() {
-                        let bytes = pending.take().or_else(|| {
-                            let current = rx.borrow().clone();
-                            if current.is_empty() {
-                                None
-                            } else {
-                                Some(current)
-                            }
-                        });
-
-                        if let Some(bytes) = bytes {
-                            let _ = persist_with_retry(&path, bytes, options)
-                                .await
-                                .inspect_err(|err| warn!("Persist to disk failed during shutdown: {}", err));
-                        }
-                        break;
-                    }
-                }
-            }
-
-            let Some(bytes) = pending.clone() else {
-                continue;
-            };
-
-            match persist_with_retry(&path, bytes.clone(), options).await {
-                Ok(()) => {
-                    let mut guard = last_error.write().await;
-                    *guard = None;
-                    pending = None;
-                }
-                Err(err) => {
-                    warn!("Persist to disk failed: {}", err);
-                    let mut guard = last_error.write().await;
-                    *guard = Some(err.to_string());
-                }
-            }
-        }
-    });
-
-    PersistenceHandle { tx, shutdown }
-}
-
-async fn persist_with_retry(
-    path: &std::path::Path,
-    bytes: Bytes,
-    options: PersistenceOptions,
-) -> Result<(), RelayError> {
-    let mut attempt = 0;
-    let mut delay = options.retry_backoff;
-    let tmp_path = path.with_extension("tmp");
-
-    loop {
-        attempt += 1;
-        let write_result = async {
-            use tokio::io::AsyncWriteExt;
-            let mut file = tokio::fs::File::create(&tmp_path).await?;
-            file.write_all(&bytes).await?;
-            file.sync_all().await?;
-            drop(file);
-            tokio::fs::rename(&tmp_path, path).await?;
-            Ok::<(), std::io::Error>(())
-        }
-        .await;
-
-        match write_result {
-            Ok(()) => return Ok(()),
-            Err(err) if attempt <= options.retry_max => {
-                warn!(
-                    "Persist attempt {} of {} failed: {}",
-                    attempt, options.retry_max, err
-                );
-                tokio::time::sleep(delay).await;
-                delay = std::cmp::min(delay.saturating_mul(2), options.retry_backoff_max);
-            }
-            Err(err) => return Err(RelayError::Storage(err)),
-        }
     }
 }
 

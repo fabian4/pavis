@@ -69,9 +69,9 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 > **Status**: ⏳ Planned (Promoted from Phase 6)
 
 - [x] **TLS Termination**: Server-side TLS with single certificate per listener (No SNI).
-- [ ] **mTLS (Mutual TLS)**: Client certificate validation + SPIFFE ID extraction.
-- [ ] **Authorization (RBAC)**: Static Path/Method based policies (Deny-by-default).
-- [ ] **Identity**: Integration with SPIRE/SPIFFE workload identities.
+- [ ] [TODO] **mTLS (Mutual TLS)**: Client certificate validation + SPIFFE ID extraction.
+- [ ] [TODO] **Authorization (RBAC)**: Static Path/Method based policies (Deny-by-default).
+- [ ] [TODO] **Identity**: Integration with SPIRE/SPIFFE workload identities.
 
 ## Phase 5: Observability (Critical Path)
 > **Goal**: Deep visibility into proxy behavior required for Operations.

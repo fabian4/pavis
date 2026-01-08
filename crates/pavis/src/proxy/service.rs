@@ -333,21 +333,26 @@ impl ProxyHttp for Proxy {
                 RouteAction::Redirect { status, location } => {
                     let status_code = *status;
                     let location_url = location.clone();
+                    let response_headers = route.response_headers.clone();
                     drop(state);
 
                     let mut resp = ResponseHeader::build(status_code, None)?;
                     resp.insert_header("Location", location_url.as_str())?;
+                    resp.insert_header("Content-Length", "0")?;
+                    apply_response_headers(&mut resp, &response_headers)?;
                     session.write_response_header(Box::new(resp), true).await?;
                     return Ok(true);
                 }
                 RouteAction::Direct { status, body } => {
                     let status_code = *status;
                     let body_content = body.clone();
+                    let response_headers = route.response_headers.clone();
                     drop(state);
 
                     let mut resp = ResponseHeader::build(status_code, None)?;
                     resp.insert_header("Content-Type", "text/plain")?;
                     resp.insert_header("Content-Length", body_content.len().to_string())?;
+                    apply_response_headers(&mut resp, &response_headers)?;
                     session.write_response_header(Box::new(resp), false).await?;
                     session
                         .write_response_body(Some(body_content.into_bytes().into()), true)

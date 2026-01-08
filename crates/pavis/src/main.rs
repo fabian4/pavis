@@ -36,53 +36,6 @@ fn log_level_to_str(level: LogLevel) -> &'static str {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::log_level_to_str;
-    use pavis_core::{AccessLogPolicy, LogLevel, Path};
-
-    #[test]
-    fn log_level_to_str_defaults_to_info() {
-        assert_eq!(log_level_to_str(LogLevel::Info), "info");
-    }
-
-    #[test]
-    fn log_level_to_str_maps_values() {
-        assert_eq!(log_level_to_str(LogLevel::Error), "error");
-        assert_eq!(log_level_to_str(LogLevel::Warn), "warn");
-        assert_eq!(log_level_to_str(LogLevel::Info), "info");
-        assert_eq!(log_level_to_str(LogLevel::Debug), "debug");
-        assert_eq!(log_level_to_str(LogLevel::Trace), "trace");
-    }
-
-    #[test]
-    fn access_log_description_logic() {
-        let desc = match AccessLogPolicy::Disabled {
-            AccessLogPolicy::Disabled => "off".to_string(),
-            AccessLogPolicy::Stdout => "stdout".to_string(),
-            AccessLogPolicy::File(path) => format!("file:{}", path.0),
-            _ => "off".to_string(),
-        };
-        assert_eq!(desc, "off");
-
-        let desc = match AccessLogPolicy::Stdout {
-            AccessLogPolicy::Disabled => "off".to_string(),
-            AccessLogPolicy::Stdout => "stdout".to_string(),
-            AccessLogPolicy::File(path) => format!("file:{}", path.0),
-            _ => "off".to_string(),
-        };
-        assert_eq!(desc, "stdout");
-
-        let desc = match AccessLogPolicy::File(Path("/tmp/test".to_string())) {
-            AccessLogPolicy::Disabled => "off".to_string(),
-            AccessLogPolicy::Stdout => "stdout".to_string(),
-            AccessLogPolicy::File(path) => format!("file:{}", path.0),
-            _ => "off".to_string(),
-        };
-        assert_eq!(desc, "file:/tmp/test");
-    }
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -247,4 +200,51 @@ fn main() -> Result<()> {
         server.add_service(agent.worker());
     }
     server.run_forever();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::log_level_to_str;
+    use pavis_core::{AccessLogPolicy, LogLevel, Path};
+
+    #[test]
+    fn log_level_to_str_defaults_to_info() {
+        assert_eq!(log_level_to_str(LogLevel::Info), "info");
+    }
+
+    #[test]
+    fn log_level_to_str_maps_values() {
+        assert_eq!(log_level_to_str(LogLevel::Error), "error");
+        assert_eq!(log_level_to_str(LogLevel::Warn), "warn");
+        assert_eq!(log_level_to_str(LogLevel::Info), "info");
+        assert_eq!(log_level_to_str(LogLevel::Debug), "debug");
+        assert_eq!(log_level_to_str(LogLevel::Trace), "trace");
+    }
+
+    #[test]
+    fn access_log_description_logic() {
+        let desc = match AccessLogPolicy::Disabled {
+            AccessLogPolicy::Disabled => "off".to_string(),
+            AccessLogPolicy::Stdout => "stdout".to_string(),
+            AccessLogPolicy::File(path) => format!("file:{}", path.0),
+            _ => "off".to_string(),
+        };
+        assert_eq!(desc, "off");
+
+        let desc = match AccessLogPolicy::Stdout {
+            AccessLogPolicy::Disabled => "off".to_string(),
+            AccessLogPolicy::Stdout => "stdout".to_string(),
+            AccessLogPolicy::File(path) => format!("file:{}", path.0),
+            _ => "off".to_string(),
+        };
+        assert_eq!(desc, "stdout");
+
+        let desc = match AccessLogPolicy::File(Path("/tmp/test".to_string())) {
+            AccessLogPolicy::Disabled => "off".to_string(),
+            AccessLogPolicy::Stdout => "stdout".to_string(),
+            AccessLogPolicy::File(path) => format!("file:{}", path.0),
+            _ => "off".to_string(),
+        };
+        assert_eq!(desc, "file:/tmp/test");
+    }
 }
