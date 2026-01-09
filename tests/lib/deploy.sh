@@ -41,7 +41,8 @@ run_pavis() {
             run -d --rm
             --user "$(id -u):$(id -g)"
             --network host
-            -v "$TEST_TMP:$TEST_TMP:ro"
+            -e RUST_LOG=debug
+            -v "$TEST_TMP:$TEST_TMP:rw"
         )
         local cmd_args=("--config" "$config_path")
         if [ -n "$relay_url" ]; then
@@ -64,6 +65,7 @@ run_relay() {
         local container_id=$(docker run -d --rm \
             --user "$(id -u):$(id -g)" \
             --network host \
+            -e RUST_LOG=debug \
             -v "$TEST_TMP:$TEST_TMP:rw" \
             "$RELAY_IMAGE" \
             --config "$config_path")
