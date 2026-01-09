@@ -6,6 +6,7 @@ set -e
 
 export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PROJECT_ROOT="$(cd "$SCRIPT_DIR/../" && pwd)"
+export RUN_ID=${RUN_ID:-$(date +%s)}
 
 # Source new libraries
 source "$SCRIPT_DIR/lib/log.sh"
@@ -22,8 +23,8 @@ SKIPPED_CASES=0
 run_case() {
     local suite="$1"
     local script_path="$2"
-    local case_name=$(basename "$script_path" .sh)
-    local case_log="$SCRIPT_DIR/temp/${suite}_${case_name}.log"
+    export CASE_NAME=$(basename "$script_path" .sh)
+    local case_log="$SCRIPT_DIR/temp/${suite}_${CASE_NAME}.log"
     mkdir -p "$(dirname "$case_log")"
 
     local t_start=$(get_time)
@@ -44,7 +45,7 @@ run_case() {
     
     # Format the line
     local suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
-    printf "[%s] %-35s " "$suite_upper" "$case_name"
+    printf "[%s] %-35s " "$suite_upper" "$CASE_NAME"
 
     if [ $status -eq 0 ]; then
         printf "✅ PASS  (%ss)\n" "$duration"
@@ -56,7 +57,7 @@ run_case() {
         printf "❌ FAIL  (%ss)\n" "$duration"
         FAILED_CASES=$((FAILED_CASES + 1))
         
-        log_group "❌ Failure Details: $suite/$case_name"
+        log_group "❌ Failure Details: $suite/$CASE_NAME"
         cat "$case_log"
         log_endgroup
     fi
@@ -95,7 +96,7 @@ run_suite() {
             run_case "$suite" "$test_path" || suite_failed=1
         fi
     else
-        for test_case in "$SCRIPT_DIR/suites/$suite"/[0-9]*.sh; do
+        for test_case in "$SCRIPT_DIR/suites/$suite"/*.sh; do
             [ -e "$test_case" ] || continue
             run_case "$suite" "$test_case" || suite_failed=1
         done

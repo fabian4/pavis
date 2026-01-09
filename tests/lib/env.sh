@@ -12,9 +12,11 @@ export TEST_MODE=${TEST_MODE:-binary}
 export PAVIS_BIN=${PAVIS_BIN:-$PROJECT_ROOT/target/release/pavis}
 export RELAY_BIN=${RELAY_BIN:-$PROJECT_ROOT/target/release/pavis-relay}
 export PAVCTL_BIN=${PAVCTL_BIN:-$PROJECT_ROOT/target/release/pavctl}
-export PAVIS_UPSTREAM_BIN=${PAVIS_UPSTREAM_BIN:-$PROJECT_ROOT/target/release/pavis-upstream}
+export PAVIS_UPSTREAM_BIN=${PAVIS_UPSTREAM_BIN:-$PROJECT_ROOT/target/release/pavis-mock-upstream}
+export MOCK_RELAY_BIN=${MOCK_RELAY_BIN:-$PROJECT_ROOT/target/release/pavis-mock-relay}
 export PAVIS_IMAGE=${PAVIS_IMAGE:-pavis:local}
 export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:local}
+export MOCK_RELAY_IMAGE=${MOCK_RELAY_IMAGE:-pavis-testkit:local}
 
 CERTS_DIR="$PROJECT_ROOT/tests/config/certs"
 
@@ -159,9 +161,51 @@ run_relay() {
     fi
 }
 
+run_mock_relay() {
+    local port="$1"
+    local name="${2:-mock-relay}"
+
+    if [ "$TEST_MODE" == "binary" ]; then
+        RUST_LOG=debug "$MOCK_RELAY_BIN" --listen "127.0.0.1:$port" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "$name"
+    else
+        local container_id=$(docker run -d --rm \
+            --user "$(id -u):$(id -g)" \
+            --network host \
+            -e RUST_LOG=debug \
+            "$MOCK_RELAY_IMAGE" \
+            /usr/local/bin/pavis-mock-relay --listen "0.0.0.0:$port")
+        record_container "$container_id" "$name"
+    fi
+}
+
+publish_config() {
+    local relay_url="$1"
+    local pvs_path="$2"
+    
+    curl -f -X POST "${relay_url}/publish" --data-binary "@${pvs_path}"
+}
+
 gen_pvs() {
     local yaml_path="$1"
     local pvs_path="$2"
+    "$PAVCTL_BIN" gen "$yaml_path" "$pvs_path"
+}
+
+gen_minimal_pvs() {
+    local pvs_path="$1"
+    local id="${2:-default}"
+    
+    local yaml_path="${pvs_path}.yaml"
+    cat <<-EOF > "$yaml_path"
+	listeners: []
+	upstreams:
+	  - name: "dummy-$id"
+	    endpoints: []
+	routes: []
+	telemetry:
+	  service_name: "relay-test-$id"
+EOF
     "$PAVCTL_BIN" gen "$yaml_path" "$pvs_path"
 }
 

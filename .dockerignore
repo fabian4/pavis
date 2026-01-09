@@ -6,14 +6,36 @@ target/
 .git
 .gitignore
 
-# Editor / OS
+# Editor / OS / IDE
 .DS_Store
 .idea/
 .vscode/
+.claude/
+
+# CI / CD
+.github/
+.codecov.yml
+
+# Documentation & Specs
+AGENTS.md
+ARCHITECTURE.md
+ROADMAP.md
+README.md
+LICENSE
+docs/
+
+# Tests & Benchmarks & Examples
+bench/
+tests/
+examples/
+
+# Build scripts / Makefiles
+Makefile
+make/
 
 # Local caches
 .buildx-cache/
 
-# Logs / temp（按需）
+# Logs / temp
 logs/
 tmp/

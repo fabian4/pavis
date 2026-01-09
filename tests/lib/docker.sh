@@ -124,7 +124,7 @@ start_upstreams_binary() {
     local key_path="$CERTS_DIR/upstream_tls.key"
     local instances=(
         "backend-v1:8081:8443"
-        "backend-v2:8082:"
+        "backend-v2:8082:8444"
     )
 
     for entry in "${instances[@]}"; do
@@ -148,13 +148,20 @@ launch_upstream_process() {
     local key_path="$5"
 
     local log_file="$UPSTREAMS_LOG_DIR/${name}.log"
-    INSTANCE_ID="$name" \
-    HTTP_PORT="$http_port" \
-    HTTPS_PORT="$https_port" \
-    TLS_CERT_FILE="$cert_path" \
-    TLS_KEY_FILE="$key_path" \
-    RUST_LOG=${UPSTREAM_LOG_LEVEL:-info} \
-        "$PAVIS_UPSTREAM_BIN" > "$log_file" 2>&1 &
+    
+    # Build env array
+    local env_vars=(
+        "INSTANCE_ID=$name"
+        "HTTP_PORT=$http_port"
+        "TLS_CERT_FILE=$cert_path"
+        "TLS_KEY_FILE=$key_path"
+        "RUST_LOG=${UPSTREAM_LOG_LEVEL:-info}"
+    )
+    if [ -n "$https_port" ]; then
+        env_vars+=("HTTPS_PORT=$https_port")
+    fi
+
+    env "${env_vars[@]}" "$PAVIS_UPSTREAM_BIN" > "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$UPSTREAMS_PID_DIR/$name.pid"
 

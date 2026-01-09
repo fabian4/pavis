@@ -26,20 +26,26 @@ binary-build:
 		cargo build --release -p $$CRATE_NAME; \
 	fi
 
-# Build Docker image (IMAGE=pavis|relay, MODE=local|ci)
+# Build Docker image (IMAGE=pavis|relay|mock-upstream|mock-relay, MODE=local|ci)
 docker-build:
 	@set -e; \
+	BUILD_ARGS=""; \
 	if [ "$(IMAGE)" = "pavis" ]; then \
 		DOCKERFILE=crates/pavis/Dockerfile; \
 		TAG=pavis:local; \
 	elif [ "$(IMAGE)" = "relay" ]; then \
 		DOCKERFILE=crates/pavis-relay/Dockerfile; \
 		TAG=pavis-relay:local; \
-	elif [ "$(IMAGE)" = "upstream" ]; then \
-		DOCKERFILE=crates/pavis-upstream/Dockerfile; \
-		TAG=pavis-upstream:local; \
+	elif [ "$(IMAGE)" = "mock-upstream" ]; then \
+		DOCKERFILE=crates/pavis-testkit/Dockerfile; \
+		TAG=pavis-mock-upstream:local; \
+		BUILD_ARGS="--build-arg BINARY=pavis-mock-upstream"; \
+	elif [ "$(IMAGE)" = "mock-relay" ]; then \
+		DOCKERFILE=crates/pavis-testkit/Dockerfile; \
+		TAG=pavis-mock-relay:local; \
+		BUILD_ARGS="--build-arg BINARY=pavis-mock-relay"; \
 	else \
-		echo "Unsupported IMAGE=$(IMAGE) (use pavis, relay, or upstream)"; \
+		echo "Unsupported IMAGE=$(IMAGE) (use pavis, relay, mock-upstream, or mock-relay)"; \
 		exit 2; \
 	fi; \
 	if [ "$(MODE)" = "local" ]; then \
@@ -47,6 +53,7 @@ docker-build:
 			--builder $(BUILDER) \
 			--file $$DOCKERFILE \
 			--tag $$TAG \
+			$$BUILD_ARGS \
 			--cache-from=type=local,src=.buildx-cache \
 			--cache-to=type=local,dest=.buildx-cache,mode=max \
 			--load \
@@ -55,6 +62,7 @@ docker-build:
 		docker buildx build \
 			--file $$DOCKERFILE \
 			--tag $$TAG \
+			$$BUILD_ARGS \
 			--cache-from=type=gha \
 			--cache-to=type=gha,mode=max \
 			--load \

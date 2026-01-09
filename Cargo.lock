@@ -2174,13 +2174,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "pavis-upstream"
-version = "0.0.0"
+name = "pavis-testkit"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "axum-server",
+ "bytes",
+ "clap 4.5.53",
  "serde",
+ "serde_json",
  "tokio",
  "tower 0.4.13",
  "tower-http 0.5.2",
