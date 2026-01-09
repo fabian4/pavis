@@ -12,6 +12,17 @@ export PAVCTL_BIN=${PAVCTL_BIN:-$PROJECT_ROOT/target/release/pavctl}
 export PAVIS_IMAGE=${PAVIS_IMAGE:-pavis:local}
 export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:local}
 
+# Helper to get the address of the host from within a container
+# On Linux with --network host, localhost works.
+# On Mac/Windows, we need host.docker.internal.
+get_host_addr() {
+    if [ "$TEST_MODE" == "docker" ] && [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "host.docker.internal"
+    else
+        echo "127.0.0.1"
+    fi
+}
+
 run_pavis() {
     local config_path="$1"
     local relay_url="$2"
@@ -28,6 +39,7 @@ run_pavis() {
     else
         local docker_args=(
             run -d --rm
+            --user "$(id -u):$(id -g)"
             --network host
             -v "$TEST_TMP:$TEST_TMP:ro"
         )
@@ -50,6 +62,7 @@ run_relay() {
         record_pid $! "$name"
     else
         local container_id=$(docker run -d --rm \
+            --user "$(id -u):$(id -g)" \
             --network host \
             -v "$TEST_TMP:$TEST_TMP:rw" \
             "$RELAY_IMAGE" \

@@ -27,7 +27,7 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 
 V_START=$(curl -s "http://127.0.0.1:$PORT_RELAY/v1/status" | grep -o "version=[0-9]*" | cut -d= -f2)
 
-CODE=$(curl -s -w "% {http_code}" -o /dev/null -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+CODE=$(curl -s -w "%{http_code}" -o /dev/null -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "X-Pavis-Version: 100" --data "garbage")
 
 if [ "$CODE" -lt 400 ]; then echo "❌ Expected error, got $CODE"; exit 1; fi

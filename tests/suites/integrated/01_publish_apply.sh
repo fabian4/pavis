@@ -15,6 +15,7 @@ trap cleanup_trap EXIT
 
 PORT_RELAY=$(get_free_port)
 PORT_PAVIS=$(get_free_port)
+HOST_ADDR=$(get_host_addr)
 
 # 1. Start Relay
 mkdir -p "$TEST_TMP/storage"
@@ -37,7 +38,7 @@ listeners:
     address: "127.0.0.1:$PORT_PAVIS"
 upstreams:
   - name: upstream-a
-    endpoints: [{ ip: "127.0.0.1", port: 8081 }]
+    endpoints: [{ ip: "$HOST_ADDR", port: 8081 }]
 routes:
   - host: "*"
     paths:
@@ -50,7 +51,7 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 
 # 2. Start Pavis
 gen_pvs "$TEST_TMP/ingest.yaml" "$TEST_TMP/boot.pvs"
-run_pavis "$TEST_TMP/boot.pvs" "http://127.0.0.1:$PORT_RELAY"
+run_pavis "$TEST_TMP/boot.pvs" "http://$HOST_ADDR:$PORT_RELAY"
 
 wait_for_url "http://127.0.0.1:$PORT_PAVIS" 5
 assert_body "http://127.0.0.1:$PORT_PAVIS" "backend-v1"
@@ -62,7 +63,7 @@ listeners:
     address: "127.0.0.1:$PORT_PAVIS"
 upstreams:
   - name: upstream-b
-    endpoints: [{ ip: "127.0.0.1", port: 8082 }]
+    endpoints: [{ ip: "$HOST_ADDR", port: 8082 }]
 routes:
   - host: "*"
     paths:

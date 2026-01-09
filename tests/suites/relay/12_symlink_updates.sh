@@ -15,6 +15,7 @@ PORT_RELAY=$(get_free_port)
 
 mkdir -p "$TEST_TMP/data"
 echo "listeners: []" > "$TEST_TMP/data/v1.yaml"
+sleep 1.5 # Ensure v2 has different mtime for polling fallback
 echo "listeners: []" > "$TEST_TMP/data/v2.yaml"
 ln -s "$TEST_TMP/data/v1.yaml" "$TEST_TMP/link.yaml"
 

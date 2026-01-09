@@ -13,6 +13,7 @@ trap cleanup_trap EXIT
 
 PORT_RELAY=$(get_free_port)
 P1=$(get_free_port); P2=$(get_free_port); P3=$(get_free_port)
+HOST_ADDR=$(get_host_addr)
 
 mkdir -p "$TEST_TMP/storage"
 cat <<EOF > "$TEST_TMP/relay.yaml"
@@ -25,7 +26,7 @@ EOF
 
 cat <<EOF > "$TEST_TMP/ingest.yaml"
 listeners: [{ name: default, address: "0.0.0.0:8080" }]
-upstreams: [{ name: backend, endpoints: [{ ip: "127.0.0.1", port: 8081 }] }]
+upstreams: [{ name: backend, endpoints: [{ ip: "$HOST_ADDR", port: 8081 }] }]
 routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: backend, weight: 1 }] }] }]
 EOF
 
@@ -36,8 +37,8 @@ gen_instance() {
     local p=$1
     local out=$2
     cat <<EOF > "$TEST_TMP/config_$p.yaml"
-listeners: [{ name: default, address: "127.0.0.1:$p" }]
-upstreams: [{ name: backend, endpoints: [{ ip: "127.0.0.1", port: 8081 }] }]
+listeners: [{ name: default, address: "0.0.0.0:$p" }]
+upstreams: [{ name: backend, endpoints: [{ ip: "$HOST_ADDR", port: 8081 }] }]
 routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: backend, weight: 1 }] }] }]
 EOF
     gen_pvs "$TEST_TMP/config_$p.yaml" "$out"
@@ -47,17 +48,19 @@ gen_instance $P1 "$TEST_TMP/b1.pvs"
 gen_instance $P2 "$TEST_TMP/b2.pvs"
 gen_instance $P3 "$TEST_TMP/b3.pvs"
 
-run_pavis "$TEST_TMP/b1.pvs" "http://127.0.0.1:$PORT_RELAY" "p1"
-run_pavis "$TEST_TMP/b2.pvs" "http://127.0.0.1:$PORT_RELAY" "p2"
-run_pavis "$TEST_TMP/b3.pvs" "http://127.0.0.1:$PORT_RELAY" "p3"
+run_pavis "$TEST_TMP/b1.pvs" "http://$HOST_ADDR:$PORT_RELAY" "p1"
+run_pavis "$TEST_TMP/b2.pvs" "http://$HOST_ADDR:$PORT_RELAY" "p2"
+run_pavis "$TEST_TMP/b3.pvs" "http://$HOST_ADDR:$PORT_RELAY" "p3"
 
+# In Docker mode on Mac, we can't reach these if they don't map ports.
+# Assuming binary mode or Linux Docker.
 wait_for_url "http://127.0.0.1:$P1" 5
 wait_for_url "http://127.0.0.1:$P2" 5
 wait_for_url "http://127.0.0.1:$P3" 5
 
 cat <<EOF > "$TEST_TMP/ingest.yaml"
 listeners: []
-upstreams: [{ name: backend, endpoints: [{ ip: "127.0.0.1", port: 8082 }] }]
+upstreams: [{ name: backend, endpoints: [{ ip: "$HOST_ADDR", port: 8082 }] }]
 routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: backend, weight: 1 }] }] }]
 EOF
 
