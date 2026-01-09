@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/lib/assert.sh"
 run_suite() {
     local suite="$1"
     echo "=================================================="
-    echo "RUNNING SUITE: $suite"
+    echo "📂 RUNNING SUITE: $suite"
     echo "=================================================="
 
     if [[ "$suite" == "pavis" || "$suite" == "integrated" ]]; then
@@ -25,7 +25,7 @@ run_suite() {
     local failed=0
     for test_case in "$SCRIPT_DIR/suites/$suite"/[0-9]*.sh; do
         [ -e "$test_case" ] || continue
-        echo "--> Case: $(basename "$test_case")"
+        echo "🧪 Case: $(basename "$test_case")"
         if ! bash "$test_case"; then
             echo "❌ FAILED: $(basename "$test_case")"
             failed=1
@@ -43,7 +43,7 @@ SUITE_TARGET="${1:-all}"
 FAILED_ANY=0
 
 if [ "$TEST_MODE" == "binary" ]; then
-    echo "Building binaries..."
+    echo "🛠️ Building binaries..."
     (cd "$PROJECT_ROOT" && cargo build --release)
 fi
 
