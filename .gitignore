@@ -21,3 +21,5 @@ target
 bench/output/
 /lcov.info
 /build_rs_cov.profraw
+/tests/temp/
+/tests/config/certs/

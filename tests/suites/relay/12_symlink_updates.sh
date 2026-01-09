@@ -2,9 +2,7 @@
 set -e
 
 # Case 12: Symlink Updates
-source "$(dirname "$0")/../../lib/harness.sh"
-source "$(dirname "$0")/../../lib/network.sh"
-source "$(dirname "$0")/../../lib/deploy.sh"
+source "$(dirname "$0")/../../lib/env.sh"
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "relay_12"
@@ -14,17 +12,29 @@ trap cleanup_trap EXIT
 PORT_RELAY=$(get_free_port)
 
 mkdir -p "$TEST_TMP/data"
-echo "listeners: []" > "$TEST_TMP/data/v1.yaml"
+cat <<-EOF > "$TEST_TMP/data/v1.yaml"
+	listeners: []
+EOF
 sleep 1.5 # Ensure v2 has different mtime for polling fallback
-echo "listeners: []" > "$TEST_TMP/data/v2.yaml"
+cat <<-EOF > "$TEST_TMP/data/v2.yaml"
+	listeners: []
+EOF
 ln -s "$TEST_TMP/data/v1.yaml" "$TEST_TMP/link.yaml"
 
-cat <<EOF > "$TEST_TMP/relay.yaml"
-identity: { name: relay-12 }
-http: { bind: "127.0.0.1:$PORT_RELAY" }
-storage: { root_dir: "$TEST_TMP/storage" }
-artifact: { lkg_path: "$TEST_TMP/storage/lkg.pvs" }
-pipeline: { ingest: { source: { kind: file, path: "$TEST_TMP/link.yaml" } } }
+cat <<-EOF > "$TEST_TMP/relay.yaml"
+	identity:
+	  name: "relay-12"
+	http:
+	  bind: "127.0.0.1:$PORT_RELAY"
+	storage:
+	  root_dir: "$TEST_TMP/storage"
+	artifact:
+	  lkg_path: "$TEST_TMP/storage/lkg.pvs"
+	pipeline:
+	  ingest:
+	    source:
+	      kind: file
+	      path: "$TEST_TMP/link.yaml"
 EOF
 
 run_relay "$TEST_TMP/relay.yaml"

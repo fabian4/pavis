@@ -8,6 +8,7 @@ members = [
     "crates/pavis-ingest-file",
     "crates/pavis-pvs",
     "crates/pavis-relay",
+    "crates/pavis-upstream",
 ]
 resolver = "2"
 

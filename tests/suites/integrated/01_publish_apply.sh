@@ -4,9 +4,7 @@ set -e
 # Case 01: Publish & Apply
 # Verifies the full pipeline: Publish to Relay -> Pavis Polling -> Traffic Shift.
 
-source "$(dirname "$0")/../../lib/harness.sh"
-source "$(dirname "$0")/../../lib/network.sh"
-source "$(dirname "$0")/../../lib/deploy.sh"
+source "$(dirname "$0")/../../lib/env.sh"
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "integrated_01"
@@ -19,31 +17,40 @@ HOST_ADDR=$(get_host_addr)
 
 # 1. Start Relay
 mkdir -p "$TEST_TMP/storage"
-cat <<EOF > "$TEST_TMP/relay.yaml"
-identity: { name: integrated-01 }
-http: { bind: "127.0.0.1:$PORT_RELAY" }
-storage: { root_dir: "$TEST_TMP/storage" }
-artifact: { lkg_path: "$TEST_TMP/storage/lkg.pvs" }
-pipeline:
-  ingest:
-    source:
-      kind: file
-      path: "$TEST_TMP/ingest.yaml"
+cat <<-EOF > "$TEST_TMP/relay.yaml"
+	identity:
+	  name: "integrated-01"
+	http:
+	  bind: "127.0.0.1:$PORT_RELAY"
+	storage:
+	  root_dir: "$TEST_TMP/storage"
+	artifact:
+	  lkg_path: "$TEST_TMP/storage/lkg.pvs"
+	pipeline:
+	  ingest:
+	    source:
+	      kind: file
+	      path: "$TEST_TMP/ingest.yaml"
 EOF
 
 # Start with Config A (backend-v1)
-cat <<EOF > "$TEST_TMP/ingest.yaml"
-listeners:
-  - name: default
-    address: "127.0.0.1:$PORT_PAVIS"
-upstreams:
-  - name: upstream-a
-    endpoints: [{ ip: "$HOST_ADDR", port: 8081 }]
-routes:
-  - host: "*"
-    paths:
-      - matcher: !prefix { path: "/" }
-        destinations: [{ upstream: upstream-a, weight: 1 }]
+cat <<-EOF > "$TEST_TMP/ingest.yaml"
+	listeners:
+	  - name: "default"
+	    address: "127.0.0.1:$PORT_PAVIS"
+	upstreams:
+	  - name: "upstream-a"
+	    endpoints:
+	      - ip: "$HOST_ADDR"
+	        port: 8081
+	routes:
+	  - host: "*"
+	    paths:
+	      - matcher: !prefix
+	          path: "/"
+	        destinations:
+	          - upstream: "upstream-a"
+	            weight: 1
 EOF
 
 run_relay "$TEST_TMP/relay.yaml"
@@ -57,18 +64,23 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS" 5
 assert_body "http://127.0.0.1:$PORT_PAVIS" "backend-v1"
 
 # 3. Update to Config B (backend-v2)
-cat <<EOF > "$TEST_TMP/ingest.yaml"
-listeners:
-  - name: default
-    address: "127.0.0.1:$PORT_PAVIS"
-upstreams:
-  - name: upstream-b
-    endpoints: [{ ip: "$HOST_ADDR", port: 8082 }]
-routes:
-  - host: "*"
-    paths:
-      - matcher: !prefix { path: "/" }
-        destinations: [{ upstream: upstream-b, weight: 1 }]
+cat <<-EOF > "$TEST_TMP/ingest.yaml"
+	listeners:
+	  - name: "default"
+	    address: "127.0.0.1:$PORT_PAVIS"
+	upstreams:
+	  - name: "upstream-b"
+	    endpoints:
+	      - ip: "$HOST_ADDR"
+	        port: 8082
+	routes:
+	  - host: "*"
+	    paths:
+	      - matcher: !prefix
+	          path: "/"
+	        destinations:
+	          - upstream: "upstream-b"
+	            weight: 1
 EOF
 
 # 4. Wait for Shift

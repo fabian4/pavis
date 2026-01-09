@@ -7,9 +7,7 @@ set -e
 echo "⏭️ Skipping Case 13 (Outbound mTLS marked TODO in roadmap)"
 exit 0
 
-source "$(dirname "$0")/../../lib/harness.sh"
-source "$(dirname "$0")/../../lib/network.sh"
-source "$(dirname "$0")/../../lib/deploy.sh"
+source "$(dirname "$0")/../../lib/env.sh"
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "integrated_13"
@@ -41,33 +39,46 @@ wait_for_port $PORT_UPSTREAM 5
 
 # 3. Start Relay
 mkdir -p "$TEST_TMP/storage"
-cat <<EOF > "$TEST_TMP/relay.yaml"
-identity: { name: integrated-13 }
-http: { bind: "127.0.0.1:$PORT_RELAY" }
-storage: { root_dir: "$TEST_TMP/storage" }
-artifact: { lkg_path: "$TEST_TMP/storage/lkg.pvs" }
-pipeline: { ingest: { source: { kind: file, path: "$TEST_TMP/ingest.yaml" } } }
+cat <<-EOF > "$TEST_TMP/relay.yaml"
+	identity:
+	  name: "integrated-13"
+	http:
+	  bind: "127.0.0.1:$PORT_RELAY"
+	storage:
+	  root_dir: "$TEST_TMP/storage"
+	artifact:
+	  lkg_path: "$TEST_TMP/storage/lkg.pvs"
+	pipeline:
+	  ingest:
+	    source:
+	      kind: file
+	      path: "$TEST_TMP/ingest.yaml"
 EOF
 
-cat <<EOF > "$TEST_TMP/ingest.yaml"
-listeners:
-  - name: default
-    address: "127.0.0.1:$PORT_PAVIS"
-upstreams:
-  - name: mtls-backend
-    tls:
-      enabled: true
-      verify_cert: false
-      verify_hostname: false
-      cert:
-        cert_path: "$TEST_TMP/certs/client.crt"
-        key_path: "$TEST_TMP/certs/client.key"
-    endpoints: [{ address: "127.0.0.1", port: $PORT_UPSTREAM }]
-routes:
-  - host: "*"
-    paths:
-      - matcher: !prefix { path: "/" }
-        destinations: [{ upstream: mtls-backend, weight: 1 }]
+cat <<-EOF > "$TEST_TMP/ingest.yaml"
+	listeners:
+	  - name: "default"
+	    address: "127.0.0.1:$PORT_PAVIS"
+	upstreams:
+	  - name: "mtls-backend"
+	    tls:
+	      enabled: true
+	      verify_cert: false
+	      verify_hostname: false
+	      cert:
+	        cert_path: "$TEST_TMP/certs/client.crt"
+	        key_path: "$TEST_TMP/certs/client.key"
+	    endpoints:
+	      - address: "127.0.0.1"
+	        port: $PORT_UPSTREAM
+	routes:
+	  - host: "*"
+	    paths:
+	      - matcher: !prefix
+	          path: "/"
+	        destinations:
+	          - upstream: "mtls-backend"
+	            weight: 1
 EOF
 
 run_relay "$TEST_TMP/relay.yaml"

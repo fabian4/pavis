@@ -1,10 +1,13 @@
-.PHONY: build binary-build docker-build run-pavis run-relay fmt fmt-check lint coverage-report
+.PHONY: build binary-build docker-build run-pavis run-relay run-upstream fmt fmt-check lint coverage-report
 
 BUILDER ?= builder
 ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 IMAGE ?= pavis
 MODE ?= local
 CRATE ?= workspace
+HTTP_PORT ?= 8080
+HTTPS_PORT ?= 8443
+INSTANCE_ID ?= pavis-upstream
 
 # Build all crates in the workspace (debug mode)
 build:
@@ -32,8 +35,11 @@ docker-build:
 	elif [ "$(IMAGE)" = "relay" ]; then \
 		DOCKERFILE=crates/pavis-relay/Dockerfile; \
 		TAG=pavis-relay:local; \
+	elif [ "$(IMAGE)" = "upstream" ]; then \
+		DOCKERFILE=crates/pavis-upstream/Dockerfile; \
+		TAG=pavis-upstream:local; \
 	else \
-		echo "Unsupported IMAGE=$(IMAGE) (use pavis or relay)"; \
+		echo "Unsupported IMAGE=$(IMAGE) (use pavis, relay, or upstream)"; \
 		exit 2; \
 	fi; \
 	if [ "$(MODE)" = "local" ]; then \
@@ -65,6 +71,18 @@ run-pavis:
 # Run the Pavis relay with the example config
 run-relay:
 	RUST_LOG=debug cargo run -p pavis-relay -- --config $(ROOT_DIR)/crates/pavis-relay/relay.yaml
+
+# Run the pavis-upstream fixture (requires TLS_CERT_FILE/TLS_KEY_FILE env vars)
+run-upstream:
+	@:${TLS_CERT_FILE:?Set TLS_CERT_FILE=/absolute/path/to/upstream.crt}
+	@:${TLS_KEY_FILE:?Set TLS_KEY_FILE=/absolute/path/to/upstream.key}
+	RUST_LOG=debug \
+		TLS_CERT_FILE=$(TLS_CERT_FILE) \
+		TLS_KEY_FILE=$(TLS_KEY_FILE) \
+		HTTP_PORT=$(HTTP_PORT) \
+		HTTPS_PORT=$(HTTPS_PORT) \
+		INSTANCE_ID=$(INSTANCE_ID) \
+		cargo run -p pavis-upstream
 
 audit:
 	cargo audit

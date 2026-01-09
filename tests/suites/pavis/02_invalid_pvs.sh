@@ -2,9 +2,7 @@
 set -e
 
 # Case 02: Invalid PVS
-source "$(dirname "$0")/../../lib/harness.sh"
-source "$(dirname "$0")/../../lib/network.sh"
-source "$(dirname "$0")/../../lib/deploy.sh"
+source "$(dirname "$0")/../../lib/env.sh"
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "pavis_02"

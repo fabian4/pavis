@@ -40,7 +40,7 @@ pub(crate) fn compile_config(input_path: PathBuf, output_path: PathBuf) -> Resul
     pvs::write(&output_path, &pavis_config)?;
 
     let metadata = fs::metadata(&output_path)?;
-    println!("✅ Successfully compiled config to {:?}", output_path);
+    println!("📦 Successfully compiled config to {:?}", output_path);
     println!("   Size: {} bytes", metadata.len());
     println!("   Protocol Version: {}", pvs::PAVIS_VERSION);
 

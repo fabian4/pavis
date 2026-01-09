@@ -29,17 +29,33 @@ dimensions:
     values:
       throughput:
         connections: 100
-        description: "Measures requests per second under light load"
+        load_type: "closed-loop"
+        description: "Measures requests per second under light load (closed-loop)"
       latency:
         connections: 500
-        description: "Measures tail latency under sustained load"
+        target_rps: 10000
+        load_type: "open-loop"
+        description: "Measures tail latency under sustained load (open-loop, fixed RPS)"
       concurrency:
         connections: 5000
+        load_type: "closed-loop"
         description: "Stresses the system with many concurrent connections"
       churn:
         connections: 100
         connection_close: true
+        load_type: "closed-loop"
         description: "Rapidly opens/closes connections to measure handshake cost"
+      reload:
+        connections: 500
+        target_rps: 5000
+        load_type: "open-loop"
+        reload_interval: 10
+        description: "Measures latency jitter during hot config reloads (Pavis-specific)"
+      config-scale:
+        connections: 100
+        load_type: "closed-loop"
+        config_multiplier: [1, 10, 50]
+        description: "Measures memory and latency impact of config size (Pavis-specific)"
 
   resource:
     description: "CPU and memory constraints applied via container limits"
@@ -68,7 +84,34 @@ dimensions:
       1x: 1.0
       2x: 2.0
 
-# Benchmark Matrix (11 configurations per proxy, 44 total)
+  backend:
+    description: "Backend service type for workload isolation"
+    values:
+      httpbin:
+        type: "functional"
+        description: "Functional realism (kennethreitz/httpbin)"
+      minimal:
+        type: "minimal"
+        description: "Dataplane isolation (minimal Go server)"
+
+  runs:
+    description: "Number of repeated benchmark runs for statistical validity"
+    values:
+      single: 1
+      multi: 5
+
+# Benchmark Matrix
+# ================
+# CI Matrix: 4 core runs per proxy (16 total) - baseline for regression detection
+# Extended Matrix: 7 additional runs per proxy (28 total) - detailed analysis
+# Pavis-Specific: 2 runs (Pavis only) - hot-reload and config-scale
+# Total: 46 runs (11 per proxy × 4 proxies + 2 Pavis-specific)
+#
+# NOTE: All runs now support:
+#   - Multi-run mode (default 5 runs) for statistical validity
+#   - Backend selection (httpbin vs minimal)
+#   - Open-loop load for latency workloads (wrk2 with target RPS)
+
 matrix:
   # CI Matrix (4 runs per proxy) - baseline for regression detection
   - id: throughput_baseline_short_1x
@@ -76,24 +119,37 @@ matrix:
     resource: baseline
     duration: short
     intensity: 1x
+    backend: httpbin
+    runs: single
+    load_type: closed-loop
 
   - id: latency_baseline_short_1x
     workload: latency
     resource: baseline
     duration: short
     intensity: 1x
+    backend: httpbin
+    runs: single
+    load_type: open-loop
+    target_rps: 10000
 
   - id: concurrency_baseline_short_1x
     workload: concurrency
     resource: baseline
     duration: short
     intensity: 1x
+    backend: httpbin
+    runs: single
+    load_type: closed-loop
 
   - id: churn_baseline_short_1x
     workload: churn
     resource: baseline
     duration: short
     intensity: 1x
+    backend: httpbin
+    runs: single
+    load_type: closed-loop
 
   # Extended Matrix (7 runs per proxy) - detailed analysis
   - id: throughput_cpu-limited_short_1x
@@ -101,6 +157,9 @@ matrix:
     resource: cpu-limited
     duration: short
     intensity: 1x
+    backend: httpbin
+    runs: single
+    load_type: closed-loop
     purpose: "CPU saturation behavior"
 
   - id: throughput_memory-limited_short_1x
@@ -108,6 +167,9 @@ matrix:
     resource: memory-limited
     duration: short
     intensity: 1x
+    backend: httpbin
+    runs: single
+    load_type: closed-loop
     purpose: "Memory pressure behavior"
 
   - id: churn_cpu-limited_short_1x
@@ -115,6 +177,9 @@ matrix:
     resource: cpu-limited
     duration: short
     intensity: 1x
+    backend: httpbin
+    runs: single
+    load_type: closed-loop
     purpose: "Handshake cost under CPU constraint"
 
   - id: throughput_baseline_extended_1x
@@ -122,25 +187,63 @@ matrix:
     resource: baseline
     duration: extended
     intensity: 1x
-    purpose: "Steady-state throughput stability"
+    backend: minimal
+    runs: single
+    load_type: closed-loop
+    purpose: "Steady-state throughput stability (minimal backend for dataplane isolation)"
 
   - id: latency_baseline_extended_1x
     workload: latency
     resource: baseline
     duration: extended
     intensity: 1x
-    purpose: "Long-term latency stability"
+    backend: minimal
+    runs: multi
+    load_type: open-loop
+    target_rps: 10000
+    purpose: "Long-term latency stability with statistical validation (5 runs)"
 
   - id: latency_baseline_short_2x
     workload: latency
     resource: baseline
     duration: short
     intensity: 2x
-    purpose: "Latency under increased load"
+    backend: httpbin
+    runs: single
+    load_type: open-loop
+    target_rps: 20000
+    purpose: "Latency under increased load (2x RPS target)"
 
   - id: concurrency_baseline_short_2x
     workload: concurrency
     resource: baseline
     duration: short
     intensity: 2x
+    backend: httpbin
+    runs: single
+    load_type: closed-loop
     purpose: "High connection count behavior"
+
+  # Pavis-Specific Benchmarks (extended matrix, optional)
+  - id: reload_baseline_short_1x
+    workload: reload
+    resource: baseline
+    duration: short
+    intensity: 1x
+    backend: minimal
+    runs: multi
+    load_type: open-loop
+    target_rps: 5000
+    proxies: [pavis]
+    purpose: "Hot-reload latency jitter test (Pavis frozen dataplane advantage)"
+
+  - id: config-scale_baseline_short_1x
+    workload: config-scale
+    resource: baseline
+    duration: short
+    intensity: 1x
+    backend: minimal
+    runs: single
+    load_type: closed-loop
+    proxies: [pavis]
+    purpose: "Config scale memory and latency impact"

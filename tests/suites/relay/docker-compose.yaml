@@ -1,0 +1,62 @@
+services:
+  backend-v1:
+    image: pavis-upstream:local
+    restart: unless-stopped
+    environment:
+      - INSTANCE_ID=backend-v1
+      - HTTP_PORT=8081
+      - HTTPS_PORT=8443
+      - TLS_CERT_FILE=/certs/upstream_tls.pem
+      - TLS_KEY_FILE=/certs/upstream_tls.key
+    volumes:
+      - ../../config/certs:/certs:ro
+    ports:
+      - "8081:8081"
+      - "8443:8443"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+
+  backend-v2:
+    image: pavis-upstream:local
+    restart: unless-stopped
+    environment:
+      - INSTANCE_ID=backend-v2
+      - HTTP_PORT=8082
+      - HTTPS_PORT=8444
+      - TLS_CERT_FILE=/certs/upstream_tls.pem
+      - TLS_KEY_FILE=/certs/upstream_tls.key
+    volumes:
+      - ../../config/certs:/certs:ro
+    ports:
+      - "8082:8082"
+      - "8444:8444"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/healthz"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+
+  pavis:
+    image: pavis:local
+    profiles: ["sut"]
+    entrypoint: ["/usr/local/bin/pavis"]
+    working_dir: /workspace
+    volumes:
+      - ../../..:/workspace
+    environment:
+      - RUST_LOG=debug
+    command: ["--help"]
+
+  relay:
+    image: pavis-relay:local
+    profiles: ["sut"]
+    entrypoint: ["/usr/local/bin/pavis-relay"]
+    working_dir: /workspace
+    volumes:
+      - ../../..:/workspace
+    environment:
+      - RUST_LOG=debug
+    command: ["--help"]

@@ -6,7 +6,8 @@ listeners:
 telemetry:
   level: "warn"
   pingora: "error"
-  access_log: "off"
+  service_name: "pavis-benchmark"
+  access_log: false
 
 upstreams:
   - name: "backend"

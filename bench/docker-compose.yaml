@@ -11,18 +11,57 @@
 #   - haproxy:  Port 8083 (C, baseline control)
 
 services:
-  # Backend service (httpbin)
-  backend:
+  # Backend service (httpbin - functional realism)
+  backend-httpbin:
     image: kennethreitz/httpbin:latest
-    container_name: bench-backend
+    platform: linux/amd64  # Force amd64 platform for compatibility
+    container_name: bench-backend-httpbin
+    profiles:
+      - httpbin
     ports:
       - "8000:80"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+    cpuset: "0"  # Pin to CPU 0
     healthcheck:
       test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:80/get\")'"]
       interval: 3s
       timeout: 5s
       retries: 20
       start_period: 10s
+
+  # Backend service (minimal - dataplane isolation)
+  backend-minimal:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: bench-minimal-backend:latest
+    container_name: bench-backend-minimal
+    profiles:
+      - minimal
+    ports:
+      - "8001:8000"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
+          cpus: '1'
+          memory: 256M
+    cpuset: "0"  # Pin to CPU 0
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:8000/health || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
 
   # Pavis Proxy (Rust, async - our project)
   pavis:
@@ -36,8 +75,12 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      backend:
+      backend-httpbin:
         condition: service_healthy
+        required: false
+      backend-minimal:
+        condition: service_healthy
+        required: false
     deploy:
       resources:
         limits:
@@ -46,6 +89,7 @@ services:
         reservations:
           cpus: '${CPU_LIMIT:-2}'
           memory: ${MEMORY_LIMIT:-512M}
+    cpuset: "${PROXY_CPUSET:-1-2}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
 
   # Envoy Proxy (C++, industry standard)
   envoy:
@@ -56,8 +100,12 @@ services:
     ports:
       - "8081:8081"
     depends_on:
-      backend:
+      backend-httpbin:
         condition: service_healthy
+        required: false
+      backend-minimal:
+        condition: service_healthy
+        required: false
     command: ["-c", "/etc/envoy/envoy.yaml", "--concurrency", "${CPU_LIMIT:-2}"]
     deploy:
       resources:
@@ -67,6 +115,7 @@ services:
         reservations:
           cpus: '${CPU_LIMIT:-2}'
           memory: ${MEMORY_LIMIT:-512M}
+    cpuset: "${PROXY_CPUSET:-1-2}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
 
   # Nginx (C, widely-used reverse proxy)
   nginx:
@@ -77,8 +126,12 @@ services:
     ports:
       - "8082:8082"
     depends_on:
-      backend:
+      backend-httpbin:
         condition: service_healthy
+        required: false
+      backend-minimal:
+        condition: service_healthy
+        required: false
     deploy:
       resources:
         limits:
@@ -87,6 +140,7 @@ services:
         reservations:
           cpus: '${CPU_LIMIT:-2}'
           memory: ${MEMORY_LIMIT:-512M}
+    cpuset: "${PROXY_CPUSET:-1-2}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
 
   # HAProxy (C, baseline control - mature, optimized)
   # Note: nbthread=2 hardcoded; CPU actually limited via cgroups
@@ -98,8 +152,12 @@ services:
     ports:
       - "8083:8083"
     depends_on:
-      backend:
+      backend-httpbin:
         condition: service_healthy
+        required: false
+      backend-minimal:
+        condition: service_healthy
+        required: false
     deploy:
       resources:
         limits:
@@ -108,3 +166,4 @@ services:
         reservations:
           cpus: '${CPU_LIMIT:-2}'
           memory: ${MEMORY_LIMIT:-512M}
+    cpuset: "${PROXY_CPUSET:-1-2}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)

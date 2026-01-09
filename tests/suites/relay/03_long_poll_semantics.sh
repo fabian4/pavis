@@ -2,9 +2,7 @@
 set -e
 
 # Case 03: Long Poll
-source "$(dirname "$0")/../../lib/harness.sh"
-source "$(dirname "$0")/../../lib/network.sh"
-source "$(dirname "$0")/../../lib/deploy.sh"
+source "$(dirname "$0")/../../lib/env.sh"
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "relay_03"
@@ -13,12 +11,20 @@ trap cleanup_trap EXIT
 
 PORT_RELAY=$(get_free_port)
 
-cat <<EOF > "$TEST_TMP/relay.yaml"
-identity: { name: relay-03 }
-http: { bind: "127.0.0.1:$PORT_RELAY" }
-storage: { root_dir: "$TEST_TMP/storage" }
-artifact: { lkg_path: "$TEST_TMP/storage/lkg.pvs" }
-pipeline: { ingest: { source: { kind: file, path: "$TEST_TMP/ingest.yaml" } } }
+cat <<-EOF > "$TEST_TMP/relay.yaml"
+	identity:
+	  name: "relay-03"
+	http:
+	  bind: "127.0.0.1:$PORT_RELAY"
+	storage:
+	  root_dir: "$TEST_TMP/storage"
+	artifact:
+	  lkg_path: "$TEST_TMP/storage/lkg.pvs"
+	pipeline:
+	  ingest:
+	    source:
+	      kind: file
+	      path: "$TEST_TMP/ingest.yaml"
 EOF
 touch "$TEST_TMP/ingest.yaml"
 
@@ -35,8 +41,8 @@ V_START=$(curl -s "http://127.0.0.1:$PORT_RELAY/v1/status" | grep -o "version=[0
 POLL_PID=$!
 
 sleep 0.5
-cat <<EOF > "$TEST_TMP/ingest.yaml"
-listeners: []
+cat <<-EOF > "$TEST_TMP/ingest.yaml"
+	listeners: []
 EOF
 
 wait $POLL_PID

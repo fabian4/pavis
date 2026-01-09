@@ -7,9 +7,7 @@ set -e
 echo "⏭️ Skipping Case 14 (RBAC marked TODO in roadmap)"
 exit 0
 
-source "$(dirname "$0")/../../lib/harness.sh"
-source "$(dirname "$0")/../../lib/network.sh"
-source "$(dirname "$0")/../../lib/deploy.sh"
+source "$(dirname "$0")/../../lib/env.sh"
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "integrated_14"
@@ -49,36 +47,52 @@ gen_client_cert "dev_client" "spiffe://cluster.local/ns/dev/sa/app-b"
 
 # 2. Start Relay
 mkdir -p "$TEST_TMP/storage"
-cat <<EOF > "$TEST_TMP/relay.yaml"
-identity: { name: integrated-14 }
-http: { bind: "127.0.0.1:$PORT_RELAY" }
-storage: { root_dir: "$TEST_TMP/storage" }
-artifact: { lkg_path: "$TEST_TMP/storage/lkg.pvs" }
-pipeline: { ingest: { source: { kind: file, path: "$TEST_TMP/ingest.yaml" } } }
+cat <<-EOF > "$TEST_TMP/relay.yaml"
+	identity:
+	  name: "integrated-14"
+	http:
+	  bind: "127.0.0.1:$PORT_RELAY"
+	storage:
+	  root_dir: "$TEST_TMP/storage"
+	artifact:
+	  lkg_path: "$TEST_TMP/storage/lkg.pvs"
+	pipeline:
+	  ingest:
+	    source:
+	      kind: file
+	      path: "$TEST_TMP/ingest.yaml"
 EOF
 
-cat <<EOF > "$TEST_TMP/ingest.yaml"
-listeners:
-  - name: default
-    address: "127.0.0.1:$PORT_PAVIS"
-    tls:
-      cert_path: "$TEST_TMP/certs/server.crt"
-      key_path: "$TEST_TMP/certs/server.key"
-      client_auth: !required
-        ca_path: "$TEST_TMP/certs/ca.crt"
-upstreams:
-  - name: backend
-    endpoints: [{ address: "127.0.0.1", port: 8081 }]
-routes:
-  - host: "*"
-    paths:
-      - matcher: !prefix { path: "/prod" }
-        principal: !prefix
-          prefix: "spiffe://cluster.local/ns/prod/"
-        destinations: [{ upstream: backend, weight: 1 }]
-      - matcher: !prefix { path: "/public" }
-        principal: !any
-        destinations: [{ upstream: backend, weight: 1 }]
+cat <<-EOF > "$TEST_TMP/ingest.yaml"
+	listeners:
+	  - name: "default"
+	    address: "127.0.0.1:$PORT_PAVIS"
+	    tls:
+	      cert_path: "$TEST_TMP/certs/server.crt"
+	      key_path: "$TEST_TMP/certs/server.key"
+	      client_auth: !required
+	        ca_path: "$TEST_TMP/certs/ca.crt"
+	upstreams:
+	  - name: "backend"
+	    endpoints:
+	      - address: "127.0.0.1"
+	        port: 8081
+	routes:
+	  - host: "*"
+	    paths:
+	      - matcher: !prefix
+	          path: "/prod"
+	        principal: !prefix
+	          prefix: "spiffe://cluster.local/ns/prod/"
+	        destinations:
+	          - upstream: "backend"
+	            weight: 1
+	      - matcher: !prefix
+	          path: "/public"
+	        principal: !any
+	        destinations:
+	          - upstream: "backend"
+	            weight: 1
 EOF
 
 run_relay "$TEST_TMP/relay.yaml"

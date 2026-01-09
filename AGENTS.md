@@ -166,6 +166,11 @@ Derived from Rust Readability Standards. Verify before completion.
 
 ## 1. Standard Workflow
 
+### Execution Protocol (Strict)
+- **Plan First**: Before modifying any code, output a detailed plan.
+- **Ask Permission**: Explicitly ask the user for permission to execute the plan.
+- **No Unilateral Execution**: Do not proceed with code changes until the user grants permission.
+
 ### Git Workflow Rules
 - **No Direct Pushes**: The user handles the final push and merge.
 - **No Destructive Commands**: Never revert unrelated changes or rewrite history.

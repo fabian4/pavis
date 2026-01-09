@@ -2,9 +2,7 @@
 set -e
 
 # Case 03: Concurrency
-source "$(dirname "$0")/../../lib/harness.sh"
-source "$(dirname "$0")/../../lib/network.sh"
-source "$(dirname "$0")/../../lib/deploy.sh"
+source "$(dirname "$0")/../../lib/env.sh"
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "integrated_03"
@@ -16,18 +14,39 @@ P1=$(get_free_port); P2=$(get_free_port); P3=$(get_free_port)
 HOST_ADDR=$(get_host_addr)
 
 mkdir -p "$TEST_TMP/storage"
-cat <<EOF > "$TEST_TMP/relay.yaml"
-identity: { name: integrated-03 }
-http: { bind: "127.0.0.1:$PORT_RELAY" }
-storage: { root_dir: "$TEST_TMP/storage" }
-artifact: { lkg_path: "$TEST_TMP/storage/lkg.pvs" }
-pipeline: { ingest: { source: { kind: file, path: "$TEST_TMP/ingest.yaml" } } }
+cat <<-EOF > "$TEST_TMP/relay.yaml"
+	identity:
+	  name: "integrated-03"
+	http:
+	  bind: "127.0.0.1:$PORT_RELAY"
+	storage:
+	  root_dir: "$TEST_TMP/storage"
+	artifact:
+	  lkg_path: "$TEST_TMP/storage/lkg.pvs"
+	pipeline:
+	  ingest:
+	    source:
+	      kind: file
+	      path: "$TEST_TMP/ingest.yaml"
 EOF
 
-cat <<EOF > "$TEST_TMP/ingest.yaml"
-listeners: [{ name: default, address: "0.0.0.0:8080" }]
-upstreams: [{ name: backend, endpoints: [{ ip: "$HOST_ADDR", port: 8081 }] }]
-routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: backend, weight: 1 }] }] }]
+cat <<-EOF > "$TEST_TMP/ingest.yaml"
+	listeners:
+	  - name: "default"
+	    address: "0.0.0.0:8080"
+	upstreams:
+	  - name: "backend"
+	    endpoints:
+	      - ip: "$HOST_ADDR"
+	        port: 8081
+	routes:
+	  - host: "*"
+	    paths:
+	      - matcher: !prefix
+	          path: "/"
+	        destinations:
+	          - upstream: "backend"
+	            weight: 1
 EOF
 
 run_relay "$TEST_TMP/relay.yaml"
@@ -36,10 +55,23 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 gen_instance() {
     local p=$1
     local out=$2
-    cat <<EOF > "$TEST_TMP/config_$p.yaml"
-listeners: [{ name: default, address: "0.0.0.0:$p" }]
-upstreams: [{ name: backend, endpoints: [{ ip: "$HOST_ADDR", port: 8081 }] }]
-routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: backend, weight: 1 }] }] }]
+    cat <<-EOF > "$TEST_TMP/config_$p.yaml"
+	listeners:
+	  - name: "default"
+	    address: "0.0.0.0:$p"
+	upstreams:
+	  - name: "backend"
+	    endpoints:
+	      - ip: "$HOST_ADDR"
+	        port: 8081
+	routes:
+	  - host: "*"
+	    paths:
+	      - matcher: !prefix
+	          path: "/"
+	        destinations:
+	          - upstream: "backend"
+	            weight: 1
 EOF
     gen_pvs "$TEST_TMP/config_$p.yaml" "$out"
 }
@@ -58,10 +90,21 @@ wait_for_url "http://127.0.0.1:$P1" 5
 wait_for_url "http://127.0.0.1:$P2" 5
 wait_for_url "http://127.0.0.1:$P3" 5
 
-cat <<EOF > "$TEST_TMP/ingest.yaml"
-listeners: []
-upstreams: [{ name: backend, endpoints: [{ ip: "$HOST_ADDR", port: 8082 }] }]
-routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: backend, weight: 1 }] }] }]
+cat <<-EOF > "$TEST_TMP/ingest.yaml"
+	listeners: []
+	upstreams:
+	  - name: "backend"
+	    endpoints:
+	      - ip: "$HOST_ADDR"
+	        port: 8082
+	routes:
+	  - host: "*"
+	    paths:
+	      - matcher: !prefix
+	          path: "/"
+	        destinations:
+	          - upstream: "backend"
+	            weight: 1
 EOF
 
 echo "Waiting for convergence..."

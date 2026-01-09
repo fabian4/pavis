@@ -1,6 +1,6 @@
-# Remediation Plan: Pavis Core, PVS & Runtime
+# Remediation Plan: Pavis Ecosystem
 
-This plan outlines the steps required to address the critical stability, safety, and performance issues identified across the Pavis ecosystem (`pavis-core`, `pavis-pvs`, `pavis`).
+This plan outlines the steps required to address the critical stability, safety, and performance issues identified across the Pavis ecosystem (`pavis-core`, `pavis-pvs`, `pavis`, `tests`).
 
 ## 1. Core Stability & API Hardening (`crates/pavis-core`)
 **Goal:** Prevent breaking changes for downstream consumers and eliminate validation bottlenecks.
@@ -62,7 +62,27 @@ This plan outlines the steps required to address the critical stability, safety,
     *   **Change:** Log a `tracing::warn!` when falling back to "localhost" SNI (if no SNI configured).
     *   **Reason:** Helps operators debug connection failures to upstreams that strictly enforce SNI.
 
-## 4. Execution Order
-1.  **Phase 1 (Core)**: Must happen first as it changes types consumed by PVS and Runtime.
-2.  **Phase 2 (PVS)**: Can proceed in parallel with Runtime changes once Core types are stable.
-3.  **Phase 3 (Runtime)**: Dependent on Core changes for the zero-copy header optimization.
+## 4. E2E Test Suite (`tests/`)
+**Goal:** Eliminate flakiness and drastically improve failure debuggability.
+
+*   [x] **4.1. Fix Log Preservation (DevEx)**
+    *   **Action:** Update `tests/lib/harness.sh` `cleanup_test` function.
+    *   **Change:** If the exit code is non-zero, skip `rm -rf` of `TEST_TMP` and print the location.
+    *   **Reason:** CRITICAL. Currently, logs are deleted on failure, making CI failures undiagnosable.
+
+*   [x] **4.2. Eliminate Hardcoded Sleeps (Reliability)**
+    *   **Action:** Refactor `tests/suites/relay/11_rapid_toggle.sh` (and others if found).
+    *   **Change:** Replace `sleep X` with a polling loop checking `/v1/status` or file modification time.
+    *   **Reason:** Reduces test flakiness on slow runners/CI.
+
+*   [x] **4.3. Harden JSON Assertions (Correctness)**
+    *   **Action:** Create a `jq`-like Python helper in `tests/lib/assert.sh`.
+    *   **Change:** Update `04_observability.sh` to use structural validation instead of `grep`.
+    *   **Reason:** Prevents false positives where `grep` matches substring keys instead of values.
+
+## 5. Execution Order
+1.  **Phase 1 (Core)**: [Complete]
+2.  **Phase 4.1 (E2E Logs)**: **Immediate Priority**. Fixing debuggability ensures we can safely verify subsequent changes.
+3.  **Phase 2 (PVS)**: Can proceed in parallel with Runtime changes.
+4.  **Phase 3 (Runtime)**: Dependent on Core changes.
+5.  **Phase 4.2 & 4.3 (E2E Flakiness)**: Can be done incrementally.
