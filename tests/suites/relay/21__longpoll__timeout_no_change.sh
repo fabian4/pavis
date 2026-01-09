@@ -37,11 +37,9 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 # 2. Start Subscriber
 START_TIME=$(date +%s)
 # 2000ms timeout
-RESPONSE=$(curl -s -w "%{{http_code}}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=2000")
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=2000")
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
-
-CODE=${{RESPONSE: -3}}
 
 # 3. Assert
 if [ "$CODE" != "304" ]; then

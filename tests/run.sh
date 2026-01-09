@@ -45,7 +45,7 @@ run_case() {
     
     # Format the line
     local suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
-    printf "[%s] %-35s " "$suite_upper" "$CASE_NAME"
+    printf "[%s] %-40s " "$suite_upper" "$CASE_NAME"
 
     if [ $status -eq 0 ]; then
         printf "✅ PASS  (%ss)\n" "$duration"
@@ -139,4 +139,16 @@ else
     run_suite "$SUITE_TARGET" "$SPECIFIC_CASE" || FAILED_ANY=1
 fi
 
+# Final cleanup of the shared temp directory
+
+if [ "${KEEP_TMP:-false}" != "true" ]; then
+
+    rm -rf "$SCRIPT_DIR/temp"
+
+fi
+
+
+
 print_summary "$TOTAL_CASES" "$PASSED_CASES" "$FAILED_CASES" "$SKIPPED_CASES"
+
+

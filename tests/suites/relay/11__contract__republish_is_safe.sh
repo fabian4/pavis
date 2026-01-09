@@ -32,14 +32,8 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     --data-binary "@$TEST_TMP/payload.pvs" > /dev/null
 
 # 2. Publish Second (v2, same payload)
-# We bump version because relay might reject non-monotonic version even if payload same?
-# Spec says "Republishing identical bytes".
-# If we reuse version 1, relay handles idempotency?
-# `post_publish`: `if let Err(err) = state.publish(proposed_version...`.
-# If version exists and payload matches, it might succeed.
-# Let's try sending version 1 again.
 curl -s -i -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
+    -H "x-pavis-version: 2" \
     --data-binary "@$TEST_TMP/payload.pvs" > "$TEST_TMP/pub2_resp"
 
 if ! grep -q "200 OK" "$TEST_TMP/pub2_resp"; then

@@ -31,7 +31,7 @@ The suite is organized into four critical zones of verification:
 
 ### Zone 1: Lifecycle & Governance
 
-#### `lifecycle_01_bootstrap_static`
+#### `10__bootstrap__static`
 *   **Category:** Bootstrap & Initial Load
 *   **What is tested:** Ability to start with a local file and no relay connection. **Bootstrap-only behavior.**
 *   **Initial State:** `pavis` started with `--config initial.pvs`. No relay URL provided.
@@ -40,7 +40,7 @@ The suite is organized into four critical zones of verification:
 *   **Invariants:** D (Zero-Option) — validates that behavior is derived strictly from the artifact without implicit defaults.
 *   **Notes:** Hot-reload is **not** exercised in this case.
 
-#### `lifecycle_02_hot_reload_basic`
+#### `20__reload__no_restart`
 *   **Category:** Reload Semantics
 *   **What is tested:** The primary long-poll update loop.
 *   **Initial State:** `pavis` started with `v1.pvs` (Routes to Backend A). Connected to `mock-relay`.
@@ -52,7 +52,7 @@ The suite is organized into four critical zones of verification:
     3. **Crucial:** `pavis` PID remains constant (no restart).
 *   **Invariants:** A (No-Drop), C (Atomic Switch).
 
-#### `lifecycle_03_lkg_corruption`
+#### `30__lkg__reject_corrupt_artifact`
 *   **Category:** Failure & LKG
 *   **What is tested:** Rejection of binary corruption during reload.
 *   **Initial State:** Serving `v1.pvs` (valid).
@@ -64,7 +64,7 @@ The suite is organized into four critical zones of verification:
     3. Process does *not* crash or stop polling.
 *   **Invariants:** B (LKG).
 
-#### `lifecycle_04_lkg_semantic_invalidity`
+#### `31__lkg__reject_incompatible_artifact`
 *   **Category:** Failure & LKG
 *   **What is tested:** Rejection of structurally valid but semantically unsupported artifacts.
 *   **Initial State:** Serving `v1.pvs` (valid).
@@ -78,7 +78,7 @@ The suite is organized into four critical zones of verification:
 
 ### Zone 2: Traffic Management
 
-#### `traffic_01_matcher_evolution`
+#### `40__traffic__matcher_evolution`
 *   **Category:** Traffic Behavior Under Reload
 *   **What is tested:** Changing route matching precedence dynamically.
 *   **Initial State:** `v1.pvs`: Match prefix `/api` -> Backend A.
@@ -89,7 +89,7 @@ The suite is organized into four critical zones of verification:
     2. Post-reload: Hits Backend B (caught by exact match).
 *   **Invariants:** C (Atomic Switch).
 
-#### `traffic_02_weighted_shift`
+#### `41__traffic__weighted_shift`
 *   **Category:** Traffic Behavior Under Reload
 *   **What is tested:** Traffic splitting via weight changes.
 *   **Initial State:** `v1.pvs`: 100% Backend A.
@@ -102,7 +102,7 @@ The suite is organized into four critical zones of verification:
 
 ### Zone 3: Resilience & Policies
 
-#### `resilience_01_timeout_tightening`
+#### `50__resilience__timeout_tightening`
 *   **Category:** Traffic Behavior Under Reload
 *   **What is tested:** Dynamic enforcement of stricter latency SLAs.
 *   **Initial State:** `v1.pvs`: Timeout 5000ms.
@@ -114,7 +114,7 @@ The suite is organized into four critical zones of verification:
 *   **Invariants:** C (Atomic Switch).
 *   **Notes:** Planned / TODO – blocked on implementation.
 
-#### `resilience_02_retry_policy_enable`
+#### `51__resilience__retry_policy_enable`
 *   **Category:** Traffic Behavior Under Reload
 *   **What is tested:** Activating retries for a failing upstream.
 *   **Initial State:** `v1.pvs`: No retry policy.
@@ -128,7 +128,7 @@ The suite is organized into four critical zones of verification:
 
 ### Zone 4: Protocol & Security
 
-#### `security_01_tls_origination_toggle`
+#### `60__security__tls_origination_toggle`
 *   **Category:** Security & TLS
 *   **What is tested:** Dynamically upgrading cleartext upstream to TLS.
 *   **Initial State:** `v1.pvs`: Upstream port 8080 (Plaintext).

@@ -36,7 +36,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 
 ### Zone 1: Smoke & Bootstrap
 
-#### `smoke_01_full_path_bootstrap`
+#### `10__bootstrap__end_to_end`
 *   **Purpose:** Verify the "happy path" of system startup and initial configuration distribution.
 *   **Initial State:** Relay running. Runtime bootstraps from a **minimal bootstrap artifact** (defines listeners and relay URL only, no upstream routing). Upstream running.
 *   **Action Sequence:**
@@ -52,7 +52,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 
 ### Zone 2: End-to-End Reload
 
-#### `reload_01_traffic_shift`
+#### `20__reload__end_to_end_route_switch`
 *   **Purpose:** Verify dynamic reconfiguration affects traffic without restart.
 *   **Initial State:** System running with `config_v1` (routes `/echo` to `backend-v1`). Traffic flowing to v1.
 *   **Action Sequence:**
@@ -66,7 +66,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 *   **Invariants Proven:** I1, I2, I5.
 *   **Determinism:** Poll endpoint checking for `instance_id` change.
 
-#### `reload_02_idempotent_update`
+#### `21__reload__republish_is_stable`
 *   **Purpose:** Ensure re-publishing an identical config does not break long-poll or traffic flow (Black-box invariant).
 *   **Initial State:** System running `config_v1`.
 *   **Action Sequence:**
@@ -80,7 +80,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 
 ### Zone 3: Failure & LKG
 
-#### `lkg_01_relay_bad_artifact`
+#### `30__lkg__bad_artifact_does_not_break_traffic`
 *   **Purpose:** Verify runtime LKG protection when Relay serves bad data.
 *   **Initial State:** System running `config_v1` (Valid).
 *   **Action Sequence:**
@@ -93,7 +93,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
     2.  Runtime does *not* crash.
 *   **Invariants Proven:** I3, I4.
 
-#### `lkg_02_semantic_rejection`
+#### `31__lkg__incompatible_artifact_is_rejected`
 *   **Purpose:** Verify runtime rejects structurally valid but semantically invalid updates.
 *   **Initial State:** System running `config_v1`.
 *   **Action Sequence:**
@@ -106,7 +106,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 
 ### Zone 4: Resilience (Planned)
 
-#### `resilience_01_relay_restart` (Planned / TODO)
+#### `40__resilience__relay_restart_recovery`
 *   **Purpose:** Verify Runtime reconnects after Control Plane outage.
 *   **Initial State:** System healthy.
 *   **Action Sequence:**
@@ -116,6 +116,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
     4.  Publish `config_v2`.
     5.  Verify Runtime picks up `v2`.
 *   **Invariants Proven:** I2, I4.
+*   **Notes:** Planned / TODO.
 
 ## 5. Explicit Non-Goals
 

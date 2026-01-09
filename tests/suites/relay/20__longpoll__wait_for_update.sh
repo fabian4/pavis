@@ -40,16 +40,17 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 START_TIME=$(date +%s)
 (
     # Request version 1, expect wait.
-    resp=$(curl -s -w "% {http_code}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
-    code=${resp: -3}
-    # Body is binary, difficult to check in string var if null bytes?
-    # But gen_minimal_pvs generates valid PVS which is binary.
-    # We just check length > 0 and code 200.
+    code=$(curl -s -o "$TEST_TMP/sub_body" -w "%{http_code}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
     
     if [ "$code" != "200" ]; then
         echo "FAIL: Code $code" > "$TEST_TMP/result"
     else
-        echo "PASS" > "$TEST_TMP/result"
+        # Verify body matches V2
+        if cmp -s "$TEST_TMP/v2.pvs" "$TEST_TMP/sub_body"; then
+            echo "PASS" > "$TEST_TMP/result"
+        else
+            echo "FAIL: Body mismatch" > "$TEST_TMP/result"
+        fi
     fi
 ) &
 PID_SUB=$!

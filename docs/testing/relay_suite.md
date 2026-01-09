@@ -47,7 +47,7 @@ The suite is divided into six categories:
 
 ### Zone 1: Contract & Integrity
 
-#### `contract_01_opaque_publish_subscribe`
+#### `10__contract__opaque_publish_subscribe`
 *   **Category:** Contract & Integrity
 *   **What is tested:** Basic create-read cycle.
 *   **Initial State:** Clean relay (isolated instance).
@@ -61,7 +61,7 @@ The suite is divided into six categories:
     *   Response Header `ETag` == `"A"`.
 *   **Invariants Proven:** R1 (Opaque), R2 (Versioned).
 
-#### `contract_02_idempotency_check`
+#### `11__contract__republish_is_safe`
 *   **Category:** Contract & Integrity
 *   **What is tested:** Republishing identical bytes does not break subscribe semantics.
 *   **Initial State:** Relay serving "payload-v1" (`ETag: "A"`).
@@ -77,7 +77,7 @@ The suite is divided into six categories:
 
 ### Zone 2: Long-Poll Semantics
 
-#### `longpoll_01_wait_for_update`
+#### `20__longpoll__wait_for_update`
 *   **Category:** Long-Poll Semantics
 *   **What is tested:** Subscriber blocks until update occurs.
 *   **Initial State:** Relay serving "v1" (`ETag: "1"`).
@@ -93,7 +93,7 @@ The suite is divided into six categories:
 *   **Invariants Proven:** R3 (Efficient Long-Poll), R2 (Versioned).
 *   **Determinism:** Polling for "v2" publish completion ensures Client A unblocks.
 
-#### `longpoll_02_timeout_no_change`
+#### `21__longpoll__timeout_no_change`
 *   **Category:** Long-Poll Semantics
 *   **What is tested:** Subscriber waits for full timeout if no update occurs.
 *   **Initial State:** Relay serving "v1" (`ETag: "1"`).
@@ -109,7 +109,7 @@ The suite is divided into six categories:
 
 ### Zone 3: Fanout & Scale
 
-#### `fanout_01_multi_subscriber_broadcast`
+#### `30__fanout__multi_subscriber_broadcast`
 *   **Category:** Fanout
 *   **What is tested:** One publish wakes up multiple pending subscribers.
 *   **Initial State:** Relay serving "v1" (`ETag: "1"`).
@@ -122,7 +122,7 @@ The suite is divided into six categories:
     *   ALL 5 clients receive "v2" body.
 *   **Invariants Proven:** R4 (Fanout Correctness).
 
-#### `fanout_02_catch_up`
+#### `31__fanout__late_subscriber_catch_up`
 *   **Category:** Fanout
 *   **What is tested:** A subscriber that is behind (old ETag) gets immediate update.
 *   **Initial State:** Relay serving "v5" (`ETag: "5"`).
@@ -137,7 +137,7 @@ The suite is divided into six categories:
 
 ### Zone 4: Concurrency
 
-#### `concurrency_01_rapid_publish`
+#### `40__concurrency__publish_is_monotonic`
 *   **Category:** Concurrency
 *   **What is tested:** Relay handles high-frequency updates without crashing.
 *   **Initial State:** Clean relay.
@@ -152,9 +152,7 @@ The suite is divided into six categories:
 
 ### Zone 5: Persistence (Storage Mode)
 
-*Requires `TEST_STORAGE=file` or specific config.*
-
-#### `persistence_01_restart_recovery`
+#### `50__persistence__restart_recovery`
 *   **Category:** Persistence
 *   **What is tested:** LKG is saved to disk and restored.
 *   **Initial State:** Relay started with `--storage-dir <temp_dir>`.
@@ -171,28 +169,7 @@ The suite is divided into six categories:
 
 ### Zone 6: Limits & Robustness
 
-#### `limits_01_oversized_payload`
-*   **Category:** Limits
-*   **What is tested:** Relay rejects huge bodies.
-*   **Initial State:** Relay configured with `max_body_size = 1MB` (or known default).
-*   **Action:**
-    1.  Publish 5MB of zero bytes.
-*   **Assertions:**
-    *   Status is 413 Payload Too Large (or 400 Bad Request).
-    *   Subsequent GET returns previous valid version (relay state unchanged).
-*   **Invariants Proven:** R7 (Backpressure/Limits).
-
-#### `limits_02_empty_publish`
-*   **Category:** Limits
-*   **What is tested:** Handling of empty body.
-*   **Action:**
-    1.  Publish empty body (0 bytes).
-*   **Assertions:**
-    *   Should behave deterministically (either accept as valid empty config, or reject 400).
-    *   If accepted, subscribers get 0 bytes.
-*   **Invariants Proven:** R1 (Opaque).
-
-#### `robustness_01_subscriber_reconnect`
+#### `60__robustness__subscriber_reconnect`
 *   **Category:** Robustness
 *   **What is tested:** Subscriber disconnects and reconnects with old ETag.
 *   **Initial State:** Relay serving "v2" (`ETag: "2"`).
@@ -205,6 +182,27 @@ The suite is divided into six categories:
     *   Reconnect returns IMMEDIATE 200 OK.
     *   Body is "v3".
 *   **Invariants Proven:** R2 (Versioned Delivery), R3 (Efficient Long-Poll).
+
+#### `70__limits__oversized_payload_rejected`
+*   **Category:** Limits
+*   **What is tested:** Relay rejects huge bodies.
+*   **Initial State:** Relay configured with `max_body_size = 1MB` (or known default).
+*   **Action:**
+    1.  Publish 5MB of zero bytes.
+*   **Assertions:**
+    *   Status is 413 Payload Too Large (or 400 Bad Request).
+    *   Subsequent GET returns previous valid version (relay state unchanged).
+*   **Invariants Proven:** R7 (Backpressure/Limits).
+
+#### `71__limits__empty_payload_handling`
+*   **Category:** Limits
+*   **What is tested:** Handling of empty body.
+*   **Action:**
+    1.  Publish empty body (0 bytes).
+*   **Assertions:**
+    *   Should behave deterministically (either accept as valid empty config, or reject 400).
+    *   If accepted, subscribers get 0 bytes.
+*   **Invariants Proven:** R1 (Opaque).
 
 ## 6. Implementation Principles
 

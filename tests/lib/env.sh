@@ -146,6 +146,31 @@ run_relay() {
     local config_path="$1"
     local name="${2:-relay}"
     
+    # Ensure the config file has valid storage paths to avoid errors on publish.
+    # We use TEST_TMP as the root_dir and lkg.pvs as the filename.
+    if ! grep -q "root_dir" "$config_path"; then
+        if grep -q "storage:" "$config_path"; then
+             sed -i.bak "/storage:/a\\
+  root_dir: \"$TEST_TMP\"" "$config_path"
+        else
+             cat <<-EOF >> "$config_path"
+storage:
+  root_dir: "$TEST_TMP"
+EOF
+        fi
+    fi
+    if ! grep -q "lkg_path" "$config_path"; then
+        if grep -q "artifact:" "$config_path"; then
+             sed -i.bak "/artifact:/a\\
+  lkg_path: \"lkg.pvs\"" "$config_path"
+        else
+             cat <<-EOF >> "$config_path"
+artifact:
+  lkg_path: "lkg.pvs"
+EOF
+        fi
+    fi
+
     if [ "$TEST_MODE" == "binary" ]; then
         RUST_LOG=debug "$RELAY_BIN" --config "$config_path" > "$TEST_TMP/logs/${name}.log" 2>&1 &
         record_pid $! "$name"
