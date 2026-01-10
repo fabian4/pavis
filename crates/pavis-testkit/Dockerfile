@@ -52,12 +52,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY crates/pavis-testkit/entrypoint.c /src/entrypoint.c
 RUN gcc -O2 -s -o /tmp/entrypoint /src/entrypoint.c
 
-FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl \
-      ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+FROM gcr.io/distroless/cc-debian12
 
 ARG BINARY=pavis-mock-upstream
 

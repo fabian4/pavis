@@ -27,17 +27,20 @@ GLOBAL RULES (NON-NEGOTIABLE)
    - Focus on assessing what the current E2E tests actually verify.
 
 4. Output:
-   - Generate ONE Markdown report per phase.
-   - Write outputs to the exact paths specified below.
+   - Generate ONLY ONE final Markdown summary report.
+   - Write this output to the path specified in the FINAL SUMMARY section.
+   - Intermediate phases (0-5) are for rigorous data gathering and must be held in context or temporary reasoning, NOT written as separate permanent files.
 
 5. Phase Isolation (CRITICAL):
    - Each phase MUST address ONLY its stated goal.
    - Do NOT comment on topics that belong to later phases.
+   - Findings from ALL phases must be consolidated into the Final Summary.
 
 6. Output Overwrite Rule (CRITICAL):
-   - If any target output file already exists,
-     you MUST ignore its existing contents entirely.
+   - The final target output file (docs/audit/e2e.audit.summary.md)
+     MUST be a complete, standalone replacement of any existing content.
    - Treat the file as EMPTY and generate a complete replacement.
+   - Do NOT merge, append to, reference, or preserve any existing text.
 
 7. Report Metadata Requirement (CRITICAL):
    - EVERY generated report MUST begin with a metadata header containing:
@@ -101,7 +104,7 @@ Rules:
 - Do NOT flag issues yet.
 
 Output:
-docs/audit/e2e.phase0.inventory.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 1: Coverage of System Responsibilities
@@ -133,7 +136,7 @@ Rules:
 - Focus on coverage, not correctness.
 
 Output:
-docs/audit/e2e.phase1.coverage.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 2: Assertions & Oracles
@@ -161,7 +164,7 @@ Rules:
 - Do NOT propose new assertions.
 
 Output:
-docs/audit/e2e.phase2.assertions.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 3: Determinism, Timing & Flakiness Risk
@@ -192,7 +195,7 @@ Rules:
 - Only assess risk and evidence.
 
 Output:
-docs/audit/e2e.phase3.flakiness.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 4: Failure Diagnostics & Debuggability
@@ -220,7 +223,7 @@ Rules:
 - Do NOT redesign harnesses.
 
 Output:
-docs/audit/e2e.phase4.diagnostics.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 5: E2E Scope & Cost Balance
@@ -249,7 +252,7 @@ Rules:
 - Identify signals only.
 
 Output:
-docs/audit/e2e.phase5.scope.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 FINAL SUMMARY: Executive Verdict

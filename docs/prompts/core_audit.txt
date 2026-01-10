@@ -25,17 +25,19 @@ GLOBAL RULES (NON-NEGOTIABLE)
    - Focus strictly on assessing the CURRENT STATE.
 
 4. Output:
-   - Generate ONE Markdown report per phase.
-   - Write outputs to the exact paths specified below.
+   - Generate ONLY ONE final Markdown summary report.
+   - Write this output to the path specified in the FINAL SUMMARY section.
+   - Intermediate phases (0-5) are for rigorous data gathering and must be held in context or temporary reasoning, NOT written as separate permanent files.
 
 5. Phase Isolation (CRITICAL):
    - Each phase MUST address ONLY its stated goal.
    - Do NOT comment on topics that belong to later phases.
    - Do NOT “preview” fixes or conclusions early.
+   - Findings from ALL phases must be consolidated into the Final Summary.
 
 6. Output Overwrite Rule (CRITICAL):
-   - If any target output file already exists (e.g. docs/audit/core.audit.summary.md),
-     you MUST ignore its existing contents entirely.
+   - The final target output file (docs/audit/core.audit.summary.md)
+     MUST be a complete, standalone replacement of any existing content.
    - Treat the file as EMPTY and generate a complete replacement.
    - Do NOT merge, append to, reference, or preserve any existing text.
 
@@ -85,7 +87,7 @@ Rules:
 - Do NOT skip files.
 
 Output:
-docs/audit/core.phase0.inventory.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 1: Boundary & Dependency Audit
@@ -126,7 +128,7 @@ Rules:
 - Ambiguous cases MUST be labeled “Boundary Risk”.
 
 Output:
-docs/audit/core.phase1.boundary.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 2: Invariants & Correctness
@@ -153,7 +155,7 @@ Rules:
 - Do NOT redesign APIs.
 
 Output:
-docs/audit/core.phase2.invariants.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 3: Error Model & Diagnostics
@@ -177,7 +179,7 @@ Rules:
 - Do NOT discuss performance or compatibility.
 
 Output:
-docs/audit/core.phase3.errors.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 4: Safety & Undefined Behavior
@@ -200,7 +202,7 @@ Rules:
 - Do NOT suggest runtime mitigations.
 
 Output:
-docs/audit/core.phase4.safety.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 PHASE 5: Compatibility & Performance
@@ -227,7 +229,7 @@ Rules:
 - Identify signals only.
 
 Output:
-docs/audit/core.phase5.compat-perf.md
+Internal Findings (Consolidate into Final Summary)
 
 ============================================================
 FINAL SUMMARY: Executive Verdict

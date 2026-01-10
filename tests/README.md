@@ -3,9 +3,9 @@
 This document describes the test architecture for Pavis. It serves as the primary entry point for understanding how to run and write tests.
 
 **Detailed Design Specifications:**
-- [Runtime Suite Design](../docs/testing/runtime_suite.md) - Focuses on the `pavis` data plane binary.
-- [Relay Suite Design](../docs/testing/relay_suite.md) - Focuses on the `pavis-relay` control plane.
-- [Integrated Suite Design](../docs/testing/integrated_suite.md) - Focuses on end-to-end system integration.
+- [Runtime Suite Design](suites/DESIGN_PAVIS.md) - Focuses on the `pavis` data plane binary.
+- [Relay Suite Design](suites/DESIGN_RELAY.md) - Focuses on the `pavis-relay` control plane.
+- [Integrated Suite Design](suites/DESIGN_INTEGRATED.md) - Focuses on end-to-end system integration.
 
 ---
 
