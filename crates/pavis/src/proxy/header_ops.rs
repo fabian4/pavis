@@ -407,6 +407,44 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_response_headers_extra() {
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        resp.insert_header("X-Existing", "old").unwrap();
+        resp.insert_header("Set-Cookie", "a=1").unwrap();
+
+        let ops = HeadersPolicy::Enabled {
+            rules: Headers {
+                set_headers: Vec::new(),
+                append_headers: vec![(
+                    HeaderName("Set-Cookie".to_string()),
+                    HeaderValue("b=2".to_string()),
+                )],
+                add_headers: vec![
+                    (
+                        HeaderName("X-Existing".to_string()),
+                        HeaderValue("new".to_string()),
+                    ),
+                    (
+                        HeaderName("X-New".to_string()),
+                        HeaderValue("fresh".to_string()),
+                    ),
+                ],
+                remove_headers: vec![HeaderName("X-Existing".to_string())],
+            },
+        };
+
+        apply_response_headers(&mut resp, &ops).unwrap();
+
+        assert_eq!(
+            resp.headers.get("X-New").unwrap().to_str().unwrap(),
+            "fresh"
+        );
+        assert!(resp.headers.get("X-Existing").is_none());
+        let cookies: Vec<_> = resp.headers.get_all("Set-Cookie").iter().collect();
+        assert_eq!(cookies.len(), 2);
+    }
+
+    #[test]
     fn test_apply_headers_disabled() {
         let mut req = RequestHeader::build("GET", b"/", None).unwrap();
         apply_request_headers(&mut req, &HeadersPolicy::Disabled).unwrap();

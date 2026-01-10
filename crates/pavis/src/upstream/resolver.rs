@@ -416,6 +416,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_resolve_once_triggers_updates() {
+        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
+        // Use an IP that won't actually resolve but triggers the loop branches
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("logical".to_string()),
+            discovery: Discovery::Logical,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![Endpoint {
+                address: EndpointAddr::Dns {
+                    host: pavis_core::Hostname("localhost".to_string()),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            }],
+        };
+
+        let manager = crate::upstream::Manager::new(&[config]);
+        let state = Arc::new(crate::state::RuntimeStateHandle::new(
+            crate::state::RuntimeState {
+                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                upstream_manager: manager,
+            },
+        ));
+
+        let resolver = UpstreamResolver::new(state.clone(), Duration::from_secs(10));
+
+        // This will run the loop once.
+        // localhost should resolve on most systems, triggering an update.
+        resolver.resolve_once().await;
+
+        let _current = state
+            .load()
+            .upstream_manager
+            .get("logical")
+            .unwrap()
+            .current_endpoints();
+    }
+
+    #[tokio::test]
     async fn test_resolve_dns_success() {
         let manager = crate::upstream::Manager::new(&[]);
         let state = Arc::new(crate::state::RuntimeStateHandle::new(

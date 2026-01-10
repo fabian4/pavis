@@ -421,6 +421,15 @@ mod tests {
     }
 
     #[test]
+    fn checked_artifact_new() {
+        let artifact = test_artifact();
+        let checked = CheckedArtifact::new(artifact.clone());
+        assert_eq!(checked.artifact.bytes, artifact.bytes);
+        assert!(checked.state.is_none());
+        assert_eq!(checked.state::<u32>(), None);
+    }
+
+    #[test]
     fn checked_artifact_state() {
         let artifact = test_artifact();
         let checked = CheckedArtifact::with_state(artifact, 42u32);

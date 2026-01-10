@@ -529,6 +529,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_file_ingest_rejects_whitespace_only() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        file.as_file_mut().write_all(b"   \n\t  ")?;
+        let path = file.path().to_path_buf();
+        let yaml_path = path.with_extension("yaml");
+        std::fs::rename(&path, &yaml_path)?;
+
+        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(10));
+        let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+
+        if let Some(Err(err)) = stream.next().await {
+            assert!(err.to_string().contains("Empty or whitespace-only"));
+        } else {
+            panic!("Expected whitespace error");
+        }
+
+        std::fs::remove_file(yaml_path)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_file_ingest_rejects_malformed_utf8() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        // Invalid UTF-8 sequence
+        file.as_file_mut().write_all(&[0xFF, 0xFE, 0xFD])?;
+        let path = file.path().to_path_buf();
+        let yaml_path = path.with_extension("yaml");
+        std::fs::rename(&path, &yaml_path)?;
+
+        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(10));
+        let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+
+        if let Some(Err(err)) = stream.next().await {
+            assert!(err.to_string().contains("Malformed UTF-8"));
+        } else {
+            panic!("Expected malformed UTF-8 error");
+        }
+
+        std::fs::remove_file(yaml_path)?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_file_ingest_read_failure_and_closed_stream() -> Result<()> {
         // Skip on root/windows where permission tricks are hard
         #[cfg(unix)]
@@ -575,6 +618,31 @@ mod tests {
 
             std::fs::remove_file(yaml_path)?;
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_watcher_timer_send_failure() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        file.as_file_mut().write_all(b"v1")?;
+        let yaml_path = file.path().with_extension("yaml");
+        std::fs::rename(file.path(), &yaml_path)?;
+
+        let (tx, rx) = mpsc::channel(1);
+        let _watcher =
+            watch::spawn_watcher(yaml_path.clone(), Duration::from_millis(10), tx).await?;
+
+        // Drop the receiver so that when timer fires, send fails.
+        drop(rx);
+
+        // Change the file to trigger event and then timer
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        std::fs::write(&yaml_path, b"v2")?;
+
+        // Wait for debounce and internal send attempt
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        std::fs::remove_file(yaml_path)?;
         Ok(())
     }
 }

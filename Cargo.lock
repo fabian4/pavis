@@ -2055,6 +2055,7 @@ dependencies = [
  "clap 4.5.53",
  "hickory-resolver",
  "http",
+ "openssl",
  "pavis-core",
  "pavis-pvs",
  "pingora",

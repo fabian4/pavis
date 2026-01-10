@@ -992,3 +992,102 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
     assert_eq!(header.uri.path(), "/new-api/resource");
     assert_eq!(header.uri.query(), Some("filter=active&limit=10"));
 }
+
+#[tokio::test]
+async fn upstream_peer_dns_unsupported_fails() {
+    let manager = Manager::new(&[Upstream {
+        id: UpstreamId(NonZeroU16::new(1).unwrap()),
+        name: UpstreamName("dns-upstream".to_string()),
+        discovery: Discovery::Logical,
+        balancer: LoadBalancer::RoundRobin,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Disabled,
+            connect: ConnectTimeout::Disabled,
+            max: ConnectionLimit::Unlimited,
+        },
+        tls: TlsPolicy::Disabled,
+        endpoints: vec![Endpoint {
+            address: EndpointAddr::Dns {
+                host: Hostname("example.com".to_string()),
+                port: Port(NonZeroU16::new(80).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        }],
+    }]);
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: manager,
+        })),
+        telemetry: test_telemetry(),
+    };
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("dns-upstream".to_string()));
+    let res = proxy.upstream_peer(&mut session, &mut ctx).await;
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("not supported yet"));
+}
+
+#[tokio::test]
+async fn upstream_peer_tls_and_pool_variants() {
+    let mut upstream = upstream("variants", 1, 8080);
+    upstream.tls = TlsPolicy::Enabled {
+        mode: pavis_core::TlsVerify::Cert,
+        sni: pavis_core::SniName::Value(Hostname("custom.sni".to_string())),
+        cert: pavis_core::ClientCert::Enabled {
+            cert_path: Path("c".to_string()),
+            key_path: Path("k".to_string()),
+        },
+    };
+    upstream.protocol = HttpVersion::H2;
+    upstream.pool.idle = IdleTimeout::Enabled(Duration(NonZeroU32::new(1000).unwrap()));
+    upstream.pool.connect = ConnectTimeout::Enabled(Duration(NonZeroU32::new(2000).unwrap()));
+
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: Manager::new(&[upstream]),
+        })),
+        telemetry: test_telemetry(),
+    };
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("variants".to_string()));
+
+    let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+    assert!(peer.is_tls());
+    assert_eq!(peer.sni, "custom.sni");
+    assert_eq!(
+        peer.options.idle_timeout,
+        Some(std::time::Duration::from_millis(1000))
+    );
+    assert_eq!(
+        peer.options.connection_timeout,
+        Some(std::time::Duration::from_millis(2000))
+    );
+}
+
+#[test]
+fn test_calculate_path_rewrite_invalid_uri() {
+    let route = pavis_core::Route {
+        matcher: PathMatch::Prefix {
+            path: Path("/".to_string()),
+        },
+        timeout: Timeout::Disabled,
+        retry: RetryPolicy::Disabled,
+        request_headers: HeadersPolicy::Disabled.into(),
+        response_headers: HeadersPolicy::Disabled.into(),
+        principal: pavis_core::Principal::Any,
+        rewrite: Rewrite {
+            path: RewritePath::Prefix {
+                from: Path("/".to_string()),
+                to: Path("/\0".to_string()), // Invalid character for URI
+            },
+            host: RewriteHost::Disabled,
+        },
+        action: RouteAction::Forward(vec![]),
+    };
+    assert!(calculate_path_rewrite(&route, "/", None).is_none());
+}

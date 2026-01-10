@@ -276,13 +276,7 @@ EOF
     "$PAVCTL_BIN" gen "$yaml_path" "$pvs_path"
 }
 
-get_host_addr() {
-    if [ "$TEST_MODE" == "docker" ] && [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "host.docker.internal"
-    else
-        echo "127.0.0.1"
-    fi
-}
+
 
 pavis_curl_body() {
     curl -s -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" -H "X-Pavis-Test-Case: ${CASE_NAME:-unknown}" "$@"

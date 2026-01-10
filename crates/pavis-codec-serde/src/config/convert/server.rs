@@ -165,9 +165,20 @@ mod tests {
 
         let serde = from_runtime(runtime);
         assert_eq!(serde.workers, Some(4));
+        assert_eq!(serde.address, "127.0.0.1:8080");
         let tls = serde.tls.unwrap();
         assert_eq!(tls.cert_path.as_deref(), Some("cert.pem"));
         assert_eq!(tls.key_path.as_deref(), Some("key.pem"));
+
+        // Test Auto workers
+        let runtime_auto = pavis_core::Listener {
+            name: ListenerName("auto".to_string()),
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081),
+            workers: WorkerCount::Auto,
+            tls: TlsConfig::Disabled,
+        };
+        let serde_auto = from_runtime(runtime_auto);
+        assert_eq!(serde_auto.workers, None);
     }
 
     #[test]
@@ -217,12 +228,18 @@ mod tests {
         let r1 = to_runtime(l1).unwrap();
         match r1.tls {
             TlsConfig::Enabled {
-                client_auth: pavis_core::ClientAuth::Optional { ca_path },
+                client_auth: pavis_core::ClientAuth::Optional { ref ca_path },
                 ..
             } => {
                 assert_eq!(ca_path.0, "ca");
             }
             _ => panic!("expected optional"),
+        }
+
+        let s1 = from_runtime(r1);
+        match s1.tls.unwrap().client_auth.unwrap() {
+            ClientAuthConfig::Optional { ca_path } => assert_eq!(ca_path, "ca"),
+            _ => panic!("expected optional back"),
         }
 
         // Test Required

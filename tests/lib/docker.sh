@@ -54,9 +54,9 @@ start_upstreams_docker() {
     fi
 
     generate_certs
-    local project="pavis-${suite:-shared}-e2e"
-    local compose_log="$PROJECT_ROOT/tests/temp/upstreams-${suite:-shared}.log"
-    echo "::group::🐳 Starting Shared Upstreams (${suite:-shared})"
+    local project="pavis-${suite}-e2e"
+    local compose_log="$PROJECT_ROOT/tests/temp/upstreams-${suite}.log"
+    echo "::group::🐳 Starting Shared Upstreams (${suite})"
     
     if docker compose -p "$project" -f "$compose_file" up -d --wait > "$compose_log" 2>&1; then
         echo "✅ Upstreams started (Docker Compose)"
@@ -93,9 +93,9 @@ stop_upstreams_docker() {
     if [ -z "$compose_file" ]; then
         return
     fi
-    local project="pavis-${suite:-shared}-e2e"
+    local project="pavis-${suite}-e2e"
     if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
-        echo "🛑 Stopping shared upstreams (${suite:-shared})..."
+        echo "🛑 Stopping shared upstreams (${suite})..."
         docker compose -p "$project" -f "$compose_file" down -v
     else
         docker compose -p "$project" -f "$compose_file" down -v > /dev/null 2>&1

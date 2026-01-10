@@ -145,4 +145,32 @@ mod tests {
             assert!(idx < endpoints.len());
         }
     }
+
+    #[test]
+    fn select_index_least_request_is_in_range() {
+        let counter = AtomicUsize::new(0);
+        let endpoints = vec![
+            make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 1),
+            make_endpoint(Ipv4Addr::new(127, 0, 0, 2), 8081, 1),
+        ];
+        let cumulative = build_cumulative(&endpoints);
+        let total_weight = 2;
+        let idx = select_index(
+            LoadBalancer::LeastRequest,
+            &endpoints,
+            &cumulative,
+            &counter,
+            total_weight,
+        );
+        assert!(idx < endpoints.len());
+    }
+
+    #[test]
+    fn find_index_clamps_to_last_element() {
+        let cumulative = vec![10, 20, 30];
+        // total_weight should be 30, but if we pass a pick >= 30:
+        assert_eq!(super::find_index(&cumulative, 29), 2);
+        assert_eq!(super::find_index(&cumulative, 30), 2);
+        assert_eq!(super::find_index(&cumulative, 100), 2);
+    }
 }

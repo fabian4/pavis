@@ -356,6 +356,90 @@ mod tests {
     }
 
     #[test]
+    fn to_runtime_validates_pool_max() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: Some(ConnectionPoolConfig {
+                idle: None,
+                connect: None,
+                max: Some(0), // becomes Unlimited but let's test explicit > 0
+            }),
+            tls: None,
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![],
+        }];
+        let runtime = to_runtime(config).unwrap();
+        assert!(matches!(
+            runtime[0].pool.max,
+            pavis_core::ConnectionLimit::Unlimited
+        ));
+    }
+
+    #[test]
+    fn tls_enabled_false_conversion() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(false),
+                verify_hostname: None,
+                verify_cert: None,
+                sni: None,
+                cert: None,
+            }),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![],
+        }];
+        let runtime = to_runtime(config).unwrap();
+        assert!(matches!(runtime[0].tls, TlsPolicy::Disabled));
+    }
+
+    #[test]
+    fn tls_verify_modes_conversion() {
+        let test_cases = vec![
+            ((false, false), TlsVerify::Disabled),
+            ((true, false), TlsVerify::Cert),
+            ((true, true), TlsVerify::CertAndHost),
+        ];
+
+        for ((cert, host), expected_mode) in test_cases {
+            let config = vec![Upstream {
+                id: None,
+                name: "test".to_string(),
+                discovery: None,
+                balancer: None,
+                protocol: None,
+                pool: None,
+                tls: Some(UpstreamTlsConfig {
+                    enabled: Some(true),
+                    verify_hostname: Some(host),
+                    verify_cert: Some(cert),
+                    sni: None,
+                    cert: None,
+                }),
+                circuit_breaker: None,
+                health_check: None,
+                endpoints: vec![],
+            }];
+            let runtime = to_runtime(config).unwrap();
+            match runtime[0].tls {
+                TlsPolicy::Enabled { mode, .. } => assert_eq!(mode, expected_mode),
+                _ => panic!("expected tls enabled"),
+            }
+        }
+    }
+
+    #[test]
     fn from_runtime_round_trips() {
         let runtime = pavis_core::Upstream {
             id: UpstreamId(NonZeroU16::new(1).unwrap()),
@@ -462,5 +546,53 @@ mod tests {
         let tls = u_serde.tls.as_ref().unwrap();
         assert_eq!(tls.sni.as_deref(), Some("example.com"));
         assert!(tls.verify_hostname.unwrap());
+    }
+
+    #[test]
+    fn from_runtime_tls_variants() {
+        use pavis_core::{
+            ClientCert, ConnectTimeout, ConnectionLimit, Discovery, HttpVersion, IdleTimeout,
+            LoadBalancer, Pool, SniName, TlsPolicy, TlsVerify, UpstreamId, UpstreamName,
+        };
+
+        let mut upstream = pavis_core::Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("u".to_string()),
+            discovery: Discovery::Static,
+            balancer: LoadBalancer::Random,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit::Unlimited,
+            },
+            tls: TlsPolicy::Enabled {
+                mode: TlsVerify::Disabled,
+                sni: SniName::Auto,
+                cert: ClientCert::Disabled,
+            },
+            endpoints: vec![],
+        };
+
+        // 1. TlsVerify::Disabled, SniName::Auto
+        let serde = from_runtime(vec![upstream.clone()]);
+        let tls = serde[0].tls.as_ref().unwrap();
+        assert!(!tls.verify_cert.unwrap());
+        assert!(!tls.verify_hostname.unwrap());
+        assert_eq!(tls.sni, None);
+
+        // 2. TlsVerify::Cert
+        if let TlsPolicy::Enabled { mode, .. } = &mut upstream.tls {
+            *mode = TlsVerify::Cert;
+        }
+        let serde = from_runtime(vec![upstream.clone()]);
+        let tls = serde[0].tls.as_ref().unwrap();
+        assert!(tls.verify_cert.unwrap());
+        assert!(!tls.verify_hostname.unwrap());
+
+        // 3. Pool::Limited
+        upstream.pool.max = ConnectionLimit::Limited(NonZeroU32::new(100).unwrap());
+        let serde = from_runtime(vec![upstream.clone()]);
+        assert_eq!(serde[0].pool.as_ref().unwrap().max, Some(100));
     }
 }

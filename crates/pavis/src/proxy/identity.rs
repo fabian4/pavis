@@ -37,9 +37,28 @@ pub fn extract_spiffe_id(ssl: &SslRef) -> Option<String> {
     None
 }
 
+/// Extracts the SPIFFE identity from an X.509 certificate.
+/// Only compiled for tests to avoid production dependency on openssl crate.
+#[cfg(test)]
+pub fn extract_spiffe_id_from_cert(cert: &openssl::x509::X509) -> Option<String> {
+    // Get the Subject Alternative Names extension
+    let san = cert.subject_alt_names()?;
+
+    // Iterate through SANs to find URI entries
+    for name in san.iter() {
+        // Check if this is a URI-type SAN
+        if let Some(uri) = name.uri() {
+            // Check if it's a SPIFFE ID (starts with "spiffe://")
+            if uri.starts_with("spiffe://") {
+                return Some(uri.to_string());
+            }
+        }
+    }
+
+    None
+}
+
 /// A cached identity extractor that memoizes extraction results.
-///
-/// This can be used to avoid redundant parsing of certificates on the same connection.
 #[derive(Clone)]
 pub struct IdentityExtractor {
     // Future optimization: Add a cache here if needed
@@ -67,12 +86,83 @@ impl Default for IdentityExtractor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pingora::tls::ssl::{Ssl, SslContext, SslMethod};
 
     #[test]
     fn extractor_can_be_created() {
         let _extractor = IdentityExtractor::new();
-        // Basic smoke test - actual certificate testing would require
-        // setting up real certificates and SSL contexts
-        // Placeholder test
+    }
+
+    #[test]
+    fn test_extract_spiffe_id_no_cert() {
+        let ctx = SslContext::builder(SslMethod::tls()).unwrap().build();
+        let ssl = Ssl::new(&ctx).unwrap();
+        assert_eq!(extract_spiffe_id(&ssl), None);
+    }
+
+    #[test]
+    fn test_extract_spiffe_id_with_cert() {
+        use openssl::asn1::Asn1Time;
+        use openssl::bn::BigNum;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::extension::SubjectAlternativeName;
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        // 1. Generate a key pair
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
+
+        // 2. Build a certificate with SPIFFE ID in SAN
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "test").unwrap();
+        let name = name.build();
+
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_version(2).unwrap();
+        let serial_number = BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap();
+        builder.set_serial_number(&serial_number).unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        let not_before = Asn1Time::days_from_now(0).unwrap();
+        builder.set_not_before(&not_before).unwrap();
+        let not_after = Asn1Time::days_from_now(365).unwrap();
+        builder.set_not_after(&not_after).unwrap();
+
+        let spiffe_id = "spiffe://example.org/ns/foo/sa/bar";
+        let san = SubjectAlternativeName::new()
+            .uri(spiffe_id)
+            .build(&builder.x509v3_context(None, None))
+            .unwrap();
+        builder.append_extension(san).unwrap();
+
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let cert = builder.build();
+
+        // 3. Test extraction from cert
+        assert_eq!(
+            extract_spiffe_id_from_cert(&cert),
+            Some(spiffe_id.to_string())
+        );
+
+        // 4. Test with non-spiffe URI
+        let mut builder = X509Builder::new().unwrap();
+        builder.set_version(2).unwrap();
+        builder.set_serial_number(&serial_number).unwrap();
+        builder.set_subject_name(&name).unwrap();
+        builder.set_issuer_name(&name).unwrap();
+        builder.set_pubkey(&pkey).unwrap();
+        builder.set_not_before(&not_before).unwrap();
+        builder.set_not_after(&not_after).unwrap();
+        let san = SubjectAlternativeName::new()
+            .uri("https://not-spiffe.com")
+            .build(&builder.x509v3_context(None, None))
+            .unwrap();
+        builder.append_extension(san).unwrap();
+        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let cert = builder.build();
+        assert_eq!(extract_spiffe_id_from_cert(&cert), None);
     }
 }

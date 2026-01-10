@@ -28,3 +28,4 @@ hickory-resolver = "0.25.2"
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
 axum = "0.7"
+openssl = "0.10"

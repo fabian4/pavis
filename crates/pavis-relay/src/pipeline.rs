@@ -377,6 +377,101 @@ routes: []
         assert_eq!(state.version().await, 0);
     }
 
+    #[cfg(feature = "codec-serde")]
+    #[tokio::test]
+    async fn handle_artifact_handles_codec_errors() {
+        use axum::body::Bytes;
+        let state = RelayState::new(0, Bytes::new()).expect("state");
+
+        struct FailingCodec(CodecError);
+        impl pavis_codec_api::Codec for FailingCodec {
+            type Error = CodecError;
+            fn check(
+                &self,
+                _art: Artifact,
+            ) -> Result<pavis_codec_api::CheckedArtifact, Self::Error> {
+                if matches!(self.0, CodecError::Check(_)) {
+                    return Err(CodecError::Check(anyhow::anyhow!("check")));
+                }
+                Ok(pavis_codec_api::CheckedArtifact::new(Artifact::new(
+                    Bytes::new(),
+                    pavis_ingest_api::Format::Yaml,
+                    pavis_ingest_api::SourceInfo::unknown(),
+                )))
+            }
+            fn compile(
+                &self,
+                _checked: &pavis_codec_api::CheckedArtifact,
+            ) -> Result<pavis_core::RuntimeConfig, Self::Error> {
+                if matches!(self.0, CodecError::Compile(_)) {
+                    return Err(CodecError::Compile(anyhow::anyhow!("compile")));
+                }
+                Err(CodecError::Core(
+                    pavis_core::CoreValidationError::EmptyUpstreamName,
+                ))
+            }
+        }
+
+        let artifact = Artifact::new(
+            Bytes::from(""),
+            pavis_ingest_api::Format::Yaml,
+            pavis_ingest_api::SourceInfo::new("test"),
+        );
+
+        // Check error
+        let codec: BoxedCodec = Box::new(FailingCodec(CodecError::Check(anyhow::anyhow!("err"))));
+        let res = handle_artifact(
+            "t",
+            Ok(artifact.clone()),
+            &codec,
+            &state,
+            PipelineCompaction::Off,
+            RetryPolicy {
+                max_attempts: 1,
+                base_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(1),
+            },
+        )
+        .await;
+        assert!(res.is_err());
+
+        // Compile error
+        let codec: BoxedCodec = Box::new(FailingCodec(CodecError::Compile(anyhow::anyhow!("err"))));
+        let res = handle_artifact(
+            "t",
+            Ok(artifact.clone()),
+            &codec,
+            &state,
+            PipelineCompaction::Off,
+            RetryPolicy {
+                max_attempts: 1,
+                base_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(1),
+            },
+        )
+        .await;
+        assert!(res.is_err());
+
+        // Core error
+        let codec: BoxedCodec = Box::new(FailingCodec(CodecError::Core(
+            pavis_core::CoreValidationError::EmptyUpstreamName,
+        )));
+        let res = handle_artifact(
+            "t",
+            Ok(artifact.clone()),
+            &codec,
+            &state,
+            PipelineCompaction::Off,
+            RetryPolicy {
+                max_attempts: 1,
+                base_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(1),
+            },
+        )
+        .await;
+        assert!(res.is_err());
+    }
+
     #[tokio::test]
     async fn publish_with_retry_fails_eventually() {
         use axum::body::Bytes;

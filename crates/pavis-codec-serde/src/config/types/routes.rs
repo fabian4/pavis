@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct VirtualHost {
     pub host: String,
     pub paths: Vec<Route>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct Route {
     pub matcher: Option<Matcher>,
     #[serde(default, with = "humantime_serde")]
@@ -20,7 +20,7 @@ pub struct Route {
     pub principal: Option<PrincipalConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PrincipalConfig {
     Any,
@@ -28,7 +28,7 @@ pub enum PrincipalConfig {
     Prefix { prefix: String },
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(untagged, rename_all = "snake_case")]
 pub enum RouteAction {
     Forward {
@@ -44,7 +44,7 @@ pub enum RouteAction {
     },
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Matcher {
     Prefix { path: String },
@@ -52,13 +52,13 @@ pub enum Matcher {
     Regex { path: String },
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct RewritePolicy {
     pub path: Option<String>,
     pub host: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct RetryPolicy {
     pub attempts: usize,
     pub retry_on: Vec<serde_json::Value>,
@@ -66,7 +66,7 @@ pub struct RetryPolicy {
     pub per_try_timeout: std::time::Duration,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
 pub struct HeaderOperations {
     #[serde(default)]
     pub set_headers: Vec<(String, String)>,
@@ -78,7 +78,7 @@ pub struct HeaderOperations {
     pub remove_headers: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct WeightedDestination {
     pub upstream: String,
     pub weight: u32,
