@@ -1,44 +1,37 @@
-# Audit Summary: E2E Testing
-**Target Module:** E2E
-**Timestamp:** 2026-01-09T12:30:00Z
-**AI Model:** gemini-2.0-flash-exp
+# E2E Test Audit - Final Summary: Executive Verdict
 
-## 1. Verdict
-**Verdict:** E2E Coverage is Partial (Gaps Exist)
+- Audit Phase: Final Summary
+- Target Module: E2E
+- Generation Timestamp: 2026-01-10T05:45:00Z
+- AI Model Identifier: Gemini 2.0 Flash
 
-The E2E suite provides a solid baseline of functional verification for the Pavis Runtime and Control Plane. It successfully validates the "Critical User Journeys" (configuration, routing, updates). However, it suffers from significant tooling deficiencies (lost logs, brittle assertions) and timing risks that undermine confidence in CI reliability and debuggability.
+## 1. Verdict: E2E Coverage is Partial (Gaps Exist)
+
+The Pavis E2E test suite provides a robust foundation for verifying the **Frozen Data Plane** architecture, but it currently lacks coverage for critical resilience scenarios and contains internal race conditions that may lead to flakiness as the system evolves.
 
 ## 2. Top Risks
 
-1.  **Diagnosability Black Hole (Phase 4):**
-    -   **Issue:** Application logs (`stdout`/`stderr`) are deleted immediately upon test failure by default.
-    -   **Impact:** Developers cannot diagnose CI failures without re-running tests with specific manual flags. This dramatically increases time-to-resolution.
+### 2.1 Race Conditions in Fanout Validation (Phase 3)
+The use of fixed `sleep` durations to synchronize background subscribers in the relay suite (`relay/30_fanout_multi.sh`) is a high-risk pattern. It relies on the assumption that background `curl` processes start within 2 seconds, which will eventually fail in high-load CI environments.
 
-2.  **Timing & Flakiness (Phase 3):**
-    -   **Issue:** Tests like `relay/11_rapid_toggle.sh` use hardcoded `sleep` commands to handle asynchronous consistency.
-    -   **Impact:** High probability of "flaky" failures on slower CI runners, leading to alert fatigue and ignored tests.
+### 2.2 Lack of Control-Plane Outage Verification (Phase 5)
+There is currently no active verification of the system's behavior when the Relay is offline. While LKG logic is tested via artifact corruption, the **network resilience** of the long-poll loop remains unproven in an E2E context.
 
-3.  **Brittle Assertions (Phase 2):**
-    -   **Issue:** JSON responses are validated using substring matching (`grep` or bash regex) rather than structural parsing.
-    -   **Impact:** Tests may pass false positives (e.g., matching a key name instead of a value) or break on harmless formatting changes.
+### 2.3 Resource Limit Gaps (Phase 1, Phase 5)
+Negative testing for oversized artifacts and empty payloads is either skipped or minimal. This leaves the system vulnerable to resource exhaustion or unexpected state transitions that could be caught at the E2E boundary.
+
+### 2.4 Sequential Execution Bottleneck (Phase 5)
+The test suite is architecturally designed for parallel execution (via `TEST_TMP` and `get_free_port`), but the runner executes them sequentially. This currently hides potential concurrency bugs and increases CI costs unnecessarily.
 
 ## 3. Confidence Assessment
 
--   **User-Facing Behavior:** **High.** Tests accurately simulate real-world usage (CLI -> API -> Traffic), respecting architectural boundaries.
--   **Failure Modes:** **Medium.** Good coverage of configuration errors, but limited coverage of runtime crashes or partial system failures.
--   **Stability:** **Medium.** The reliance on `sleep` and lack of structured polling for some internal states introduces non-determinism.
+- **Real User Workflow**: **High**. The suite correctly exercises the `pavctl` -> `pavis-relay` -> `pavis` path using real binaries.
+- **Critical Failure Modes**: **Medium**. LKG fallback and monotonicity violations are well-covered, but network-level resilience is missing.
+- **Flakiness Risk**: **Medium**. Generally sound, but the "Sleep-based synchronization" in relay fanout and LKG tests is a significant liability.
 
-## 4. Next Steps (Actionable)
+## 4. Next Steps (Evidence-Based)
 
-1.  **Fix Log Preservation:**
-    -   Modify `tests/lib/harness.sh` to preserve the temporary directory (`TEST_TMP`) automatically if a test returns a non-zero exit code.
-    -   *Context:* Phase 4 findings.
-
-2.  **Harden Assertions:**
-    -   Introduce `jq` to the test environment (or a lightweight Python helper since Python is already required).
-    -   Replace string-matching assertions in `observability.sh` and others with precise JSON value checks.
-    -   *Context:* Phase 2 findings.
-
-3.  **Eliminate Hardcoded Sleeps:**
-    -   Refactor `relay/11_rapid_toggle.sh` to use a polling loop that checks the version/status endpoint until it matches the expectation or times out.
-    -   *Context:* Phase 3 findings.
+1.  **Implement Resilience Tests**: Prioritize the implementation of `integrated/40_resilience_restart.sh` to prove runtime stability during control-plane outages (Phase 5).
+2.  **Eliminate Race-Prone Sleeps**: Replace the `sleep 2` in `relay/30_fanout_multi.sh` with a polling mechanism or a readiness signal from the background subscribers (Phase 3).
+3.  **Enable Parallel Execution**: Update `tests/run.sh` to leverage the existing isolation (ports/temp dirs) to run test cases in parallel, potentially using `GNU Parallel` or a simple background loop (Phase 5).
+4.  **Close Limit Gaps**: Implement the skipped `relay/70_limits_oversize.sh` test to verify artifact size enforcement (Phase 1).

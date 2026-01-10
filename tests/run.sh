@@ -93,12 +93,20 @@ run_suite() {
             echo "❌ Test case not found: $specific_case"
             suite_failed=1
         else
-            run_case "$suite" "$test_path" || suite_failed=1
+            local status=0
+            run_case "$suite" "$test_path" || status=$?
+            if [ $status -ne 0 ] && [ $status -ne 77 ]; then
+                suite_failed=1
+            fi
         fi
     else
         for test_case in "$SCRIPT_DIR/suites/$suite"/*.sh; do
             [ -e "$test_case" ] || continue
-            run_case "$suite" "$test_case" || suite_failed=1
+            local status=0
+            run_case "$suite" "$test_case" || status=$?
+            if [ $status -ne 0 ] && [ $status -ne 77 ]; then
+                suite_failed=1
+            fi
         done
     fi
 

@@ -1,42 +1,46 @@
-# Audit Phase 2: Assertions & Oracles
-**Target Module:** E2E
-**Timestamp:** 2026-01-09T12:10:00Z
-**AI Model:** gemini-2.0-flash-exp
+# E2E Test Audit - Phase 2: Assertions & Oracles
+
+- Audit Phase: Phase 2 (Assertions & Oracles)
+- Target Module: E2E
+- Generation Timestamp: 2026-01-10T05:25:00Z
+- AI Model Identifier: Gemini 2.0 Flash
 
 ## 1. Assertion Inventory
 
-The test suite relies on a mix of helper functions and ad-hoc shell commands for verification.
+The E2E tests utilize a mix of black-box network assertions and process-level state checks.
 
-### Helper Library (`tests/lib/assert.sh`)
-- `assert_body(url, expected)`: Performs a simple substring match on the HTTP response body.
-- `assert_status(url, expected)`: exact match on the HTTP status code.
+### 1.1 Network Observations (HTTP)
+- **Status Codes**: `assert_status` is used to verify API outcomes (e.g., `200 OK` for valid publish, `409 Conflict` for monotonicity violation in `relay/11_contract_republish.sh`).
+- **Body Content**: `assert_body` verifies routing targets by checking the `instance_id` returned by `pavis-mock-upstream` (e.g., `pavis/40_traffic_matcher.sh`).
+- **JSON Structure**: `assert_json_has_key` ensures mock services return the expected schema before specific values are parsed.
 
-### Ad-Hoc Assertions
-- **Header Verification:** Tests like `14_header_manipulation.sh` use `curl` combined with `grep` to verify headers are present/absent. This relies on the upstream backend echoing headers in the response body.
-- **JSON Validation:** `04_observability.sh` uses bash string matching (`[[ "$RESP" == *"checksum"* ]]`) to verify JSON API responses.
-- **Log Inspection:** Some failure cases (seen in Phase 0 exploration) check exit codes or log output implicitly via `grep`.
+### 1.2 Binary & Artifact Integrity
+- **Byte Comparison**: `cmp -s` is used in `relay/10_contract_opaque.sh` to prove that the relay serves exactly the same bytes it received, establishing it as a pure distribution engine.
+- **Checksums**: Headers like `x-pavis-checksum` are observed in several tests to ensure metadata propagation.
+
+### 1.3 Process Lifecycle & Invariants
+- **PID Stability**: Tests like `pavis/20_reload_norestart.sh` capture the runtime PID and compare it post-reload to guarantee zero-downtime evolution.
+- **Process Liveness**: `kill -0 $PID` is used in fallback tests (`pavis/30_lkg_corrupt.sh`) to ensure the proxy remains operational after rejecting a bad update.
+
+### 1.4 Temporal Oracles
+- **Request Duration**: `relay/21_longpoll_timeout.sh` measures the time taken for a `304 Not Modified` response to verify that long-polling actually blocks for the requested `wait_ms` interval.
 
 ## 2. Oracle Quality
 
-### External Behavior (Black-Box)
-- **High Quality:** The majority of tests behave as true black-box clients. They assert on HTTP status codes, response bodies, and observable headers. This accurately reflects the user/operator perspective.
-- **Decoupled:** Tests do not introspect the binary's internal memory or debug endpoints unless testing those specific endpoints (like `/v1/status`).
+The oracles used in the suite are generally of **high quality** due to their focus on external effects:
+- **Externally Observable**: Assertions focus on HTTP responses and network connectivity, which are the primary interfaces for users and operators.
+- **Decoupled from Implementation**: The tests do not assert on internal variable states or specific log message strings for correctness (logs are used only as debug aids in failure details).
+- **Strong Typing via Mocks**: By using `pavis-mock-upstream`, the tests can assert on structured JSON rather than trying to parse cleartext payloads from arbitrary backends.
 
-### Implementation Coupling
-- **Low:** The assertions are largely decoupled from internal implementation. Changing the internal routing logic or config parsing would not break tests as long as the external HTTP behavior remains consistent.
+## 3. False-Positive Risk
 
-## 3. Risks & Weaknesses
+The following false-positive risks were identified:
 
-### Brittle JSON Parsing
-- **Risk:** High. The use of substring matching for JSON (e.g., checking if "checksum" exists in the text) is fragile. It cannot distinguish between a key, a value, or a nested object. It does not validate the *structure* or *type* of the data.
-- **Evidence:** `tests/suites/integrated/04_observability.sh` check for checksum presence.
+### 3.1 PID Reuse
+In `binary` mode, if a process crashes and restarts so quickly that it receives the same PID from the OS (unlikely but possible), the "no-restart" assertion in `norestart` tests could pass even though a restart occurred.
 
-### Upstream Dependency
-- **Risk:** Medium. Header manipulation tests rely on the specific text format of the upstream echo server. If the upstream's response format changes (e.g., from `Key: Value` to `Key=Value`), tests will fail despite Pavis working correctly.
+### 3.2 Weak Health Checks
+In some tests, `wait_for_url` against `/health` or `/healthz` is the only signal of readiness. If these endpoints return `200 OK` before the internal routing table or relay state is fully synchronized, subsequent assertions might fail or, worse, pass if they are not specific enough about the expected state version.
 
-### False Positives
-- **Risk:** Low-Medium. `grep` checks can match unintended strings. For example, ensuring a header is *removed* by grepping for it in the body might fail if the header name appears in the body for a different reason (e.g. part of the original request body echoed back).
-
-## 4. Observations
-- The lack of a proper JSON parser (like `jq`) in the test environment forces reliance on brittle string matching.
-- Oracles are focused on "it works" rather than "it works correctly in detail" (e.g., checking that a checksum *exists*, not that it matches the config).
+### 3.3 Default Routing Pass
+If a routing test asserts `200 OK` but doesn't check the `instance_id` or specific backend markers, it might pass if Pavis is routing to *any* healthy backend, rather than the *specific* one targeted by the update. This risk is largely mitigated in the current suite by consistent use of `instance_id` checks.

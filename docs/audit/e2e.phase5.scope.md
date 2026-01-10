@@ -1,34 +1,43 @@
-# Audit Phase 5: E2E Scope & Cost Balance
-**Target Module:** E2E
-**Timestamp:** 2026-01-09T12:25:00Z
-**AI Model:** gemini-2.0-flash-exp
+# E2E Test Audit - Phase 5: E2E Scope & Cost Balance
 
-## 1. Scope Adequacy
+- Audit Phase: Phase 5 (E2E Scope & Cost Balance)
+- Target Module: E2E
+- Generation Timestamp: 2026-01-10T05:40:00Z
+- AI Model Identifier: Gemini 2.0 Flash
 
-### Functional Coverage
-- **Verdict:** Good. The suite covers the "Critical User Journeys": defining config, applying it, routing traffic, and updating it.
-- **Appropriateness:** Tests focus on the integration of components (CLI, Relay, Pavis) which is the correct scope for E2E. They do not excessively test internal logic that should be unit tested (e.g., complex regex matching is tested minimally to ensure the engine is wired up).
+## 1. Redundancy Analysis
 
-### Misnomers
-- **"Stress" Tests:** `tests/suites/pavis/10_stress_routing.sh` is a misnomer. It performs 50 sequential requests. This verifies basic stability but provides zero value as a load or stress test.
+### 1.1 Overlap with Integration Tests
+There is significant functional overlap between crate-level tests and E2E scripts:
+- **Relay Logic**: `pavis-relay` includes `http_tests.rs` which verifies publish/subscribe and monotonicity. The `relay` E2E suite (`10_contract_opaque.sh`, `11_contract_republish.sh`) repeats these checks. However, this is a **valuable redundancy** as the crate tests use `tower::Service` mocks, while the E2E tests exercise the real compiled binary and actual network stack.
+- **PVS Generation**: `pavctl` has `gen_validation.rs`. E2E tests implicitly verify this in every case.
 
-## 2. Redundancy
+### 1.2 Suite Cross-Pollution
+The `integrated` suite duplicates several scenarios from the `pavis` suite (e.g., traffic shifting). This is intentional to provide a "Full System Path" sanity check, but the `integrated` suite should remain minimal to avoid bloat.
 
-### Vs. Unit Tests
-- **Minimal:** While `12_wildcard_host.sh` tests routing logic that is likely also unit tested, doing so via `curl` verifies the HTTP Host header parsing and the entire request path, which unit tests cannot mock perfectly. This overlap is healthy.
+## 2. Missing Critical Scenarios
 
-### Vs. Benchmarks
-- **Separation:** The existence of a top-level `bench/` directory (observed in Phase 0) suggests that true performance testing is offloaded there. The E2E suite correctly stays focused on correctness, not speed.
+The following high-risk areas were identified as lacking E2E coverage:
+
+### 2.1 Control Plane Resilience
+While `norestart` evolution is well-tested, the behavior of the `pavis` runtime when the `pavis-relay` is unreachable for an extended period is only planned (`integrated/40_resilience_restart.sh`) and not currently implemented.
+
+### 2.2 Boundary Limits
+Negative testing for resource limits (e.g., maximum PVS artifact size) is planned but currently skipped (`relay/70_limits_oversize.sh`). This leaves a gap in resource-protection verification.
+
+### 2.3 Large-Scale Configuration
+The current tests use very small configurations (1-2 listeners/upstreams). There is no E2E verification of system behavior when handling artifacts with hundreds of routes, which may expose performance regressions in the `rkyv` deserialization or the `Proxy` update logic.
 
 ## 3. Cost Signals
 
-### Execution Speed
-- **Fast:** The tests use lightweight local processes. The heaviest operation is `docker compose` for the shared upstream, which is done once per suite.
-- **Resource Usage:** Low. Running ~50 sequential tests is very cheap.
+### 3.1 Execution Time
+- **Binary Mode**: Highly efficient. 26 tests execute in ~30-40 seconds.
+- **Docker Mode**: Significant overhead. The startup and teardown of containerized infrastructure increases execution time by ~5x compared to binary mode.
 
-### Parallelization Limits
-- **Bottleneck:** The suite is currently serial. The port allocation strategy (Phase 3) prevents safe parallel execution. As the suite grows, this will become a bottleneck.
+### 3.2 Parallelization Potential
+The current `tests/run.sh` executes all cases sequentially. 
+- **Signal**: As the suite grows, this will become a primary CI bottleneck.
+- **Evidence**: The architectural use of `get_free_port` and `TEST_TMP` makes the suite **perfectly suited for parallelization**, but the current runner does not exploit this.
 
-## 4. Missing Critical Scenarios
-- **Traffic Interruption:** While there are update tests, there is no explicit test verifying "Zero Downtime" during a reload (e.g., running a load generator *during* a config reload and asserting 0 failures).
-- **Soak Testing:** No tests run for longer than a few seconds. Memory leaks or resource exhaustion over time are not covered.
+### 3.3 Infrastructure Weight
+The reliance on `docker run --network host` for SUT components in Docker mode makes the suite difficult to run in restrictive environments (e.g., some DinD CI runners) where host networking is prohibited.

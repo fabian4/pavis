@@ -1,46 +1,54 @@
-# Audit Phase 1: Coverage of System Responsibilities
-**Target Module:** E2E
-**Timestamp:** 2026-01-09T12:05:00Z
-**AI Model:** gemini-2.0-flash-exp
+# E2E Test Audit - Phase 1: Coverage of System Responsibilities
+
+- Audit Phase: Phase 1 (Coverage of System Responsibilities)
+- Target Module: E2E
+- Generation Timestamp: 2026-01-10T05:20:00Z
+- AI Model Identifier: Gemini 2.0 Flash
 
 ## 1. Responsibility Mapping
 
-The E2E suite effectively maps to the core responsibilities of the Pavis architecture, covering the pipeline from configuration ingestion to traffic forwarding.
+The E2E tests are mapped to the primary responsibilities of the Pavis system as follows:
 
-### Configuration Pipeline
-- **Ingestion (Relay):** `tests/suites/relay/01_ingest.sh` and `06_ingest_debouncing.sh` verify that the Control Plane detects file changes and processes them.
-- **Validation:** `tests/suites/relay/02_reject_invalid_pvs.sh` and `08_codec_validation.sh` ensure invalid configurations are rejected before generation.
-- **Artifact Generation:** `tests/suites/relay` implicitly covers `.pvs` generation. `tests/suites/pavis` relies on `pavctl gen` (via `gen_pvs` helper), ensuring the CLI's generation logic is exercised.
-- **Distribution:** `tests/suites/integrated/01_publish_apply.sh` validates the end-to-end flow: Ingest -> Relay -> Polling (Pavis) -> Application.
+### 1.1 Configuration Ingestion & Artifact Generation
+- **Mechanism**: Use of `pavctl gen` (via `gen_pvs` helper in `tests/lib/env.sh`) to transform YAML into `.pvs` binary artifacts.
+- **Coverage**: 
+    - Exercised in nearly every test case (e.g., `pavis/10_bootstrap_static.sh`).
+    - `gen_minimal_pvs` in `tests/lib/env.sh` provides a baseline for minimal valid artifacts.
 
-### Runtime Forwarding
-- **Routing:** `tests/suites/pavis/` contains extensive routing tests (basic, rewrites, headers, splitting).
-- **Upstreams:** Real network interactions are tested using `docker compose` based upstreams (nginx/minimal-server), not internal mocks.
-- **Features:** Specific tests cover TLS termination (`06_tls_termination.sh`), header manipulation (`14_header_manipulation.sh`), and load balancing (`16_round_robin.sh`).
+### 1.2 Distribution & Hot-Reload
+- **Control Plane Side**: `pavis-relay` distribution is tested in the `relay` suite.
+    - `relay/20_longpoll_wait.sh`: Blocks until an update is available.
+    - `relay/30_fanout_multi.sh`: Verifies one publish event wakes up multiple subscribers.
+- **Data Plane Side**: `pavis` runtime consumption is tested in the `pavis` suite.
+    - `pavis/20_reload_norestart.sh`: Proof of version increment via long-poll without restart.
+- **End-to-End**: `integrated/10_bootstrap_path.sh` validates the full chain from compile to active proxy.
 
-### Error Handling & Resilience
-- **Invalid Config:** `tests/suites/pavis/02_invalid_pvs.sh` verifies fail-fast behavior on startup.
-- **Persistence:** `tests/suites/relay/07_persistence_recovery.sh` confirms the Control Plane recovers state after a crash/restart.
-- **System Stability:** `tests/suites/integrated/06_data_plane_recovery.sh` (inferred from name) likely covers runtime resilience.
+### 1.3 Runtime Routing & Forwarding
+- **Matcher Logic**: `pavis/40_traffic_matcher.sh` verifies that routing precedence (prefix vs exact) is enforced and can be updated.
+- **Load Balancing**: `pavis/41_traffic_weighted.sh` validates that weighted traffic shifts between backends works as specified in the artifact.
+- **Security**: `pavis/60_security_tls.sh` verifies that TLS origination to upstreams can be toggled via reload.
 
-## 2. Positive vs. Negative Coverage
+### 1.4 Error Handling & LKG
+- **Artifact Integrity**: `pavis/30_lkg_corrupt.sh` ensures that if the relay serves a non-PVS file (e.g., random bytes), the runtime maintains the Last-Known-Good state.
+- **System Monotonicity**: `relay/11_contract_republish.sh` ensures that the relay rejects configuration rollbacks (duplicate versions).
 
-### Success Paths (Happy Path)
-- **High Coverage:** The `integrated` suite (`01_publish_apply`) provides a strong "Golden Path" test, verifying the entire system works together.
-- **Routing:** The `pavis` suite exhaustively covers valid routing scenarios.
+## 2. Positive vs Negative Coverage
 
-### Failure Paths (Sad Path)
-- **Configuration:** Strong coverage of invalid configurations (syntax errors, logic errors) in both Relay and Pavis suites.
-- **Network:** `tests/suites/integrated/07_network_partition.sh` suggests coverage for network failures between components.
-- **Corrupted State:** `tests/suites/relay/10_startup_corrupted_lkg.sh` tests recovery from bad disk state.
+### 2.1 Success-Path (Positive)
+The vast majority of tests verify the "happy path" of system evolution:
+- Successful bootstrap (`pavis/10_bootstrap_static.sh`).
+- Successful route evolution (`pavis/40_traffic_matcher.sh`).
+- Successful relay persistence (`relay/50_persistence_recovery.sh`).
+
+### 2.2 Failure-Path (Negative)
+The suite includes critical negative scenarios:
+- **Corrupt Artifacts**: `pavis/30_lkg_corrupt.sh` publishes raw string data to verify runtime resilience.
+- **Monotonicity Violation**: `relay/11_contract_republish.sh` attempts to publish an existing version to trigger a `409 Conflict`.
+- **Empty Payloads**: `relay/71_limits_empty.sh` verifies handling of zero-byte publications.
+- **Planned Coverage**: `pavis/31_lkg_incompatible.sh` is reserved for semantic rejection (e.g., binding to privileged ports).
 
 ## 3. Boundary Validation
 
-The tests respect architectural boundaries:
-- **Runtime Isolation:** `pavis` suite tests start the runtime with a pre-compiled `.pvs` file, mimicking production startup where the runtime does not compile raw config.
-- **Relay Independence:** `relay` suite tests run without the runtime, verifying the Control Plane's responsibilities (validation, serving artifacts) in isolation.
-- **Integration:** The `integrated` suite connects them via HTTP (Relay URL), respecting the decoupled nature of the system.
-
-## 4. Observations
-- The use of `docker compose` for upstreams (`tests/lib/suites.sh`) is excellent, ensuring the runtime speaks to real TCP/HTTP services.
-- The separation of `pavis` (data plane) and `relay` (control plane) suites accurately reflects the decoupled architecture.
+- **Artifact Opaqueness**: `relay/10_contract_opaque.sh` explicitly validates that the relay handles random bytes as artifacts, proving it does not interpret or semantically validate the `.pvs` content.
+- **Runtime Integrity**: `pavis/10_bootstrap_static.sh` confirms the runtime starts only when provided with a valid `.pvs` file, respecting the boundary that the data plane does not handle raw YAML.
+- **Isolation of Concerns**: The separation of `relay` and `pavis` suites ensures that distribution logic (concurrency, persistence) is verified independently of traffic proxying logic.
