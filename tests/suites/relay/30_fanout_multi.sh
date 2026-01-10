@@ -19,6 +19,8 @@ cat <<-EOF > "$TEST_TMP/relay.yaml"
 	  bind: "127.0.0.1:$PORT_RELAY"
 	storage:
 	  type: memory
+	source:
+	  type: none
 	distribution:
 	  long_poll:
 	    enabled: true
@@ -36,24 +38,25 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     --data-binary "@$TEST_TMP/v1.pvs" > /dev/null
 
 # 2. Start 5 Subscribers
+SUB_PIDS=""
 for i in {1..5}; do
     (
-        resp=$(curl -s -w "%{{http_code}}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
-        code=${resp: -3}
+        code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
         echo "$i:$code" > "$TEST_TMP/sub_$i"
     ) &
+    SUB_PIDS="$SUB_PIDS $!"
 done
 
 # Wait for them to be ready (approx)
-sleep 1
+sleep 2
 
 # 3. Publish V2 (ver 2)
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 2" \
     --data-binary "@$TEST_TMP/v2.pvs" > /dev/null
 
-# 4. Wait
-wait
+# 4. Wait for subscribers only
+wait $SUB_PIDS
 
 # 5. Assert
 for i in {1..5}; do

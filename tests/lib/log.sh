@@ -24,6 +24,7 @@ print_summary() {
     local passed=$2
     local failed=$3
     local skipped=$4
+    local global_failed=${5:-0}
     
     local end_time=$(get_time)
     local duration=$(python3 -c "print(f'{($end_time - $START_TIME):.2f}')")
@@ -37,7 +38,7 @@ print_summary() {
     echo "Skipped:     $skipped"
     echo "Duration:    ${duration}s"
     
-    if [ "$failed" -eq 0 ]; then
+    if [ "$failed" -eq 0 ] && [ "$global_failed" -eq 0 ]; then
         echo "✅ RESULT: SUCCESS"
         exit 0
     else

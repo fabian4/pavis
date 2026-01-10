@@ -51,12 +51,8 @@ services:
     command: ["--help"]
 
   relay:
-    image: pavis-relay:local
+    image: pavis-mock-relay:local
     profiles: ["sut"]
-    entrypoint: ["/usr/local/bin/pavis-relay"]
-    working_dir: /workspace
-    volumes:
-      - ../../..:/workspace
     environment:
       - RUST_LOG=debug
     command: ["--help"]

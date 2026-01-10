@@ -45,7 +45,7 @@ run_case() {
     
     # Format the line
     local suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
-    printf "[%s] %-40s " "$suite_upper" "$CASE_NAME"
+    printf "[%s] %-25s " "$suite_upper" "$CASE_NAME"
 
     if [ $status -eq 0 ]; then
         printf "✅ PASS  (%ss)\n" "$duration"
@@ -149,6 +149,8 @@ fi
 
 
 
-print_summary "$TOTAL_CASES" "$PASSED_CASES" "$FAILED_CASES" "$SKIPPED_CASES"
+print_summary "$TOTAL_CASES" "$PASSED_CASES" "$FAILED_CASES" "$SKIPPED_CASES" "$FAILED_ANY"
+
+
 
 

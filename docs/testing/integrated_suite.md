@@ -36,7 +36,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 
 ### Zone 1: Smoke & Bootstrap
 
-#### `10__bootstrap__end_to_end`
+#### `10_bootstrap_path`
 *   **Purpose:** Verify the "happy path" of system startup and initial configuration distribution.
 *   **Initial State:** Relay running. Runtime bootstraps from a **minimal bootstrap artifact** (defines listeners and relay URL only, no upstream routing). Upstream running.
 *   **Action Sequence:**
@@ -52,7 +52,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 
 ### Zone 2: End-to-End Reload
 
-#### `20__reload__end_to_end_route_switch`
+#### `20_reload_switch`
 *   **Purpose:** Verify dynamic reconfiguration affects traffic without restart.
 *   **Initial State:** System running with `config_v1` (routes `/echo` to `backend-v1`). Traffic flowing to v1.
 *   **Action Sequence:**
@@ -66,7 +66,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 *   **Invariants Proven:** I1, I2, I5.
 *   **Determinism:** Poll endpoint checking for `instance_id` change.
 
-#### `21__reload__republish_is_stable`
+#### `21_reload_stable`
 *   **Purpose:** Ensure re-publishing an identical config does not break long-poll or traffic flow (Black-box invariant).
 *   **Initial State:** System running `config_v1`.
 *   **Action Sequence:**
@@ -80,7 +80,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 
 ### Zone 3: Failure & LKG
 
-#### `30__lkg__bad_artifact_does_not_break_traffic`
+#### `30_lkg_artifact`
 *   **Purpose:** Verify runtime LKG protection when Relay serves bad data.
 *   **Initial State:** System running `config_v1` (Valid).
 *   **Action Sequence:**
@@ -93,7 +93,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
     2.  Runtime does *not* crash.
 *   **Invariants Proven:** I3, I4.
 
-#### `31__lkg__incompatible_artifact_is_rejected`
+#### `31_lkg_rejection`
 *   **Purpose:** Verify runtime rejects structurally valid but semantically invalid updates.
 *   **Initial State:** System running `config_v1`.
 *   **Action Sequence:**
@@ -106,7 +106,7 @@ The suite is intentionally small, focusing on high-value integration scenarios.
 
 ### Zone 4: Resilience (Planned)
 
-#### `40__resilience__relay_restart_recovery`
+#### `40_resilience_restart` (Planned / TODO)
 *   **Purpose:** Verify Runtime reconnects after Control Plane outage.
 *   **Initial State:** System healthy.
 *   **Action Sequence:**
@@ -116,12 +116,11 @@ The suite is intentionally small, focusing on high-value integration scenarios.
     4.  Publish `config_v2`.
     5.  Verify Runtime picks up `v2`.
 *   **Invariants Proven:** I2, I4.
-*   **Notes:** Planned / TODO.
 
 ## 5. Explicit Non-Goals
 
 The Integrated Suite explicitly excludes:
-1.  **Pavctl CLI Ergonomics:** We use `pavctl` to generate artifacts, but we don't test help text, flag parsing, or user experience.
+1.  **Pavctl CLI Ergonomics:** We don't test help text, flag parsing, or user experience.
 2.  **Complex Routing:** Testing regex vs prefix precedence is done in Runtime suite. We use simple routes to prove *change*.
 3.  **Relay Storage Backends:** We use one storage mode (likely memory or file) to prove integration. Exhaustive storage testing is in Relay suite.
 4.  **Performance/Load:** This is functional verification, not a benchmark.

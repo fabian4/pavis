@@ -1,5 +1,52 @@
 # AI Agent Instructions (Core)
 
+## AI Reasoning & Execution Model
+- The agent must reason and plan internally before acting.
+- Internal reasoning steps are not fully exposed unless explicitly requested.
+- The agent must strictly respect explicit constraints, dependency ordering, and risk.
+- Reasoning must prioritize system integrity over speed of implementation.
+
+## Decision Priority
+When resolving conflicts or making implementation choices, the following priority order is absolute:
+1. **Correctness and safety**: Functional correctness and memory safety (PVS validation, rkyv checks).
+2. **Architecture boundaries and layering**: Strict adherence to crate responsibilities (Core vs. Codec vs. Runtime).
+3. **Maintainability**: Readability, idiomatic Rust, and clarity for future human/AI developers.
+4. **Performance**: Latency and throughput optimizations.
+5. **Code size and local elegance**: Minimal diffs and concise logic.
+
+## Task Complexity & Workflow
+
+### 1. Classification
+- **Trivial**: Documentation updates, single-line fixes, formatting, or renaming variables.
+    - *Planning*: Not required.
+    - *Confirmation*: Not required before execution.
+- **Moderate**: Feature implementation within a single crate, refactoring multiple functions/files, or adding unit tests.
+    - *Planning*: Required.
+    - *Confirmation*: Required before entering Code mode.
+- **Complex**: Cross-crate changes, core protocol modifications, architectural shifts, or new crate creation.
+    - *Planning*: Required (high-depth analysis).
+    - *Confirmation*: Required before entering Code mode.
+
+### 2. Plan / Code Workflow
+- **Plan Mode**: Responsible for discovery, impact analysis, and technical strategy.
+    - A Plan must include: Affected files, logic changes, dependency impacts, and verification steps.
+    - Exit Condition: User approval of the proposed strategy. For cases where a single, clearly superior strategy is proposed and the user clearly accepts it, this constitutes approval.
+- **Code Mode**: Responsible for implementation, testing, and CI validation.
+    - Trigger: Approval of the Plan for Moderate/Complex tasks, or direct identification of a Trivial task.
+    - Responsibility: Atomic application of changes and adherence to the Code Change Checklist.
+
+## Missing Information & Self-Correction
+
+### 1. Handling Missing Information
+- Progress must not be stalled by minor, cosmetic, or non-material uncertainties.
+- If logs, errors, or repository context are partial, the agent should proceed using **explicit assumptions**.
+- Assumptions must be stated clearly before acting.
+- Clarification is mandatory ONLY when missing information would materially affect the chosen architectural or strategic decision.
+
+### 2. Self-Correction Rule (Mandatory)
+- The agent MUST fix low-level mistakes it introduced (syntax errors, missing imports, formatting issues, obvious compile failures) immediately and without asking for permission.
+- Only high-risk, irreversible, or wide-impact changes (e.g., deleting data, altering public API signatures to fix a bug) require confirmation before correction.
+
 ## References
 
 | Document                      | Description                              |
@@ -166,10 +213,13 @@ Derived from Rust Readability Standards. Verify before completion.
 
 ## 1. Standard Workflow
 
-### Execution Protocol (Strict)
-- **Plan First**: Before modifying any code, output a detailed plan.
-- **Ask Permission**: Explicitly ask the user for permission to execute the plan.
-- **No Unilateral Execution**: Do not proceed with code changes until the user grants permission.
+### Execution Protocol
+- **Classify Complexity**: Determine if the task is Trivial, Moderate, or Complex.
+- **Plan Mode**: Required for Moderate and Complex tasks. Provide a detailed strategy and wait for approval.
+- **Code Mode**: 
+    - For Trivial tasks: Direct execution is allowed.
+    - For Moderate/Complex: Only enter after Plan approval.
+- **Unilateral Execution**: Strictly prohibited except for Trivial fixes or self-correction of agent-introduced low-level errors (per the Self-Correction Rule). Any other unilateral execution is a violation of this contract.
 
 ### Git Workflow Rules
 - **No Direct Pushes**: The user handles the final push and merge.

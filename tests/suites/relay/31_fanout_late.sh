@@ -19,6 +19,8 @@ cat <<-EOF > "$TEST_TMP/relay.yaml"
 	  bind: "127.0.0.1:$PORT_RELAY"
 	storage:
 	  type: memory
+	source:
+	  type: none
 	distribution:
 	  long_poll:
 	    enabled: true
@@ -36,11 +38,9 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 
 # 2. Subscribe with old Version (1)
 START=$(date +%s)
-RESPONSE=$(curl -s -w "%{{http_code}}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
 END=$(date +%s)
 DURATION=$((END - START))
-
-CODE=${RESPONSE: -3}
 
 if [ "$CODE" != "200" ]; then echo "❌ Expected 200, got $CODE"; exit 1; fi
 if [ "$DURATION" -ge 2 ]; then echo "❌ Request blocked unexpectedly"; exit 1; fi

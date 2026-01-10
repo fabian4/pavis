@@ -16,7 +16,7 @@ export PAVIS_UPSTREAM_BIN=${PAVIS_UPSTREAM_BIN:-$PROJECT_ROOT/target/release/pav
 export MOCK_RELAY_BIN=${MOCK_RELAY_BIN:-$PROJECT_ROOT/target/release/pavis-mock-relay}
 export PAVIS_IMAGE=${PAVIS_IMAGE:-pavis:local}
 export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:local}
-export MOCK_RELAY_IMAGE=${MOCK_RELAY_IMAGE:-pavis-testkit:local}
+export MOCK_RELAY_IMAGE=${MOCK_RELAY_IMAGE:-pavis-mock-relay:local}
 
 CERTS_DIR="$PROJECT_ROOT/tests/config/certs"
 
@@ -199,7 +199,7 @@ run_mock_relay() {
             --network host \
             -e RUST_LOG=debug \
             "$MOCK_RELAY_IMAGE" \
-            /usr/local/bin/pavis-mock-relay --listen "0.0.0.0:$port")
+            --listen "0.0.0.0:$port")
         record_container "$container_id" "$name"
     fi
 }

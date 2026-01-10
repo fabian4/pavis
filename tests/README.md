@@ -133,7 +133,7 @@ source "$(dirname "$0")"/../../lib/assert.sh"
 
 # 2. Configuration & Inputs
 # Define variables or write config files relative to the case execution
-setup_test "10__bootstrap__static"
+setup_test "10_bootstrap"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 
@@ -179,5 +179,6 @@ Use the `run.sh` script:
 ./tests/run.sh integrated
 
 # Run specific case
-./tests/run.sh pavis 10__bootstrap__static
+./tests/run.sh pavis 10_bootstrap_static
+./tests/run.sh integrated 10_bootstrap_path
 ```
