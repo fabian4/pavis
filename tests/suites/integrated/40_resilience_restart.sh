@@ -53,10 +53,10 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" -H "x-pavis-version
 # Wait for V1 to be active
 MAX_RETRIES=50
 for i in $(seq 1 $MAX_RETRIES); do
-    if curl -s -f "http://127.0.0.1:$PORT_PAVIS/echo" > /dev/null; then break; fi
+    if pavis_curl_body -f "http://127.0.0.1:$PORT_PAVIS/echo" > /dev/null; then break; fi
     sleep 0.1
 done
-assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1" -H "X-Pavis-Test-Case: ${CASE_NAME}"
+assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
 
 # 2. Kill Relay
 stop_sut "relay"
@@ -64,7 +64,7 @@ stop_sut "relay"
 # 3. Assert Traffic Continues (LKG)
 # We send a few requests to be sure
 for i in {1..5}; do
-    assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1" -H "X-Pavis-Test-Case: ${CASE_NAME}"
+    assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
     sleep 0.1
 done
 
@@ -85,7 +85,7 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" -H "x-pavis-version
 MAX_RETRIES=50
 SWITCHED=0
 for i in $(seq 1 $MAX_RETRIES); do
-    if curl -s "http://127.0.0.1:$PORT_PAVIS/echo" | grep -q "backend-v2"; then
+    if pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo" | grep -q "backend-v2"; then
         SWITCHED=1
         break
     fi

@@ -49,14 +49,11 @@ EOF
 fi
 
 # 3. Attempt Publish
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_headers "$TEST_TMP/resp" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 1" \
-    --data-binary "@$TEST_TMP/valid.pvs")
+    --data-binary "@$TEST_TMP/valid.pvs"
 
 # 4. Assert 413 Payload Too Large
-if [ "$CODE" != "413" ]; then
-    echo "❌ Expected 413 Payload Too Large, got $CODE"
-    exit 1
-fi
+assert_status_eq "$TEST_TMP/resp" 413
 
 echo "✅ 70_limits_oversize passed"

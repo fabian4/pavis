@@ -76,9 +76,7 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 MAX_RETRIES=20
 SUCCESS=0
 for i in $(seq 1 $MAX_RETRIES); do
-    if curl -s -f "http://127.0.0.1:$PORT_PAVIS/echo" \
-        -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
-        -H "X-Pavis-Test-Case: ${CASE_NAME}" > /dev/null; then
+    if pavis_curl_body -f "http://127.0.0.1:$PORT_PAVIS/echo" > /dev/null; then
         SUCCESS=1
         break
     fi

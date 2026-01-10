@@ -42,9 +42,7 @@ run_pavis "$TEST_TMP/initial.pvs" ""
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 
 # 4. Assert Behavior
-response=$(curl -s "http://127.0.0.1:$PORT_PAVIS/echo" \
-  -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
-  -H "X-Pavis-Test-Case: ${CASE_NAME}")
+response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 
 echo "$response" | assert_json_has_key "instance_id"
 instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['instance_id'])")

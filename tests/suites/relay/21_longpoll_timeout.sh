@@ -30,14 +30,14 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 gen_minimal_pvs "$TEST_TMP/v1.pvs" "v1"
 
 # 1. Publish V1 (ver 1)
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/v1.pvs" > /dev/null
 
 # 2. Start Subscriber
 START_TIME=$(date +%s)
 # 2000ms timeout
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=2000")
+CODE=$(pavis_curl_body -o /dev/null -w "%{http_code}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=2000")
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 

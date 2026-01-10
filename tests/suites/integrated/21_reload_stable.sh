@@ -55,9 +55,7 @@ run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 
 # Assert Traffic
-assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1" \
-  -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
-  -H "X-Pavis-Test-Case: ${CASE_NAME}"
+assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
 
 # Publish V1 again (ver 2, same content)
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
@@ -67,9 +65,7 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 # Wait & Assert Stability
 # We loop requests to ensure no drops
 for i in {1..20}; do
-    response=$(curl -s "http://127.0.0.1:$PORT_PAVIS/echo" \
-      -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
-      -H "X-Pavis-Test-Case: ${CASE_NAME}")
+    response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     if [[ "$response" != *"backend-v1"* ]]; then
         echo "❌ Traffic failure during idempotent update"
         exit 1

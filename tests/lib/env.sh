@@ -283,3 +283,13 @@ get_host_addr() {
         echo "127.0.0.1"
     fi
 }
+
+pavis_curl_body() {
+    curl -s -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" -H "X-Pavis-Test-Case: ${CASE_NAME:-unknown}" "$@"
+}
+
+pavis_curl_headers() {
+    local output_file="$1"
+    shift
+    curl -s -i -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" -H "X-Pavis-Test-Case: ${CASE_NAME:-unknown}" -o "$output_file" "$@"
+}

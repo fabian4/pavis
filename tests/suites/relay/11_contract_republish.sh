@@ -27,31 +27,28 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 gen_minimal_pvs "$TEST_TMP/payload.pvs" "v1"
 
 # 1. Publish First (v1)
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/payload.pvs" > /dev/null
 
 # 2. Publish Second (v2, same payload)
-curl -s -i -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_headers "$TEST_TMP/pub2_resp" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 2" \
-    --data-binary "@$TEST_TMP/payload.pvs" > "$TEST_TMP/pub2_resp"
+    --data-binary "@$TEST_TMP/payload.pvs"
 
-if ! grep -q "200 OK" "$TEST_TMP/pub2_resp"; then
-    echo "❌ Second publish failed"
-    cat "$TEST_TMP/pub2_resp"
-    # If it fails with Conflict (monotonicity), then idempotency logic isn't there or requires newer version.
-    # But usually idempotency means same ID (version) + same payload = OK.
-    exit 1
-fi
+assert_status_eq "$TEST_TMP/pub2_resp" 200
 
 # 3. Subscribe
-curl -s -i "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/sub_resp"
+pavis_curl_headers "$TEST_TMP/sub_resp" "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0"
+assert_status_eq "$TEST_TMP/sub_resp" 200
 
 # 4. Assert Body
-curl -s "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/body"
+pavis_curl_body "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/body"
 if ! cmp -s "$TEST_TMP/payload.pvs" "$TEST_TMP/body"; then
     echo "❌ Body mismatch"
     exit 1
 fi
+
+assert_header_eq "$TEST_TMP/sub_resp" "x-pavis-version" "2"
 
 echo "✅ contract_02_idempotency_check passed"

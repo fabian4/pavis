@@ -31,16 +31,14 @@ gen_minimal_pvs "$TEST_TMP/v1.pvs" "v1"
 gen_minimal_pvs "$TEST_TMP/v2.pvs" "v2"
 
 # 1. Publish V1 (ver 1)
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/v1.pvs" > /dev/null
 
 # 2. Start Subscriber (Background)
-# Wait for version > 1
-START_TIME=$(date +%s)
 (
     # Request version 1, expect wait.
-    code=$(curl -s -o "$TEST_TMP/sub_body" -w "%{http_code}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
+    code=$(pavis_curl_body -s -o "$TEST_TMP/sub_body" -w "%{http_code}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
     
     if [ "$code" != "200" ]; then
         echo "FAIL: Code $code" > "$TEST_TMP/result"
@@ -55,18 +53,22 @@ START_TIME=$(date +%s)
 ) &
 PID_SUB=$!
 
-# 3. Wait 1s then Publish V2 (ver 2)
-sleep 1
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+# 3. Verify blocking (Subscriber should be alive)
+sleep 0.5
+if ! kill -0 $PID_SUB 2>/dev/null; then
+    echo "❌ Subscriber exited prematurely (did not block)"
+    exit 1
+fi
+
+# 4. Publish V2 (ver 2) to unblock
+pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 2" \
     --data-binary "@$TEST_TMP/v2.pvs" > /dev/null
 
-# 4. Wait for subscriber
+# 5. Wait for subscriber
 wait $PID_SUB
-END_TIME=$(date +%s)
-DURATION=$((END_TIME - START_TIME))
 
-# 5. Assert
+# 6. Assert
 if [ ! -f "$TEST_TMP/result" ]; then
     echo "❌ Subscriber did not produce result"
     exit 1

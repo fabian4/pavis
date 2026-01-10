@@ -35,7 +35,7 @@ done
 # 1. Start Publisher Loop
 (
     for i in {1..50}; do
-        curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+        pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
             -H "x-pavis-version: $i" \
             --data-binary "@$TEST_TMP/payload-$i.pvs" >/dev/null || echo "Pub $i failed"
     done
@@ -49,11 +49,17 @@ LAST_VER="0"
     # Run for approx same duration or until done
     for i in {1..100}; do
         # Short timeout to catch updates fast
-        RESP=$(curl -s -i -H "x-pavis-version: $VERSION" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=100")
+        pavis_curl_headers "$TEST_TMP/resp_$i" -H "x-pavis-version: $VERSION" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=100"
         
-        if echo "$RESP" | grep -q "200 OK"; then
-            VERSION=$(echo "$RESP" | grep -i "x-pavis-version:" | awk '{print $2}' | tr -d '\r')
-            LAST_VER=$VERSION
+        if grep -q "200 OK" "$TEST_TMP/resp_$i"; then
+            V=$(header_value "$TEST_TMP/resp_$i" "x-pavis-version")
+            # Monotonicity check
+            if [ "$V" -lt "$LAST_VER" ]; then
+                echo "FAIL: Version regression detected: $V < $LAST_VER" > "$TEST_TMP/sub_fail"
+                exit 1
+            fi
+            VERSION=$V
+            LAST_VER=$V
         fi
         
         if [ "$LAST_VER" == "50" ]; then
@@ -64,8 +70,12 @@ LAST_VER="0"
         # Check if publisher finished and we are stale?
         if ! kill -0 $PUB_PID 2>/dev/null; then
              # Give it one last check
-             RESP=$(curl -s -i -H "x-pavis-version: $VERSION" "http://127.0.0.1:$PORT_RELAY/v1/config")
-             V=$(echo "$RESP" | grep -i "x-pavis-version:" | awk '{print $2}' | tr -d '\r')
+             pavis_curl_headers "$TEST_TMP/final_check" -H "x-pavis-version: $VERSION" "http://127.0.0.1:$PORT_RELAY/v1/config"
+             V=$(header_value "$TEST_TMP/final_check" "x-pavis-version")
+             if [ "$V" -lt "$LAST_VER" ]; then
+                 echo "FAIL: Version regression in final check: $V < $LAST_VER" > "$TEST_TMP/sub_fail"
+                 exit 1
+             fi
              if [ "$V" == "50" ]; then
                  echo "DONE" > "$TEST_TMP/sub_done"
                  break
@@ -79,9 +89,14 @@ wait $PUB_PID
 wait $SUB_PID
 
 # 3. Assert
+if [ -f "$TEST_TMP/sub_fail" ]; then
+    cat "$TEST_TMP/sub_fail"
+    exit 1
+fi
+
 if [ ! -f "$TEST_TMP/sub_done" ]; then
-    FINAL=$(curl -s -i -H "x-pavis-version: 0" "http://127.0.0.1:$PORT_RELAY/v1/config")
-    V=$(echo "$FINAL" | grep -i "x-pavis-version:" | awk '{print $2}' | tr -d '\r')
+    pavis_curl_headers "$TEST_TMP/final" -H "x-pavis-version: 0" "http://127.0.0.1:$PORT_RELAY/v1/config"
+    V=$(header_value "$TEST_TMP/final" "x-pavis-version")
     if [ "$V" != "50" ]; then
         echo "❌ Final state is $V, expected 50"
         exit 1
@@ -89,7 +104,7 @@ if [ ! -f "$TEST_TMP/sub_done" ]; then
 fi
 
 # Check Relay Health
-if ! curl -s -f "http://127.0.0.1:$PORT_RELAY/health" >/dev/null; then
+if ! pavis_curl_body -f "http://127.0.0.1:$PORT_RELAY/health" >/dev/null; then
     echo "❌ Relay died"
     exit 1
 fi

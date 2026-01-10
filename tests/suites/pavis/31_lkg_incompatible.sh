@@ -48,9 +48,7 @@ run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 
 # 4. Assert V1
-response=$(curl -s "http://127.0.0.1:$PORT_PAVIS/echo" \
-  -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
-  -H "X-Pavis-Test-Case: ${CASE_NAME}")
+response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['instance_id'])")
 if [ "$instance" != "backend-v1" ]; then
     echo "❌ Expected backend-v1, got $instance"
@@ -106,9 +104,7 @@ publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2_bad.pvs"
 sleep 2
 
 # 8. Assert LKG (Still V1)
-response=$(curl -s "http://127.0.0.1:$PORT_PAVIS/echo" \
-  -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
-  -H "X-Pavis-Test-Case: ${CASE_NAME}")
+response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id', ''))")
 
 if [ "$instance" != "backend-v1" ]; then

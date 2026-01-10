@@ -6,7 +6,8 @@
 assert_body() {
     local url="$1"
     local expected="$2"
-    local actual=$(curl -s "$url")
+    shift 2
+    local actual=$(pavis_curl_body "$url" "$@")
     if [[ "$actual" != *"$expected"* ]]; then
         echo "❌ Assertion failed: Expected body to contain '$expected', got '$actual'"
         return 1
@@ -16,9 +17,40 @@ assert_body() {
 assert_status() {
     local url="$1"
     local expected="$2"
-    local actual=$(curl -s -o /dev/null -w "%{http_code}" "$url")
+    shift 2
+    local actual=$(pavis_curl_body -o /dev/null -w "%{http_code}" "$url" "$@")
     if [ "$actual" != "$expected" ]; then
         echo "❌ Assertion failed: Expected status $expected, got $actual"
+        return 1
+    fi
+}
+
+header_value() {
+    local file="$1"
+    local header_name="$2"
+    # Case-insensitive grep for the header, using -a to treat as text even if binary body exists
+    # We use sed to extract the value after the first colon and space, and trim \r
+    grep -ai "^$header_name:" "$file" | head -n 1 | sed -E "s/^[^:]+:[[:space:]]*//i" | tr -d '\r' | tr -d '\n' | tr -d ' '
+}
+
+assert_status_eq() {
+    local file="$1"
+    local expected="$2"
+    # First line of curl -i is "HTTP/1.1 200 OK"
+    local actual=$(head -n 1 "$file" | awk '{print $2}')
+    if [ "$actual" != "$expected" ]; then
+        echo "❌ Assertion failed: Expected status $expected, got $actual"
+        return 1
+    fi
+}
+
+assert_header_eq() {
+    local file="$1"
+    local name="$2"
+    local expected="$3"
+    local actual=$(header_value "$file" "$name")
+    if [ "$actual" != "$expected" ]; then
+        echo "❌ Assertion failed: Expected header '$name' to be '$expected', got '$actual'"
         return 1
     fi
 }

@@ -33,7 +33,7 @@ gen_minimal_pvs "$TEST_TMP/v1.pvs" "v1"
 gen_minimal_pvs "$TEST_TMP/v2.pvs" "v2"
 
 # 1. Publish V1 (ver 1)
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/v1.pvs" > /dev/null
 
@@ -41,7 +41,7 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 SUB_PIDS=""
 for i in {1..5}; do
     (
-        code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
+        code=$(pavis_curl_body -o /dev/null -w "%{http_code}" --max-time 10 -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
         echo "$i:$code" > "$TEST_TMP/sub_$i"
     ) &
     SUB_PIDS="$SUB_PIDS $!"
@@ -51,7 +51,7 @@ done
 MAX_RETRIES=50
 READY=0
 for i in $(seq 1 $MAX_RETRIES); do
-    WAIT_COUNT=$(curl -s "http://127.0.0.1:$PORT_RELAY/v1/metrics" | grep "^pavis_relay_longpoll_wait_total" | awk '{print $2}' || echo "0")
+    WAIT_COUNT=$(pavis_curl_body "http://127.0.0.1:$PORT_RELAY/v1/metrics" | grep "^pavis_relay_longpoll_wait_total" | awk '{print $2}' || echo "0")
     if [ "${WAIT_COUNT:-0}" -ge 5 ]; then
         READY=1
         break
@@ -65,7 +65,7 @@ if [ "$READY" -eq 0 ]; then
 fi
 
 # 3. Publish V2 (ver 2)
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 2" \
     --data-binary "@$TEST_TMP/v2.pvs" > /dev/null
 

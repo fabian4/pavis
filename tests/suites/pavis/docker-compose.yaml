@@ -14,10 +14,10 @@ services:
       - "8081:8081"
       - "8443:8443"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
-      interval: 2s
-      timeout: 1s
-      retries: 10
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8081/healthz"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
 
   backend-v2:
     image: pavis-mock-upstream:local
@@ -34,10 +34,10 @@ services:
       - "8082:8082"
       - "8444:8444"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/healthz"]
-      interval: 2s
-      timeout: 1s
-      retries: 10
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8082/healthz"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
 
   pavis:
     image: pavis:local

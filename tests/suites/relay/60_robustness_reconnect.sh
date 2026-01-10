@@ -19,6 +19,8 @@ cat <<-EOF > "$TEST_TMP/relay.yaml"
 	  bind: "127.0.0.1:$PORT_RELAY"
 	storage:
 	  type: memory
+	source:
+	  type: none
 	distribution:
 	  long_poll:
 	    enabled: true
@@ -31,36 +33,36 @@ gen_minimal_pvs "$TEST_TMP/v1.pvs" "v1"
 gen_minimal_pvs "$TEST_TMP/v2.pvs" "v2"
 
 # 1. Publish V1
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/v1.pvs" > /dev/null
 
-# 2. Subscribe and Abort (Simulated)
-curl -s -m 1 -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000" || true
+# 2. Start long-poll (Blocks)
+# We use --max-time to simulate disconnect
+pavis_curl_body -m 1 -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000" || true
 
 # 3. Publish V2
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 2" \
     --data-binary "@$TEST_TMP/v2.pvs" > /dev/null
 
-# 4. Reconnect with OLD Version (1)
-START=$(date +%s)
-RESP=$(curl -s -i -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
-END=$(date +%s)
-DURATION=$((END - START))
+# 4. Reconnect
+START_TIME=$(date +%s)
+pavis_curl_headers "$TEST_TMP/resp" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000"
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
 
-if echo "$RESP" | grep -q "200 OK"; then
-    # Verify content
-    curl -s "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 1" > "$TEST_TMP/body"
-    if ! cmp -s "$TEST_TMP/v2.pvs" "$TEST_TMP/body"; then
-        echo "❌ Expected v2, got something else"
-        exit 1
-    fi
-else
-    echo "❌ Expected 200 OK"
+# 5. Assert
+assert_status_eq "$TEST_TMP/resp" 200
+pavis_curl_body -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config" > "$TEST_TMP/body"
+if ! cmp -s "$TEST_TMP/v2.pvs" "$TEST_TMP/body"; then
+    echo "❌ Body mismatch after reconnect"
     exit 1
 fi
 
-if [ "$DURATION" -ge 2 ]; then echo "❌ Request blocked unexpectedly"; exit 1; fi
+if [ "$DURATION" -ge 2 ]; then
+    echo "❌ Request blocked unexpectedly after reconnect (should be immediate update)"
+    exit 1
+fi
 
 echo "✅ robustness_01_subscriber_reconnect passed"

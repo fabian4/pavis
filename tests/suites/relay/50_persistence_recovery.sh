@@ -32,12 +32,12 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 gen_minimal_pvs "$TEST_TMP/persistent.pvs" "persistent"
 
 # 2. Publish
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/persistent.pvs" > /dev/null
 
 # Verify
-curl -s "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/body"
+pavis_curl_body "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/body"
 if ! cmp -s "$TEST_TMP/persistent.pvs" "$TEST_TMP/body"; then
     echo "❌ Failed to serve data initially"
     exit 1
@@ -50,7 +50,7 @@ run_relay "$TEST_TMP/relay.yaml" "relay2"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 
 # 4. Verify Persistence
-curl -s "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/body_restored"
+pavis_curl_body "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/body_restored"
 if ! cmp -s "$TEST_TMP/persistent.pvs" "$TEST_TMP/body_restored"; then
     echo "❌ Data lost after restart"
     exit 1

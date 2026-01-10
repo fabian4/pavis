@@ -44,9 +44,7 @@ run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 
 # Assert V1 (HTTP)
-response=$(curl -s "http://127.0.0.1:$PORT_PAVIS/echo" \
-  -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
-  -H "X-Pavis-Test-Case: ${CASE_NAME}")
+response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['tls']['enabled'])")
 if [ "$tls_enabled" == "True" ] || [ "$tls_enabled" == "true" ]; then
     echo "❌ Expected HTTP initially, got TLS enabled"
@@ -65,6 +63,7 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	      enabled: true
 	      verify_cert: false
 	      verify_hostname: false
+	      sni: "localhost"
 	    endpoints:
 	      - ip: "127.0.0.1"
 	        port: 8443
@@ -84,9 +83,7 @@ publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
 MAX_RETRIES=20
 SWITCHED=0
 for i in $(seq 1 $MAX_RETRIES); do
-    response=$(curl -s "http://127.0.0.1:$PORT_PAVIS/echo" \
-      -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
-      -H "X-Pavis-Test-Case: ${CASE_NAME}")
+    response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     
     tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('enabled', False))")
     

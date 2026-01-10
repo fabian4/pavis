@@ -28,11 +28,12 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 
 # 1. Publish Empty
 touch "$TEST_TMP/empty"
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+pavis_curl_headers "$TEST_TMP/resp" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 1" \
-    --data-binary "@$TEST_TMP/empty")
+    --data-binary "@$TEST_TMP/empty"
 
 # 2. Assert (Empty body is invalid PVS, so 400 or 422)
+CODE=$(head -n 1 "$TEST_TMP/resp" | awk '{print $2}')
 if [ "$CODE" == "400" ] || [ "$CODE" == "422" ]; then
     # Correct behavior (rejected)
     true
@@ -40,7 +41,7 @@ elif [ "$CODE" == "200" ]; then
     echo "❌ Unexpected success for empty body"
     exit 1
 else
-    echo "❌ Unexpected code $CODE"
+    echo "❌ Unexpected status code $CODE"
     exit 1
 fi
 
