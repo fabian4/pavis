@@ -47,6 +47,7 @@ run_case() {
     local suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
     printf "[%s] %-25s " "$suite_upper" "$CASE_NAME"
 
+    TOTAL_CASES=$((TOTAL_CASES + 1))
     if [ $status -eq 0 ]; then
         printf "✅ PASS  (%ss)\n" "$duration"
         PASSED_CASES=$((PASSED_CASES + 1))
@@ -61,7 +62,6 @@ run_case() {
         cat "$case_log"
         log_endgroup
     fi
-    TOTAL_CASES=$((TOTAL_CASES + 1))
     
     # Clean up log if success and not verbose
     if [ $status -eq 0 ] && [ "${E2E_VERBOSE:-0}" -ne 1 ]; then
@@ -148,17 +148,8 @@ else
 fi
 
 # Final cleanup of the shared temp directory
-
 if [ "${KEEP_TMP:-false}" != "true" ]; then
-
     rm -rf "$SCRIPT_DIR/temp"
-
 fi
 
-
-
 print_summary "$TOTAL_CASES" "$PASSED_CASES" "$FAILED_CASES" "$SKIPPED_CASES" "$FAILED_ANY"
-
-
-
-

@@ -1,9 +1,9 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 31/70
+- **Total**: 32/70
 - **Core Features**: 26/53
-- **Technical Debt**: 5/17
+- **Technical Debt**: 6/17
 
 > **Status**: Active
 > **Focus**: Phase 4 (Security & Identity)

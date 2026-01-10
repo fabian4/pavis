@@ -2,53 +2,43 @@
 
 - Audit Phase: Phase 1 (Coverage of System Responsibilities)
 - Target Module: E2E
-- Generation Timestamp: 2026-01-10T05:20:00Z
+- Generation Timestamp: 2026-01-10T06:16:00Z
 - AI Model Identifier: Gemini 2.0 Flash
 
 ## 1. Responsibility Mapping
 
-The E2E tests are mapped to the primary responsibilities of the Pavis system as follows:
+The E2E tests cover the following system responsibilities:
 
-### 1.1 Configuration Ingestion & Artifact Generation
-- **Mechanism**: Use of `pavctl gen` (via `gen_pvs` helper in `tests/lib/env.sh`) to transform YAML into `.pvs` binary artifacts.
-- **Coverage**: 
-    - Exercised in nearly every test case (e.g., `pavis/10_bootstrap_static.sh`).
-    - `gen_minimal_pvs` in `tests/lib/env.sh` provides a baseline for minimal valid artifacts.
+### 1.1 Config Ingestion & Artifact Generation
+- **`pavis/10_bootstrap_static.sh`**: Uses `pavctl gen` to compile YAML to `.pvs`.
+- **`integrated/10_bootstrap_path.sh`**: Validates the end-to-end ingestion flow from compiler to active runtime.
 
-### 1.2 Distribution & Hot-Reload
-- **Control Plane Side**: `pavis-relay` distribution is tested in the `relay` suite.
-    - `relay/20_longpoll_wait.sh`: Blocks until an update is available.
-    - `relay/30_fanout_multi.sh`: Verifies one publish event wakes up multiple subscribers.
-- **Data Plane Side**: `pavis` runtime consumption is tested in the `pavis` suite.
-    - `pavis/20_reload_norestart.sh`: Proof of version increment via long-poll without restart.
-- **End-to-End**: `integrated/10_bootstrap_path.sh` validates the full chain from compile to active proxy.
+### 1.2 Distribution / Reload
+- **`relay/` Suite**: Extensively tests the `pavis-relay` distribution logic, including long-polling (`relay/20_longpoll_wait.sh`) and multi-subscriber fanout (`relay/30_fanout_multi.sh`).
+- **`pavis/20_reload_norestart.sh`**: Proves that `pavis` runtime consumes updates via long-poll without process interruption.
 
 ### 1.3 Runtime Routing & Forwarding
-- **Matcher Logic**: `pavis/40_traffic_matcher.sh` verifies that routing precedence (prefix vs exact) is enforced and can be updated.
-- **Load Balancing**: `pavis/41_traffic_weighted.sh` validates that weighted traffic shifts between backends works as specified in the artifact.
-- **Security**: `pavis/60_security_tls.sh` verifies that TLS origination to upstreams can be toggled via reload.
+- **`pavis/40_traffic_matcher.sh`**: Verifies dynamic evolution of path matching logic.
+- **`pavis/41_traffic_weighted.sh`**: Verifies weighted load balancing.
+- **`pavis/60_security_tls.sh`**: Verifies TLS origination policy changes.
 
-### 1.4 Error Handling & LKG
-- **Artifact Integrity**: `pavis/30_lkg_corrupt.sh` ensures that if the relay serves a non-PVS file (e.g., random bytes), the runtime maintains the Last-Known-Good state.
-- **System Monotonicity**: `relay/11_contract_republish.sh` ensures that the relay rejects configuration rollbacks (duplicate versions).
+### 1.4 Error Handling Paths
+- **`pavis/30_lkg_corrupt.sh`**: Validates fallback to Last-Known-Good configuration when a corrupt artifact is served.
+- **`relay/11_contract_republish.sh`**: Validates version monotonicity enforcement at the API boundary.
 
 ## 2. Positive vs Negative Coverage
 
-### 2.1 Success-Path (Positive)
-The vast majority of tests verify the "happy path" of system evolution:
-- Successful bootstrap (`pavis/10_bootstrap_static.sh`).
-- Successful route evolution (`pavis/40_traffic_matcher.sh`).
-- Successful relay persistence (`relay/50_persistence_recovery.sh`).
+### 2.1 Success-path (Positive)
+- Core functionality: bootstrap, routing, reload, persistence are well-covered across all suites.
 
-### 2.2 Failure-Path (Negative)
-The suite includes critical negative scenarios:
-- **Corrupt Artifacts**: `pavis/30_lkg_corrupt.sh` publishes raw string data to verify runtime resilience.
-- **Monotonicity Violation**: `relay/11_contract_republish.sh` attempts to publish an existing version to trigger a `409 Conflict`.
-- **Empty Payloads**: `relay/71_limits_empty.sh` verifies handling of zero-byte publications.
-- **Planned Coverage**: `pavis/31_lkg_incompatible.sh` is reserved for semantic rejection (e.g., binding to privileged ports).
+### 2.2 Failure-path (Negative)
+- **Invalid binary artifact**: `pavis/30_lkg_corrupt.sh` (Integrity check).
+- **Stale version update**: `relay/11_contract_republish.sh` (Monotonicity check).
+- **Oversized payload**: `relay/70_limits_oversize.sh` (Resource limit check).
+- **Semantically invalid config**: `pavis/31_lkg_incompatible.sh` (e.g., privileged port bind - status: Planned/Manual).
 
 ## 3. Boundary Validation
 
-- **Artifact Opaqueness**: `relay/10_contract_opaque.sh` explicitly validates that the relay handles random bytes as artifacts, proving it does not interpret or semantically validate the `.pvs` content.
-- **Runtime Integrity**: `pavis/10_bootstrap_static.sh` confirms the runtime starts only when provided with a valid `.pvs` file, respecting the boundary that the data plane does not handle raw YAML.
-- **Isolation of Concerns**: The separation of `relay` and `pavis` suites ensures that distribution logic (concurrency, persistence) is verified independently of traffic proxying logic.
+- **Artifact Consumption**: Tests strictly enforce the boundary that `pavis` runtime only consumes `.pvs` artifacts (`pavis/10_bootstrap_static.sh`).
+- **Relay Role**: `relay/10_contract_opaque.sh` demonstrates that the relay handles artifacts as opaque blobs, as intended by the Frozen Data Plane architecture.
+- **Integrated Boundary**: `integrated/` suite proves that `pavctl`, `relay`, and `pavis` speak the same protocol (Long-poll, ETag, PVS) in a realistic topology.

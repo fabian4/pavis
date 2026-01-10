@@ -44,12 +44,7 @@ if ! cmp -s "$TEST_TMP/persistent.pvs" "$TEST_TMP/body"; then
 fi
 
 # 3. Restart
-if [ "$TEST_MODE" == "binary" ]; then
-    kill $(cat "$TEST_TMP/pids/relay1.pid")
-    wait $(cat "$TEST_TMP/pids/relay1.pid") 2>/dev/null || true
-else
-    docker stop $(cat "$TEST_TMP/pids/relay1.container")
-fi
+stop_sut "relay1"
 
 run_relay "$TEST_TMP/relay.yaml" "relay2"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5

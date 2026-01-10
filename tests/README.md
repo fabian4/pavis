@@ -156,12 +156,16 @@ assert_status 200 "$response"
 
 ### Mandatory Test Isolation Headers
 
-To ensure parallel safety and determinism, **EVERY** request sent through Pavis MUST include the following headers:
+To ensure determinism and allow for clear log tracing, **EVERY** request sent through Pavis MUST include the following headers:
 
 1. **`X-Pavis-Test-Run`**: Identifies the specific CI run or test session.
 2. **`X-Pavis-Test-Case`**: Identifies the specific test case file/function.
 
-**Violation of this rule will cause flaky tests and CI failures.**
+### Why?
+
+- **State Isolation**: The upstream uses these headers to namespace counters (e.g., for `/flaky` or `/received`).
+- **Debugging**: Traces logs clearly to a specific test case.
+
 
 ---
 

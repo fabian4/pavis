@@ -47,8 +47,22 @@ for i in {1..5}; do
     SUB_PIDS="$SUB_PIDS $!"
 done
 
-# Wait for them to be ready (approx)
-sleep 2
+# Wait for subscribers to be registered in metrics
+MAX_RETRIES=50
+READY=0
+for i in $(seq 1 $MAX_RETRIES); do
+    WAIT_COUNT=$(curl -s "http://127.0.0.1:$PORT_RELAY/v1/metrics" | grep "^pavis_relay_longpoll_wait_total" | awk '{print $2}' || echo "0")
+    if [ "${WAIT_COUNT:-0}" -ge 5 ]; then
+        READY=1
+        break
+    fi
+    sleep 0.1
+done
+
+if [ "$READY" -eq 0 ]; then
+    echo "❌ Subscribers did not register in time (found $WAIT_COUNT)"
+    exit 1
+fi
 
 # 3. Publish V2 (ver 2)
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \

@@ -83,10 +83,8 @@ if [ "$instance" != "backend-v1" ]; then
     exit 1
 fi
 
-# Capture PID to ensure no restart
-if [ "$TEST_MODE" == "binary" ]; then
-    PID_INITIAL=$(cat "$TEST_TMP/pids/pavis.pid")
-fi
+# Capture ID to ensure no restart
+SUT_ID_INITIAL=$(get_sut_id "pavis")
 
 # 6. Publish V2 to Relay (Hot Reload)
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
@@ -114,18 +112,17 @@ if [ "$SWITCHED" -eq 0 ]; then
     exit 1
 fi
 
-# 8. Assert PID Constant
-if [ "$TEST_MODE" == "binary" ]; then
-    PID_FINAL=$(cat "$TEST_TMP/pids/pavis.pid")
-    if [ "$PID_INITIAL" != "$PID_FINAL" ]; then
-        echo "❌ PID changed! Pavis restarted."
-        exit 1
-    fi
-    # Ensure process is still running
-    if ! kill -0 "$PID_FINAL" 2>/dev/null; then
-        echo "❌ Pavis process died!"
-        exit 1
-    fi
+# 8. Assert ID Constant
+SUT_ID_FINAL=$(get_sut_id "pavis")
+if [ "$SUT_ID_INITIAL" != "$SUT_ID_FINAL" ]; then
+    echo "❌ SUT identity changed! Possible restart."
+    exit 1
+fi
+
+# Ensure process/container is still running
+if ! check_sut_alive "pavis"; then
+    echo "❌ Pavis is not running!"
+    exit 1
 fi
 
 echo "✅ lifecycle_02_hot_reload_basic passed"

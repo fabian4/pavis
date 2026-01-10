@@ -76,12 +76,9 @@ if [ "$instance" != "backend-v1" ]; then
 fi
 
 # 8. Assert Process Alive
-if [ "$TEST_MODE" == "binary" ]; then
-    PID=$(cat "$TEST_TMP/pids/pavis.pid")
-    if ! kill -0 "$PID" 2>/dev/null; then
-        echo "❌ Pavis died after receiving corrupt config!"
-        exit 1
-    fi
+if ! check_sut_alive "pavis"; then
+    echo "❌ Pavis died after receiving corrupt config!"
+    exit 1
 fi
 
 echo "✅ lifecycle_03_lkg_corruption passed"

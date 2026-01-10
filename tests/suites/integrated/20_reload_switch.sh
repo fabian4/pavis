@@ -67,10 +67,8 @@ if [ "$instance" != "backend-v1" ]; then
     exit 1
 fi
 
-# Capture PID
-if [ "$TEST_MODE" == "binary" ]; then
-    PID_INITIAL=$(cat "$TEST_TMP/pids/pavis.pid")
-fi
+# Capture ID to ensure no restart
+SUT_ID_INITIAL=$(get_sut_id "pavis")
 
 # 3. Publish V2
 cat <<-EOF > "$TEST_TMP/config_v2.yaml"
@@ -117,13 +115,11 @@ if [ "$SWITCHED" -eq 0 ]; then
     exit 1
 fi
 
-# 5. Assert PID
-if [ "$TEST_MODE" == "binary" ]; then
-    PID_FINAL=$(cat "$TEST_TMP/pids/pavis.pid")
-    if [ "$PID_INITIAL" != "$PID_FINAL" ]; then
-        echo "❌ PID changed! Pavis restarted."
-        exit 1
-    fi
+# 5. Assert Identity
+SUT_ID_FINAL=$(get_sut_id "pavis")
+if [ "$SUT_ID_INITIAL" != "$SUT_ID_FINAL" ]; then
+    echo "❌ SUT identity changed! Possible restart."
+    exit 1
 fi
 
 echo "✅ reload_01_traffic_shift passed"

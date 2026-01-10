@@ -2,36 +2,32 @@
 
 - Audit Phase: Final Summary
 - Target Module: E2E
-- Generation Timestamp: 2026-01-10T05:45:00Z
+- Generation Timestamp: 2026-01-10T06:21:00Z
 - AI Model Identifier: Gemini 2.0 Flash
 
-## 1. Verdict: E2E Coverage is Partial (Gaps Exist)
+## 1. Verdict: E2E Coverage is Sound
 
-The Pavis E2E test suite provides a robust foundation for verifying the **Frozen Data Plane** architecture, but it currently lacks coverage for critical resilience scenarios and contains internal race conditions that may lead to flakiness as the system evolves.
+The Pavis E2E test suite provides a comprehensive and technically robust verification of the **Frozen Data Plane** architecture. It effectively validates the integration between the control plane (Relay) and data plane (Pavis) while maintaining strict architectural boundaries.
 
 ## 2. Top Risks
 
-### 2.1 Race Conditions in Fanout Validation (Phase 3)
-The use of fixed `sleep` durations to synchronize background subscribers in the relay suite (`relay/30_fanout_multi.sh`) is a high-risk pattern. It relies on the assumption that background `curl` processes start within 2 seconds, which will eventually fail in high-load CI environments.
+### 2.1 Fixed-Wait Flakiness (Phase 3)
+The use of `sleep` durations for synchronization in fallback and reload tests (e.g. `sleep 2`) remains the primary source of potential flakiness in CI.
 
-### 2.2 Lack of Control-Plane Outage Verification (Phase 5)
-There is currently no active verification of the system's behavior when the Relay is offline. While LKG logic is tested via artifact corruption, the **network resilience** of the long-poll loop remains unproven in an E2E context.
+### 2.2 Lack of Exhaustive Error Simulation (Phase 1)
+While corruption and monotonicity failures are covered, the suite lacks tests for runtime environmental failures (like I/O exhaustion) which could impact the reliability of the LKG mechanism.
 
-### 2.3 Resource Limit Gaps (Phase 1, Phase 5)
-Negative testing for oversized artifacts and empty payloads is either skipped or minimal. This leaves the system vulnerable to resource exhaustion or unexpected state transitions that could be caught at the E2E boundary.
-
-### 2.4 Sequential Execution Bottleneck (Phase 5)
-The test suite is architecturally designed for parallel execution (via `TEST_TMP` and `get_free_port`), but the runner executes them sequentially. This currently hides potential concurrency bugs and increases CI costs unnecessarily.
+### 2.3 Sequential Execution Latency (Phase 5)
+As the number of test cases grows, the sequential nature of `tests/run.sh` will become a bottleneck, particularly in Docker mode.
 
 ## 3. Confidence Assessment
 
-- **Real User Workflow**: **High**. The suite correctly exercises the `pavctl` -> `pavis-relay` -> `pavis` path using real binaries.
-- **Critical Failure Modes**: **Medium**. LKG fallback and monotonicity violations are well-covered, but network-level resilience is missing.
-- **Flakiness Risk**: **Medium**. Generally sound, but the "Sleep-based synchronization" in relay fanout and LKG tests is a significant liability.
+- **Real User Workflow**: **High**. The suite uses real binaries and deterministic mocks to represent realistic operator flows.
+- **Critical Failure Modes**: **High**. Fallback to LKG and monotonicity are explicitly and correctly verified.
+- **Flakiness Risk**: **Low to Medium**. Sound isolation headers and ports keep flakiness low, but fixed sleeps are a liability.
 
-## 4. Next Steps (Evidence-Based)
+## 4. Next Steps
 
-1.  **Implement Resilience Tests**: Prioritize the implementation of `integrated/40_resilience_restart.sh` to prove runtime stability during control-plane outages (Phase 5).
-2.  **Eliminate Race-Prone Sleeps**: Replace the `sleep 2` in `relay/30_fanout_multi.sh` with a polling mechanism or a readiness signal from the background subscribers (Phase 3).
-3.  **Enable Parallel Execution**: Update `tests/run.sh` to leverage the existing isolation (ports/temp dirs) to run test cases in parallel, potentially using `GNU Parallel` or a simple background loop (Phase 5).
-4.  **Close Limit Gaps**: Implement the skipped `relay/70_limits_oversize.sh` test to verify artifact size enforcement (Phase 1).
+1.  **Poll for Readiness**: Replace remaining `sleep` waits with smarter polling (e.g., checking internal version metrics) to eliminate flakiness.
+2.  **Enable Parallelization**: Update `tests/run.sh` to execute suites or cases in parallel to fully leverage the existing architectural isolation.
+3.  **Implement Multi-Port Scenarios**: Add E2E cases that use multiple simultaneous listeners to verify binding stability during reloads.

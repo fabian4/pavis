@@ -111,6 +111,48 @@ record_container() {
     echo "$container_id" > "$TEST_TMP/pids/$name.container"
 }
 
+get_sut_id() {
+    local name="$1"
+    if [ -f "$TEST_TMP/pids/$name.pid" ]; then
+        cat "$TEST_TMP/pids/$name.pid"
+    elif [ -f "$TEST_TMP/pids/$name.container" ]; then
+        cat "$TEST_TMP/pids/$name.container"
+    else
+        echo ""
+    fi
+}
+
+stop_sut() {
+    local name="$1"
+    local pid_file="$TEST_TMP/pids/$name.pid"
+    local container_file="$TEST_TMP/pids/$name.container"
+
+    if [ -f "$pid_file" ]; then
+        local pid=$(cat "$pid_file")
+        kill -9 "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        rm -f "$pid_file"
+    elif [ -f "$container_file" ]; then
+        local container_id=$(cat "$container_file")
+        docker stop "$container_id" >/dev/null 2>&1 || true
+        rm -f "$container_file"
+    fi
+}
+
+check_sut_alive() {
+    local name="$1"
+    local pid_file="$TEST_TMP/pids/$name.pid"
+    local container_file="$TEST_TMP/pids/$name.container"
+
+    if [ -f "$pid_file" ]; then
+        kill -0 "$(cat "$pid_file")" 2>/dev/null
+    elif [ -f "$container_file" ]; then
+        [ "$(docker inspect -f '{{.State.Running}}' "$(cat "$container_file")" 2>/dev/null)" == "true" ]
+    else
+        return 1
+    fi
+}
+
 run_pavis() {
     local config_path="$1"
     local relay_url="$2"
