@@ -189,4 +189,24 @@ mod tests {
             WorkerCount::Auto => panic!("expected explicit worker count"),
         }
     }
+
+    #[test]
+    fn validated_runtime_from_trusted() {
+        let config = RuntimeConfig {
+            listeners: Vec::new(),
+            telemetry: Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("svc".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            },
+            upstreams: Vec::new(),
+            routes: Vec::new(),
+        };
+
+        let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config.clone()) };
+        assert_eq!(validated.listeners.len(), 0);
+    }
 }

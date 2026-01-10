@@ -30,6 +30,22 @@ pub struct CheckedArtifact {
     pub state: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
 }
 
+impl std::fmt::Debug for CheckedArtifact {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckedArtifact")
+            .field("artifact", &self.artifact)
+            .field(
+                "state",
+                &if self.state.is_some() {
+                    "Some(...)"
+                } else {
+                    "None"
+                },
+            )
+            .finish()
+    }
+}
+
 impl CheckedArtifact {
     pub fn new(artifact: Artifact) -> Self {
         Self {
@@ -402,5 +418,23 @@ mod tests {
             err,
             CodecError::Core(CoreValidationError::EmptyUpstreamName)
         ));
+    }
+
+    #[test]
+    fn checked_artifact_state() {
+        let artifact = test_artifact();
+        let checked = CheckedArtifact::with_state(artifact, 42u32);
+        assert_eq!(checked.state::<u32>(), Some(&42));
+        assert_eq!(checked.state::<String>(), None);
+    }
+
+    #[test]
+    fn compact_default_impl_is_noop() {
+        let codec = MockCodec::new(Mode::Ok);
+        let cfg = codec
+            .materialize(test_artifact(), CompactionLevel::Trim)
+            .expect("ok");
+        // MockCodec uses default compact implementation which does nothing
+        assert_eq!(cfg.listeners.len(), 1);
     }
 }

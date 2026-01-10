@@ -1,4 +1,4 @@
-.PHONY: e2e e2e-binary e2e-docker e2e-pavis e2e-pavis-binary e2e-pavis-docker e2e-relay e2e-relay-binary e2e-relay-docker e2e-integrated e2e-integrated-binary e2e-integrated-docker e2e-down
+.PHONY: e2e e2e-binary e2e-docker e2e-pavis e2e-pavis-binary e2e-pavis-docker e2e-relay e2e-relay-binary e2e-relay-docker e2e-integrated e2e-integrated-binary e2e-integrated-docker
 
 # Run all E2E tests (defaults to binary mode)
 e2e: e2e-binary
@@ -41,7 +41,3 @@ e2e-integrated-binary:
 # Run Integrated E2E tests in docker mode
 e2e-integrated-docker:
 	TEST_MODE=docker bash tests/run.sh integrated
-
-# Stop and cleanup the shared E2E environment (upstreams)
-e2e-down:
-	docker compose -f tests/config/upstreams.yaml down -v

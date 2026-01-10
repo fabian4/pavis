@@ -394,4 +394,33 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
     }
+
+    #[test]
+    fn verify_file_success() {
+        let config = minimal_config();
+        let dir = std::env::temp_dir();
+        let path = dir.join("pavis_verify_file.pvs");
+        write(&path, &config).expect("write config");
+
+        assert!(super::verify_file(&path).is_ok());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn into_bytes_mapped() {
+        let config = minimal_config();
+        let dir = std::env::temp_dir();
+        let path = dir.join("pavis_into_bytes_mapped.pvs");
+        write(&path, &config).expect("write config");
+
+        let verified = super::read_from_path(&path).expect("read from path");
+        let bytes = verified.into_bytes();
+        assert_eq!(
+            bytes.len(),
+            std::fs::metadata(&path).unwrap().len() as usize
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

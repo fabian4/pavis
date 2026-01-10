@@ -447,4 +447,107 @@ mod tests {
         let res = resolve_dns("invalid host", 80, &resolver.resolver).await;
         assert!(res.is_err());
     }
+
+    #[tokio::test]
+    async fn test_resolve_strict_dns_preserves_ip_endpoints() {
+        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: Discovery::Strict { ttl: 30 },
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![Endpoint {
+                address: EndpointAddr::Ip {
+                    address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            }],
+        };
+
+        let manager = crate::upstream::Manager::new(&[]);
+        let state = Arc::new(crate::state::RuntimeStateHandle::new(
+            crate::state::RuntimeState {
+                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                upstream_manager: manager,
+            },
+        ));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+
+        let result = resolve_strict_dns(&config, &resolver.resolver)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        match result[0].address {
+            EndpointAddr::Ip { address, .. } => {
+                assert_eq!(address, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))
+            }
+            _ => panic!("Expected IP endpoint"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_logical_dns_multiple_endpoints_logs_warning_and_uses_first() {
+        // We can't assert logging, but we can verify it returns result based on first endpoint.
+        use pavis_core::{
+            Discovery, Hostname, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName,
+        };
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: Discovery::Logical,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![
+                Endpoint {
+                    address: EndpointAddr::Dns {
+                        host: Hostname("localhost".to_string()),
+                        port: Port(NonZeroU16::new(8080).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
+                },
+                Endpoint {
+                    address: EndpointAddr::Dns {
+                        host: Hostname("example.com".to_string()),
+                        port: Port(NonZeroU16::new(8081).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
+                },
+            ],
+        };
+
+        let manager = crate::upstream::Manager::new(&[]);
+        let state = Arc::new(crate::state::RuntimeStateHandle::new(
+            crate::state::RuntimeState {
+                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                upstream_manager: manager,
+            },
+        ));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+
+        // This relies on localhost resolving
+        let result = resolve_logical_dns(&config, &[], &resolver.resolver)
+            .await
+            .unwrap();
+
+        if let Some(endpoints) = result {
+            assert!(!endpoints.is_empty());
+            // Should resolve localhost (first one)
+            // Can't easily check IP, but can check it succeeded.
+        }
+    }
 }

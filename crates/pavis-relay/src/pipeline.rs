@@ -527,7 +527,7 @@ routes: []
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(all(feature = "ingest-file", feature = "codec-serde"))]
+    #[cfg(feature = "ingest-file")]
     #[tokio::test]
     async fn test_pipeline_restarts_on_stream_failure() {
         use crate::config::{FileSourceConfig, IngestSource};
@@ -564,8 +564,45 @@ routes: []
 
         // Give it some time to attempt restarts
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 
-        // If we reached here without panicking, the restart loop is working.
-        // We can't easily assert internal backoff state, but we've hit the lines.
+    struct FailingIngest;
+    #[async_trait::async_trait]
+    impl pavis_ingest_api::Ingest for FailingIngest {
+        type Stream = futures_util::stream::Empty<Result<Artifact, IngestError>>;
+        async fn stream(&mut self) -> Result<Self::Stream, IngestError> {
+            Err(IngestError::Io(anyhow::anyhow!("simulated failure")))
+        }
+    }
+
+    #[tokio::test]
+    async fn pipeline_restarts_on_ingest_start_error() {
+        let state = RelayState::new(0, axum::body::Bytes::new()).expect("state");
+        let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
+            format: pavis_codec_serde::SerdeFormat::Yaml,
+        });
+        let options = PipelineOptions {
+            max_in_flight: 1,
+            compaction: PipelineCompaction::Off,
+            restart_backoff: BackoffConfig {
+                base_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(5),
+            },
+            publish_retry: RetryPolicy {
+                max_attempts: 1,
+                base_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(1),
+            },
+        };
+
+        let ingest = crate::ingest::boxed_ingest(FailingIngest);
+        // We verify it doesn't crash but logs warnings and retries (looping)
+        // We can't verify logs easily here but we ensure it runs without panic.
+        let handle = tokio::spawn(async move {
+            let _ = run_pipeline("test".to_string(), ingest, codec, state, options).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        handle.abort();
     }
 }

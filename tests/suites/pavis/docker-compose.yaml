@@ -9,7 +9,7 @@ services:
       - TLS_CERT_FILE=/certs/upstream_tls.pem
       - TLS_KEY_FILE=/certs/upstream_tls.key
     volumes:
-      - ../../config/certs:/certs:ro
+      - ../config/certs:/certs:ro
     ports:
       - "8081:8081"
       - "8443:8443"
@@ -29,7 +29,7 @@ services:
       - TLS_CERT_FILE=/certs/upstream_tls.pem
       - TLS_KEY_FILE=/certs/upstream_tls.key
     volumes:
-      - ../../config/certs:/certs:ro
+      - ../config/certs:/certs:ro
     ports:
       - "8082:8082"
       - "8444:8444"

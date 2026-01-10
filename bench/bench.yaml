@@ -102,15 +102,11 @@ dimensions:
 
 # Benchmark Matrix
 # ================
-# CI Matrix: 4 core runs per proxy (16 total) - baseline for regression detection
-# Extended Matrix: 7 additional runs per proxy (28 total) - detailed analysis
-# Pavis-Specific: 2 runs (Pavis only) - hot-reload and config-scale
-# Total: 46 runs (11 per proxy × 4 proxies + 2 Pavis-specific)
-#
-# NOTE: All runs now support:
-#   - Multi-run mode (default 5 runs) for statistical validity
-#   - Backend selection (httpbin vs minimal)
-#   - Open-loop load for latency workloads (wrk2 with target RPS)
+# Benchmark Matrix Dimensions
+# ===========================
+# - Multi-run mode (default 5 runs) for statistical validity
+# - Backend selection (httpbin vs minimal)
+# - Open-loop load for latency workloads (wrk2 with target RPS)
 
 matrix:
   # CI Matrix (4 runs per proxy) - baseline for regression detection

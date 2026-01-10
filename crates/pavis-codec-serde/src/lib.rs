@@ -66,8 +66,38 @@ impl Codec for SerdeCodec {
 mod tests {
     use super::{SerdeCodec, SerdeFormat};
     use bytes::Bytes;
-    use pavis_codec_api::{CheckedArtifact, Codec};
+    use pavis_codec_api::{CheckedArtifact, Codec, CodecError};
     use pavis_ingest_api::{Artifact, Format, SourceInfo};
+
+    #[test]
+    fn check_empty_artifact_fails() {
+        let codec = SerdeCodec {
+            format: SerdeFormat::Yaml,
+        };
+        let artifact = Artifact::new(Bytes::new(), Format::Yaml, SourceInfo::unknown());
+        let err = codec.check(artifact).unwrap_err();
+        match err {
+            CodecError::Check(e) => assert_eq!(e.to_string(), "Artifact payload is empty"),
+            _ => panic!("wrong error type"),
+        }
+    }
+
+    #[test]
+    fn check_wrong_format_fails() {
+        let codec = SerdeCodec {
+            format: SerdeFormat::Yaml,
+        };
+        let artifact = Artifact::new(
+            Bytes::from_static(b"{}"),
+            Format::Json,
+            SourceInfo::unknown(),
+        );
+        let err = codec.check(artifact).unwrap_err();
+        match err {
+            CodecError::Check(e) => assert!(e.to_string().contains("Unsupported format")),
+            _ => panic!("wrong error type"),
+        }
+    }
 
     #[test]
     fn compile_handles_missing_state() {

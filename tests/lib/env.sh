@@ -18,7 +18,7 @@ export PAVIS_IMAGE=${PAVIS_IMAGE:-pavis:local}
 export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:local}
 export MOCK_RELAY_IMAGE=${MOCK_RELAY_IMAGE:-pavis-mock-relay:local}
 
-CERTS_DIR="$PROJECT_ROOT/tests/config/certs"
+CERTS_DIR="$PROJECT_ROOT/tests/suites/config/certs"
 
 setup_test() {
     local case_name="$1"

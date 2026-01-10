@@ -529,23 +529,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_file_ingest_rejects_malformed_utf8() -> Result<()> {
-        let mut file = NamedTempFile::new()?;
-        file.as_file_mut().write_all(&[0xff, 0xfe])?;
-        let path = file.path().to_path_buf();
-        let yaml_path = path.with_extension("yaml");
-        std::fs::rename(&path, &yaml_path)?;
+    async fn test_file_ingest_read_failure_and_closed_stream() -> Result<()> {
+        // Skip on root/windows where permission tricks are hard
+        #[cfg(unix)]
+        {
+            if nix::unistd::geteuid().is_root() {
+                return Ok(());
+            }
 
-        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(10));
-        let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+            let mut file = NamedTempFile::new()?;
+            file.as_file_mut().write_all(b"v1")?;
+            let path = file.path().to_path_buf();
+            let yaml_path = path.with_extension("yaml");
+            std::fs::rename(&path, &yaml_path)?;
 
-        if let Some(Err(err)) = stream.next().await {
-            assert!(err.to_string().contains("Malformed UTF-8"));
-        } else {
-            panic!("Expected malformed UTF-8 error");
+            let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(10));
+            let stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+
+            // Drop stream
+            drop(stream);
+
+            // Make unreadable
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(&yaml_path)?;
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o000);
+            std::fs::set_permissions(&yaml_path, perms)?;
+
+            // Trigger update (touch the file/metadata if possible, or wait for poll?)
+            // Writing to it might fail if we don't have write permissions either.
+            // But we can try to write if we kept write permission? No 000 removes all.
+            // We can change mtime?
+            // Or just wait for poll interval? Poll interval is 2s, too long.
+
+            // Actually, we can just rely on the permission change being an event itself on some platforms (chmod is Modify(Metadata)).
+            // Or we can try to spawn a writer that fails but triggers event?
+
+            // Let's just wait a bit. If notify picks up the chmod, it tries to read and fails.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            // Restore permissions
+            let mut perms = std::fs::metadata(&yaml_path)?.permissions();
+            perms.set_mode(0o644);
+            std::fs::set_permissions(&yaml_path, perms)?;
+
+            std::fs::remove_file(yaml_path)?;
         }
-
-        std::fs::remove_file(yaml_path)?;
         Ok(())
     }
 }

@@ -2,8 +2,6 @@
 
 **Purpose**: This document ensures all proxies in the benchmark are configured with equivalent semantics to enable fair performance comparison.
 
-**Last Updated**: 2026-01-09
-
 ---
 
 ## Configuration Equivalence Table

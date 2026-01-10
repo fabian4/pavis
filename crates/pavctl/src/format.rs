@@ -288,4 +288,88 @@ mod tests {
         assert!(output.contains("Routes: 2"));
         assert!(output.contains("Destinations: 2"));
     }
+
+    #[test]
+    fn format_config_variants() {
+        use pavis_core::Hostname;
+        let config = RuntimeConfig {
+            listeners: vec![],
+            telemetry: Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: ServiceName("pavis".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            },
+            upstreams: vec![Upstream {
+                id: UpstreamId(NonZeroU16::new(1).unwrap()),
+                name: UpstreamName("u1".to_string()),
+                discovery: pavis_core::Discovery::Logical,
+                balancer: LoadBalancer::LeastRequest,
+                protocol: HttpVersion::H1,
+                pool: Pool {
+                    idle: IdleTimeout::Disabled,
+                    connect: ConnectTimeout::Disabled,
+                    max: ConnectionLimit::Unlimited,
+                },
+                tls: TlsPolicy::Disabled,
+                endpoints: vec![Endpoint {
+                    address: EndpointAddr::Dns {
+                        host: Hostname("example.com".to_string()),
+                        port: Port(NonZeroU16::new(80).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
+                }],
+            }],
+            routes: vec![VirtualHost {
+                host: Host("vhost".to_string()),
+                paths: vec![
+                    pavis_core::Route {
+                        matcher: PathMatch::Prefix {
+                            path: Path("/redirect".to_string()),
+                        },
+                        timeout: Timeout::Disabled,
+                        retry: RetryPolicy::Disabled,
+                        request_headers: Arc::new(pavis_core::HeadersPolicy::Disabled),
+                        response_headers: Arc::new(pavis_core::HeadersPolicy::Disabled),
+                        principal: pavis_core::Principal::Any,
+                        rewrite: Rewrite {
+                            path: RewritePath::Disabled,
+                            host: RewriteHost::Disabled,
+                        },
+                        action: RouteAction::Redirect {
+                            status: 302,
+                            location: "/login".to_string(),
+                        },
+                    },
+                    pavis_core::Route {
+                        matcher: PathMatch::Prefix {
+                            path: Path("/direct".to_string()),
+                        },
+                        timeout: Timeout::Disabled,
+                        retry: RetryPolicy::Disabled,
+                        request_headers: Arc::new(pavis_core::HeadersPolicy::Disabled),
+                        response_headers: Arc::new(pavis_core::HeadersPolicy::Disabled),
+                        principal: pavis_core::Principal::Any,
+                        rewrite: Rewrite {
+                            path: RewritePath::Disabled,
+                            host: RewriteHost::Disabled,
+                        },
+                        action: RouteAction::Direct {
+                            status: 200,
+                            body: "ok".to_string(),
+                        },
+                    },
+                ],
+            }],
+        };
+
+        let output = format_config(&config);
+        assert!(output.contains("LeastRequest"));
+        assert!(output.contains("HTTP: H1"));
+        assert!(output.contains("example.com:80"));
+        assert!(output.contains("Redirect 302 to /login"));
+        assert!(output.contains("Direct 200"));
+    }
 }

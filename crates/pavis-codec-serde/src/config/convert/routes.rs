@@ -585,4 +585,122 @@ mod tests {
         assert_eq!(rewrite.path.as_deref(), Some("/api"));
         assert_eq!(rewrite.host.as_deref(), Some("backend"));
     }
+
+    #[test]
+    fn conversion_handles_all_variants() {
+        use crate::config::types::{
+            Matcher, PrincipalConfig, Route, RouteAction as CodecRouteAction, VirtualHost,
+        };
+        use pavis_core::{PathMatch, Principal, RouteAction as CoreRouteAction};
+
+        let vhost = VirtualHost {
+            host: "example.com".to_string(),
+            paths: vec![
+                // 1. Redirect, Authenticated Principal, Exact Match
+                Route {
+                    matcher: Some(Matcher::Exact {
+                        path: "/secure".to_string(),
+                    }),
+                    timeout: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    principal: Some(PrincipalConfig::Authenticated {
+                        spiffe: "spiffe://example.org/ns/foo/sa/bar".to_string(),
+                    }),
+                    rewrite: None,
+                    action: CodecRouteAction::Redirect {
+                        status: 302,
+                        location: "/login".to_string(),
+                    },
+                },
+                // 2. Direct, Prefix Principal, Regex Match
+                Route {
+                    matcher: Some(Matcher::Regex {
+                        path: "^/admin/.*".to_string(),
+                    }),
+                    timeout: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    principal: Some(PrincipalConfig::Prefix {
+                        prefix: "admin-".to_string(),
+                    }),
+                    rewrite: None,
+                    action: CodecRouteAction::Direct {
+                        status: 403,
+                        body: "forbidden".to_string(),
+                    },
+                },
+            ],
+        };
+
+        let runtime = to_runtime(vec![vhost]).unwrap();
+
+        // Check Runtime
+        let paths = &runtime[0].paths;
+        match &paths[0].action {
+            CoreRouteAction::Redirect { status, location } => {
+                assert_eq!(*status, 302);
+                assert_eq!(location, "/login");
+            }
+            _ => panic!("expected redirect"),
+        }
+        match &paths[0].principal {
+            Principal::Authenticated { spiffe } => {
+                assert_eq!(spiffe, "spiffe://example.org/ns/foo/sa/bar")
+            }
+            _ => panic!("expected authenticated"),
+        }
+        match &paths[0].matcher {
+            PathMatch::Exact { path } => assert_eq!(path.0, "/secure"),
+            _ => panic!("expected exact match"),
+        }
+
+        match &paths[1].action {
+            CoreRouteAction::Direct { status, body } => {
+                assert_eq!(*status, 403);
+                assert_eq!(body, "forbidden");
+            }
+            _ => panic!("expected direct"),
+        }
+        match &paths[1].principal {
+            Principal::Prefix { prefix } => assert_eq!(prefix, "admin-"),
+            _ => panic!("expected prefix"),
+        }
+        match &paths[1].matcher {
+            PathMatch::Regex { path } => assert_eq!(path.0, "^/admin/.*"),
+            _ => panic!("expected regex match"),
+        }
+
+        // Round trip back
+        let serde_back = from_runtime(runtime);
+        let paths_back = &serde_back[0].paths;
+
+        match &paths_back[0].action {
+            CodecRouteAction::Redirect { status, location } => {
+                assert_eq!(*status, 302);
+                assert_eq!(location, "/login");
+            }
+            _ => panic!("expected redirect back"),
+        }
+        match &paths_back[0].principal {
+            Some(PrincipalConfig::Authenticated { spiffe }) => {
+                assert_eq!(spiffe, "spiffe://example.org/ns/foo/sa/bar")
+            }
+            _ => panic!("expected authenticated back"),
+        }
+
+        match &paths_back[1].action {
+            CodecRouteAction::Direct { status, body } => {
+                assert_eq!(*status, 403);
+                assert_eq!(body, "forbidden");
+            }
+            _ => panic!("expected direct back"),
+        }
+        match &paths_back[1].principal {
+            Some(PrincipalConfig::Prefix { prefix }) => assert_eq!(prefix, "admin-"),
+            _ => panic!("expected prefix back"),
+        }
+    }
 }

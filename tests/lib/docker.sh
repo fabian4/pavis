@@ -7,9 +7,7 @@ if [ -z "$PROJECT_ROOT" ]; then
     export PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 fi
 
-UPSTREAMS_COMPOSE="$PROJECT_ROOT/tests/config/upstreams.yaml"
 SUITES_DIR="$PROJECT_ROOT/tests/suites"
-UPSTREAMS_LOG="$PROJECT_ROOT/tests/temp/upstreams.log"
 UPSTREAMS_PID_DIR="$PROJECT_ROOT/tests/temp/upstreams"
 UPSTREAMS_LOG_DIR="$PROJECT_ROOT/tests/temp/upstream-logs"
 mkdir -p "$PROJECT_ROOT/tests/temp"
@@ -44,11 +42,7 @@ resolve_compose_file() {
             return
         fi
     fi
-    if [ -f "$UPSTREAMS_COMPOSE" ]; then
-        echo "$UPSTREAMS_COMPOSE"
-    else
-        echo ""
-    fi
+    echo ""
 }
 
 start_upstreams_docker() {

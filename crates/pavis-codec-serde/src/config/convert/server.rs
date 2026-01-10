@@ -194,4 +194,62 @@ mod tests {
             _ => panic!("expected tls enabled"),
         }
     }
+
+    #[test]
+    fn client_auth_variants() {
+        use crate::config::types::ClientAuthConfig;
+        let base_listener = Listener {
+            name: "test".to_string(),
+            address: "127.0.0.1:8080".to_string(),
+            workers: None,
+            tls: None,
+        };
+
+        // Test Optional
+        let mut l1 = base_listener.clone();
+        l1.tls = Some(SerdeTls {
+            cert_path: Some("c".to_string()),
+            key_path: Some("k".to_string()),
+            client_auth: Some(ClientAuthConfig::Optional {
+                ca_path: "ca".to_string(),
+            }),
+        });
+        let r1 = to_runtime(l1).unwrap();
+        match r1.tls {
+            TlsConfig::Enabled {
+                client_auth: pavis_core::ClientAuth::Optional { ca_path },
+                ..
+            } => {
+                assert_eq!(ca_path.0, "ca");
+            }
+            _ => panic!("expected optional"),
+        }
+
+        // Test Required
+        let mut l2 = base_listener.clone();
+        l2.tls = Some(SerdeTls {
+            cert_path: Some("c".to_string()),
+            key_path: Some("k".to_string()),
+            client_auth: Some(ClientAuthConfig::Required {
+                ca_path: "ca".to_string(),
+            }),
+        });
+        let r2 = to_runtime(l2).unwrap();
+        match r2.tls {
+            TlsConfig::Enabled {
+                client_auth: pavis_core::ClientAuth::Required { ref ca_path },
+                ..
+            } => {
+                assert_eq!(ca_path.0, "ca");
+            }
+            _ => panic!("expected required"),
+        }
+
+        // Round trip check for one variant
+        let s2 = from_runtime(r2);
+        match s2.tls.unwrap().client_auth.unwrap() {
+            ClientAuthConfig::Required { ca_path } => assert_eq!(ca_path, "ca"),
+            _ => panic!("expected required back"),
+        }
+    }
 }

@@ -388,4 +388,79 @@ mod tests {
         assert_eq!(u.endpoints[0].port, 8080);
         assert_eq!(u.endpoints[0].weight, Some(5));
     }
+
+    #[test]
+    fn dns_discovery_and_tls_conversion() {
+        use crate::config::types::{ClientCertConfig, UpstreamTlsConfig};
+        let config = vec![Upstream {
+            id: None,
+            name: "dns".to_string(),
+            discovery: Some(Discovery::Logical),
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                verify_hostname: Some(true),
+                verify_cert: Some(true),
+                sni: Some("example.com".to_string()),
+                cert: Some(ClientCertConfig {
+                    cert_path: "c.pem".to_string(),
+                    key_path: "k.pem".to_string(),
+                }),
+            }),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                address: "example.com".to_string(),
+                port: 80,
+                weight: None,
+            }],
+        }];
+
+        let runtime = to_runtime(config).unwrap();
+        let u = &runtime[0];
+        match u.discovery {
+            Discovery::Logical => {}
+            _ => panic!("expected logical discovery"),
+        }
+        match &u.endpoints[0].address {
+            EndpointAddr::Dns { host, port } => {
+                assert_eq!(host.0, "example.com");
+                assert_eq!(port.0.get(), 80);
+            }
+            _ => panic!("expected dns endpoint"),
+        }
+        match &u.tls {
+            TlsPolicy::Enabled { mode, sni, cert } => {
+                assert!(matches!(mode, pavis_core::TlsVerify::CertAndHost));
+                match sni {
+                    pavis_core::SniName::Value(s) => assert_eq!(s.0, "example.com"),
+                    _ => panic!("expected sni value"),
+                }
+                match cert {
+                    pavis_core::ClientCert::Enabled {
+                        cert_path,
+                        key_path,
+                    } => {
+                        assert_eq!(cert_path.0, "c.pem");
+                        assert_eq!(key_path.0, "k.pem");
+                    }
+                    _ => panic!("expected client cert"),
+                }
+            }
+            _ => panic!("expected tls enabled"),
+        }
+
+        // Round trip
+        let serde = from_runtime(runtime);
+        let u_serde = &serde[0];
+        match u_serde.endpoints[0].address.as_str() {
+            "example.com" => {}
+            _ => panic!("expected example.com"),
+        }
+        let tls = u_serde.tls.as_ref().unwrap();
+        assert_eq!(tls.sni.as_deref(), Some("example.com"));
+        assert!(tls.verify_hostname.unwrap());
+    }
 }

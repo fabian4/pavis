@@ -28,3 +28,27 @@ where
 {
     Box::new(IngestBox(ingest))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::StreamExt;
+    use pavis_ingest_api::Artifact;
+
+    struct MockIngest;
+    #[async_trait::async_trait]
+    impl Ingest for MockIngest {
+        type Stream = futures_util::stream::Empty<Result<Artifact, IngestError>>;
+        async fn stream(&mut self) -> Result<Self::Stream, IngestError> {
+            Ok(futures_util::stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn boxed_ingest_delegates_stream() {
+        let mut ingest = boxed_ingest(MockIngest);
+        let stream = ingest.stream().await;
+        assert!(stream.is_ok());
+        assert!(stream.unwrap().next().await.is_none());
+    }
+}

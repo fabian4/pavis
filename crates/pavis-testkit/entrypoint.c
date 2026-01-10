@@ -95,8 +95,8 @@ static int run_healthcheck(const char *url) {
     response[received] = '\0';
 
     int status_code = 0;
-    if (sscanf(response, "HTTP/%%*d.%%*d %%d", &status_code) != 1) {
-        fprintf(stderr, "Error: Invalid HTTP response\n");
+    if (sscanf(response, "HTTP/%*d.%*d %d", &status_code) != 1) {
+        fprintf(stderr, "Error: Invalid HTTP response: '%s'\n", response);
         return 1;
     }
 
@@ -109,7 +109,11 @@ static int run_healthcheck(const char *url) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc >= 3 && strcmp(argv[1], "healthcheck") == 0) {
+    if (argc >= 2 && strcmp(argv[1], "healthcheck") == 0) {
+        if (argc < 3) {
+             fprintf(stderr, "Error: healthcheck requires a URL\n");
+             return 1;
+        }
         return run_healthcheck(argv[2]);
     }
 

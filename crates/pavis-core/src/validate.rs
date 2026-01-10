@@ -499,6 +499,49 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_listener_name_fails() {
+        let mut cfg = base_config();
+        let mut duplicate = cfg.listeners[0].clone();
+        duplicate.address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8081);
+        cfg.listeners.push(duplicate);
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::DuplicateListener(_)));
+    }
+
+    #[test]
+    fn duplicate_virtual_host_fails() {
+        let mut cfg = base_config();
+        let duplicate = cfg.routes[0].clone();
+        cfg.routes.push(duplicate);
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::DuplicateVirtualHost(_)));
+    }
+
+    #[test]
+    fn client_auth_missing_ca_path_fails() {
+        let mut cfg = base_config();
+        cfg.listeners[0].tls = TlsConfig::Enabled {
+            cert_path: Path("cert.pem".to_string()),
+            key_path: Path("key.pem".to_string()),
+            client_auth: ClientAuth::Required {
+                ca_path: Path("".to_string()),
+            },
+        };
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::MissingTlsFiles));
+
+        cfg.listeners[0].tls = TlsConfig::Enabled {
+            cert_path: Path("cert.pem".to_string()),
+            key_path: Path("key.pem".to_string()),
+            client_auth: ClientAuth::Optional {
+                ca_path: Path("".to_string()),
+            },
+        };
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::MissingTlsFiles));
+    }
+
+    #[test]
     fn forward_empty_destinations_fails() {
         let mut cfg = base_config();
         cfg.routes[0].paths[0].action = RouteAction::Forward(Vec::new());

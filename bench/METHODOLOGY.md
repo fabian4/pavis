@@ -1,9 +1,7 @@
 # Pavis Benchmark Methodology
 
-**Version:** 2.0
-**Last Updated:** 2026-01-09
-
-This document explains the methodological foundations of the Pavis benchmark suite and the design decisions made to ensure credible, reproducible, and defensible performance comparisons.
+This document explains the methodological foundations
+ of the Pavis benchmark suite and the design decisions made to ensure credible, reproducible, and defensible performance comparisons.
 
 ---
 
@@ -368,7 +366,57 @@ Used to explain or validate primary metrics:
 
 ---
 
-## 10. References
+## 11. Metrics & Interpretation
+
+### Load Types
+- **open-loop**: wrk2 with fixed target RPS → best for latency measurement.
+- **closed-loop**: wrk maximizing throughput → best for RPS measurement.
+
+### Backend Types
+- **httpbin**: Python application (realistic but may saturate).
+- **minimal**: Go server (eliminates backend bottleneck).
+
+### Key Metrics
+
+| Metric | Good Value | Meaning |
+|--------|-----------|---------|
+| `achieved_rps` | High | Requests per second |
+| `p99_ms` | <10ms | 99th percentile latency |
+| `p999_ms` | <50ms | 99.9th percentile latency |
+| `errors` | 0 | Socket errors |
+| `backend_saturated` | false | Backend not bottleneck |
+| `rps_iqr` | Low | Stable performance across runs |
+
+---
+
+## 12. Benchmark Matrix Detail
+
+The full matrix consists of **46 total runs** = (11 configurations × 4 proxies) + 2 Pavis-specific tests.
+
+### dimensions
+
+| Dimension | Values | Description |
+|-----------|--------|-------------|
+| **Workload** | throughput, latency, concurrency, churn, reload | Operational pattern |
+| **Resource** | baseline, cpu-limited, memory-limited | Container cgroup limits |
+| **Duration** | short (30s), extended (300s) | Measurement window |
+| **Intensity** | 1x, 2x | Connection count multiplier |
+| **Backend** | httpbin, minimal | Backend service type |
+| **Runs** | single (N=1), multi (N=5) | Statistical validation |
+
+### Workload Matrix
+
+| Workload | Connections | Load Type | Target RPS | Description |
+|----------|:-----------:|-----------|:----------:|-------------|
+| throughput | 100 | closed-loop | - | RPS under light load |
+| latency | 500 | **open-loop** | 10,000 | Tail latency under sustained load |
+| concurrency | 5,000 | closed-loop | - | High concurrent connection stress |
+| churn | 100 | closed-loop | - | Rapid connect/disconnect handshake cost |
+| reload | 500 | **open-loop** | 5,000 | Hot-reload latency jitter (Pavis specific) |
+
+---
+
+## 13. References
 
 ### Load Testing Methodology
 
