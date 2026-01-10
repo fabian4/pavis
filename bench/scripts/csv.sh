@@ -12,7 +12,7 @@
 # | resource_profile    | config: ..._{resource}_...               |
 # | duration_s          | config: short=30, extended=300           |
 # | load_type           | "Load Type:" line in output              |
-# | backend_type        | "Backend:" line in output                |
+# | backend_type        | "Backend:" line in output (bench-upstream) |
 # | connections         | wrk output: "X threads and Y conn"       |
 # | threads             | wrk output: "X threads and Y conn"       |
 # | target_rps          | wrk2: target rate (if open-loop)         |
@@ -311,7 +311,7 @@ echo "Generated: $OUTPUT_FILE ($(tail -n +2 "$OUTPUT_FILE" | wc -l | tr -d ' ') 
 echo ""
 echo "Enhanced metrics included:"
 echo "  - Load type (open-loop vs closed-loop)"
-echo "  - Backend type (httpbin vs minimal)"
+echo "  - Backend type (bench-upstream)"
 echo "  - Multi-run statistics (median, IQR)"
 echo "  - P99.9 latency (wrk2)"
 echo "  - Backend saturation indicators"

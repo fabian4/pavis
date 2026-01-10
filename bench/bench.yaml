@@ -87,12 +87,9 @@ dimensions:
   backend:
     description: "Backend service type for workload isolation"
     values:
-      httpbin:
-        type: "functional"
-        description: "Functional realism (kennethreitz/httpbin)"
-      minimal:
-        type: "minimal"
-        description: "Dataplane isolation (minimal Go server)"
+      bench-upstream:
+        type: "deterministic"
+        description: "bench-upstream (crates/pavis-benchkit/src/bin/bench-upstream.rs)"
 
   runs:
     description: "Number of repeated benchmark runs for statistical validity"
@@ -105,7 +102,7 @@ dimensions:
 # Benchmark Matrix Dimensions
 # ===========================
 # - Multi-run mode (default 5 runs) for statistical validity
-# - Backend selection (httpbin vs minimal)
+# - Backend fixed to bench-upstream
 # - Open-loop load for latency workloads (wrk2 with target RPS)
 
 matrix:
@@ -115,7 +112,7 @@ matrix:
     resource: baseline
     duration: short
     intensity: 1x
-    backend: httpbin
+    backend: bench-upstream
     runs: single
     load_type: closed-loop
 
@@ -124,7 +121,7 @@ matrix:
     resource: baseline
     duration: short
     intensity: 1x
-    backend: httpbin
+    backend: bench-upstream
     runs: single
     load_type: open-loop
     target_rps: 10000
@@ -134,7 +131,7 @@ matrix:
     resource: baseline
     duration: short
     intensity: 1x
-    backend: httpbin
+    backend: bench-upstream
     runs: single
     load_type: closed-loop
 
@@ -143,7 +140,7 @@ matrix:
     resource: baseline
     duration: short
     intensity: 1x
-    backend: httpbin
+    backend: bench-upstream
     runs: single
     load_type: closed-loop
 
@@ -153,7 +150,7 @@ matrix:
     resource: cpu-limited
     duration: short
     intensity: 1x
-    backend: httpbin
+    backend: bench-upstream
     runs: single
     load_type: closed-loop
     purpose: "CPU saturation behavior"
@@ -163,7 +160,7 @@ matrix:
     resource: memory-limited
     duration: short
     intensity: 1x
-    backend: httpbin
+    backend: bench-upstream
     runs: single
     load_type: closed-loop
     purpose: "Memory pressure behavior"
@@ -173,7 +170,7 @@ matrix:
     resource: cpu-limited
     duration: short
     intensity: 1x
-    backend: httpbin
+    backend: bench-upstream
     runs: single
     load_type: closed-loop
     purpose: "Handshake cost under CPU constraint"
@@ -183,17 +180,17 @@ matrix:
     resource: baseline
     duration: extended
     intensity: 1x
-    backend: minimal
+    backend: bench-upstream
     runs: single
     load_type: closed-loop
-    purpose: "Steady-state throughput stability (minimal backend for dataplane isolation)"
+    purpose: "Steady-state throughput stability with deterministic backend"
 
   - id: latency_baseline_extended_1x
     workload: latency
     resource: baseline
     duration: extended
     intensity: 1x
-    backend: minimal
+    backend: bench-upstream
     runs: multi
     load_type: open-loop
     target_rps: 10000
@@ -204,7 +201,7 @@ matrix:
     resource: baseline
     duration: short
     intensity: 2x
-    backend: httpbin
+    backend: bench-upstream
     runs: single
     load_type: open-loop
     target_rps: 20000
@@ -215,7 +212,7 @@ matrix:
     resource: baseline
     duration: short
     intensity: 2x
-    backend: httpbin
+    backend: bench-upstream
     runs: single
     load_type: closed-loop
     purpose: "High connection count behavior"
@@ -226,7 +223,7 @@ matrix:
     resource: baseline
     duration: short
     intensity: 1x
-    backend: minimal
+    backend: bench-upstream
     runs: multi
     load_type: open-loop
     target_rps: 5000
@@ -238,7 +235,7 @@ matrix:
     resource: baseline
     duration: short
     intensity: 1x
-    backend: minimal
+    backend: bench-upstream
     runs: single
     load_type: closed-loop
     proxies: [pavis]

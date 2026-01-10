@@ -27,7 +27,7 @@ The benchmark suite is designed around the following principles:
 ### Credibility
 - **Open-loop latency testing**: Latency benchmarks use wrk2 with fixed target RPS to avoid coordinated omission
 - **Multi-run validation**: Statistical aggregation (median, IQR) across N=5 runs for critical tests
-- **Backend isolation**: Minimal backend option eliminates application-layer bottlenecks
+- **Backend isolation**: bench-upstream eliminates application-layer bottlenecks
 
 ### Reproducibility
 - **Fixed configurations**: All proxy configs documented with semantic equivalence
@@ -37,7 +37,7 @@ The benchmark suite is designed around the following principles:
 ### Fairness
 - **Configuration parity**: All proxies configured with equivalent semantics (keepalive, HTTP/1.1, etc.)
 - **Explicit documentation**: Fairness checklist maps each proxy's config to common behavior
-- **Backend transparency**: Backend type and saturation status reported in results
+- **Backend transparency**: Backend identity and saturation status reported in results
 
 ### Explainability
 - **Workload classification**: Clear labeling of open-loop vs closed-loop, latency vs throughput
@@ -82,43 +82,37 @@ The benchmark suite is designed around the following principles:
 
 ## 3. Backend Bottleneck Elimination
 
+All benchmark runs use **bench-upstream** as the backend to eliminate application bottlenecks and ensure determinism.
+
 ### 3.1 Problem Statement
 
-Using httpbin (or similar application backends) can introduce hidden bottlenecks:
-- Python/application-level processing overhead
-- JSON serialization/parsing
+Application-style backends introduce hidden bottlenecks:
+- Application runtime overhead
 - Variable response times
 - Backend saturation under high load
+- Uncontrolled header injection and formatting noise
 
-### 3.2 Solution: Dual Backend Strategy
+### 3.2 Solution: bench-upstream
 
-**Backend Option 1: httpbin (Functional Realism)**
-- **Use case**: Tests requiring realistic application behavior
-- **Pros**: Functional HTTP responses, realistic latency distribution
-- **Cons**: May saturate under high RPS, adds non-proxy overhead
-- **Resource limits**: 2 CPU cores, 1GB memory
+**bench-upstream** is a minimal, deterministic backend implemented in Rust:
+- **Source**: `crates/pavis-benchkit/src/bin/bench-upstream.rs`
+- **Behavior**: Fixed payloads, fixed headers, no dynamic formatting
+- **Runtime**: `tokio` + `hyper`, HTTP/1.1 only
+- **Payload**: Pre-allocated once at startup
+- **Headers**: Explicit `Content-Length`, no `Date` or `Server` headers
+- **Compose service**: `bench-upstream` (container `bench-upstream`)
 
-**Backend Option 2: Minimal (Dataplane Isolation)**
-- **Use case**: Tests focused on proxy dataplane performance
-- **Pros**: Fixed 200 response, minimal overhead, deterministic
-- **Cons**: Not representative of real-world applications
-- **Resource limits**: 2 CPU cores, 512MB memory
-- **Implementation**: Lightweight Go server (39 bytes JSON response)
+**Image Policy**:
+- **Local runs**: `pavis-bench-upstream:local`
+- **Official results**: digest must be recorded in the report metadata
 
-### 3.3 Backend Selection Guidelines
+### 3.3 Backend Saturation Detection
 
-| Test Type                | Recommended Backend |
-|--------------------------|---------------------|
-| Throughput (short)       | httpbin             |
-| Latency (short)          | httpbin             |
-| Throughput (extended)    | minimal             |
-| Latency (extended)       | minimal             |
-| Pavis-specific           | minimal             |
-
-### 3.4 Backend Saturation Detection
-
-All reports include `backend_cpu_pct` and `backend_saturated` flag (CPU > 80%).
+All reports include `backend_cpu_pct` and `backend_saturated` (CPU > 80%).
+These metrics are derived from `docker stats` sampling of the bench-upstream container.
 If backend is saturated, results may reflect backend limits rather than proxy performance.
+
+**Optional sanity check**: `/metrics` may be scraped outside the load window when enabled.
 
 ---
 
@@ -252,7 +246,7 @@ Used to explain or validate primary metrics:
 |----------------------|------------|------------------------------------------------|
 | `target_rps`         | req/s      | Target RPS (open-loop only)                    |
 | `load_type`          | string     | `open-loop` or `closed-loop`                   |
-| `backend_type`       | string     | `httpbin` or `minimal`                         |
+| `backend_type`       | string     | `bench-upstream`                               |
 | `backend_cpu_pct`    | %          | Backend CPU usage (avg)                        |
 | `backend_saturated`  | bool       | `true` if backend CPU > 80%                    |
 | `run_count`          | count      | Number of iterations for this config           |
@@ -270,6 +264,7 @@ Used to explain or validate primary metrics:
 **Type**: Closed-loop
 **Connections**: 100
 **Expected Behavior**: Proxy should serve maximum RPS under light load
+**Backend**: bench-upstream fixed payload to isolate proxy dataplane overhead
 **Saturation Point**: Not expected to saturate (baseline resource profile)
 
 **Metrics of Interest**:
@@ -283,6 +278,7 @@ Used to explain or validate primary metrics:
 **Connections**: 500
 **Target RPS**: 10,000 (baseline), 20,000 (2x intensity)
 **Expected Behavior**: Measure tail latency under sustained load
+**Backend**: bench-upstream fixed payload to isolate proxy dataplane overhead
 **Saturation Point**: If achieved RPS < target RPS, proxy is saturated
 
 **Metrics of Interest**:
@@ -295,6 +291,7 @@ Used to explain or validate primary metrics:
 **Type**: Closed-loop
 **Connections**: 5,000 (baseline), 10,000 (2x intensity)
 **Expected Behavior**: Stress proxy with many concurrent idle connections
+**Backend**: bench-upstream fixed payload to isolate proxy dataplane overhead
 **Distinction**: Not just connection count, but connection + request stress
 
 **Metrics of Interest**:
@@ -308,6 +305,7 @@ Used to explain or validate primary metrics:
 **Connections**: 100
 **Connection Behavior**: `Connection: close` header (no keepalive)
 **Expected Behavior**: Rapidly open/close connections to measure handshake cost
+**Backend**: bench-upstream fixed payload to isolate proxy dataplane overhead
 **Target**: New connections per second (not just requests)
 
 **Metrics of Interest**:
@@ -322,6 +320,7 @@ Used to explain or validate primary metrics:
 **Target RPS**: 5,000
 **Special Behavior**: Trigger config reload every 10 seconds during benchmark
 **Expected Behavior**: Pavis should maintain stable latency during reload (frozen dataplane)
+**Backend**: bench-upstream fixed payload to isolate proxy dataplane overhead
 
 **Metrics of Interest**:
 - P99 latency spikes during reload
@@ -353,11 +352,11 @@ Used to explain or validate primary metrics:
 **Threats to Internal Validity**:
 - Warm cache effects (mitigated by warmup phase, cooldown between runs)
 - Container scheduler noise (mitigated by CPU pinning)
-- Backend saturation (mitigated by backend selection, saturation detection)
+- Backend saturation (mitigated by bench-upstream determinism and saturation detection)
 
 **Threats to External Validity**:
 - Synthetic workloads may not represent real-world traffic patterns
-- httpbin backend not representative of production applications
+- Deterministic backend may not capture application-specific behavior
 - Single-host setup may not capture distributed system effects
 
 **Threats to Construct Validity**:
@@ -372,9 +371,8 @@ Used to explain or validate primary metrics:
 - **open-loop**: wrk2 with fixed target RPS → best for latency measurement.
 - **closed-loop**: wrk maximizing throughput → best for RPS measurement.
 
-### Backend Types
-- **httpbin**: Python application (realistic but may saturate).
-- **minimal**: Go server (eliminates backend bottleneck).
+### Backend Type
+- **bench-upstream**: Deterministic backend for dataplane isolation.
 
 ### Key Metrics
 
@@ -401,7 +399,7 @@ The full matrix consists of **46 total runs** = (11 configurations × 4 proxies)
 | **Resource** | baseline, cpu-limited, memory-limited | Container cgroup limits |
 | **Duration** | short (30s), extended (300s) | Measurement window |
 | **Intensity** | 1x, 2x | Connection count multiplier |
-| **Backend** | httpbin, minimal | Backend service type |
+| **Backend** | bench-upstream | Backend service type |
 | **Runs** | single (N=1), multi (N=5) | Statistical validation |
 
 ### Workload Matrix

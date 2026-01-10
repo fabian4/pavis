@@ -1,13 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-# Benchmark Runner (Enhanced with Open-Loop, Multi-Run, Backend Selection)
+# Benchmark Runner (Enhanced with Open-Loop, Multi-Run, bench-upstream backend)
 # =========================================================================
 # Runs benchmark matrix for a single proxy with methodological improvements:
 #   - Open-loop load (wrk2) for latency workloads with fixed target RPS
 #   - Closed-loop load (wrk) for throughput/concurrency/churn workloads
 #   - Multi-run support (N iterations) for statistical validity
-#   - Backend selection (httpbin vs minimal)
+#   - Backend selection (bench-upstream only; legacy flag retained)
 #   - CPU pinning (distinct cores for proxy, backend, load generator)
 #
 # Usage: BENCHMARK_TARGET=pavis bash run.sh
@@ -21,7 +21,7 @@ THREADS=${THREADS:-4}
 WARMUP=${WARMUP:-5s}
 BENCHMARK_TARGET=${BENCHMARK_TARGET:-pavis}
 BENCHMARK_RUNS=${BENCHMARK_RUNS:-1}  # Number of repeated runs for statistical validity
-BACKEND_TYPE=${BACKEND_TYPE:-httpbin}  # httpbin or minimal
+BACKEND_TYPE="minimal"
 
 # Proxy Versions (defaults for local run)
 export PAVIS_TAG="${PAVIS_TAG:-bench}"
@@ -42,6 +42,14 @@ get_version() {
 
 PROXY_VERSION=$(get_version "$BENCHMARK_TARGET")
 
+case "$BENCHMARK_TARGET" in
+    pavis) PROXY_IMAGE="pavis:${PAVIS_TAG}" ;;
+    envoy) PROXY_IMAGE="envoyproxy/envoy:${ENVOY_TAG}" ;;
+    nginx) PROXY_IMAGE="nginx:${NGINX_TAG}" ;;
+    haproxy) PROXY_IMAGE="haproxy:${HAPROXY_TAG}" ;;
+    *) PROXY_IMAGE="${BENCHMARK_TARGET}:${PROXY_VERSION}" ;;
+esac
+
 # Proxy port mapping
 declare -A PROXY_PORTS=(
     ["pavis"]="8080"
@@ -59,20 +67,15 @@ PROXY_PORT="${PROXY_PORTS[$BENCHMARK_TARGET]}"
 PROXY_URL="http://localhost:${PROXY_PORT}"
 
 # Backend configuration
-if [ "$BACKEND_TYPE" = "minimal" ]; then
-    BACKEND_IMAGE="bench-minimal-backend:latest"
-    BACKEND_PORT="8001"
-    BACKEND_INTERNAL_PORT="8000"
-    BACKEND_MEMORY="512M"
-    BACKEND_HEALTHCHECK='["CMD-SHELL", "wget -q -O- http://localhost:8000/health || exit 1"]'
-else
-    # Default: httpbin
-    BACKEND_IMAGE="kennethreitz/httpbin:latest"
-    BACKEND_PORT="8000"
-    BACKEND_INTERNAL_PORT="80"
-    BACKEND_MEMORY="1G"
-    BACKEND_HEALTHCHECK='["CMD-SHELL", "python3 -c '\''import urllib.request; urllib.request.urlopen(\"http://localhost:80/get\")'\''"]'
-fi
+BACKEND_IMAGE="pavis-bench-upstream:latest"
+BACKEND_PORT="8001"
+BACKEND_INTERNAL_PORT="80"
+BACKEND_CONTAINER_NAME="bench-upstream"
+BACKEND_MEMORY="512M"
+BACKEND_HEALTHCHECK='["CMD-SHELL", "wget -q -O- http://localhost:8000/healthz || exit 1"]'
+PROXY_PATH="/fixed"
+
+PROXY_TARGET_URL="${PROXY_URL}${PROXY_PATH}"
 
 # Output directory for this specific target
 TARGET_DIR="${RESULTS_DIR}/${BENCHMARK_TARGET}"
@@ -90,6 +93,19 @@ cat > "$OUTPUT_FILE" <<EOF
 # Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
 EOF
+
+resolve_image_ref() {
+    local image=$1
+    local digest
+    digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || true)
+    if [ -n "$digest" ]; then
+        echo "$digest"
+        return
+    fi
+    docker image inspect --format '{{.Id}}' "$image" 2>/dev/null || echo "unknown"
+}
+
+META_WRITTEN=0
 
 echo "=============================================="
 echo "  Benchmark: ${BENCHMARK_TARGET}"
@@ -139,7 +155,7 @@ wait_for_service() {
     local attempt=0
 
     echo "Waiting for ${BENCHMARK_TARGET}..."
-    while ! curl -sf "${PROXY_URL}/get" > /dev/null 2>&1; do
+    while ! curl -sf "${PROXY_TARGET_URL}" > /dev/null 2>&1; do
         attempt=$((attempt + 1))
         if [ $attempt -ge $max_attempts ]; then
             echo "ERROR: ${BENCHMARK_TARGET} not ready after ${max_attempts} attempts"
@@ -154,13 +170,7 @@ wait_for_service() {
 wait_for_backend() {
     local max_attempts=30
     local attempt=0
-    local backend_url=""
-
-    if [ "$BACKEND_TYPE" = "minimal" ]; then
-        backend_url="http://localhost:8001/health"
-    else
-        backend_url="http://localhost:8000/get"
-    fi
+    local backend_url="http://localhost:8001/healthz"
 
     echo "Waiting for backend ($BACKEND_TYPE)..."
     while ! curl -sf "$backend_url" > /dev/null 2>&1; do
@@ -184,12 +194,10 @@ start_containers() {
         cargo run -p pavctl -- gen "$BENCH_DIR/config/pavis.yaml" "$BENCH_DIR/config/pavis.pvs"
     fi
 
-    # Build minimal backend if needed
-    if [ "$BACKEND_TYPE" = "minimal" ]; then
-        echo "Building minimal backend..."
-        cd "$BENCH_DIR"
-        docker compose build backend-minimal
-    fi
+    # Build bench-upstream backend
+    echo "Building bench-upstream..."
+    cd "$BENCH_DIR"
+    docker compose build bench-upstream
 
     echo "Starting ${BENCHMARK_TARGET}: CPU=${cpu_cores}, Memory=${memory_mib}MiB"
 
@@ -202,16 +210,26 @@ start_containers() {
         proxy_cpuset="1"
     fi
 
-    # Select which backend profile to use
-    local backend_profile="httpbin"
-    if [ "$BACKEND_TYPE" = "minimal" ]; then
-        backend_profile="minimal"
-    fi
+    # Select which backend profile to use (bench-upstream only)
+    local backend_profile="minimal"
 
     CPU_LIMIT="${cpu_cores}" \
     MEMORY_LIMIT="${memory_mib}M" \
     PROXY_CPUSET="${proxy_cpuset}" \
         docker compose --profile "${backend_profile}" up -d "${BENCHMARK_TARGET}"
+
+    if [ "$META_WRITTEN" -eq 0 ]; then
+        local proxy_ref
+        local backend_ref
+        proxy_ref=$(resolve_image_ref "${PROXY_IMAGE}")
+        backend_ref=$(resolve_image_ref "${BACKEND_IMAGE}")
+        cat >> "$OUTPUT_FILE" <<EOF
+# Proxy Image: ${proxy_ref}
+# Backend Image: ${backend_ref}
+
+EOF
+        META_WRITTEN=1
+    fi
 
     wait_for_backend
     wait_for_service
@@ -286,7 +304,7 @@ run_benchmark_iteration() {
     (
         while true; do
             docker stats "bench-${BENCHMARK_TARGET}" --no-stream --format "{{.CPUPerc}},{{.MemUsage}}" >> "$temp_stats" 2>/dev/null || true
-            docker stats "bench-backend" --no-stream --format "{{.CPUPerc}},{{.MemUsage}}" >> "$temp_stats.backend" 2>/dev/null || true
+            docker stats "${BACKEND_CONTAINER_NAME}" --no-stream --format "{{.CPUPerc}},{{.MemUsage}}" >> "$temp_stats.backend" 2>/dev/null || true
             sleep 1
         done
     ) &
@@ -295,13 +313,13 @@ run_benchmark_iteration() {
     # Run benchmark
     local bench_result=""
     if [ "$use_churn" = "true" ]; then
-        bench_result=$($load_cmd -t${THREADS} -c${connections} -d${duration_sec}s --latency -H "Connection: close" "${PROXY_URL}/get" 2>&1)
+        bench_result=$($load_cmd -t${THREADS} -c${connections} -d${duration_sec}s --latency -H "Connection: close" "${PROXY_TARGET_URL}" 2>&1)
     elif [ "$load_type" = "open-loop" ] && [ "$target_rps" -gt 0 ] && [ -n "$WRK2_CMD" ]; then
         # Open-loop with wrk2
-        bench_result=$($WRK2_CMD -t${THREADS} -c${connections} -d${duration_sec}s -R${target_rps} --latency "${PROXY_URL}/get" 2>&1)
+        bench_result=$($WRK2_CMD -t${THREADS} -c${connections} -d${duration_sec}s -R${target_rps} --latency "${PROXY_TARGET_URL}" 2>&1)
     else
         # Closed-loop
-        bench_result=$($load_cmd -t${THREADS} -c${connections} -d${duration_sec}s --latency "${PROXY_URL}/get" 2>&1)
+        bench_result=$($load_cmd -t${THREADS} -c${connections} -d${duration_sec}s --latency "${PROXY_TARGET_URL}" 2>&1)
     fi
 
     # Stop stats collection
@@ -384,14 +402,11 @@ run_extended_matrix() {
     run_benchmark "throughput_memory-limited_short_1x" 100 30 false "closed-loop" 0 1
     stop_containers
 
-    # Duration variation: extended (with minimal backend for dataplane isolation)
-    ORIGINAL_BACKEND=$BACKEND_TYPE
-    BACKEND_TYPE="minimal"
+    # Duration variation: extended (bench-upstream for dataplane isolation)
     start_containers 2 512
     run_benchmark "throughput_baseline_extended_1x" 100 300 false "closed-loop" 0 1
     run_benchmark "latency_baseline_extended_1x" 500 300 false "open-loop" 10000 5  # Multi-run for statistical validity
     stop_containers
-    BACKEND_TYPE=$ORIGINAL_BACKEND
 
     # Intensity variation: 2x
     start_containers 2 512
@@ -413,8 +428,6 @@ run_pavis_specific() {
     echo "=============================================="
 
     # Hot-reload jitter test
-    ORIGINAL_BACKEND=$BACKEND_TYPE
-    BACKEND_TYPE="minimal"
     start_containers 2 512
 
     echo "Running reload benchmark (hot-reload jitter test)..."
@@ -424,7 +437,6 @@ run_pavis_specific() {
     run_benchmark "reload_baseline_short_1x" 500 30 false "open-loop" 5000 5
 
     stop_containers
-    BACKEND_TYPE=$ORIGINAL_BACKEND
 
     echo "NOTE: Reload benchmark ran as standard latency test."
     echo "      Implement reload triggering for full hot-reload jitter analysis."

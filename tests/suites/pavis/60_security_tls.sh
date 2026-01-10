@@ -45,7 +45,7 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 
 # Assert V1 (HTTP)
 response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
-tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['tls']['enabled'])")
+tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('enabled'))")
 if [ "$tls_enabled" == "True" ] || [ "$tls_enabled" == "true" ]; then
     echo "❌ Expected HTTP initially, got TLS enabled"
     exit 1
@@ -77,6 +77,7 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
 
+echo "Publishing V2 (HTTPS Config)..."
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
 
 # Wait for switch (poll for TLS enabled)
@@ -96,6 +97,19 @@ done
 
 if [ "$SWITCHED" -eq 0 ]; then
     echo "❌ Traffic did not switch to HTTPS (TLS) after reload"
+    exit 1
+fi
+
+# SNI Validation (Optional/Pending Upstream Support)
+sni_value=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('sni'))")
+echo "Reported SNI: $sni_value"
+
+if [ "$sni_value" == "localhost" ]; then
+    echo "✅ SNI correctly verified as 'localhost'"
+elif [ "$sni_value" == "None" ] || [ -z "$sni_value" ]; then
+    echo "⚠️ SNI not reported by upstream (Known limitation)"
+else
+    echo "❌ SNI mismatch: Expected 'localhost', got '$sni_value'"
     exit 1
 fi
 

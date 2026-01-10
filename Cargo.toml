@@ -11,6 +11,7 @@ members = [
     "crates/pavis-pvs",
     "crates/pavis-relay",
     "crates/pavis-testkit",
+    "crates/pavis-benchkit",
 ]
 resolver = "2"
 

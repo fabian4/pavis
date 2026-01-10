@@ -191,7 +191,8 @@ async fn stub_bytes(ctx: TestContext) -> Response {
 }
 
 async fn stub_hang(ctx: TestContext) -> Response {
-    ctx.respond(StatusCode::NOT_IMPLEMENTED, stub_response("/hang"))
+    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    ctx.respond(StatusCode::OK, stub_response("/hang"))
 }
 
 async fn stub_close(ctx: TestContext) -> Response {

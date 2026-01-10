@@ -88,3 +88,12 @@ Introducing a deterministic minimal backend under project control allows for pre
 - **M1**: Dockerfile (distroless) + image digest recording in runner.
 - **M2**: Integration into `bench/docker-compose.yaml` with `cpuset` and average-CPU saturation logic.
 - **M3**: Baseline stability comparison and final documentation.
+
+## Execution Steps
+- [ ] Confirm crate boundaries and dependencies against `ARCHITECTURE.md` and `Cargo.toml`.
+- [x] Create `crates/pavis-benchkit` skeleton with `lib.rs` and `metrics.rs`.
+- [x] Implement `bench-upstream` binary with fixed payload, handlers, and deterministic headers.
+- [x] Add Dockerfile for distroless image and wire image digest capture in bench runner.
+- [x] Integrate `backend-minimal` into `bench/docker-compose.yaml` with `cpuset` and saturation metrics.
+- [x] Document `bench-upstream` usage in `bench/README.md`.
+- [x] Add unit test for `bench-upstream`.

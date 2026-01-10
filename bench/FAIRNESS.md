@@ -97,7 +97,7 @@ docker exec bench-haproxy haproxy -vv | grep -i thread
 **Verification**:
 ```bash
 # Capture upstream request from backend
-docker exec bench-backend tcpdump -A -s 0 'tcp port 80' | grep "HTTP/1"
+docker exec bench-upstream tcpdump -A -s 0 'tcp port 80' | grep "HTTP/1"
 ```
 
 ---
@@ -154,7 +154,7 @@ docker exec bench-haproxy ls /var/log 2>/dev/null
    - **Mitigation**: Benchmark connections ≤ 100 for most tests (except concurrency)
 
 3. **Buffer Sizes**: HAProxy explicitly sets `tune.bufsize 16384`; others use defaults
-   - **Impact**: Minimal for small payloads (httpbin/minimal responses < 1KB)
+   - **Impact**: Minimal for small fixed payloads (default 64 bytes)
    - **Mitigation**: None required for current workloads
 
 ---

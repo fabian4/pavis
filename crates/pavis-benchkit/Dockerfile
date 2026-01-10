@@ -1,0 +1,15 @@
+FROM rust:1.85-slim AS builder
+
+WORKDIR /work
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+RUN cargo build -p pavis-benchkit --bin bench-upstream --release --locked
+
+FROM gcr.io/distroless/cc-debian12
+
+COPY --from=builder /work/target/release/bench-upstream /bench-upstream
+
+EXPOSE 8000
+
+ENTRYPOINT ["/bench-upstream"]

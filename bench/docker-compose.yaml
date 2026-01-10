@@ -11,42 +11,23 @@
 #   - haproxy:  Port 8083 (C, baseline control)
 
 services:
-  # Backend service (httpbin - functional realism)
-  backend-httpbin:
-    image: kennethreitz/httpbin:latest
-    platform: linux/amd64  # Force amd64 platform for compatibility
-    container_name: bench-backend-httpbin
-    profiles:
-      - httpbin
-    ports:
-      - "8000:80"
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 1G
-        reservations:
-          cpus: '1'
-          memory: 512M
-    cpuset: "0"  # Pin to CPU 0
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:80/get\")'"]
-      interval: 3s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-
-  # Backend service (minimal - dataplane isolation)
-  backend-minimal:
+  # Backend service (bench-upstream - canonical backend)
+  bench-upstream:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: bench-minimal-backend:latest
-    container_name: bench-backend-minimal
+      context: ..
+      dockerfile: crates/pavis-benchkit/Dockerfile
+    image: pavis-bench-upstream:latest
+    container_name: bench-upstream
+    networks:
+      default:
+        aliases:
+          - backend
     profiles:
       - minimal
     ports:
-      - "8001:8000"
+      - "8001:80"
+    environment:
+      PORT: "80"
     deploy:
       resources:
         limits:
@@ -56,12 +37,6 @@ services:
           cpus: '1'
           memory: 256M
     cpuset: "0"  # Pin to CPU 0
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:8000/health || exit 1"]
-      interval: 3s
-      timeout: 5s
-      retries: 20
-      start_period: 5s
 
   # Pavis Proxy (Rust, async - our project)
   pavis:
@@ -75,11 +50,8 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      backend-httpbin:
-        condition: service_healthy
-        required: false
-      backend-minimal:
-        condition: service_healthy
+      bench-upstream:
+        condition: service_started
         required: false
     deploy:
       resources:
@@ -100,11 +72,8 @@ services:
     ports:
       - "8081:8081"
     depends_on:
-      backend-httpbin:
-        condition: service_healthy
-        required: false
-      backend-minimal:
-        condition: service_healthy
+      bench-upstream:
+        condition: service_started
         required: false
     command: ["-c", "/etc/envoy/envoy.yaml", "--concurrency", "${CPU_LIMIT:-2}"]
     deploy:
@@ -126,11 +95,8 @@ services:
     ports:
       - "8082:8082"
     depends_on:
-      backend-httpbin:
-        condition: service_healthy
-        required: false
-      backend-minimal:
-        condition: service_healthy
+      bench-upstream:
+        condition: service_started
         required: false
     deploy:
       resources:
@@ -152,11 +118,8 @@ services:
     ports:
       - "8083:8083"
     depends_on:
-      backend-httpbin:
-        condition: service_healthy
-        required: false
-      backend-minimal:
-        condition: service_healthy
+      bench-upstream:
+        condition: service_started
         required: false
     deploy:
       resources:

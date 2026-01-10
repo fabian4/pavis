@@ -2,7 +2,7 @@
 
 Performance comparison of Pavis against industry-standard proxies with focus on:
 - **Open-loop latency testing** (wrk2) to avoid coordinated omission.
-- **Backend bottleneck elimination** (minimal backend option).
+- **Backend bottleneck elimination** (bench-upstream only).
 - **Statistical validation** (multi-run with median/IQR).
 - **CPU isolation** (pinned cores for proxy, backend, load generator).
 - **Configuration fairness** (documented semantic equivalence).
@@ -21,13 +21,17 @@ Performance comparison of Pavis against industry-standard proxies with focus on:
 - `bc` (for statistics)
 - `ulimit -n 10000` (recommended)
 
-### 2. ARM Mac Users (M1/M2/M3)
-**Recommended:** Use the minimal backend to avoid Rosetta emulation overhead:
+### 2. Backend Selection
+All benchmark runs use **bench-upstream** as the single canonical backend.
+The runner automatically uses the correct backend configuration.
+
+### 3. ARM Mac Users (M1/M2/M3)
+Use bench-upstream to avoid Rosetta emulation overhead:
 ```bash
-BACKEND_TYPE=minimal BENCHMARK_TARGET=pavis bash bench/scripts/run.sh
+BENCHMARK_TARGET=pavis bash bench/scripts/run.sh
 ```
 
-### 3. Execution Commands
+### 4. Execution Commands
 
 **Test Single Proxy (Single run, ~5 mins):**
 ```bash
@@ -54,9 +58,9 @@ BENCHMARK_RUNS=5 make benchmark
 - **Summary Report**: `bench/output/summary.md`
 
 ### Troubleshooting
-- **"bench-backend is unhealthy"**: Use `BACKEND_TYPE=minimal`.
+- **"bench-backend is unhealthy"**: Ensure the backend container is running.
 - **"wrk2 not found"**: Open-loop tests will fallback to standard `wrk` (closed-loop).
-- **Slow on ARM Mac**: Ensure `BACKEND_TYPE=minimal` is set.
+- **Slow on ARM Mac**: Ensure bench-upstream is used (default).
 
 ---
 
@@ -64,9 +68,9 @@ BENCHMARK_RUNS=5 make benchmark
 
 ```
 ┌─────────────┐      ┌─────────────────────┐      ┌──────────────────┐
-│  wrk/wrk2   │ ───▶ │  Proxy (container)  │ ───▶ │ Backend          │
-│  (host)     │      │  CPU: 1-2           │      │ (httpbin/minimal)│
-│  4 threads  │      │  cgroup-limited     │      │ CPU: 0           │
+│  wrk/wrk2   │ ───▶ │  Proxy (container)  │ ───▶ │ bench-upstream   │
+│  (host)     │      │  CPU: 1-2           │      │ CPU: 0           │
+│  4 threads  │      │  cgroup-limited     │      │ deterministic    │
 └─────────────┘      └─────────────────────┘      └──────────────────┘
                             ↓                              ↓
                        Pinned CPUs                   Pinned CPU
@@ -81,9 +85,15 @@ BENCHMARK_RUNS=5 make benchmark
 
 **Proxies:** Pavis (Rust/Pingora), Envoy (C++), Nginx (C), HAProxy (C).
 
-**Backends:**
-- **httpbin**: Functional realism (kennethreitz/httpbin).
-- **minimal**: Dataplane isolation (lightweight Go server).
+**Backend:**
+- **bench-upstream**: Deterministic backend from `crates/pavis-benchkit/src/bin/bench-upstream.rs`.
+  - Compose service: `bench-upstream` (container `bench-upstream`).
+
+**bench-upstream Endpoints:**
+- `GET /healthz` -> `200 OK` with `ok`.
+- `GET /fixed` -> fixed payload (`FIXED_BYTES`, default 64).
+- `GET /status/{code}` -> specified status with fixed payload.
+- `GET /sleep?ms=N` -> delayed fixed payload (capped at 10s).
 
 ---
 
@@ -104,7 +114,6 @@ bench/
 ├── FAIRNESS.md            ⚖️ Config parity checklist
 ├── bench.yaml             ⚙️ Matrix specification
 ├── docker-compose.yaml    🐳 Container definitions
-├── backend/               🆕 Minimal backend server
 ├── config/                🛠️ Proxy configurations
 ├── scripts/               ✨ Runner, CSV, and Summary scripts
 └── output/                📁 Results & Reports

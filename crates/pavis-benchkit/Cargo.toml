@@ -1,0 +1,18 @@
+[package]
+name = "pavis-benchkit"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[features]
+metrics = []
+
+[dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
+http = "0.2"
+bytes = "1.6"
+
+[[bin]]
+name = "bench-upstream"
+path = "src/bin/bench-upstream.rs"
