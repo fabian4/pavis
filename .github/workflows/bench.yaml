@@ -89,7 +89,7 @@ jobs:
         run: chmod +x target/release/bench-loadgen
 
       - name: Benchmark ${{ matrix.proxy }} (CI - short cases only)
-        run: PROXY=${{ matrix.proxy }} CASE="reload_short_1x" make bench
+        run: PROXY=${{ matrix.proxy }} make bench
 
       - name: Upload ${{ matrix.proxy }} Results
         if: always()

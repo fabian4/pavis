@@ -8,7 +8,8 @@
 | crates/pavctl/src/format.rs                              | 92.05%   | 81 / 88   | 31, 37, 54, 68, 88-89, 110                                                      |
 | crates/pavctl/src/main.rs                                | 100.00%  | 26 / 26   |                                                                                 |
 | crates/pavctl/src/parse.rs                               | 100.00%  | 9 / 9     |                                                                                 |
-| crates/pavis-benchkit/src/bin/bench-upstream.rs          | 68.49%   | 100 / 146 | 29-74, 190-195                                                                  |
+| crates/pavis-benchkit/src/bin/bench-loadgen.rs           | 0.00%    | 0 / 147   | 64-479                                                                          |
+| crates/pavis-benchkit/src/bin/bench-upstream.rs          | 68.49%   | 100 / 146 | 29-89, 190-195                                                                  |
 | crates/pavis-benchkit/src/metrics.rs                     | 100.00%  | 6 / 6     |                                                                                 |
 | crates/pavis-codec-api/src/lib.rs                        | 100.00%  | 21 / 21   |                                                                                 |
 | crates/pavis-codec-serde/src/config/convert.rs           | 100.00%  | 25 / 25   |                                                                                 |
@@ -29,7 +30,7 @@
 | crates/pavis-core/src/validate/upstreams.rs              | 100.00%  | 9 / 9     |                                                                                 |
 | crates/pavis-ingest-api/src/lib.rs                       | 100.00%  | 13 / 13   |                                                                                 |
 | crates/pavis-ingest-file/src/lib.rs                      | 100.00%  | 42 / 42   |                                                                                 |
-| crates/pavis-ingest-file/src/watch.rs                    | 85.33%   | 64 / 75   | 45, 69-71, 85, 96-97, 105-110, 123-124                                          |
+| crates/pavis-ingest-file/src/watch.rs                    | 81.33%   | 61 / 75   | 45, 69-71, 85, 96-97, 105-110, 123-124                                          |
 | crates/pavis-pvs/src/header.rs                           | 100.00%  | 17 / 17   |                                                                                 |
 | crates/pavis-pvs/src/read.rs                             | 100.00%  | 31 / 31   |                                                                                 |
 | crates/pavis-pvs/src/verify.rs                           | 96.33%   | 105 / 109 | 87, 97-99                                                                       |
@@ -41,7 +42,7 @@
 | crates/pavis-relay/src/handlers.rs                       | 100.00%  | 167 / 167 |                                                                                 |
 | crates/pavis-relay/src/ingest.rs                         | 60.00%   | 3 / 5     | 19-20                                                                           |
 | crates/pavis-relay/src/main.rs                           | 0.00%    | 0 / 5     | 14-18                                                                           |
-| crates/pavis-relay/src/pipeline.rs                       | 90.59%   | 77 / 85   | 21, 69-75, 91-95, 106, 112, 118, 136, 184                                       |
+| crates/pavis-relay/src/pipeline.rs                       | 90.59%   | 77 / 85   | 21, 91-95, 106, 112, 118, 136, 184                                              |
 | crates/pavis-relay/src/routes.rs                         | 94.74%   | 18 / 19   | 32                                                                              |
 | crates/pavis-relay/src/state.rs                          | 95.24%   | 140 / 147 | 218-219, 223-228                                                                |
 | crates/pavis-testkit/src/bin/pavis-mock-relay.rs         | 0.00%    | 0 / 4     | 6-9                                                                             |
@@ -55,7 +56,7 @@
 | crates/pavis-testkit/src/relay/server.rs                 | 0.00%    | 0 / 18    | 9-38                                                                            |
 | crates/pavis-testkit/src/relay/state.rs                  | 0.00%    | 0 / 24    | 26-76                                                                           |
 | crates/pavis-testkit/src/upstream/routes/delay.rs        | 0.00%    | 0 / 7     | 14-22                                                                           |
-| crates/pavis-testkit/src/upstream/routes/echo.rs         | 23.08%   | 9 / 39    | 13-64                                                                           |
+| crates/pavis-testkit/src/upstream/routes/echo.rs         | 30.77%   | 12 / 39   | 13-54, 65, 74-75, 78-79                                                         |
 | crates/pavis-testkit/src/upstream/routes/healthz.rs      | 0.00%    | 0 / 2     | 5-6                                                                             |
 | crates/pavis-testkit/src/upstream/routes/mod.rs          | 0.00%    | 0 / 71    | 32-210                                                                          |
 | crates/pavis-testkit/src/upstream/routes/reset.rs        | 0.00%    | 0 / 6     | 5-11                                                                            |
@@ -68,7 +69,7 @@
 | crates/pavis/src/load.rs                                 | 100.00%  | 8 / 8     |                                                                                 |
 | crates/pavis/src/main.rs                                 | 62.77%   | 59 / 94   | 35, 69-72, 77, 84, 87, 93-96, 115-124, 144-149, 157-184, 191, 199-200           |
 | crates/pavis/src/proxy/header_ops.rs                     | 86.79%   | 92 / 106  | 89, 128-140, 164, 175, 191                                                      |
-| crates/pavis/src/proxy/identity.rs                       | 92.86%   | 13 / 14   | 32                                                                              |
+| crates/pavis/src/proxy/identity.rs                       | 92.86%   | 13 / 14   | 22                                                                              |
 | crates/pavis/src/proxy/service.rs                        | 81.16%   | 56 / 69   | 54, 61-64, 82, 91-92, 96-98, 106, 190, 413                                      |
 | crates/pavis/src/router.rs                               | 95.24%   | 40 / 42   | 89, 97                                                                          |
 | crates/pavis/src/router/matcher.rs                       | 96.08%   | 49 / 51   | 27, 72                                                                          |
@@ -78,6 +79,6 @@
 | crates/pavis/src/upstream.rs                             | 100.00%  | 8 / 8     |                                                                                 |
 | crates/pavis/src/upstream/cluster.rs                     | 100.00%  | 27 / 27   |                                                                                 |
 | crates/pavis/src/upstream/load_balance.rs                | 85.00%   | 17 / 20   | 30-32                                                                           |
-| crates/pavis/src/upstream/resolver.rs                    | 81.42%   | 92 / 113  | 88-90, 129, 132, 139-140, 144-147, 166, 174, 186, 208-232, 240                  |
+| crates/pavis/src/upstream/resolver.rs                    | 81.42%   | 92 / 113  | 88-90, 129, 132, 139-140, 144-147, 166, 174, 186, 209-214, 219, 232             |
 
-Total coverage: 81.58%
+Total coverage: 78.07%
