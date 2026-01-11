@@ -8,6 +8,7 @@ Performance comparison of Pavis against industry-standard proxies with focus on:
 - **Configuration fairness** (documented semantic equivalence).
 
 📖 **Detailed References**
+- **[QUICKSTART.md](./QUICKSTART.md)**: Quick reference guide with common commands.
 - **[METHODOLOGY.md](./METHODOLOGY.md)**: Scientific foundations, metric definitions, and the full test matrix.
 - **[FAIRNESS.md](./FAIRNESS.md)**: Detailed proxy configuration parity checklist.
 
@@ -16,29 +17,62 @@ Performance comparison of Pavis against industry-standard proxies with focus on:
 ## 🚀 Quick Start
 
 ### 1. Prerequisites
-- `wrk` (or `wrk2` for latency tests)
+- `wrk` (for throughput/concurrency/churn tests)
+- `wrk2` (for latency tests - optional, required only for latency benchmarks)
 - `docker` and `docker-compose`
 - `bc` (for statistics)
 - `ulimit -n 10000` (recommended)
 
-### 2. Backend Selection
-All benchmark runs use **bench-upstream** as the single canonical backend.
-The runner automatically uses the correct backend configuration.
+### 2. Build Docker Images
 
-### 3. ARM Mac Users (M1/M2/M3)
-Use bench-upstream to avoid Rosetta emulation overhead:
+Build the required images before running benchmarks:
+
 ```bash
-BENCHMARK_TARGET=pavis bash bench/scripts/run.sh
+# Build bench-upstream (canonical backend)
+make docker-build IMAGE=bench-upstream
+
+# Build pavis proxy
+make docker-build IMAGE=pavis
+
+# Optional: Build other proxies if testing them
+# (Note: nginx, envoy, haproxy use official images with default tags)
 ```
 
-### 4. Execution Commands
+### 3. Quick Test Commands
 
-**Test Single Proxy (Single run, ~5 mins):**
+**Quick Validation (Dry-Run, ~20 seconds):**
 ```bash
-BENCHMARK_TARGET=pavis bash bench/scripts/run.sh
+# Validate setup without running benchmarks
+DRY_RUN=1 make bench
 ```
 
-**Full Matrix (All proxies, ~45 mins):**
+**Single Test Case (~1 minute):**
+```bash
+# Run single benchmark case
+make bench CASE="throughput_short_1x"
+```
+
+**Multiple Test Cases (~3-5 minutes):**
+```bash
+# Run specific cases
+make bench CASE="throughput_short_1x latency_short_1x"
+```
+
+**All Default Cases (~15-20 minutes):**
+```bash
+# Run all 6 default test cases
+make bench
+```
+
+**Test Different Proxy:**
+```bash
+# Test nginx instead of pavis
+make bench PROXY=nginx CASE="throughput_short_1x"
+```
+
+### 4. Advanced: Full Statistical Validation
+
+**Full Matrix (All proxies, all cases, ~45 mins):**
 ```bash
 make benchmark
 ```
@@ -50,17 +84,118 @@ BENCHMARK_RUNS=5 make benchmark
 
 ---
 
+## 🎯 Test Cases
+
+The benchmark suite includes 6 test cases in `bench/cases/`:
+
+| Case | Load Type | Duration | Tool | Focus |
+|------|-----------|----------|------|-------|
+| `throughput_short_1x` | Closed-loop | 30s | wrk | Maximum RPS |
+| `latency_short_1x` | Open-loop | 30s | wrk2 | Latency distribution |
+| `latency_extended_1x` | Open-loop | 120s | wrk2 | Tail latency stability |
+| `concurrency_short_1x` | Closed-loop | 30s | wrk | High connection count |
+| `churn_short_1x` | Closed-loop | 30s | wrk | Connection churn |
+| `reload_short_1x` | Open-loop | 60s | wrk2 | Config reload impact |
+
+---
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+```bash
+# Target proxy (default: pavis)
+PROXY=<pavis|envoy|nginx|haproxy>
+
+# Test cases to run (default: all 6 cases)
+CASE="throughput_short_1x latency_short_1x ..."
+
+# Dry-run mode - validate setup without benchmarks (default: off)
+DRY_RUN=1
+```
+
+### Default Proxy Tags
+
+The benchmark uses these Docker image tags by default:
+
+| Proxy | Default Tag |
+|-------|-------------|
+| pavis | `local` (built from source) |
+| envoy | `v1.32.2` |
+| nginx | `1.26.2-alpine` |
+| haproxy | `2.9.6-alpine` |
+
+Override with environment variables:
+```bash
+ENVOY_TAG=v1.33.0 make bench PROXY=envoy
+```
+
+### Pavis Configuration
+
+For `PROXY=pavis`, the benchmark automatically:
+1. Generates `.pvs` binary config from `bench/config/pavis.yaml` using `pavctl gen`
+2. Auto-builds `pavctl` if not found
+3. Cleans up generated `.pvs` file after test completion
+
+To customize pavis config, edit `bench/config/pavis.yaml`.
+
+---
+
 ## 📈 Results & Troubleshooting
 
 ### Results Location
+
+**Case-based benchmarks (`make bench`):**
+- **Per-run output**: `bench/output/{proxy}/{case}/{timestamp}/`
+  - `wrk.txt` or `wrk2.txt` - Raw wrk/wrk2 output
+  - `summary.json` - Parsed metrics
+  - `meta.json` - Test metadata
+  - `docker_stats.csv` - Container resource usage
+- **Index**: `bench/output/{proxy}/index_{timestamp}.csv`
+
+**Full matrix benchmarks (`make benchmark`):**
 - **Raw Output**: `bench/output/{proxy}/{proxy}.txt`
 - **Aggregated CSV**: `bench/output/results.csv`
 - **Summary Report**: `bench/output/summary.md`
 
 ### Troubleshooting
-- **"bench-backend is unhealthy"**: Ensure the backend container is running.
-- **"wrk2 not found"**: Open-loop tests will fallback to standard `wrk` (closed-loop).
-- **Slow on ARM Mac**: Ensure bench-upstream is used (default).
+
+**"error: missing required command 'wrk2'"**
+- Latency tests require `wrk2`. Install it or skip latency tests:
+  ```bash
+  make bench CASE="throughput_short_1x concurrency_short_1x"
+  ```
+- Or use dry-run to validate setup: `DRY_RUN=1 make bench`
+
+**"backend failed to become healthy after 30s"**
+- Backend container failed to start. Check logs:
+  ```bash
+  docker logs bench-upstream
+  ```
+- Rebuild image if needed:
+  ```bash
+  make docker-build IMAGE=bench-upstream
+  ```
+
+**"pavis container exited with error"**
+- Check pavis logs:
+  ```bash
+  docker logs bench-pavis
+  ```
+- Verify PVS config is valid:
+  ```bash
+  ./target/release/pavctl gen bench/config/pavis.yaml /tmp/test.pvs
+  ```
+
+**Slow on ARM Mac**
+- Ensure bench-upstream is used (default).
+- Check if containers are running native ARM images.
+
+**Permission denied errors**
+- Increase file descriptor limit:
+  ```bash
+  ulimit -n 10000
+  ```
 
 ---
 
@@ -109,22 +244,82 @@ echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governo
 
 ```
 bench/
-├── README.md              📖 This file
+├── README.md              📖 This file (comprehensive guide)
+├── QUICKSTART.md          ⚡ Quick reference guide
 ├── METHODOLOGY.md         🔬 Full methodology & Matrix
 ├── FAIRNESS.md            ⚖️ Config parity checklist
-├── bench.yaml             ⚙️ Matrix specification
-├── docker-compose.yaml    🐳 Container definitions
+├── run.sh                 ▶️ Main benchmark runner with auto PVS management
+├── docker-compose.yaml    🐳 Container definitions with default tags
 ├── config/                🛠️ Proxy configurations
-├── scripts/               ✨ Runner, CSV, and Summary scripts
+│   ├── pavis.yaml         - Pavis config (auto-compiled to .pvs)
+│   ├── envoy.yaml         - Envoy config
+│   ├── nginx.conf         - Nginx config
+│   └── haproxy.cfg        - HAProxy config
+├── cases/                 🎯 Individual test case scripts
+│   ├── throughput_short_1x.sh
+│   ├── latency_short_1x.sh
+│   ├── latency_extended_1x.sh
+│   ├── concurrency_short_1x.sh
+│   ├── churn_short_1x.sh
+│   └── reload_short_1x.sh
+├── scripts/               ✨ Legacy runner, CSV, and Summary scripts
 └── output/                📁 Results & Reports
+    └── {proxy}/
+        ├── {case}/{timestamp}/  - Per-run detailed results
+        └── index_{timestamp}.csv - Run index
 ```
 
 ---
 
+## 🔧 Implementation Details
+
+### Benchmark Runner (`bench/run.sh`)
+
+The main runner provides:
+- **Auto PVS Management**: Automatically generates and cleans up `.pvs` config for pavis
+- **Case Orchestration**: Runs selected test cases sequentially
+- **Dry-Run Mode**: Quick validation without actual benchmarks
+- **Result Indexing**: Aggregates results into CSV index
+
+### Test Case Scripts (`bench/cases/*.sh`)
+
+Each test case is self-contained and includes:
+- Container startup and health checks
+- CPU pinning validation
+- Warmup runs
+- Docker stats collection
+- Result parsing and JSON output
+- Dry-run support for fast validation
+
+### Docker Compose Setup
+
+- **Isolation**: Separate CPU cores for proxy (1-2) and backend (0)
+- **Resource Limits**: Configurable via `CPU_LIMIT` and `MEMORY_LIMIT`
+- **Default Tags**: Pre-configured versions for reproducibility
+- **Build Context**: Local builds for pavis and bench-upstream
+
+---
+
 ## Limitations & Known Issues
-1. **Reload Benchmark**: Triggering mechanism pending implementation.
-2. **Single-Host**: No multi-node distributed testing.
-3. **HTTP/1.1 Only**: Current tests do not cover HTTP/2 or gRPC.
+
+1. **macOS Compatibility**:
+   - CPU pinning (`cpuset`) and `/proc/cpuinfo` not available on macOS
+   - CPU governor settings only work on Linux
+   - Benchmark still runs but without CPU isolation guarantees
+
+2. **wrk2 Requirement**:
+   - Latency tests require `wrk2` (not included in standard distributions)
+   - Use `DRY_RUN=1` to test without wrk2 installed
+   - Or skip latency tests with: `CASE="throughput_short_1x concurrency_short_1x churn_short_1x"`
+
+3. **Reload Benchmark**:
+   - Config reload triggering mechanism pending implementation
+
+4. **Single-Host**:
+   - No multi-node distributed testing
+
+5. **HTTP/1.1 Only**:
+   - Current tests do not cover HTTP/2 or gRPC
 
 See [METHODOLOGY.md](./METHODOLOGY.md#limitations--known-issues) for full details.
 

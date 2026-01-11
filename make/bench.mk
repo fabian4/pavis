@@ -1,29 +1,24 @@
-.PHONY: benchmark benchmark-build benchmark-pre-run benchmark-single benchmark-down
+.PHONY: bench bench-build bench-down
 
 # Build images required for benchmarking
-benchmark-build:
-	docker buildx build --file crates/pavis/Dockerfile --tag pavis:bench --load .
+bench-build:
+	docker buildx build --file crates/pavis/Dockerfile --tag pavis:local --load .
+	cd bench && docker compose build bench-upstream
 
-# Cleanup previous benchmark results
-benchmark-pre-run:
-	rm -rf bench/output
-	mkdir -p bench/output
-
-# Run full benchmark matrix for all proxies
-benchmark: benchmark-build benchmark-pre-run
-	cd bench && BENCHMARK_TARGET=pavis bash scripts/run.sh
-	cd bench && BENCHMARK_TARGET=envoy bash scripts/run.sh
-	cd bench && BENCHMARK_TARGET=nginx bash scripts/run.sh
-	cd bench && BENCHMARK_TARGET=haproxy bash scripts/run.sh
-	RESULTS_DIR=bench/output bash bench/scripts/csv.sh
-	RESULTS_DIR=bench/output bash bench/scripts/summary.sh
-
-# Run benchmark for a specific proxy (e.g., PROXY=envoy make benchmark-single)
-benchmark-single: benchmark-build
-	cd bench && BENCHMARK_TARGET=$${PROXY:-pavis} bash scripts/run.sh
-	RESULTS_DIR=bench/output bash bench/scripts/csv.sh
-	RESULTS_DIR=bench/output bash bench/scripts/summary.sh
+# Run case scripts (from bench/cases) for a single proxy
+# Environment variables:
+#   PROXY=<pavis|envoy|nginx|haproxy>  - Target proxy (default: pavis)
+#   CASE="<case1> <case2> ..."         - Space-separated test cases (default: all)
+#   DRY_RUN=1                          - Validate setup without running benchmarks
+#
+# Examples:
+#   make bench                              # Run all tests with pavis
+#   DRY_RUN=1 make bench                   # Quick validation
+#   PROXY=envoy make bench                 # Test envoy
+#   CASE="throughput_short_1x" make bench  # Single test case
+bench:
+	PROXY=$${PROXY:-pavis} CASE="$${CASE:-}" bash bench/run.sh
 
 # Stop and cleanup the benchmark environment
-benchmark-down:
+bench-down:
 	cd bench && docker compose down -v

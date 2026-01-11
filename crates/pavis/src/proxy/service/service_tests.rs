@@ -7,12 +7,11 @@ use pavis_core::{
     AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint,
     EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname, HttpVersion,
     IdleTimeout, LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, RouteAction, ServiceName, Telemetry as RuntimeTelemetry, Timeout,
-    TlsPolicy, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
+    RewriteHost, RewritePath, RouteAction, ServiceName, SniName, Telemetry as RuntimeTelemetry,
+    Timeout, TlsPolicy, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
 };
 use pingora::http::ResponseHeader;
-use pingora::proxy::ProxyHttp;
-use pingora::proxy::Session;
+use pingora::prelude::{ProxyHttp, RequestHeader, Session};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU16, NonZeroU32};
@@ -938,6 +937,140 @@ fn test_calculate_path_rewrite_preserves_query_string() {
         calculate_path_rewrite(&route, "/api/v1/search", Some("q=hello%20world&page=1")).unwrap();
     assert_eq!(uri.path(), "/v2/search");
     assert_eq!(uri.query(), Some("q=hello%20world&page=1"));
+}
+
+#[tokio::test]
+async fn test_upstream_request_filter() {
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: Manager::new(&[]),
+        })),
+        telemetry: test_telemetry(),
+    };
+    let mut ctx = proxy.new_ctx();
+    ctx.request_headers = HeadersPolicy::Enabled {
+        rules: Headers {
+            set_headers: vec![(
+                HeaderName("x-forwarded-for".to_string()),
+                HeaderValue("1.2.3.4".to_string()),
+            )],
+            append_headers: Vec::new(),
+            add_headers: Vec::new(),
+            remove_headers: Vec::new(),
+        },
+    }
+    .into();
+
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+    proxy
+        .upstream_request_filter(&mut session, &mut req, &mut ctx)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        req.headers
+            .get("x-forwarded-for")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "1.2.3.4"
+    );
+}
+
+#[tokio::test]
+async fn test_upstream_peer_tls_verify_variants() {
+    let mut upstream_base = upstream("verify", 1, 8080);
+    upstream_base.tls = TlsPolicy::Enabled {
+        mode: pavis_core::TlsVerify::Disabled,
+        sni: SniName::Auto,
+        cert: pavis_core::ClientCert::Disabled,
+    };
+
+    let test_modes = [
+        (pavis_core::TlsVerify::Disabled, false, false),
+        (pavis_core::TlsVerify::Cert, false, true),
+        (pavis_core::TlsVerify::CertAndHost, true, true),
+    ];
+
+    for (mode, verify_host, verify_cert) in test_modes {
+        let mut u = upstream_base.clone();
+        if let TlsPolicy::Enabled { mode: m, .. } = &mut u.tls {
+            *m = mode;
+        }
+
+        let proxy = Proxy {
+            state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                upstream_manager: Manager::new(&[u]),
+            })),
+            telemetry: test_telemetry(),
+        };
+
+        let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+        ctx.upstream_name = Some(UpstreamName("verify".to_string()));
+
+        let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!(peer.options.verify_hostname, verify_host);
+        assert_eq!(peer.options.verify_cert, verify_cert);
+    }
+}
+
+#[tokio::test]
+async fn test_request_filter_direct_response_with_headers() {
+    let routes = vec![VirtualHost {
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Exact {
+                path: Path("/direct".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Enabled {
+                rules: Headers {
+                    set_headers: vec![(
+                        HeaderName("x-direct".to_string()),
+                        HeaderValue("true".to_string()),
+                    )],
+                    append_headers: Vec::new(),
+                    add_headers: Vec::new(),
+                    remove_headers: Vec::new(),
+                },
+            }
+            .into(),
+            principal: pavis_core::Principal::Any,
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
+            action: RouteAction::Direct {
+                status: 200,
+                body: "Direct".to_string(),
+            },
+        }],
+    }];
+
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(routes).unwrap()),
+            upstream_manager: Manager::new(&[]),
+        })),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, mut client) = session_for_request(b"GET /direct HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    proxy.request_filter(&mut session, &mut ctx).await.unwrap();
+
+    let mut buf = vec![0u8; 1024];
+    let n = client.read(&mut buf).await.unwrap();
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    assert!(response.contains("x-direct: true"));
+    assert!(response.contains("Direct"));
 }
 
 #[tokio::test]

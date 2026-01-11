@@ -57,9 +57,17 @@ pub(crate) fn match_request<'a>(
         let is_match = if pattern == "*" {
             true
         } else if let Some(suffix) = pattern.strip_prefix("*.") {
-            normalized_host.is_some_and(|h| h.ends_with(suffix))
+            normalized_host.is_some_and(|h| {
+                h.ends_with(suffix)
+                    && h.len() > suffix.len()
+                    && h.as_bytes()[h.len() - suffix.len() - 1] == b'.'
+            })
         } else if let Some(prefix) = pattern.strip_suffix(".*") {
-            normalized_host.is_some_and(|h| h.starts_with(prefix))
+            normalized_host.is_some_and(|h| {
+                h.starts_with(prefix)
+                    && h.len() > prefix.len()
+                    && h.as_bytes()[prefix.len()] == b'.'
+            })
         } else {
             normalized_host.is_some_and(|h| h == pattern)
         };
@@ -105,6 +113,62 @@ mod tests {
         assert_eq!(normalize_host("[::1]"), "::1");
         assert_eq!(normalize_host("[::1]:8080"), "::1");
         assert_eq!(normalize_host("127.0.0.1"), "127.0.0.1");
+        assert_eq!(normalize_host("foo.bar.com:443"), "foo.bar.com");
+    }
+
+    fn make_route() -> Route {
+        Route {
+            matcher: PathMatch::Prefix {
+                path: Path("/".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
+            principal: pavis_core::Principal::Any,
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
+            action: RouteAction::Forward(vec![]),
+        }
+    }
+
+    fn make_vhost(host: &str) -> CompiledVirtualHost {
+        CompiledVirtualHost {
+            config: VirtualHost {
+                host: Host(host.to_string()),
+                paths: vec![make_route()],
+            },
+            zones: vec![RouteZone::Linear(vec![CompiledRoute {
+                index: 0,
+                regex: None,
+            }])],
+        }
+    }
+
+    #[test]
+    fn test_match_wildcard_host_patterns() {
+        let suffix_vhost = make_vhost("*.example.com");
+        let prefix_vhost = make_vhost("app.*");
+
+        let router = Router {
+            exact_hosts: HashMap::new(),
+            wildcard_hosts: vec![suffix_vhost, prefix_vhost],
+        };
+
+        // Suffix match
+        let (v, _) = match_request(&router, Some("foo.example.com"), "/").unwrap();
+        assert_eq!(v.host.0, "*.example.com");
+
+        // Prefix match
+        let (v, _) = match_request(&router, Some("app.internal"), "/").unwrap();
+        assert_eq!(v.host.0, "app.*");
+
+        // No match
+        assert!(match_request(&router, Some("other.com"), "/").is_none());
+        assert!(match_request(&router, Some("example.com"), "/").is_none()); // strict suffix check in code? "normalized_host.is_some_and(|h| h.ends_with(suffix))"
+        // If pattern is "*.example.com", suffix is ".example.com". "example.com" does not end with ".example.com". Correct.
     }
 
     #[test]

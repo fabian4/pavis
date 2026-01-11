@@ -51,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)
+        .enable_io()
         .enable_time()
         .build()?;
 
@@ -293,6 +294,26 @@ mod tests {
     use hyper::body::HttpBody;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
+
+    #[test]
+    fn test_parse_env_functions() {
+        unsafe {
+            std::env::set_var("TEST_U16", "1234");
+        }
+        assert_eq!(parse_env_u16("TEST_U16", 0), 1234);
+        assert_eq!(parse_env_u16("TEST_MISSING", 5), 5);
+        assert_eq!(parse_env_u16("TEST_INVALID", 5), 5); // Assuming it doesn't parse
+
+        unsafe {
+            std::env::set_var("TEST_USIZE", "5678");
+        }
+        assert_eq!(parse_env_usize("TEST_USIZE", 0), 5678);
+
+        unsafe {
+            std::env::set_var("TEST_U64", "9012");
+        }
+        assert_eq!(parse_env_u64("TEST_U64", 0), 9012);
+    }
 
     #[test]
     fn parse_status_accepts_valid_range() {

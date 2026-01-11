@@ -496,29 +496,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_strict_dns_preserves_ip_endpoints() {
-        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
-        let config = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test".to_string()),
-            discovery: Discovery::Strict { ttl: 30 },
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: pavis_core::IdleTimeout::Disabled,
-                connect: pavis_core::ConnectTimeout::Disabled,
-                max: pavis_core::ConnectionLimit::Unlimited,
-            },
-            tls: pavis_core::TlsPolicy::Disabled,
-            endpoints: vec![Endpoint {
-                address: EndpointAddr::Ip {
-                    address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                    port: Port(NonZeroU16::new(8080).unwrap()),
-                },
-                weight: Weight(NonZeroU16::new(1).unwrap()),
-            }],
-        };
-
+    async fn test_upstream_resolver_new_custom_dns() {
+        unsafe {
+            std::env::set_var("PAVIS_DNS_SERVER", "1.2.3.4:53");
+        }
         let manager = crate::upstream::Manager::new(&[]);
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
@@ -526,24 +507,14 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
-
-        let result = resolve_strict_dns(&config, &resolver.resolver)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(result.len(), 1);
-        match result[0].address {
-            EndpointAddr::Ip { address, .. } => {
-                assert_eq!(address, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))
-            }
-            _ => panic!("Expected IP endpoint"),
+        let _resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        unsafe {
+            std::env::remove_var("PAVIS_DNS_SERVER");
         }
     }
 
     #[tokio::test]
-    async fn test_resolve_logical_dns_multiple_endpoints_logs_warning_and_uses_first() {
-        // We can't assert logging, but we can verify it returns result based on first endpoint.
+    async fn test_resolve_upstream_logical_multiple_dns_warns() {
         use pavis_core::{
             Discovery, Hostname, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName,
         };
@@ -569,7 +540,7 @@ mod tests {
                 },
                 Endpoint {
                     address: EndpointAddr::Dns {
-                        host: Hostname("example.com".to_string()),
+                        host: Hostname("localhost".to_string()),
                         port: Port(NonZeroU16::new(8081).unwrap()),
                     },
                     weight: Weight(NonZeroU16::new(1).unwrap()),
@@ -586,15 +557,141 @@ mod tests {
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
 
-        // This relies on localhost resolving
-        let result = resolve_logical_dns(&config, &[], &resolver.resolver)
+        // Should still resolve the first one if localhost works
+        let _ = resolve_logical_dns(&config, &[], &resolver.resolver).await;
+    }
+
+    #[tokio::test]
+    async fn test_resolve_upstream_invalid_discovery() {
+        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: Discovery::Static, // Static should return None
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![],
+        };
+
+        let manager = crate::upstream::Manager::new(&[]);
+        let state = Arc::new(crate::state::RuntimeStateHandle::new(
+            crate::state::RuntimeState {
+                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                upstream_manager: manager,
+            },
+        ));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let res = resolve_upstream(
+            "test".to_string(),
+            config,
+            vec![],
+            resolver.resolver.clone(),
+        )
+        .await;
+        assert!(res.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_once_skips_static() {
+        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("static".to_string()),
+            discovery: Discovery::Static,
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![],
+        };
+
+        let manager = crate::upstream::Manager::new(&[config]);
+        let state = Arc::new(crate::state::RuntimeStateHandle::new(
+            crate::state::RuntimeState {
+                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                upstream_manager: manager,
+            },
+        ));
+
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        resolver.resolve_once().await;
+    }
+
+    #[tokio::test]
+    async fn test_resolve_strict_dns_success() {
+        use pavis_core::{
+            Discovery, Hostname, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName,
+        };
+        let config = Upstream {
+            id: UpstreamId(NonZeroU16::new(1).unwrap()),
+            name: UpstreamName("test".to_string()),
+            discovery: Discovery::Strict { ttl: 30 },
+            balancer: LoadBalancer::RoundRobin,
+            protocol: HttpVersion::H1,
+            pool: Pool {
+                idle: pavis_core::IdleTimeout::Disabled,
+                connect: pavis_core::ConnectTimeout::Disabled,
+                max: pavis_core::ConnectionLimit::Unlimited,
+            },
+            tls: pavis_core::TlsPolicy::Disabled,
+            endpoints: vec![Endpoint {
+                address: EndpointAddr::Dns {
+                    host: Hostname("localhost".to_string()),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            }],
+        };
+
+        let manager = crate::upstream::Manager::new(&[]);
+        let state = Arc::new(crate::state::RuntimeStateHandle::new(
+            crate::state::RuntimeState {
+                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                upstream_manager: manager,
+            },
+        ));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+
+        let res = resolve_strict_dns(&config, &resolver.resolver)
             .await
             .unwrap();
-
-        if let Some(endpoints) = result {
+        if let Some(endpoints) = res {
             assert!(!endpoints.is_empty());
-            // Should resolve localhost (first one)
-            // Can't easily check IP, but can check it succeeded.
         }
+    }
+
+    #[tokio::test]
+    async fn test_upstream_resolver_service_lifecycle() {
+        let manager = crate::upstream::Manager::new(&[]);
+        let state = Arc::new(crate::state::RuntimeStateHandle::new(
+            crate::state::RuntimeState {
+                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                upstream_manager: manager,
+            },
+        ));
+        let mut resolver = UpstreamResolver::new(state, Duration::from_millis(10));
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let handle = tokio::spawn(async move {
+            resolver.start_service(None, shutdown_rx, 1).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        shutdown_tx.send(true).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

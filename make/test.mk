@@ -10,4 +10,9 @@ coverage:
 
 # Generate HTML code coverage report
 coverage-html:
-	cargo llvm-cov --workspace --exclude-files 'crates/pavis-e2e/*' --exclude-files 'crates/*/tests/*' --html
+	cargo llvm-cov --workspace --exclude-files 'crates/*/tests/*' --html
+
+# Generate coverage markdown (requires cargo-tarpaulin + grcov)
+coverage-report:
+	cargo tarpaulin --workspace --all-features --exclude-files 'crates/*/tests/*' --exclude-files "crates/**/*tests.rs" --out Lcov
+	grcov lcov.info --source-dir . --output-type markdown --ignore 'crates/*/tests/*' --ignore 'crates/**/*tests.rs' --output-path ./docs/coverage.md

@@ -532,9 +532,64 @@ mod tests {
     }
 
     #[test]
+    fn test_is_non_joinable() {
+        assert!(super::is_non_joinable("set-cookie"));
+        assert!(super::is_non_joinable("Set-Cookie"));
+        assert!(!super::is_non_joinable("Content-Type"));
+    }
+
+    #[test]
     fn test_build_joined_value_empty() {
         let val = http::HeaderValue::from_static("v");
         let res = super::build_joined_value(std::iter::empty(), &val);
         assert!(res.is_none());
+    }
+
+    #[test]
+    fn test_header_editor_trait_on_request() {
+        use super::HeaderEditor;
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+
+        req.insert(
+            http::header::HeaderName::from_static("x-foo"),
+            http::header::HeaderValue::from_static("1"),
+        )
+        .unwrap();
+        assert_eq!(req.headers.get("x-foo").unwrap(), "1");
+
+        req.append(
+            http::header::HeaderName::from_static("x-foo"),
+            http::header::HeaderValue::from_static("2"),
+        )
+        .unwrap();
+        let values: Vec<_> = req.headers.get_all("x-foo").iter().collect();
+        assert_eq!(values.len(), 2);
+
+        req.remove_all(&http::header::HeaderName::from_static("x-foo"));
+        assert!(req.headers.get("x-foo").is_none());
+    }
+
+    #[test]
+    fn test_header_editor_trait_on_response() {
+        use super::HeaderEditor;
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+
+        resp.insert(
+            http::header::HeaderName::from_static("x-bar"),
+            http::header::HeaderValue::from_static("a"),
+        )
+        .unwrap();
+        assert_eq!(resp.headers.get("x-bar").unwrap(), "a");
+
+        resp.append(
+            http::header::HeaderName::from_static("x-bar"),
+            http::header::HeaderValue::from_static("b"),
+        )
+        .unwrap();
+        let values: Vec<_> = resp.headers.get_all("x-bar").iter().collect();
+        assert_eq!(values.len(), 2);
+
+        resp.remove_all(&http::header::HeaderName::from_static("x-bar"));
+        assert!(resp.headers.get("x-bar").is_none());
     }
 }

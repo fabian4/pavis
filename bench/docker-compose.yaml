@@ -16,14 +16,12 @@ services:
     build:
       context: ..
       dockerfile: crates/pavis-benchkit/Dockerfile
-    image: pavis-bench-upstream:latest
+    image: pavis-bench-upstream:local
     container_name: bench-upstream
     networks:
       default:
         aliases:
           - backend
-    profiles:
-      - minimal
     ports:
       - "8001:80"
     environment:
@@ -40,7 +38,7 @@ services:
 
   # Pavis Proxy (Rust, async - our project)
   pavis:
-    image: pavis:${PAVIS_TAG}
+    image: pavis:${PAVIS_TAG:-local}
     build:
       context: ..
       dockerfile: crates/pavis/Dockerfile
@@ -52,7 +50,6 @@ services:
     depends_on:
       bench-upstream:
         condition: service_started
-        required: false
     deploy:
       resources:
         limits:
@@ -65,7 +62,7 @@ services:
 
   # Envoy Proxy (C++, industry standard)
   envoy:
-    image: envoyproxy/envoy:${ENVOY_TAG}
+    image: envoyproxy/envoy:${ENVOY_TAG:-v1.32.2}
     container_name: bench-envoy
     volumes:
       - ./config/envoy.yaml:/etc/envoy/envoy.yaml:ro
@@ -74,7 +71,6 @@ services:
     depends_on:
       bench-upstream:
         condition: service_started
-        required: false
     command: ["-c", "/etc/envoy/envoy.yaml", "--concurrency", "${CPU_LIMIT:-2}"]
     deploy:
       resources:
@@ -88,7 +84,7 @@ services:
 
   # Nginx (C, widely-used reverse proxy)
   nginx:
-    image: nginx:${NGINX_TAG}
+    image: nginx:${NGINX_TAG:-1.26.2-alpine}
     container_name: bench-nginx
     volumes:
       - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -97,7 +93,6 @@ services:
     depends_on:
       bench-upstream:
         condition: service_started
-        required: false
     deploy:
       resources:
         limits:
@@ -111,7 +106,7 @@ services:
   # HAProxy (C, baseline control - mature, optimized)
   # Note: nbthread=2 hardcoded; CPU actually limited via cgroups
   haproxy:
-    image: haproxy:${HAPROXY_TAG}
+    image: haproxy:${HAPROXY_TAG:-2.9.6-alpine}
     container_name: bench-haproxy
     volumes:
       - ./config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
@@ -120,7 +115,6 @@ services:
     depends_on:
       bench-upstream:
         condition: service_started
-        required: false
     deploy:
       resources:
         limits:

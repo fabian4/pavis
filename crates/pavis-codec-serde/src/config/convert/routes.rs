@@ -740,4 +740,91 @@ mod tests {
             _ => panic!("expected prefix back"),
         }
     }
+
+    #[test]
+    fn parse_retry_flags_handles_variants() {
+        let flags = parse_retry_flags(&[
+            serde_json::Value::String("5xx".to_string()),
+            serde_json::Value::String("connect_failure".to_string()),
+            serde_json::Value::String("reset".to_string()),
+            serde_json::Value::String("refused".to_string()),
+        ])
+        .unwrap();
+        assert_eq!(
+            flags.0,
+            pavis_core::RETRY_FIVE_XX
+                | pavis_core::RETRY_CONNECT_FAILURE
+                | pavis_core::RETRY_RESET
+                | pavis_core::RETRY_REFUSED
+        );
+
+        let err =
+            parse_retry_flags(&[serde_json::Value::String("unknown".to_string())]).unwrap_err();
+        assert!(err.to_string().contains("unsupported retry condition"));
+
+        let err = parse_retry_flags(&[serde_json::Value::Bool(true)]).unwrap_err();
+        assert!(err.to_string().contains("must be strings"));
+    }
+
+    #[test]
+    fn from_runtime_headers_round_trip() {
+        let headers = pavis_core::Headers {
+            set_headers: vec![(
+                pavis_core::HeaderName("x-set".to_string()),
+                pavis_core::HeaderValue("v1".to_string()),
+            )],
+            append_headers: vec![(
+                pavis_core::HeaderName("x-append".to_string()),
+                pavis_core::HeaderValue("v2".to_string()),
+            )],
+            add_headers: vec![(
+                pavis_core::HeaderName("x-add".to_string()),
+                pavis_core::HeaderValue("v3".to_string()),
+            )],
+            remove_headers: vec![pavis_core::HeaderName("x-remove".to_string())],
+        };
+        let policy = pavis_core::HeadersPolicy::Enabled { rules: headers };
+
+        let ops = from_runtime_headers(&policy).unwrap();
+        assert_eq!(ops.set_headers.len(), 1);
+        assert_eq!(ops.append_headers.len(), 1);
+        assert_eq!(ops.add_headers.len(), 1);
+        assert_eq!(ops.remove_headers.len(), 1);
+        assert_eq!(ops.set_headers[0].0, "x-set");
+    }
+
+    #[test]
+    fn rewrite_policy_conversion() {
+        use crate::config::types::{RewritePolicy, Route, RouteAction, VirtualHost};
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: Some(RewritePolicy {
+                    path: Some("/new".to_string()),
+                    host: Some("new.host".to_string()),
+                }),
+                action: RouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+
+        let runtime = to_runtime(vec![vhost]).unwrap();
+        let rewrite = &runtime[0].paths[0].rewrite;
+        match &rewrite.path {
+            pavis_core::RewritePath::Prefix { to, .. } => assert_eq!(to.0, "/new"),
+            _ => panic!("expected prefix rewrite"),
+        }
+        match &rewrite.host {
+            pavis_core::RewriteHost::Literal { host } => assert_eq!(host.0, "new.host"),
+            _ => panic!("expected host rewrite"),
+        }
+    }
 }

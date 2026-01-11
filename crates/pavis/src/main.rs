@@ -213,7 +213,41 @@ mod tests {
     }
 
     #[test]
-    fn log_level_to_str_maps_values() {
+    fn test_max_threads_logic() {
+        use pavis_core::{Listener, ListenerName, TlsConfig, WorkerCount};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        use std::num::NonZeroU16;
+
+        let listener_auto = Listener {
+            name: ListenerName("auto".to_string()),
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
+            workers: WorkerCount::Auto,
+            tls: TlsConfig::Disabled,
+        };
+
+        let listener_count = Listener {
+            name: ListenerName("count".to_string()),
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081),
+            workers: WorkerCount::Count(NonZeroU16::new(4).unwrap()),
+            tls: TlsConfig::Disabled,
+        };
+
+        let listeners = [listener_auto, listener_count];
+        let max_threads = listeners
+            .iter()
+            .filter_map(|l| match l.workers {
+                WorkerCount::Count(count) => Some(count.get() as u64),
+                WorkerCount::Auto => None,
+                #[allow(unreachable_patterns)]
+                _ => None,
+            })
+            .max();
+
+        assert_eq!(max_threads, Some(4));
+    }
+
+    #[test]
+    fn test_log_level_to_str_all() {
         assert_eq!(log_level_to_str(LogLevel::Error), "error");
         assert_eq!(log_level_to_str(LogLevel::Warn), "warn");
         assert_eq!(log_level_to_str(LogLevel::Info), "info");

@@ -700,4 +700,64 @@ routes: []
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle.abort();
     }
+
+    #[tokio::test]
+    async fn test_handle_artifact_ingest_error() {
+        let state = RelayState::new(0, axum::body::Bytes::new()).expect("state");
+        let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
+            format: pavis_codec_serde::SerdeFormat::Yaml,
+        });
+
+        let config = PipelineConfig::default();
+        let options = PipelineOptions::from_config(&config);
+
+        let result = handle_artifact(
+            "t",
+            Err(IngestError::Io(anyhow::anyhow!("fail"))),
+            &codec,
+            &state,
+            options.compaction,
+            options.publish_retry,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("ingest stream error")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_pipeline_artifact_failure() {
+        use futures_util::stream;
+        let state = RelayState::new(0, axum::body::Bytes::new()).expect("state");
+        let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
+            format: pavis_codec_serde::SerdeFormat::Yaml,
+        });
+
+        struct MockStreamIngest;
+        #[async_trait::async_trait]
+        impl pavis_ingest_api::Ingest for MockStreamIngest {
+            type Stream = stream::Iter<std::vec::IntoIter<Result<Artifact, IngestError>>>;
+            async fn stream(&mut self) -> Result<Self::Stream, IngestError> {
+                Ok(stream::iter(vec![Err(IngestError::Io(anyhow::anyhow!(
+                    "fail"
+                )))]))
+            }
+        }
+
+        let ingest = crate::ingest::boxed_ingest(MockStreamIngest);
+        let config = PipelineConfig::default();
+        let options = PipelineOptions::from_config(&config);
+
+        let handle = tokio::spawn(async move {
+            let _ = run_pipeline("test".to_string(), ingest, codec, state, options).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        handle.abort();
+    }
 }

@@ -42,8 +42,7 @@ fn find_index(cumulative_weights: &[u32], pick: u32) -> usize {
             std::cmp::Ordering::Greater
         }
     }) {
-        Ok(idx) => idx,
-        Err(idx) => idx,
+        Ok(idx) | Err(idx) => idx,
     }
     .min(cumulative_weights.len() - 1)
 }
@@ -172,5 +171,14 @@ mod tests {
         assert_eq!(super::find_index(&cumulative, 29), 2);
         assert_eq!(super::find_index(&cumulative, 30), 2);
         assert_eq!(super::find_index(&cumulative, 100), 2);
+    }
+
+    #[test]
+    fn find_index_handles_single_element() {
+        let cumulative = vec![10];
+        assert_eq!(super::find_index(&cumulative, 0), 0);
+        assert_eq!(super::find_index(&cumulative, 5), 0);
+        assert_eq!(super::find_index(&cumulative, 10), 0);
+        assert_eq!(super::find_index(&cumulative, 100), 0);
     }
 }

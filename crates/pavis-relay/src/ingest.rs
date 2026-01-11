@@ -51,4 +51,20 @@ mod tests {
         assert!(stream.is_ok());
         assert!(stream.unwrap().next().await.is_none());
     }
+
+    #[tokio::test]
+    async fn boxed_ingest_handles_error() {
+        struct ErrIngest;
+        #[async_trait::async_trait]
+        impl Ingest for ErrIngest {
+            type Stream = futures_util::stream::Empty<Result<Artifact, IngestError>>;
+            async fn stream(&mut self) -> Result<Self::Stream, IngestError> {
+                Err(IngestError::Io(anyhow::anyhow!("fail")))
+            }
+        }
+
+        let mut ingest = boxed_ingest(ErrIngest);
+        let res = ingest.stream().await;
+        assert!(res.is_err());
+    }
 }

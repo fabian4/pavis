@@ -2,15 +2,6 @@ name: Bench
 
 on:
   workflow_dispatch:
-    inputs:
-      source:
-        description: "Select benchmark source"
-        required: true
-        default: latest-code
-        type: choice
-        options:
-          - latest-code
-          - latest-bench-tag
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,60 +15,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Resolve benchmark ref
-        id: ref
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SOURCE="${{ inputs.source }}"
-          echo "Selected source: $SOURCE"
-
-          if [[ "$SOURCE" == "latest-bench-tag" ]]; then
-            TAG=$(git tag --list 'bench-*' --sort=-creatordate | head -n 1)
-
-            if [[ -z "$TAG" ]]; then
-              echo "❌ No bench-* tag found"
-              exit 1
-            fi
-
-            echo "✅ Using latest bench tag: $TAG"
-            REF="refs/tags/$TAG"
-            RESOLVED_TAG="$TAG"
-          else
-            echo "✅ Using latest code (HEAD)"
-            REF="$(git rev-parse HEAD)"
-            RESOLVED_TAG="no-tag"
-          fi
-
-          echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "tag=$RESOLVED_TAG" >> "$GITHUB_OUTPUT"
-
-          echo "PAVIS_TAG=$RESOLVED_TAG" >> "$GITHUB_ENV"
-
-      - name: Checkout benchmark ref
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.ref.outputs.ref }}
-          fetch-depth: 0
-
-      - name: Resolve commit hash
-        id: git
-        shell: bash
-        run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
-          SHORT_HASH=$(git rev-parse --short=12 HEAD)
-
-          echo "commit=$COMMIT_HASH" >> "$GITHUB_OUTPUT"
-          echo "short=$SHORT_HASH" >> "$GITHUB_OUTPUT"
-
-          echo "PAVIS_COMMIT=$COMMIT_HASH" >> "$GITHUB_ENV"
-          echo "PAVIS_COMMIT_SHORT=$SHORT_HASH" >> "$GITHUB_ENV"
-
-          echo "Resolved $PAVIS_TAG -> $COMMIT_HASH"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -87,28 +24,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wrk bc
 
-      - name: Build Pavis Image
-        run: |
-          docker buildx build \
-            --file crates/pavis/Dockerfile \
-            --tag pavis:${PAVIS_TAG} \
-            --tag pavis:${PAVIS_COMMIT_SHORT} \
-            --label git.tag=${PAVIS_TAG} \
-            --label git.commit=${PAVIS_COMMIT} \
-            --cache-from=type=gha \
-            --cache-to=type=gha,mode=max \
-            --load \
-            .
+      - name: Build Pavis Docker Image
+        run: make docker-build IMAGE=pavis MODE=ci
+
+      - name: Build Bench Upstream Docker Image
+        run: make docker-build IMAGE=bench-upstream MODE=ci
 
       - name: Benchmark Pavis
         working-directory: bench
         run: |
-          BENCHMARK_TARGET=pavis bash scripts/run.sh
+          PROXY=pavis make bench
 
       - name: Benchmark Envoy
         working-directory: bench
         run: |
-          BENCHMARK_TARGET=envoy bash scripts/run.sh
+          PROXY=enovy make bench
 #
 #      - name: Benchmark Nginx
 #        working-directory: bench
@@ -134,12 +64,6 @@ jobs:
           docker logs bench-pavis 2>&1 || true
           echo "=== Backend Logs ==="
           docker logs bench-backend 2>&1 || true
-
-      - name: Generate Summary
-        run: |
-          RESULTS_DIR=bench/output bash bench/scripts/csv.sh
-          RESULTS_DIR=bench/output bash bench/scripts/summary.sh
-          cat bench/output/summary.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload Results
         if: always()

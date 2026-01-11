@@ -19,37 +19,15 @@ use pingora::tls::ssl::SslRef;
 pub fn extract_spiffe_id(ssl: &SslRef) -> Option<String> {
     // Get the peer certificate (client certificate)
     let cert = ssl.peer_certificate()?;
-
-    // Get the Subject Alternative Names extension
-    let san = cert.subject_alt_names()?;
-
-    // Iterate through SANs to find URI entries
-    for name in san.iter() {
-        // Check if this is a URI-type SAN
-        if let Some(uri) = name.uri() {
-            // Check if it's a SPIFFE ID (starts with "spiffe://")
-            if uri.starts_with("spiffe://") {
-                return Some(uri.to_string());
-            }
-        }
-    }
-
-    None
+    extract_spiffe_id_from_cert(&cert)
 }
 
 /// Extracts the SPIFFE identity from an X.509 certificate.
-/// Only compiled for tests to avoid production dependency on openssl crate.
-#[cfg(test)]
 pub fn extract_spiffe_id_from_cert(cert: &openssl::x509::X509) -> Option<String> {
-    // Get the Subject Alternative Names extension
-    let san = cert.subject_alt_names()?;
-
     // Iterate through SANs to find URI entries
-    for name in san.iter() {
-        // Check if this is a URI-type SAN
-        if let Some(uri) = name.uri() {
-            // Check if it's a SPIFFE ID (starts with "spiffe://")
-            if uri.starts_with("spiffe://") {
+    if let Some(san) = cert.subject_alt_names() {
+        for name in san.iter() {
+            if let Some(uri) = name.uri().filter(|u| u.starts_with("spiffe://")) {
                 return Some(uri.to_string());
             }
         }
@@ -90,7 +68,12 @@ mod tests {
 
     #[test]
     fn extractor_can_be_created() {
-        let _extractor = IdentityExtractor::new();
+        let extractor = IdentityExtractor::new();
+        let default_extractor = IdentityExtractor::default();
+        let ctx = SslContext::builder(SslMethod::tls()).unwrap().build();
+        let ssl = Ssl::new(&ctx).unwrap();
+        assert_eq!(extractor.extract(&ssl), None);
+        assert_eq!(default_extractor.extract(&ssl), None);
     }
 
     #[test]

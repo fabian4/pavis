@@ -79,3 +79,31 @@ fn version_string(version: Version) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderMap;
+
+    #[test]
+    fn test_canonical_headers_normalizes_case() {
+        let mut headers = HeaderMap::new();
+        headers.insert("Content-Type", "application/json".parse().unwrap());
+        headers.insert("X-Custom", "Value".parse().unwrap());
+
+        let canonical = canonical_headers(&headers);
+        assert!(canonical.contains_key("content-type"));
+        assert!(canonical.contains_key("x-custom"));
+        assert!(!canonical.contains_key("Content-Type"));
+    }
+
+    #[test]
+    fn test_version_string() {
+        assert_eq!(
+            version_string(Version::HTTP_11),
+            Some("HTTP/1.1".to_string())
+        );
+        assert_eq!(version_string(Version::HTTP_2), Some("HTTP/2".to_string()));
+        // Note: Axum/Hyper might have more variants or different mapping
+    }
+}

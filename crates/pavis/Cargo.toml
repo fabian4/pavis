@@ -23,9 +23,9 @@ reqwest = { version = "0.12", default-features = true }
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
 hickory-resolver = "0.25.2"
+openssl = "0.10"
 
 [dev-dependencies]
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
 axum = "0.7"
-openssl = "0.10"

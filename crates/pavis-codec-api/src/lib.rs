@@ -418,6 +418,16 @@ mod tests {
             err,
             CodecError::Core(CoreValidationError::EmptyUpstreamName)
         ));
+        assert!(err.to_string().contains("empty upstream name"));
+    }
+
+    #[test]
+    fn test_codec_error_display() {
+        let check_err = CodecError::Check(anyhow::anyhow!("fail"));
+        assert!(check_err.to_string().contains("codec check failed"));
+
+        let compile_err = CodecError::Compile(anyhow::anyhow!("fail"));
+        assert!(compile_err.to_string().contains("codec compile failed"));
     }
 
     #[test]
@@ -427,6 +437,10 @@ mod tests {
         assert_eq!(checked.artifact.bytes, artifact.bytes);
         assert!(checked.state.is_none());
         assert_eq!(checked.state::<u32>(), None);
+
+        let debug = format!("{:?}", checked);
+        eprintln!("DEBUG NEW: {}", debug);
+        assert!(debug.contains("state: \"None\""));
     }
 
     #[test]
@@ -435,6 +449,10 @@ mod tests {
         let checked = CheckedArtifact::with_state(artifact, 42u32);
         assert_eq!(checked.state::<u32>(), Some(&42));
         assert_eq!(checked.state::<String>(), None);
+
+        let debug = format!("{:?}", checked);
+        eprintln!("DEBUG STATE: {}", debug);
+        assert!(debug.contains("state: \"Some(...)\""));
     }
 
     #[test]
