@@ -12,51 +12,8 @@ env:
   LOADGEN_WARN: 0
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Pavis Docker Image
-        run: make docker-build IMAGE=pavis MODE=ci
-
-      - name: Build Bench Upstream Docker Image
-        run: make docker-build IMAGE=bench-upstream MODE=ci
-
-      - name: Build bench-loadgen
-        run: cargo build -p pavis-benchkit --bin bench-loadgen --release
-
-      - name: Export Docker Images
-        run: |
-          mkdir -p docker-images
-          docker save pavis:local -o docker-images/pavis.tar
-          docker save pavis-bench-upstream:local -o docker-images/bench-upstream.tar
-
-      - name: Upload Docker Images
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-images
-          path: docker-images/
-          retention-days: 1
-
-      - name: Upload bench-loadgen
-        uses: actions/upload-artifact@v4
-        with:
-          name: bench-loadgen
-          path: target/release/bench-loadgen
-          retention-days: 1
-
   bench:
     runs-on: ubuntu-latest
-    needs: build
-    strategy:
-      matrix:
-        proxy: [pavis, envoy, nginx, haproxy]
-      fail-fast: false
 
     steps:
       - name: Checkout repository
@@ -70,36 +27,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wrk jq bc
 
-      - name: Download Docker Images
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-images
-          path: docker-images/
+      - name: Build Pavis Docker Image
+        run: make docker-build IMAGE=pavis MODE=ci
 
-      - name: Load Docker Images
+      - name: Build Bench Upstream Docker Image
+        run: make docker-build IMAGE=bench-upstream MODE=ci
+
+      - name: Build bench-loadgen
+        run: cargo build -p pavis-benchkit --bin bench-loadgen --release
+
+      - name: Benchmark proxies
         run: |
-          docker load -i docker-images/pavis.tar
-          docker load -i docker-images/bench-upstream.tar
-
-      - name: Download bench-loadgen
-        uses: actions/download-artifact@v4
-        with:
-          name: bench-loadgen
-          path: target/release/
-
-      - name: Make bench-loadgen executable
-        run: chmod +x target/release/bench-loadgen
-
-      - name: Benchmark ${{ matrix.proxy }}
-        run: PROXY=${{ matrix.proxy }} make bench
-
-      - name: Upload ${{ matrix.proxy }} Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bench-output-${{ matrix.proxy }}
-          path: bench/output/${{ matrix.proxy }}/
-          retention-days: 1
+          for proxy in pavis envoy nginx haproxy; do
+            echo "=== Benchmark $proxy ==="
+            PROXY="$proxy" make bench
+          done
 
       - name: Debug on failure
         if: failure()
@@ -107,8 +49,11 @@ jobs:
         run: |
           echo "=== Docker Containers ==="
           docker ps -a
-          echo "=== ${{ matrix.proxy }} Logs ==="
-          docker logs bench-${{ matrix.proxy }} 2>&1 || true
+          echo "=== Proxy Logs ==="
+          for proxy in pavis envoy nginx haproxy; do
+            echo "--- $proxy ---"
+            docker logs bench-$proxy 2>&1 || true
+          done
           echo "=== Backend Logs ==="
           docker logs bench-upstream 2>&1 || true
 
@@ -116,44 +61,6 @@ jobs:
         if: always()
         working-directory: bench
         run: docker compose down -v
-
-  # Summary job - runs after all matrix jobs complete
-  summarize:
-    runs-on: ubuntu-latest
-    needs: bench
-    if: always()
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install jq and bc
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq bc
-
-      - name: Download all benchmark results
-        uses: actions/download-artifact@v4
-        with:
-          pattern: bench-output-*
-          path: bench-artifacts/
-
-      - name: Restructure artifacts to expected format
-        run: |
-          mkdir -p bench/output
-          for artifact_dir in bench-artifacts/bench-output-*; do
-            if [ -d "$artifact_dir" ]; then
-              proxy=$(basename "$artifact_dir" | sed 's/^bench-output-//')
-              echo "Moving results for proxy: $proxy"
-              mv "$artifact_dir" "bench/output/$proxy"
-            fi
-          done
-
-      - name: Display downloaded artifacts
-        run: |
-          echo "=== Downloaded Results Structure ==="
-          ls -la bench/output/
-          find bench/output/ -type f -name "*.json" -o -name "*.txt" | head -20
 
       - name: Generate Summary CSV
         run: bash bench/scripts/summarize.sh
@@ -172,10 +79,10 @@ jobs:
       - name: Append Key Report to Job Summary
         run: cat bench/output/report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload Complete Results
+      - name: Upload Bench Results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-results-complete
-          path: |
-            bench/output/
+          name: bench-output
+          path: bench/output/
           retention-days: 30
