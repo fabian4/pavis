@@ -183,9 +183,15 @@ impl ProxyHttp for Proxy {
             &_ => (false, None, None, None),
         };
 
-        let sni_value = sni
-            .or_else(|| ctx.sni_override.clone())
-            .unwrap_or_else(|| Hostname("localhost".to_string()));
+        let sni_value = sni.or_else(|| ctx.sni_override.clone()).unwrap_or_else(|| {
+            if use_tls {
+                tracing::warn!(
+                    upstream = %upstream_name.0,
+                    "No SNI configured for TLS upstream, falling back to 'localhost'"
+                );
+            }
+            Hostname("localhost".to_string())
+        });
 
         let mut peer = HttpPeer::new(addr, use_tls, sni_value.0);
 

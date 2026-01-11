@@ -1069,6 +1069,143 @@ async fn upstream_peer_tls_and_pool_variants() {
     );
 }
 
+#[tokio::test]
+async fn upstream_peer_sni_fallback_warning() {
+    // Configures TLS upstream with Auto SNI, but request has no Host header
+    let manager = Manager::new(&[Upstream {
+        id: UpstreamId(NonZeroU16::new(1).unwrap()),
+        name: UpstreamName("tls-no-sni".to_string()),
+        discovery: Discovery::Static,
+        balancer: LoadBalancer::RoundRobin,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Disabled,
+            connect: ConnectTimeout::Disabled,
+            max: ConnectionLimit::Unlimited,
+        },
+        tls: TlsPolicy::Enabled {
+            mode: pavis_core::TlsVerify::Disabled,
+            sni: pavis_core::SniName::Auto,
+            cert: pavis_core::ClientCert::Disabled,
+        },
+        endpoints: vec![Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(8443).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        }],
+    }]);
+
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: manager,
+        })),
+        telemetry: test_telemetry(),
+    };
+
+    // Request without Host header
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("tls-no-sni".to_string()));
+
+    let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+    assert!(peer.is_tls());
+    assert_eq!(peer.sni, "localhost");
+}
+
+#[tokio::test]
+async fn upstream_peer_sni_override_prevents_fallback() {
+    let manager = Manager::new(&[Upstream {
+        id: UpstreamId(NonZeroU16::new(1).unwrap()),
+        name: UpstreamName("tls-auto".to_string()),
+        discovery: Discovery::Static,
+        balancer: LoadBalancer::RoundRobin,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Disabled,
+            connect: ConnectTimeout::Disabled,
+            max: ConnectionLimit::Unlimited,
+        },
+        tls: TlsPolicy::Enabled {
+            mode: pavis_core::TlsVerify::Disabled,
+            sni: pavis_core::SniName::Auto,
+            cert: pavis_core::ClientCert::Disabled,
+        },
+        endpoints: vec![Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(8443).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        }],
+    }]);
+
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: manager,
+        })),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("tls-auto".to_string()));
+
+    // Set explicit override (e.g. from Host header rewrite)
+    ctx.sni_override = Some(Hostname("overridden.com".to_string()));
+
+    let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+    assert!(peer.is_tls());
+    assert_eq!(peer.sni, "overridden.com");
+}
+
+#[tokio::test]
+async fn upstream_peer_explicit_sni_prevents_fallback() {
+    let manager = Manager::new(&[Upstream {
+        id: UpstreamId(NonZeroU16::new(1).unwrap()),
+        name: UpstreamName("tls-explicit".to_string()),
+        discovery: Discovery::Static,
+        balancer: LoadBalancer::RoundRobin,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Disabled,
+            connect: ConnectTimeout::Disabled,
+            max: ConnectionLimit::Unlimited,
+        },
+        tls: TlsPolicy::Enabled {
+            mode: pavis_core::TlsVerify::Disabled,
+            sni: pavis_core::SniName::Value(Hostname("explicit.com".to_string())),
+            cert: pavis_core::ClientCert::Disabled,
+        },
+        endpoints: vec![Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(8443).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        }],
+    }]);
+
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: manager,
+        })),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("tls-explicit".to_string()));
+
+    let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+    assert!(peer.is_tls());
+    assert_eq!(peer.sni, "explicit.com");
+}
+
 #[test]
 fn test_calculate_path_rewrite_invalid_uri() {
     let route = pavis_core::Route {

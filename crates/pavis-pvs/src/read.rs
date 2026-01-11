@@ -21,30 +21,37 @@ pub fn read_header(path: impl AsRef<Path>) -> PvsResult<PvsHeader> {
         }
         return Err(PvsError::Io(err));
     }
-    Ok(parse_header(&buf))
+    parse_header(&buf)
 }
 
-pub(crate) fn parse_header(buf: &[u8]) -> PvsHeader {
-    let magic = buf[0..4].try_into().unwrap();
+pub(crate) fn parse_header(buf: &[u8]) -> PvsResult<PvsHeader> {
+    if buf.len() < HEADER_SIZE {
+        return Err(PvsError::HeaderTooShort {
+            expected: HEADER_SIZE,
+            found: buf.len(),
+        });
+    }
+
+    let magic = buf[0..4].try_into().unwrap(); // Safe due to length check
     let version = u32::from_le_bytes(buf[4..8].try_into().unwrap());
     let algorithm = u32::from_le_bytes(buf[8..12].try_into().unwrap());
     let checksum = buf[12..44].try_into().unwrap();
     let _reserved = buf[44..64].try_into().unwrap();
 
-    PvsHeader {
+    Ok(PvsHeader {
         magic,
         version,
         algorithm,
         checksum,
         _reserved,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{parse_header, read_header};
     use crate::error::PvsError;
-    use crate::header::{PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION};
+    use crate::header::{HEADER_SIZE, PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION};
 
     #[test]
     fn parse_header_reads_fields() {
@@ -53,11 +60,23 @@ mod tests {
         buf[4..8].copy_from_slice(&PAVIS_VERSION.to_le_bytes());
         buf[8..12].copy_from_slice(&PAVIS_HASH_ALGORITHM_SHA256.to_le_bytes());
         buf[12..44].copy_from_slice(&[1u8; 32]);
-        let header = parse_header(&buf);
+        let header = parse_header(&buf).expect("parse header");
         assert_eq!(header.magic, *PAVIS_MAGIC);
         assert_eq!(header.version, PAVIS_VERSION);
         assert_eq!(header.algorithm, PAVIS_HASH_ALGORITHM_SHA256);
         assert_eq!(header.checksum, [1u8; 32]);
+    }
+
+    #[test]
+    fn parse_header_rejects_too_short_buffer() {
+        let buf = [0u8; 63]; // One byte short
+        let err = parse_header(&buf).expect_err("header too short");
+        if let PvsError::HeaderTooShort { expected, found } = err {
+            assert_eq!(expected, HEADER_SIZE);
+            assert_eq!(found, 63);
+        } else {
+            panic!("Expected HeaderTooShort error, got {:?}", err);
+        }
     }
 
     #[test]

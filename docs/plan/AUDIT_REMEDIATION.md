@@ -29,17 +29,17 @@ This plan outlines the steps required to address the critical stability, safety,
 ## 2. PVS Protocol Safety (`crates/pavis-pvs`)
 **Goal:** Ensure the binary configuration format is robust against corruption and attacks.
 
-*   [ ] **2.1. Zero-Panic Header Parsing (Safety)**
+*   [x] **2.1. Zero-Panic Header Parsing (Safety)**
     *   **Action:** Refactor `read::parse_header`.
     *   **Change:** Replace `unwrap()` on slice conversions with proper `PvsError` propagation.
     *   **Reason:** Eliminates potential crash vectors in the validation path.
 
-*   [ ] **2.2. Enhance Error Diagnostics (DevEx)**
+*   [x] **2.2. Enhance Error Diagnostics (DevEx)**
     *   **Action:** Update `PvsError` definition.
     *   **Change:** Add `expected` vs `found` context fields to `InvalidMagic` and `ChecksumMismatch` errors.
     *   **Reason:** Significantly speeds up debugging of corrupted config files.
 
-*   [ ] **2.3. DoS Protection (Security)**
+*   [x] **2.3. DoS Protection (Security)**
     *   **Action:** Update `verify_bytes`.
     *   **Change:** Enforce a `MAX_PAYLOAD_SIZE` constant (e.g., 100MB).
     *   **Reason:** Prevents memory exhaustion attacks via maliciously crafted large files.
@@ -57,7 +57,7 @@ This plan outlines the steps required to address the critical stability, safety,
     *   **Change:** Adapt logic to use the `Arc<HeadersPolicy>` introduced in Core.
     *   **Reason:** Resolves the primary hot-path allocation bottleneck.
 
-*   [ ] **3.2. SNI Observability (Operations)**
+*   [x] **3.2. SNI Observability (Operations)**
     *   **Action:** Update `Proxy::upstream_peer` in `src/proxy/service.rs`.
     *   **Change:** Log a `tracing::warn!` when falling back to "localhost" SNI (if no SNI configured).
     *   **Reason:** Helps operators debug connection failures to upstreams that strictly enforce SNI.

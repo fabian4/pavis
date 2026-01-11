@@ -11,6 +11,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
+const MAX_PAYLOAD_SIZE: usize = 100 * 1024 * 1024; // 100 MB
+
 #[derive(Debug, Clone)]
 pub struct PvsHeaderView {
     header: PvsHeader,
@@ -132,10 +134,20 @@ fn verify_bytes(bytes: &[u8]) -> PvsResult<(PvsHeader, &[u8])> {
         });
     }
 
-    let header = parse_header(&bytes[..HEADER_SIZE]);
+    if bytes.len() > HEADER_SIZE + MAX_PAYLOAD_SIZE {
+        return Err(PvsError::PayloadTooLarge {
+            max: MAX_PAYLOAD_SIZE,
+            found: bytes.len() - HEADER_SIZE,
+        });
+    }
+
+    let header = parse_header(&bytes[..HEADER_SIZE])?;
 
     if &header.magic != PAVIS_MAGIC {
-        return Err(PvsError::InvalidMagic);
+        return Err(PvsError::InvalidMagic {
+            expected: String::from_utf8_lossy(PAVIS_MAGIC).to_string(),
+            found: String::from_utf8_lossy(&header.magic).to_string(),
+        });
     }
 
     if header.version != PAVIS_VERSION {
@@ -152,10 +164,22 @@ fn verify_bytes(bytes: &[u8]) -> PvsResult<(PvsHeader, &[u8])> {
     let payload = &bytes[HEADER_SIZE..];
     let computed_checksum = compute_checksum(payload);
     if computed_checksum != header.checksum {
-        return Err(PvsError::ChecksumMismatch);
+        return Err(PvsError::ChecksumMismatch {
+            expected: to_hex(&header.checksum),
+            found: to_hex(&computed_checksum),
+        });
     }
 
     Ok((header, payload))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 fn verify_owned(bytes: Vec<u8>) -> PvsResult<VerifiedPvs> {
@@ -242,7 +266,7 @@ mod tests {
         let mut bytes = vec![0u8; HEADER_SIZE];
         bytes[0..4].copy_from_slice(b"NOPE");
         let err = verify_bytes(&bytes).expect_err("invalid magic");
-        assert!(matches!(err, PvsError::InvalidMagic));
+        assert!(matches!(err, PvsError::InvalidMagic { .. }));
     }
 
     #[test]
@@ -286,7 +310,7 @@ mod tests {
         bytes.extend_from_slice(&payload[..3]);
 
         let err = verify_bytes(&bytes).expect_err("checksum mismatch");
-        assert!(matches!(err, PvsError::ChecksumMismatch));
+        assert!(matches!(err, PvsError::ChecksumMismatch { .. }));
     }
 
     #[test]
@@ -319,6 +343,87 @@ mod tests {
         let err = super::read_from_path(&path).expect_err("corrupt archive");
         assert!(matches!(err, PvsError::CorruptArchive(_)));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn verify_bytes_rejects_large_payload() {
+        let payload = vec![0u8; super::MAX_PAYLOAD_SIZE + 1];
+        let mut bytes = vec![0u8; HEADER_SIZE];
+        bytes.extend_from_slice(&payload);
+
+        // We don't even need valid header because size check happens first (after min check)
+        // But to be clean let's make it look like a PVS
+        let header = PvsHeader::default();
+        bytes[0..4].copy_from_slice(&header.magic);
+
+        let err = verify_bytes(&bytes).expect_err("too large");
+        assert!(matches!(err, PvsError::PayloadTooLarge { .. }));
+    }
+
+    #[test]
+    fn verify_bytes_at_max_payload_limit() {
+        let payload = vec![0u8; super::MAX_PAYLOAD_SIZE];
+        let checksum = compute_checksum(&payload);
+        let header = PvsHeader {
+            checksum,
+            ..PvsHeader::default()
+        };
+
+        let mut bytes = Vec::with_capacity(HEADER_SIZE + payload.len());
+        bytes.extend_from_slice(&header.magic);
+        bytes.extend_from_slice(&header.version.to_le_bytes());
+        bytes.extend_from_slice(&header.algorithm.to_le_bytes());
+        bytes.extend_from_slice(&header.checksum);
+        bytes.extend_from_slice(&header._reserved);
+        bytes.extend_from_slice(&payload);
+
+        let (parsed, _) = verify_bytes(&bytes).expect("at max limit should pass");
+        assert_eq!(parsed.checksum, checksum);
+    }
+
+    #[test]
+    fn verify_bytes_error_context_magic() {
+        let mut bytes = vec![0u8; HEADER_SIZE];
+        bytes[0..4].copy_from_slice(b"BAD!");
+        let err = verify_bytes(&bytes).expect_err("invalid magic");
+        if let PvsError::InvalidMagic { expected, found } = err {
+            assert_eq!(expected, "PAVS");
+            assert_eq!(found, "BAD!");
+        } else {
+            panic!("Expected InvalidMagic, got {:?}", err);
+        }
+    }
+
+    #[test]
+    fn verify_bytes_error_context_checksum() {
+        let payload = b"hello";
+        let header = PvsHeader {
+            checksum: [0xaa; 32],
+            ..PvsHeader::default()
+        };
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&header.magic);
+        bytes.extend_from_slice(&header.version.to_le_bytes());
+        bytes.extend_from_slice(&header.algorithm.to_le_bytes());
+        bytes.extend_from_slice(&header.checksum);
+        bytes.extend_from_slice(&header._reserved);
+        bytes.extend_from_slice(payload);
+
+        let err = verify_bytes(&bytes).expect_err("checksum mismatch");
+        if let PvsError::ChecksumMismatch { expected, found } = err {
+            assert_eq!(
+                expected,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            );
+            // SHA256 of "hello" starts with 2cf24dba5...
+            assert!(
+                found.starts_with(
+                    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                )
+            );
+        } else {
+            panic!("Expected ChecksumMismatch, got {:?}", err);
+        }
     }
 
     fn minimal_config() -> RuntimeConfig {

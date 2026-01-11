@@ -6,20 +6,24 @@ pub enum PvsError {
     Io(#[from] std::io::Error),
     #[error("Config file too small ({actual} bytes, need at least {min})")]
     TooSmall { min: usize, actual: usize },
-    #[error("Invalid magic bytes in .pvs file")]
-    InvalidMagic,
+    #[error("Invalid magic bytes: expected {expected:?}, found {found:?}")]
+    InvalidMagic { expected: String, found: String },
     #[error("Version mismatch! File: {file}, expected: {expected}")]
     VersionMismatch { file: u32, expected: u32 },
     #[error("Unsupported or missing hash algorithm: {0}")]
     UnsupportedAlgorithm(u32),
-    #[error("Checksum mismatch! The configuration may be corrupted or tampered with")]
-    ChecksumMismatch,
+    #[error("Checksum mismatch! Expected: {expected}, Found: {found}")]
+    ChecksumMismatch { expected: String, found: String },
     #[error("Binary integrity check failed: {0}")]
     CorruptArchive(String),
     #[error("Serialization failed: {0}")]
     Serialization(String),
     #[error("Invalid .pvs extension: {0}")]
     InvalidExtension(PathBuf),
+    #[error("Header too short: expected {expected}, found {found}")]
+    HeaderTooShort { expected: usize, found: usize },
+    #[error("Payload too large: max {max} bytes, found {found} bytes")]
+    PayloadTooLarge { max: usize, found: usize },
 }
 
 pub type PvsResult<T> = Result<T, PvsError>;
