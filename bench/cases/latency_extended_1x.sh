@@ -368,7 +368,11 @@ main() {
     # Main benchmark run
     start_stats "${run_dir}/docker_stats.csv" "$BACKEND_CONTAINER" "$PROXY_CONTAINER"
     local loadgen_out="${run_dir}/loadgen.txt"
-    run_loadgen "$DURATION_S" "$loadgen_out"
+    run_loadgen "$DURATION_S" "$loadgen_out" || {
+      echo "Warning: run_loadgen failed for iteration $run_id" >&2
+      stop_stats
+      continue
+    }
     stop_stats
 
     # Parse bench-loadgen JSON output
