@@ -34,22 +34,16 @@ jobs:
         run: cargo build -p pavis-benchkit --bin bench-loadgen --release
 
       - name: Benchmark Pavis
-        working-directory: bench
-        run: |
-          PROXY=pavis make bench
+        run: PROXY=pavis make bench
 
       - name: Benchmark Envoy
-        working-directory: bench
-        run: |
-          PROXY=envoy make bench
+        run: PROXY=envoy make bench
 #
 #      - name: Benchmark Nginx
-#        working-directory: bench
-#        run: BENCHMARK_TARGET=nginx bash scripts/run.sh
+#        run: PROXY=nginx make bench
 #
 #      - name: Benchmark HAProxy
-#        working-directory: bench
-#        run: BENCHMARK_TARGET=haproxy bash scripts/run.sh
+#        run: PROXY=haproxy make bench
 
       - name: Debug on failure
         if: failure()
