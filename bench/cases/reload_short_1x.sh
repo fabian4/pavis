@@ -351,14 +351,18 @@ main() {
     return 0
   fi
 
+  echo "Writing metadata..."
   write_meta_json "$BASE_DIR/meta.json"
 
+  echo "Initializing result files..."
   local rps_values="${BASE_DIR}/rps_values.txt"
   local p99_values="${BASE_DIR}/p99_values.txt"
   : > "$rps_values"
   : > "$p99_values"
 
+  echo "Starting $RUN_COUNT benchmark runs..."
   for run_id in $(seq 1 "$RUN_COUNT"); do
+    echo "=== Run $run_id/$RUN_COUNT ===" >&2
     local run_dir="${BASE_DIR}/run_${run_id}"
     mkdir -p "$run_dir"
 
@@ -415,6 +419,7 @@ main() {
     fi
   done
 
+  echo "Aggregating results..."
   local rps_median
   local rps_iqr
   local p99_median
@@ -423,6 +428,7 @@ main() {
   read -r rps_median rps_iqr < <(aggregate_median_iqr "$rps_values")
   read -r p99_median p99_iqr < <(aggregate_median_iqr "$p99_values")
 
+  echo "Writing aggregate.json..."
   cat > "${BASE_DIR}/aggregate.json" <<JSON
 {
   "run_count": $RUN_COUNT,

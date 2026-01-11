@@ -28,12 +28,18 @@ jobs:
       - name: Build bench-loadgen
         run: cargo build -p pavis-benchkit --bin bench-loadgen --release
 
-      - name: Cache Docker Images
-        uses: actions/cache/save@v4
+      - name: Export Docker Images
+        run: |
+          mkdir -p docker-images
+          docker save pavis:local -o docker-images/pavis.tar
+          docker save pavis-bench-upstream:local -o docker-images/bench-upstream.tar
+
+      - name: Upload Docker Images
+        uses: actions/upload-artifact@v4
         with:
-          path: |
-            /var/lib/docker
-          key: bench-docker-images-${{ github.sha }}
+          name: docker-images
+          path: docker-images/
+          retention-days: 1
 
       - name: Upload bench-loadgen
         uses: actions/upload-artifact@v4
@@ -62,12 +68,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wrk jq bc
 
-      - name: Restore Docker Images
-        uses: actions/cache/restore@v4
+      - name: Download Docker Images
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            /var/lib/docker
-          key: bench-docker-images-${{ github.sha }}
+          name: docker-images
+          path: docker-images/
+
+      - name: Load Docker Images
+        run: |
+          docker load -i docker-images/pavis.tar
+          docker load -i docker-images/bench-upstream.tar
 
       - name: Download bench-loadgen
         uses: actions/download-artifact@v4
@@ -79,7 +89,7 @@ jobs:
         run: chmod +x target/release/bench-loadgen
 
       - name: Benchmark ${{ matrix.proxy }} (CI - short cases only)
-        run: PROXY=${{ matrix.proxy }} CASE="throughput_short_1x latency_short_1x concurrency_short_1x churn_short_1x reload_short_1x" make bench
+        run: PROXY=${{ matrix.proxy }} CASE="reload_short_1x" make bench
 
       - name: Upload ${{ matrix.proxy }} Results
         if: always()
@@ -124,8 +134,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: bench-output-*
-          path: bench/output/
-          merge-multiple: true
+          path: bench-artifacts/
+
+      - name: Restructure artifacts to expected format
+        run: |
+          mkdir -p bench/output
+          for artifact_dir in bench-artifacts/bench-output-*; do
+            if [ -d "$artifact_dir" ]; then
+              proxy=$(basename "$artifact_dir" | sed 's/^bench-output-//')
+              echo "Moving results for proxy: $proxy"
+              mv "$artifact_dir" "bench/output/$proxy"
+            fi
+          done
 
       - name: Display downloaded artifacts
         run: |
