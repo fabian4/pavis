@@ -129,14 +129,84 @@ parse_case() {
     errors=$(jq -r '.errors' "${case_dir}/loadgen.txt.json")
     dropped=$(jq -r '.dropped' "${case_dir}/loadgen.txt.json")
 
-  elif [ -f "${case_dir}/aggregate.json" ]; then
+  elif [ -d "${case_dir}/run_1" ]; then
     # loadgen multi-run test (reload_short_1x, latency_extended_1x)
+    # Detect by presence of run_*/ subdirectories
     case_type="loadgen-multi"
-    run_count=$(jq -r '.run_count' "${case_dir}/aggregate.json")
-    achieved_rps=$(jq -r '.rps_median' "${case_dir}/aggregate.json")
-    rps_iqr=$(jq -r '.rps_iqr' "${case_dir}/aggregate.json")
-    p99_ms=$(jq -r '.p99_median' "${case_dir}/aggregate.json")
-    p99_iqr=$(jq -r '.p99_iqr' "${case_dir}/aggregate.json")
+
+    # Count runs and collect metrics
+    local rps_temp="${case_dir}/.rps_temp.txt"
+    local p99_temp="${case_dir}/.p99_temp.txt"
+    : > "$rps_temp"
+    : > "$p99_temp"
+
+    run_count=0
+    for run_dir in "${case_dir}"/run_*; do
+      if [ -d "$run_dir" ] && [ -f "${run_dir}/result.json" ]; then
+        run_count=$((run_count + 1))
+
+        # Extract metrics from this run
+        local run_rps
+        local run_p99
+        run_rps=$(jq -r '.achieved_rps // empty' "${run_dir}/result.json")
+        run_p99=$(jq -r '.latency_ms.p99 // empty' "${run_dir}/result.json")
+
+        [ -n "$run_rps" ] && echo "$run_rps" >> "$rps_temp"
+        [ -n "$run_p99" ] && echo "$run_p99" >> "$p99_temp"
+      fi
+    done
+
+    # Calculate median and IQR
+    if [ -s "$rps_temp" ]; then
+      local rps_result
+      rps_result=$(sort -n "$rps_temp" | awk '{vals[NR]=$1} END {
+        n=NR;
+        if (n==0) { print ""; exit }
+        # Median
+        if (n%2==1) med=vals[(n+1)/2]; else med=(vals[n/2]+vals[n/2+1])/2;
+        # IQR (Q3-Q1)
+        if (n>=4) {
+          q1_pos=int(n/4+0.5); if (q1_pos<1) q1_pos=1;
+          q3_pos=int(3*n/4+0.5); if (q3_pos>n) q3_pos=n;
+          iqr=vals[q3_pos]-vals[q1_pos];
+        } else if (n==3) {
+          iqr=vals[3]-vals[1];
+        } else if (n==2) {
+          iqr=vals[2]-vals[1];
+        } else {
+          iqr=0;
+        }
+        printf "%.3f %.3f", med, iqr
+      }')
+      read -r achieved_rps rps_iqr <<< "$rps_result"
+    fi
+
+    if [ -s "$p99_temp" ]; then
+      local p99_result
+      p99_result=$(sort -n "$p99_temp" | awk '{vals[NR]=$1} END {
+        n=NR;
+        if (n==0) { print ""; exit }
+        # Median
+        if (n%2==1) med=vals[(n+1)/2]; else med=(vals[n/2]+vals[n/2+1])/2;
+        # IQR (Q3-Q1)
+        if (n>=4) {
+          q1_pos=int(n/4+0.5); if (q1_pos<1) q1_pos=1;
+          q3_pos=int(3*n/4+0.5); if (q3_pos>n) q3_pos=n;
+          iqr=vals[q3_pos]-vals[q1_pos];
+        } else if (n==3) {
+          iqr=vals[3]-vals[1];
+        } else if (n==2) {
+          iqr=vals[2]-vals[1];
+        } else {
+          iqr=0;
+        }
+        printf "%.3f %.3f", med, iqr
+      }')
+      read -r p99_ms p99_iqr <<< "$p99_result"
+    fi
+
+    rm -f "$rps_temp" "$p99_temp"
+
     p50_ms=""
     p90_ms=""
     errors="0"
@@ -150,8 +220,8 @@ parse_case() {
       proxy_container=$(jq -r '.proxy_container // empty' "${case_dir}/meta.json")
 
       # Calculate median CPU and memory across all runs
-      local cpu_temp="${case_dir}/cpu_temp.txt"
-      local mem_temp="${case_dir}/mem_temp.txt"
+      local cpu_temp="${case_dir}/.cpu_temp.txt"
+      local mem_temp="${case_dir}/.mem_temp.txt"
       : > "$cpu_temp"
       : > "$mem_temp"
 
@@ -168,15 +238,23 @@ parse_case() {
 
       # Calculate median from collected values
       if [ -s "$cpu_temp" ]; then
-        proxy_cpu=$(sort -n "$cpu_temp" | awk 'NR==int((NR+1)/2+0.5) {printf "%.2f", $1}')
+        proxy_cpu=$(sort -n "$cpu_temp" | awk '{vals[NR]=$1} END {
+          n=NR;
+          if (n%2==1) printf "%.2f", vals[(n+1)/2];
+          else printf "%.2f", (vals[n/2]+vals[n/2+1])/2
+        }')
       fi
       if [ -s "$mem_temp" ]; then
-        peak_mem=$(sort -n "$mem_temp" | awk 'NR==int((NR+1)/2+0.5) {printf "%.2f", $1}')
+        peak_mem=$(sort -n "$mem_temp" | awk '{vals[NR]=$1} END {
+          n=NR;
+          if (n%2==1) printf "%.2f", vals[(n+1)/2];
+          else printf "%.2f", (vals[n/2]+vals[n/2+1])/2
+        }')
       fi
 
       # Calculate median backend CPU
       if [ -n "$backend_container" ]; then
-        local backend_temp="${case_dir}/backend_cpu_temp.txt"
+        local backend_temp="${case_dir}/.backend_cpu_temp.txt"
         : > "$backend_temp"
         for run_dir in "${case_dir}"/run_*; do
           if [ -d "$run_dir" ] && [ -f "${run_dir}/docker_stats.csv" ]; then
@@ -185,7 +263,11 @@ parse_case() {
           fi
         done
         if [ -s "$backend_temp" ]; then
-          backend_cpu=$(sort -n "$backend_temp" | awk 'NR==int((NR+1)/2+0.5) {printf "%.2f", $1}')
+          backend_cpu=$(sort -n "$backend_temp" | awk '{vals[NR]=$1} END {
+            n=NR;
+            if (n%2==1) printf "%.2f", vals[(n+1)/2];
+            else printf "%.2f", (vals[n/2]+vals[n/2+1])/2
+          }')
         fi
         rm -f "$backend_temp"
       fi

@@ -18,7 +18,7 @@ THREADS=4
 CONNECTIONS=500
 TARGET_RPS=5000
 USE_WRK2=1
-RUN_COUNT=2
+RUN_COUNT=5
 CHURN_CLOSE=0
 PLACEHOLDER=true
 REQUEST_PATH="/fixed"
@@ -96,14 +96,6 @@ json_number_or_null() {
   fi
 }
 
-json_number_or_null_string() {
-  if [ -z "${1:-}" ] || [ "$1" = "null" ]; then
-    printf 'null'
-  else
-    printf '%s' "$1"
-  fi
-}
-
 http_get() {
   local url="$1"
   if command -v curl >/dev/null 2>&1; then
@@ -122,8 +114,13 @@ PY
 }
 
 start_compose() {
-  docker compose -f "$COMPOSE_FILE" stop "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1 || true
-  docker compose -f "$COMPOSE_FILE" --profile sut up -d --force-recreate "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null
+  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
+    docker compose -f "$COMPOSE_FILE" stop "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" --profile sut up -d --force-recreate "$BACKEND_SERVICE" "$PROXY_SERVICE"
+  else
+    docker compose -f "$COMPOSE_FILE" stop "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" --profile sut up -d --force-recreate "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1
+  fi
 }
 
 print_cpuset() {
@@ -131,10 +128,21 @@ print_cpuset() {
   local expected="$2"
   local actual
   actual=$(docker inspect -f '{{.HostConfig.CpusetCpus}}' "$container" 2>/dev/null || true)
-  if [ -n "$actual" ]; then
-    echo "cpuset ${container}: ${actual} (expected ${expected})"
+  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
+    if [ -n "$actual" ]; then
+      echo "cpuset ${container}: ${actual} (expected ${expected})"
+    else
+      echo "cpuset ${container}: unknown (expected ${expected})"
+    fi
   else
-    echo "cpuset ${container}: unknown (expected ${expected})"
+    # Compact output
+    local status="ok"
+    if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
+      status="MISMATCH"
+    elif [ -z "$actual" ]; then
+      status="unknown"
+    fi
+    echo "cpuset_${container##*-}=${actual:-none} expected=${expected} ${status}"
   fi
 }
 
@@ -308,16 +316,30 @@ run_loadgen() {
     --duration "$duration" \
     --connections "$CONNECTIONS" \
     --timeout 2 \
-    --output "${outfile}.json" | tee "$outfile"
+    --output "${outfile}"
 }
 
-aggregate_median_iqr() {
-  local file="$1"
-  if [ ! -s "$file" ]; then
-    echo "null null"
-    return
+run_loadgen_warmup() {
+  local duration="$1"
+
+  # Warmup run without saving output
+  if [ "${LOADGEN_WARN:-0}" = "1" ]; then
+    "${LOADGEN_BIN}" \
+      --url "$PROXY_URL" \
+      --rate "$TARGET_RPS" \
+      --duration "$duration" \
+      --connections "$CONNECTIONS" \
+      --timeout 2 \
+      >/dev/null
+  else
+    "${LOADGEN_BIN}" \
+      --url "$PROXY_URL" \
+      --rate "$TARGET_RPS" \
+      --duration "$duration" \
+      --connections "$CONNECTIONS" \
+      --timeout 2 \
+      >/dev/null 2>&1
   fi
-  sort -n "$file" | awk 'NR==2 {q1=$1} NR==3 {med=$1} NR==4 {q3=$1} END {if (NR>=4) printf "%.3f %.3f", med, (q3-q1); else print "null null"}'
 }
 
 main() {
@@ -338,11 +360,24 @@ main() {
 
   start_compose
 
-  echo "backend health: ${BACKEND_URL}"
-  http_get "$BACKEND_URL" >/dev/null
+  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
+    echo "backend health: ${BACKEND_URL}"
+  fi
+  http_get "$BACKEND_URL" >/dev/null || {
+    echo "backend_ready=fail"
+    exit 1
+  }
+  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
+    echo "backend_ready=ok"
+  fi
 
   print_cpuset "$BACKEND_CONTAINER" "$BACKEND_CPUSET_EXPECTED"
   print_cpuset "$PROXY_CONTAINER" "$PROXY_CPUSET_EXPECTED"
+
+  # Print compact header
+  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
+    echo "tool=loadgen duration=${DURATION_S}s connections=${CONNECTIONS} target_rps=${TARGET_RPS} runs=${RUN_COUNT}"
+  fi
 
   # Check if DRY_RUN mode is enabled
   if [ "${DRY_RUN:-}" = "1" ] || [ "${DRY_RUN:-}" = "true" ]; then
@@ -351,109 +386,66 @@ main() {
     return 0
   fi
 
-  echo "Writing metadata..."
   write_meta_json "$BASE_DIR/meta.json"
 
-  echo "Initializing result files..."
-  local rps_values="${BASE_DIR}/rps_values.txt"
-  local p99_values="${BASE_DIR}/p99_values.txt"
-  : > "$rps_values"
-  : > "$p99_values"
-
-  echo "Starting $RUN_COUNT benchmark runs..."
+  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
+    echo "Starting ${RUN_COUNT} runs..."
+  else
+    echo "Starting $RUN_COUNT benchmark runs..."
+  fi
   for run_id in $(seq 1 "$RUN_COUNT"); do
-    echo "=== Run $run_id/$RUN_COUNT ===" >&2
+    if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
+      echo "=== Run $run_id/$RUN_COUNT ===" >&2
+    fi
     local run_dir="${BASE_DIR}/run_${run_id}"
     mkdir -p "$run_dir"
 
-    # Warmup run
-    run_loadgen "$WARMUP_S" "${run_dir}/warmup.txt" >/dev/null || true
+    # Warmup run (no output saved)
+    run_loadgen_warmup "$WARMUP_S" || true
     sleep "$COOLDOWN_S"
 
-    # Main benchmark run
+    # Main benchmark run (save JSON output only)
     start_stats "${run_dir}/docker_stats.csv" "$BACKEND_CONTAINER" "$PROXY_CONTAINER"
-    local loadgen_out="${run_dir}/loadgen.txt"
-    run_loadgen "$DURATION_S" "$loadgen_out" || {
-      echo "Warning: run_loadgen failed for iteration $run_id" >&2
-      stop_stats
-      continue
-    }
+    if [ "${LOADGEN_WARN:-0}" = "1" ]; then
+      run_loadgen "$DURATION_S" "${run_dir}/result.json" || {
+        echo "Warning: run_loadgen failed for iteration $run_id" >&2
+        stop_stats
+        continue
+      }
+    else
+      run_loadgen "$DURATION_S" "${run_dir}/result.json" 2>/dev/null || {
+        echo "Warning: run_loadgen failed for iteration $run_id" >&2
+        stop_stats
+        continue
+      }
+    fi
     stop_stats
-
-    # Parse bench-loadgen JSON output
-    local loadgen_json="${loadgen_out}.json"
-
-    # Extract metrics from bench-loadgen JSON output
-    local achieved_rps
-    local errors
-    local p50
-    local p90
-    local p99
-    local dropped
-    local backend_cpu
-    local proxy_cpu
-    local backend_saturated
-    local peak_mem
-
-    achieved_rps=$(jq -r '.achieved_rps' "$loadgen_json")
-    errors=$(jq -r '.errors' "$loadgen_json")
-    p50=$(jq -r '.latency_ms.p50' "$loadgen_json")
-    p90=$(jq -r '.latency_ms.p90' "$loadgen_json")
-    p99=$(jq -r '.latency_ms.p99' "$loadgen_json")
-    dropped=$(jq -r '.dropped' "$loadgen_json")
-
-    backend_cpu=$(avg_cpu_pct "$BACKEND_CONTAINER" "${run_dir}/docker_stats.csv")
-    proxy_cpu=$(avg_cpu_pct "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
-    backend_saturated=$(backend_saturated_flag "$backend_cpu")
-    peak_mem=$(peak_mem_mib "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
-
-    if [ -n "$achieved_rps" ]; then
-      echo "$achieved_rps" >> "$rps_values"
-    fi
-    if [ -n "$p99" ]; then
-      echo "$p99" >> "$p99_values"
-    fi
 
     if [ "$run_id" -lt "$RUN_COUNT" ]; then
       sleep "$COOLDOWN_S"
     fi
   done
 
-  echo "Aggregating results..."
-
-  # Debug: show what we collected
-  echo "RPS values collected:"
-  cat "$rps_values" || echo "(file not readable)"
-  echo "P99 values collected:"
-  cat "$p99_values" || echo "(file not readable)"
-
-  local rps_median
-  local rps_iqr
-  local p99_median
-  local p99_iqr
-
-  echo "Calling aggregate_median_iqr for RPS..."
-  rps_result=$(aggregate_median_iqr "$rps_values")
-  echo "RPS result: $rps_result"
-  read -r rps_median rps_iqr <<< "$rps_result"
-
-  echo "Calling aggregate_median_iqr for P99..."
-  p99_result=$(aggregate_median_iqr "$p99_values")
-  echo "P99 result: $p99_result"
-  read -r p99_median p99_iqr <<< "$p99_result"
-
-  echo "Writing aggregate.json..."
-  cat > "${BASE_DIR}/aggregate.json" <<JSON
-{
-  "run_count": $RUN_COUNT,
-  "rps_median": $(json_number_or_null_string "$rps_median"),
-  "rps_iqr": $(json_number_or_null_string "$rps_iqr"),
-  "p99_median": $(json_number_or_null_string "$p99_median"),
-  "p99_iqr": $(json_number_or_null_string "$p99_iqr")
-}
-JSON
-
-  # Raw outputs kept: aggregate.json, rps_values.txt, p99_values.txt, run_*/loadgen.txt.json
+  # Print compact summary
+  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
+    local summary_rps=""
+    local summary_p99=""
+    local summary_dropped=0
+    for run_dir in "${BASE_DIR}"/run_*; do
+      if [ -f "${run_dir}/result.json" ]; then
+        local rps=$(jq -r '.achieved_rps // 0' "${run_dir}/result.json")
+        local p99=$(jq -r '.latency_ms.p99 // 0' "${run_dir}/result.json")
+        local dropped=$(jq -r '.dropped // 0' "${run_dir}/result.json")
+        summary_rps="${summary_rps}${rps} "
+        summary_p99="${summary_p99}${p99} "
+        summary_dropped=$((summary_dropped + dropped))
+      fi
+    done
+    echo "Results: rps=[${summary_rps}] p99_ms=[${summary_p99}] total_dropped=${summary_dropped}"
+  else
+    echo "All $RUN_COUNT runs completed"
+  fi
+  # Raw outputs kept in run_*/ subdirectories for summarize.sh to aggregate
 }
 
 trap stop_stats EXIT

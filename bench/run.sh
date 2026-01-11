@@ -20,9 +20,12 @@ RESULTS_DIR="${ROOT_DIR}/bench/output"
 PROXY="${PROXY:-pavis}"
 CASE="${CASE:-throughput_short_1x latency_short_1x latency_extended_1x concurrency_short_1x churn_short_1x reload_short_1x}"
 DRY_RUN="${DRY_RUN:-}"
+BENCH_VERBOSE="${BENCH_VERBOSE:-0}"
 
-# Export DRY_RUN so case scripts can access it
+# Export for case scripts
 export DRY_RUN
+export BENCH_VERBOSE
+export LOADGEN_WARN="${LOADGEN_WARN:-0}"
 
 # Export LOADGEN_BIN path for latency test cases
 export LOADGEN_BIN="${ROOT_DIR}/target/release/bench-loadgen"
@@ -128,7 +131,7 @@ run_case() {
   if [ "$DRY_RUN" = "1" ] || [ "$DRY_RUN" = "true" ]; then
     echo "=== [DRY-RUN] ${case_name} (PROXY=${proxy}) ==="
   else
-    echo "=== running ${case_name} (PROXY=${proxy}) ==="
+    echo "=== case=${case_name} proxy=${proxy} ==="
   fi
   PROXY="$proxy" "$script"
 }
@@ -170,10 +173,33 @@ main() {
     echo "========================================"
   else
     echo ""
-    echo "All benchmarks completed for ${PROXY}"
-    echo "Results written to ${RESULTS_DIR}/${PROXY}"
-    echo ""
-    echo "Run 'bash bench/summarize.sh' to generate summary CSV"
+    if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
+      echo "=== Benchmark Summary for ${PROXY} ==="
+
+      # Print compact summary if results exist
+      local summary_lines=0
+      for case_name in $CASE; do
+        local case_dir="${RESULTS_DIR}/${PROXY}/${case_name}"
+        if [ -d "$case_dir" ]; then
+          # Try to extract key metrics from the case
+          if [ -f "${case_dir}/meta.json" ]; then
+            local case_meta=$(jq -r '.case // "unknown"' "${case_dir}/meta.json" 2>/dev/null || echo "$case_name")
+            echo "✓ $case_meta: completed"
+            summary_lines=$((summary_lines + 1))
+          fi
+        fi
+      done
+
+      if [ "$summary_lines" -gt 0 ]; then
+        echo ""
+        echo "Run 'bash bench/summarize.sh' to generate detailed CSV summary"
+      fi
+    else
+      echo "All benchmarks completed for ${PROXY}"
+      echo "Results written to ${RESULTS_DIR}/${PROXY}"
+      echo ""
+      echo "Run 'bash bench/summarize.sh' to generate summary CSV"
+    fi
   fi
 }
 

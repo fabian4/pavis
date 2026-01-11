@@ -114,6 +114,51 @@ CASE="throughput_short_1x latency_short_1x ..."
 
 # Dry-run mode - validate setup without benchmarks (default: off)
 DRY_RUN=1
+
+# Verbose output mode - show full Docker and tool output (default: 0 for compact)
+BENCH_VERBOSE=<0|1>
+
+# Loadgen warning output - show bench-loadgen stderr warnings (default: 0 for quiet)
+LOADGEN_WARN=<0|1>
+```
+
+**Output Verbosity Control:**
+
+- **`BENCH_VERBOSE=0` (default)**: Compact output for CI/automated runs
+  - Suppresses Docker compose startup logs
+  - Compact CPU pinning validation (`cpuset_pavis=1-2 expected=1-2 ok`)
+  - Compact backend health check (`backend_ready=ok`)
+  - Tool parameter summary (`tool=loadgen duration=30s connections=500 target_rps=10000`)
+  - One-line results summary (`Results: rps=9673 p50=0.7ms p99=1.2ms errors=0`)
+
+- **`BENCH_VERBOSE=1`**: Full verbose output for debugging
+  - Docker compose startup logs
+  - Full wrk/bench-loadgen output
+  - Detailed cpuset validation messages
+  - Run-by-run progress for multi-run tests
+
+- **`LOADGEN_WARN=0` (default)**: Suppress bench-loadgen stderr warnings
+  - Quiets rate limiter warnings, dropped request notices, etc.
+  - Cleaner output for CI logs
+
+- **`LOADGEN_WARN=1`**: Show all bench-loadgen warnings
+  - Useful for debugging load generation issues
+  - Shows rate limiting and connection pool messages
+
+**Examples:**
+
+```bash
+# Default (compact, quiet) - recommended for CI
+make bench
+
+# Verbose mode for local debugging
+BENCH_VERBOSE=1 LOADGEN_WARN=1 make bench
+
+# Compact with warnings (troubleshoot loadgen issues)
+BENCH_VERBOSE=0 LOADGEN_WARN=1 CASE=latency_short_1x make bench
+
+# Full verbose for deep debugging
+BENCH_VERBOSE=1 LOADGEN_WARN=1 PROXY=pavis CASE=reload_short_1x make bench
 ```
 
 ### Default Proxy Tags

@@ -8,6 +8,8 @@ env:
   ENVOY_TAG: v1.32.2
   NGINX_TAG: 1.26.2-alpine
   HAPROXY_TAG: 2.9.6-alpine
+  BENCH_VERBOSE: 0
+  LOADGEN_WARN: 0
 
 jobs:
   build:
@@ -88,7 +90,7 @@ jobs:
       - name: Make bench-loadgen executable
         run: chmod +x target/release/bench-loadgen
 
-      - name: Benchmark ${{ matrix.proxy }} (CI - short cases only)
+      - name: Benchmark ${{ matrix.proxy }}
         run: PROXY=${{ matrix.proxy }} make bench
 
       - name: Upload ${{ matrix.proxy }} Results

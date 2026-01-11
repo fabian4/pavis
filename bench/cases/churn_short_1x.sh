@@ -113,8 +113,13 @@ PY
 }
 
 start_compose() {
-  docker compose -f "$COMPOSE_FILE" stop "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1 || true
-  docker compose -f "$COMPOSE_FILE" --profile sut up -d --force-recreate "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null
+  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
+    docker compose -f "$COMPOSE_FILE" stop "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" --profile sut up -d --force-recreate "$BACKEND_SERVICE" "$PROXY_SERVICE"
+  else
+    docker compose -f "$COMPOSE_FILE" stop "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" --profile sut up -d --force-recreate "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1
+  fi
 }
 
 print_cpuset() {
@@ -122,10 +127,20 @@ print_cpuset() {
   local expected="$2"
   local actual
   actual=$(docker inspect -f '{{.HostConfig.CpusetCpus}}' "$container" 2>/dev/null || true)
-  if [ -n "$actual" ]; then
-    echo "cpuset ${container}: ${actual} (expected ${expected})"
+  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
+    if [ -n "$actual" ]; then
+      echo "cpuset ${container}: ${actual} (expected ${expected})"
+    else
+      echo "cpuset ${container}: unknown (expected ${expected})"
+    fi
   else
-    echo "cpuset ${container}: unknown (expected ${expected})"
+    local status="ok"
+    if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
+      status="MISMATCH"
+    elif [ -z "$actual" ]; then
+      status="unknown"
+    fi
+    echo "cpuset_${container##*-}=${actual:-none} expected=${expected} ${status}"
   fi
 }
 
@@ -283,7 +298,11 @@ run_wrk() {
   local duration="$1"
   local outfile="$2"
   local header_args=(-H "Connection: close")
-  wrk -t "$THREADS" -c "$CONNECTIONS" -d "${duration}s" "${header_args[@]}" "$PROXY_URL" | tee "$outfile"
+  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
+    wrk -t "$THREADS" -c "$CONNECTIONS" -d "${duration}s" "${header_args[@]}" "$PROXY_URL" | tee "$outfile"
+  else
+    wrk -t "$THREADS" -c "$CONNECTIONS" -d "${duration}s" "${header_args[@]}" "$PROXY_URL" > "$outfile"
+  fi
 }
 
 main() {
@@ -300,11 +319,24 @@ main() {
 
   start_compose
 
-  echo "backend health: ${BACKEND_URL}"
-  http_get "$BACKEND_URL" >/dev/null
+  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
+    echo "backend health: ${BACKEND_URL}"
+  fi
+  http_get "$BACKEND_URL" >/dev/null || {
+    echo "backend_ready=fail"
+    exit 1
+  }
+  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
+    echo "backend_ready=ok"
+  fi
 
   print_cpuset "$BACKEND_CONTAINER" "$BACKEND_CPUSET_EXPECTED"
   print_cpuset "$PROXY_CONTAINER" "$PROXY_CPUSET_EXPECTED"
+
+  # Print compact header
+  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
+    echo "tool=wrk duration=${DURATION_S}s connections=${CONNECTIONS} churn=close"
+  fi
 
   # Check if DRY_RUN mode is enabled
   if [ "${DRY_RUN:-}" = "1" ] || [ "${DRY_RUN:-}" = "true" ]; then
@@ -347,6 +379,11 @@ main() {
   proxy_cpu=$(avg_cpu_pct "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
   backend_saturated=$(backend_saturated_flag "$backend_cpu")
   peak_mem=$(peak_mem_mib "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
+
+  # Print compact summary
+  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
+    echo "Results: rps=${rps} p50=${p50}ms p99=${p99}ms errors=${errors}"
+  fi
 
   # Raw outputs kept: wrk.txt, docker_stats.csv, meta.json
 }
