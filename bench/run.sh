@@ -118,9 +118,9 @@ append_index() {
   local achieved_rps
   local p99_ms
   local errors
-  achieved_rps=$(awk -F': ' '/\"achieved_rps\"/ {gsub(/,/,"",$2); print $2; exit}' "$summary_path")
-  p99_ms=$(awk -F': ' '/\"p99_ms\"/ {gsub(/,/,"",$2); print $2; exit}' "$summary_path")
-  errors=$(awk -F': ' '/\"errors\"/ {gsub(/,/,"",$2); print $2; exit}' "$summary_path")
+  achieved_rps=$(awk -F': ' '/"achieved_rps"/ {gsub(/,/,"",$2); print $2; exit}' "$summary_path")
+  p99_ms=$(awk -F': ' '/"p99_ms"/ {gsub(/,/,"",$2); print $2; exit}' "$summary_path")
+  errors=$(awk -F': ' '/"errors"/ {gsub(/,/,"",$2); print $2; exit}' "$summary_path")
 
   echo "${case_name},${proxy},${result_path},${achieved_rps},${p99_ms},${errors}" >> "$index"
 }

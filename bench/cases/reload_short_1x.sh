@@ -450,6 +450,30 @@ JSON
   "p99_iqr": $(json_number_or_null_string "$p99_iqr")
 }
 JSON
+
+  # Create top-level summary.json for index parsing (bench/run.sh expects this)
+  # Use median values from aggregation for multi-run benchmarks
+  cat > "${BASE_DIR}/summary.json" <<JSON
+{
+  "case": $(json_string "$CASE_NAME"),
+  "proxy": $(json_string "$PROXY"),
+  "load_type": $(json_string "$LOAD_TYPE"),
+  "duration_s": $DURATION_S,
+  "connections": $CONNECTIONS,
+  "target_rps": $(json_number_or_null "$TARGET_RPS"),
+  "achieved_rps": $(json_number_or_null_string "$rps_median"),
+  "dropped": null,
+  "p50_ms": null,
+  "p90_ms": null,
+  "p99_ms": $(json_number_or_null_string "$p99_median"),
+  "errors": 0,
+  "backend_cpu_pct_avg": null,
+  "backend_saturated": null,
+  "proxy_cpu_pct_avg": null,
+  "peak_mem_mib": null,
+  "placeholder": $PLACEHOLDER
+}
+JSON
 }
 
 trap stop_stats EXIT

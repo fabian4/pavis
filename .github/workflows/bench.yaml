@@ -33,17 +33,17 @@ jobs:
       - name: Build bench-loadgen
         run: cargo build -p pavis-benchkit --bin bench-loadgen --release
 
-      - name: Benchmark Pavis
-        run: PROXY=pavis make bench
+      - name: Benchmark Pavis (CI - short cases only)
+        run: PROXY=pavis CASE="throughput_short_1x latency_short_1x concurrency_short_1x churn_short_1x reload_short_1x" make bench
 
-      - name: Benchmark Envoy
-        run: PROXY=envoy make bench
-#
-#      - name: Benchmark Nginx
-#        run: PROXY=nginx make bench
-#
-#      - name: Benchmark HAProxy
-#        run: PROXY=haproxy make bench
+      - name: Benchmark Envoy (CI - short cases only)
+        run: PROXY=envoy CASE="throughput_short_1x latency_short_1x concurrency_short_1x churn_short_1x reload_short_1x" make bench
+
+      - name: Benchmark Nginx (CI - short cases only)
+        run: PROXY=nginx CASE="throughput_short_1x latency_short_1x concurrency_short_1x churn_short_1x reload_short_1x" make bench
+
+      - name: Benchmark HAProxy (CI - short cases only)
+        run: PROXY=haproxy CASE="throughput_short_1x latency_short_1x concurrency_short_1x churn_short_1x reload_short_1x" make bench
 
       - name: Debug on failure
         if: failure()
