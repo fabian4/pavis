@@ -45,6 +45,16 @@ jobs:
       - name: Benchmark HAProxy (CI - short cases only)
         run: PROXY=haproxy CASE="throughput_short_1x latency_short_1x concurrency_short_1x churn_short_1x reload_short_1x" make bench
 
+      - name: Generate Summary CSV
+        if: always()
+        run: bash bench/summarize.sh
+
+      - name: Display Summary
+        if: always()
+        run: |
+          echo "=== Benchmark Summary ==="
+          cat bench/output/summary.csv
+
       - name: Debug on failure
         if: failure()
         working-directory: bench

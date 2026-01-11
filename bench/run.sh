@@ -74,10 +74,6 @@ cleanup_pvs() {
 # Ensure cleanup happens on exit
 trap cleanup_pvs EXIT
 
-index_file() {
-  echo "${RESULTS_DIR}/${PROXY}/index.csv"
-}
-
 run_case() {
   local case_name="$1"
   local proxy="$2"
@@ -94,35 +90,6 @@ run_case() {
     echo "=== running ${case_name} (PROXY=${proxy}) ==="
   fi
   PROXY="$proxy" "$script"
-}
-
-append_index() {
-  local index="$1"
-  local case_name="$2"
-  local proxy="$3"
-  local result_path
-  local summary_path
-
-  result_path="${RESULTS_DIR}/${PROXY}/${case_name}"
-  if [ ! -d "$result_path" ]; then
-    echo "warn: no result path found for ${case_name}" >&2
-    return
-  fi
-
-  summary_path="${result_path}/summary.json"
-  if [ ! -f "$summary_path" ]; then
-    echo "warn: no summary.json found for ${case_name}" >&2
-    return
-  fi
-
-  local achieved_rps
-  local p99_ms
-  local errors
-  achieved_rps=$(awk -F': ' '/"achieved_rps"/ {gsub(/,/,"",$2); print $2; exit}' "$summary_path")
-  p99_ms=$(awk -F': ' '/"p99_ms"/ {gsub(/,/,"",$2); print $2; exit}' "$summary_path")
-  errors=$(awk -F': ' '/"errors"/ {gsub(/,/,"",$2); print $2; exit}' "$summary_path")
-
-  echo "${case_name},${proxy},${result_path},${achieved_rps},${p99_ms},${errors}" >> "$index"
 }
 
 main() {
@@ -146,15 +113,9 @@ main() {
   fi
 
   mkdir -p "${RESULTS_DIR}/${PROXY}"
-  local index
-  index=$(index_file)
-  echo "case,proxy,result_path,achieved_rps,p99_ms,errors" > "$index"
 
   for case_name in $CASE; do
     run_case "$case_name" "$PROXY"
-    if [ "$DRY_RUN" != "1" ] && [ "$DRY_RUN" != "true" ]; then
-      append_index "$index" "$case_name" "$PROXY"
-    fi
   done
 
   if [ "$DRY_RUN" = "1" ] || [ "$DRY_RUN" = "true" ]; then
@@ -164,7 +125,11 @@ main() {
     echo "  All cases validated successfully"
     echo "========================================"
   else
-    echo "index written to $index"
+    echo ""
+    echo "All benchmarks completed for ${PROXY}"
+    echo "Results written to ${RESULTS_DIR}/${PROXY}"
+    echo ""
+    echo "Run 'bash bench/summarize.sh' to generate summary CSV"
   fi
 }
 

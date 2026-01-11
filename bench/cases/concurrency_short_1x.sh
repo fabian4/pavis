@@ -347,28 +347,7 @@ main() {
   backend_saturated=$(backend_saturated_flag "$backend_cpu")
   peak_mem=$(peak_mem_mib "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
 
-  cat > "${run_dir}/summary.json" <<JSON
-{
-  "case": $(json_string "$CASE_NAME"),
-  "proxy": $(json_string "$PROXY"),
-  "load_type": $(json_string "$LOAD_TYPE"),
-  "duration_s": $DURATION_S,
-  "connections": $CONNECTIONS,
-  "threads": $THREADS,
-  "target_rps": $(json_number_or_null "$TARGET_RPS"),
-  "achieved_rps": $(json_number_or_null "$rps"),
-  "p50_ms": $(json_number_or_null "$p50"),
-  "p90_ms": $(json_number_or_null "$p90"),
-  "p99_ms": $(json_number_or_null "$p99"),
-  "p999_ms": $(json_number_or_null "$p999"),
-  "errors": $errors,
-  "backend_cpu_pct_avg": $(json_number_or_null "$backend_cpu"),
-  "backend_saturated": $backend_saturated,
-  "proxy_cpu_pct_avg": $(json_number_or_null "$proxy_cpu"),
-  "peak_mem_mib": $(json_number_or_null "$peak_mem"),
-  "placeholder": $PLACEHOLDER
-}
-JSON
+  # Raw outputs kept: wrk.txt, docker_stats.csv, meta.json
 }
 
 trap stop_stats EXIT
