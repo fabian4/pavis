@@ -18,10 +18,12 @@ Performance comparison of Pavis against industry-standard proxies with focus on:
 
 ### 1. Prerequisites
 - `wrk` (for throughput/concurrency/churn tests)
-- `wrk2` (for latency tests - optional, required only for latency benchmarks)
 - `docker` and `docker-compose`
+- `jq` (for JSON parsing)
 - `bc` (for statistics)
 - `ulimit -n 10000` (recommended)
+
+**Note**: `wrk2` is no longer required. Latency tests use `bench-loadgen`, which is automatically built from `crates/pavis-benchkit/src/bin/bench-loadgen.rs` when running `make bench`.
 
 ### 2. Build Docker Images
 
@@ -91,11 +93,11 @@ The benchmark suite includes 6 test cases in `bench/cases/`:
 | Case | Load Type | Duration | Tool | Focus |
 |------|-----------|----------|------|-------|
 | `throughput_short_1x` | Closed-loop | 30s | wrk | Maximum RPS |
-| `latency_short_1x` | Open-loop | 30s | wrk2 | Latency distribution |
-| `latency_extended_1x` | Open-loop | 120s | wrk2 | Tail latency stability |
+| `latency_short_1x` | Open-loop | 30s | bench-loadgen | Latency distribution |
+| `latency_extended_1x` | Open-loop | 300s | bench-loadgen | Tail latency stability |
 | `concurrency_short_1x` | Closed-loop | 30s | wrk | High connection count |
 | `churn_short_1x` | Closed-loop | 30s | wrk | Connection churn |
-| `reload_short_1x` | Open-loop | 60s | wrk2 | Config reload impact |
+| `reload_short_1x` | Open-loop | 30s | bench-loadgen | Config reload impact |
 
 ---
 
@@ -146,12 +148,13 @@ To customize pavis config, edit `bench/config/pavis.yaml`.
 ### Results Location
 
 **Case-based benchmarks (`make bench`):**
-- **Per-run output**: `bench/output/{proxy}/{case}/{timestamp}/`
-  - `wrk.txt` or `wrk2.txt` - Raw wrk/wrk2 output
+- **Per-run output**: `bench/output/{proxy}/{case}/`
+  - `wrk.txt` or `loadgen.txt` - Raw load generator output
+  - `loadgen.txt.json` - JSON metrics (latency tests only)
   - `summary.json` - Parsed metrics
   - `meta.json` - Test metadata
   - `docker_stats.csv` - Container resource usage
-- **Index**: `bench/output/{proxy}/index_{timestamp}.csv`
+- **Index**: `bench/output/{proxy}/index.csv`
 
 **Full matrix benchmarks (`make benchmark`):**
 - **Raw Output**: `bench/output/{proxy}/{proxy}.txt`
@@ -160,12 +163,11 @@ To customize pavis config, edit `bench/config/pavis.yaml`.
 
 ### Troubleshooting
 
-**"error: missing required command 'wrk2'"**
-- Latency tests require `wrk2`. Install it or skip latency tests:
+**"error: bench-loadgen not found"**
+- Latency tests require `bench-loadgen` to be built. Run via `make bench` which automatically builds it, or build manually:
   ```bash
-  make bench CASE="throughput_short_1x concurrency_short_1x"
+  cargo build -p pavis-benchkit --bin bench-loadgen --release
   ```
-- Or use dry-run to validate setup: `DRY_RUN=1 make bench`
 
 **"backend failed to become healthy after 30s"**
 - Backend container failed to start. Check logs:
@@ -202,11 +204,11 @@ To customize pavis config, edit `bench/config/pavis.yaml`.
 ## Architecture
 
 ```
-┌─────────────┐      ┌─────────────────────┐      ┌──────────────────┐
-│  wrk/wrk2   │ ───▶ │  Proxy (container)  │ ───▶ │ bench-upstream   │
-│  (host)     │      │  CPU: 1-2           │      │ CPU: 0           │
-│  4 threads  │      │  cgroup-limited     │      │ deterministic    │
-└─────────────┘      └─────────────────────┘      └──────────────────┘
+┌──────────────────┐      ┌─────────────────────┐      ┌──────────────────┐
+│ wrk/bench-loadgen│ ───▶ │  Proxy (container)  │ ───▶ │ bench-upstream   │
+│     (host)       │      │  CPU: 1-2           │      │ CPU: 0           │
+│   4 threads      │      │  cgroup-limited     │      │ deterministic    │
+└──────────────────┘      └─────────────────────┘      └──────────────────┘
                             ↓                              ↓
                        Pinned CPUs                   Pinned CPU
                        (isolation)                   (isolation)
@@ -215,7 +217,7 @@ To customize pavis config, edit `bench/config/pavis.yaml`.
 ### Components
 
 **Load Generators:**
-- **wrk2** (open-loop): Fixed target RPS to avoid coordinated omission.
+- **bench-loadgen** (open-loop): Rust-based load generator with fixed target RPS to avoid coordinated omission. Built from `crates/pavis-benchkit/src/bin/bench-loadgen.rs`.
 - **wrk** (closed-loop): Maximum RPS throughput testing.
 
 **Proxies:** Pavis (Rust/Pingora), Envoy (C++), Nginx (C), HAProxy (C).
@@ -276,6 +278,7 @@ bench/
 ### Benchmark Runner (`bench/run.sh`)
 
 The main runner provides:
+- **Auto Build**: Automatically builds `bench-loadgen` if not present
 - **Auto PVS Management**: Automatically generates and cleans up `.pvs` config for pavis
 - **Case Orchestration**: Runs selected test cases sequentially
 - **Dry-Run Mode**: Quick validation without actual benchmarks
@@ -307,18 +310,13 @@ Each test case is self-contained and includes:
    - CPU governor settings only work on Linux
    - Benchmark still runs but without CPU isolation guarantees
 
-2. **wrk2 Requirement**:
-   - Latency tests require `wrk2` (not included in standard distributions)
-   - Use `DRY_RUN=1` to test without wrk2 installed
-   - Or skip latency tests with: `CASE="throughput_short_1x concurrency_short_1x churn_short_1x"`
-
-3. **Reload Benchmark**:
+2. **Reload Benchmark**:
    - Config reload triggering mechanism pending implementation
 
-4. **Single-Host**:
+3. **Single-Host**:
    - No multi-node distributed testing
 
-5. **HTTP/1.1 Only**:
+4. **HTTP/1.1 Only**:
    - Current tests do not cover HTTP/2 or gRPC
 
 See [METHODOLOGY.md](./METHODOLOGY.md#limitations--known-issues) for full details.

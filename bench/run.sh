@@ -4,7 +4,8 @@ set -euo pipefail
 # Benchmark runner: sequentially executes case scripts and writes an index.
 # Assumptions:
 # - docker and docker compose are available.
-# - wrk and wrk2 are installed on the host.
+# - wrk is installed on the host (for throughput/concurrency/churn tests).
+# - bench-loadgen is built (for latency tests) - NO wrk2 required.
 # - Individual case scripts under bench/cases are self-contained.
 #
 # Environment variables:
@@ -23,10 +24,21 @@ DRY_RUN="${DRY_RUN:-}"
 # Export DRY_RUN so case scripts can access it
 export DRY_RUN
 
+# Export LOADGEN_BIN path for latency test cases
+export LOADGEN_BIN="${ROOT_DIR}/target/release/bench-loadgen"
+
 # PVS config management for pavis
 PVS_CONFIG="${ROOT_DIR}/bench/config/pavis.pvs"
 YAML_CONFIG="${ROOT_DIR}/bench/config/pavis.yaml"
 PVS_GENERATED=false
+
+ensure_loadgen() {
+  # Build bench-loadgen if not present (for latency tests)
+  if [ ! -x "$LOADGEN_BIN" ]; then
+    echo "Building bench-loadgen for latency tests..."
+    cargo build -p pavis-benchkit --bin bench-loadgen --release --quiet
+  fi
+}
 
 generate_pvs() {
   if [ "$PROXY" = "pavis" ]; then
@@ -121,6 +133,9 @@ main() {
     echo "========================================"
     echo ""
   fi
+
+  # Ensure bench-loadgen is built (for latency tests)
+  ensure_loadgen
 
   generate_pvs
 

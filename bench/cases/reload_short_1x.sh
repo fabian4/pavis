@@ -4,7 +4,7 @@ set -euo pipefail
 # Case: reload_short_1x
 # Assumptions:
 # - docker and docker compose are available.
-# - wrk2 is installed on the host.
+# - bench-loadgen is built (by bench/run.sh).
 # - bench/docker-compose.yaml defines bench-upstream and proxy services/ports.
 # - If service names/ports differ, adjust the variables in the Config section.
 # - Reload triggering is not implemented; this runs as a normal open-loop latency test.
@@ -207,14 +207,14 @@ peak_mem_mib() {
   awk -F, -v c="$container" '$2==c {
     split($4, parts, " /");
     val=parts[1];
-    if (match(val, /^([0-9.]+)([A-Za-z]+)$/, m)) {
-      num=m[1]; unit=m[2];
-      if (unit=="MiB") mib=num;
-      else if (unit=="GiB") mib=num*1024;
-      else if (unit=="KiB") mib=num/1024;
-      else mib=num;
-      if (mib>max) max=mib;
-    }
+    # Extract number and unit using gsub (portable across BSD and GNU awk)
+    num=val; gsub(/[^0-9.]/, "", num);
+    unit=val; gsub(/[0-9.]/, "", unit);
+    if (unit=="MiB") mib=num;
+    else if (unit=="GiB") mib=num*1024;
+    else if (unit=="KiB") mib=num/1024;
+    else mib=num+0;
+    if (mib>max) max=mib;
   } END {if (max>0) printf "%.2f", max; else print "0"}' "$2"
 }
 
@@ -258,7 +258,15 @@ write_meta_json() {
   backend_digest=$(container_image_digest "$BACKEND_CONTAINER")
   proxy_digest=$(container_image_digest "$PROXY_CONTAINER")
   kernel=$(uname -r)
-  cpu_model=$(awk -F: '/model name/ {print $2; exit}' /proc/cpuinfo | sed 's/^ *//')
+
+  # CPU model - handle both Linux and macOS
+  cpu_model="unknown"
+  if [ -r /proc/cpuinfo ]; then
+    cpu_model=$(awk -F: '/model name/ {print $2; exit}' /proc/cpuinfo | sed 's/^ *//')
+  elif command -v sysctl >/dev/null 2>&1; then
+    cpu_model=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
+  fi
+
   cpu_governor="unknown"
   if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
     cpu_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)
@@ -288,10 +296,19 @@ write_meta_json() {
 JSON
 }
 
-run_wrk2() {
+run_loadgen() {
   local duration="$1"
   local outfile="$2"
-  wrk2 -t "$THREADS" -c "$CONNECTIONS" -d "${duration}s" -R "$TARGET_RPS" "$PROXY_URL" | tee "$outfile"
+
+  # Use bench-loadgen instead of wrk2
+  # LOADGEN_BIN is exported by bench/run.sh
+  "${LOADGEN_BIN}" \
+    --url "$PROXY_URL" \
+    --rate "$TARGET_RPS" \
+    --duration "$duration" \
+    --connections "$CONNECTIONS" \
+    --timeout 2 \
+    --output "${outfile}.json" | tee "$outfile"
 }
 
 aggregate_median_iqr() {
@@ -305,12 +322,16 @@ aggregate_median_iqr() {
 
 main() {
   require_cmd docker
-  # Removed - will check conditionally
   require_cmd awk
 
-  # Only require wrk2 if not in dry-run mode
+  # Check if bench-loadgen is available (built by bench/run.sh)
   if [ "${DRY_RUN:-}" != "1" ] && [ "${DRY_RUN:-}" != "true" ]; then
-    require_cmd wrk2
+    if [ -z "${LOADGEN_BIN:-}" ] || [ ! -x "${LOADGEN_BIN}" ]; then
+      echo "error: bench-loadgen not found at ${LOADGEN_BIN:-not set}" >&2
+      echo "Please run this script via bench/run.sh or build manually:" >&2
+      echo "  cargo build -p pavis-benchkit --bin bench-loadgen --release" >&2
+      exit 1
+    fi
   fi
 
   mkdir -p "$BASE_DIR"
@@ -341,30 +362,37 @@ main() {
     local run_dir="${BASE_DIR}/run_${run_id}"
     mkdir -p "$run_dir"
 
-    run_wrk2 "$WARMUP_S" "${run_dir}/warmup.txt" >/dev/null || true
+    # Warmup run
+    run_loadgen "$WARMUP_S" "${run_dir}/warmup.txt" >/dev/null || true
     sleep "$COOLDOWN_S"
 
+    # Main benchmark run
     start_stats "${run_dir}/docker_stats.csv" "$BACKEND_CONTAINER" "$PROXY_CONTAINER"
-    run_wrk2 "$DURATION_S" "${run_dir}/wrk2.txt"
+    local loadgen_out="${run_dir}/loadgen.txt"
+    run_loadgen "$DURATION_S" "$loadgen_out"
     stop_stats
 
-    local rps
+    # Parse bench-loadgen JSON output
+    local loadgen_json="${loadgen_out}.json"
+
+    # Extract metrics from bench-loadgen JSON output
+    local achieved_rps
     local errors
     local p50
     local p90
     local p99
-    local p999
+    local dropped
     local backend_cpu
     local proxy_cpu
     local backend_saturated
     local peak_mem
 
-    rps=$(parse_rps "${run_dir}/wrk2.txt")
-    errors=$(parse_errors "${run_dir}/wrk2.txt")
-    p50=$(to_ms "$(parse_latency_pct "50%" "${run_dir}/wrk2.txt")")
-    p90=$(to_ms "$(parse_latency_pct "90%" "${run_dir}/wrk2.txt")")
-    p99=$(to_ms "$(parse_latency_pct "99%" "${run_dir}/wrk2.txt")")
-    p999=$(to_ms "$(parse_latency_pct "99.9%" "${run_dir}/wrk2.txt")")
+    achieved_rps=$(jq -r '.achieved_rps' "$loadgen_json")
+    errors=$(jq -r '.errors' "$loadgen_json")
+    p50=$(jq -r '.latency_ms.p50' "$loadgen_json")
+    p90=$(jq -r '.latency_ms.p90' "$loadgen_json")
+    p99=$(jq -r '.latency_ms.p99' "$loadgen_json")
+    dropped=$(jq -r '.dropped' "$loadgen_json")
 
     backend_cpu=$(avg_cpu_pct "$BACKEND_CONTAINER" "${run_dir}/docker_stats.csv")
     proxy_cpu=$(avg_cpu_pct "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
@@ -378,13 +406,12 @@ main() {
   "load_type": $(json_string "$LOAD_TYPE"),
   "duration_s": $DURATION_S,
   "connections": $CONNECTIONS,
-  "threads": $THREADS,
   "target_rps": $(json_number_or_null "$TARGET_RPS"),
-  "achieved_rps": $(json_number_or_null "$rps"),
+  "achieved_rps": $(json_number_or_null "$achieved_rps"),
+  "dropped": $(json_number_or_null "$dropped"),
   "p50_ms": $(json_number_or_null "$p50"),
   "p90_ms": $(json_number_or_null "$p90"),
   "p99_ms": $(json_number_or_null "$p99"),
-  "p999_ms": $(json_number_or_null "$p999"),
   "errors": $errors,
   "backend_cpu_pct_avg": $(json_number_or_null "$backend_cpu"),
   "backend_saturated": $backend_saturated,
@@ -394,8 +421,8 @@ main() {
 }
 JSON
 
-    if [ -n "$rps" ]; then
-      echo "$rps" >> "$rps_values"
+    if [ -n "$achieved_rps" ]; then
+      echo "$achieved_rps" >> "$rps_values"
     fi
     if [ -n "$p99" ]; then
       echo "$p99" >> "$p99_values"

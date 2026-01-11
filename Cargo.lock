@@ -2118,8 +2118,12 @@ name = "pavis-benchkit"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "clap 4.5.53",
  "http 0.2.12",
  "hyper 0.14.32",
+ "parking_lot",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
