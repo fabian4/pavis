@@ -74,32 +74,44 @@ bench/output/
 │   └── [same structure]
 ├── haproxy/
 │   └── [same structure]
-└── summary.csv              # ⭐ Aggregated results from all tests
+└── summary.csv              # ⭐ Results from all tests (iterations + aggregates)
 ```
 
 ### Summary CSV Format
 
-The `summary.csv` contains one row per test case per proxy:
+The `summary.csv` contains iteration rows and aggregate rows per test case per proxy:
 
 ```csv
-proxy,case,type,runs,achieved_rps,p50_ms,p90_ms,p99_ms,errors,dropped,rps_iqr,p99_iqr
-pavis,throughput_short_1x,wrk,1,26310.45,0.450,0.890,1.230,0,,,
-pavis,latency_short_1x,loadgen-single,1,9992.466666666667,0.652,0.943,1.557,0,0,,
-pavis,reload_short_1x,loadgen-multi,5,4998.234,,,1.423,0,,12.456,0.045
-envoy,throughput_short_1x,wrk,1,24567.89,0.520,0.950,1.340,0,,,
+git_sha,iteration,aggregate,phase,proxy,case,type,runs,achieved_rps,p50_ms,p90_ms,p99_ms,errors,dropped,rps_iqr,p99_iqr,backend_cpu,proxy_cpu,peak_mem_mib,target_rps,timestamp,cpu_model,kernel
+5f8ed8b8bfe1d075686d47623d6bd50ecc6fe5fc,1,1,measure,pavis,throughput_short_1x,wrk,1,26310.45,0.450,0.890,1.230,0,,,,12.34,56.78,90.12,10000,2026-01-11T14:05:22Z,AMD EPYC 7763 64-Core Processor,6.11.0-1018-azure
+5f8ed8b8bfe1d075686d47623d6bd50ecc6fe5fc,1,1,measure,pavis,latency_short_1x,loadgen-single,1,9992.466666666667,0.652,0.943,1.557,0,0,,,22.10,110.11,43.92,10000,2026-01-11T14:05:09Z,AMD EPYC 7763 64-Core Processor,6.11.0-1018-azure
+5f8ed8b8bfe1d075686d47623d6bd50ecc6fe5fc,1,0,measure,pavis,reload_short_1x,loadgen-multi,,5000.0,0.695,0.894,1.091,0,0,,,,14.01,66.09,30.16,5000,2026-01-11T14:34:06Z,AMD EPYC 7763 64-Core Processor,6.11.0-1018-azure
+5f8ed8b8bfe1d075686d47623d6bd50ecc6fe5fc,0,1,measure,pavis,reload_short_1x,loadgen-multi,5,5000.000,0.695,0.914,1.110,,,0.059,13.48,65.72,30.16,5000,2026-01-11T14:34:06Z,AMD EPYC 7763 64-Core Processor,6.11.0-1018-azure
+5f8ed8b8bfe1d075686d47623d6bd50ecc6fe5fc,1,1,measure,envoy,throughput_short_1x,wrk,1,24567.89,0.520,0.950,1.340,0,,,,11.11,22.22,33.33,10000,2026-01-11T14:04:19Z,AMD EPYC 7763 64-Core Processor,6.11.0-1018-azure
 ...
 ```
 
 **Columns:**
+- `git_sha`: Commit used for the benchmark run
+- `iteration`: Repeated measurement index within a case (1..N, or 1 for single-run)
+- `aggregate`: `1` for aggregate rows, `0` for iteration rows
+- `phase`: Measurement phase (currently `measure`)
 - `proxy`: pavis, envoy, nginx, haproxy
 - `case`: Test case name
 - `type`: wrk, loadgen-single, loadgen-multi
-- `runs`: Number of runs (1 for single, 5 for multi)
-- `achieved_rps`: Actual requests/sec (median for multi-run)
+- `runs`: Number of runs (1 for single-run, N for multi-run aggregate row)
+- `achieved_rps`: Actual requests/sec (median for multi-run aggregate row)
 - `p50_ms`, `p90_ms`, `p99_ms`: Latency percentiles in milliseconds
 - `errors`: Failed requests
 - `dropped`: Dropped requests (open-loop saturation)
-- `rps_iqr`, `p99_iqr`: Interquartile range (multi-run only)
+- `rps_iqr`, `p99_iqr`: Interquartile range (aggregate rows only)
+- `backend_cpu`, `proxy_cpu`: Median CPU usage (%) for aggregate rows; per-run for iteration rows
+- `peak_mem_mib`: Max memory (MiB) for aggregate rows; per-run for iteration rows
+- `target_rps`: Target load (if set by case)
+- `timestamp`: Case timestamp from `meta.json`
+- `cpu_model`, `kernel`: Host info
+
+For multi-run cases, the aggregate row uses `iteration=0` and `runs=N`.
 
 ## Running Benchmarks
 
@@ -112,7 +124,7 @@ for proxy in pavis envoy nginx haproxy; do
 done
 
 # Generate summary
-bash bench/summarize.sh
+bash bench/scripts/summarize.sh
 
 # View results
 cat bench/output/summary.csv
@@ -125,7 +137,7 @@ cat bench/output/summary.csv
 PROXY=pavis CASE="throughput_short_1x latency_short_1x concurrency_short_1x churn_short_1x reload_short_1x" make bench
 
 # Generate summary
-bash bench/summarize.sh
+bash bench/scripts/summarize.sh
 ```
 
 ### Full Benchmark Suite (Local Only)
@@ -135,7 +147,7 @@ bash bench/summarize.sh
 PROXY=pavis make bench
 
 # Generate summary
-bash bench/summarize.sh
+bash bench/scripts/summarize.sh
 ```
 
 ### Dry-Run Validation
@@ -160,8 +172,8 @@ column -t -s, bench/output/summary.csv
 # Filter by case
 grep "latency_short_1x" bench/output/summary.csv
 
-# Compare RPS across proxies
-awk -F, 'NR>1 {print $1,$2,$5}' bench/output/summary.csv | column -t
+# Compare RPS across proxies (aggregate rows only)
+awk -F, 'NR>1 && $3==1 {print $5,$6,$9}' bench/output/summary.csv | column -t
 ```
 
 ### Import to Excel/Sheets
@@ -201,4 +213,3 @@ After running benchmarks:
 3. **Investigate** raw outputs (`wrk.txt`, `loadgen.txt.json`) for details
 4. **Visualize** results (create charts from CSV)
 5. **Optimize** pavis based on comparison with competitors
-

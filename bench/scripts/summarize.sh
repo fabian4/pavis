@@ -5,7 +5,7 @@ set -euo pipefail
 # Scans bench/output/{proxy}/{case}/ directories and aggregates into summary.csv
 #
 # Usage:
-#   bash bench/summarize.sh [output_dir]
+#   bash bench/scripts/summarize.sh [output_dir]
 #
 # Environment:
 #   OUTPUT_DIR: Override default bench/output directory
@@ -52,6 +52,59 @@ parse_wrk_errors() {
   echo "$line" | sed 's/,//g' | awk '{sum=0; for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) sum+=$i; print sum}'
 }
 
+median_value() {
+  local file="$1"
+  local fmt="${2:-%.3f}"
+  if [ ! -s "$file" ]; then
+    echo ""
+    return
+  fi
+  sort -n "$file" | awk -v fmt="$fmt" '{vals[NR]=$1} END {
+    n=NR;
+    if (n==0) { print ""; exit }
+    if (n%2==1) med=vals[(n+1)/2]; else med=(vals[n/2]+vals[n/2+1])/2;
+    printf fmt, med
+  }'
+}
+
+median_iqr() {
+  local file="$1"
+  local fmt="${2:-%.3f}"
+  if [ ! -s "$file" ]; then
+    echo ""
+    return
+  fi
+  sort -n "$file" | awk -v fmt="$fmt" '{vals[NR]=$1} END {
+    n=NR;
+    if (n==0) { print ""; exit }
+    if (n%2==1) med=vals[(n+1)/2]; else med=(vals[n/2]+vals[n/2+1])/2;
+    if (n>=4) {
+      q1_pos=int(n/4+0.5); if (q1_pos<1) q1_pos=1;
+      q3_pos=int(3*n/4+0.5); if (q3_pos>n) q3_pos=n;
+      iqr=vals[q3_pos]-vals[q1_pos];
+    } else if (n==3) {
+      iqr=vals[3]-vals[1];
+    } else if (n==2) {
+      iqr=vals[2]-vals[1];
+    } else {
+      iqr=0;
+    }
+    printf fmt " " fmt, med, iqr
+  }'
+}
+
+max_value() {
+  local file="$1"
+  local fmt="${2:-%.2f}"
+  if [ ! -s "$file" ]; then
+    echo ""
+    return
+  fi
+  sort -n "$file" | awk -v fmt="$fmt" 'END {
+    if (NR>0) { printf fmt, $1 }
+  }'
+}
+
 # Extract CPU/memory metrics from docker_stats.csv
 avg_cpu_pct() {
   local container="$1"
@@ -83,11 +136,40 @@ peak_mem_mib() {
   } END {if (max>0) printf "%.2f", max; else print ""}' "$stats_file"
 }
 
+emit_row() {
+  local git_sha="$1"
+  local iteration="$2"
+  local aggregate="$3"
+  local phase="$4"
+  local proxy="$5"
+  local case_name="$6"
+  local case_type="$7"
+  local runs="$8"
+  local achieved_rps="$9"
+  local p50_ms="${10}"
+  local p90_ms="${11}"
+  local p99_ms="${12}"
+  local errors="${13}"
+  local dropped="${14}"
+  local rps_iqr="${15}"
+  local p99_iqr="${16}"
+  local backend_cpu="${17}"
+  local proxy_cpu="${18}"
+  local peak_mem="${19}"
+  local target_rps="${20}"
+  local timestamp="${21}"
+  local cpu_model="${22}"
+  local kernel="${23}"
+
+  echo "${git_sha},${iteration},${aggregate},${phase},${proxy},${case_name},${case_type},${runs},${achieved_rps},${p50_ms},${p90_ms},${p99_ms},${errors},${dropped},${rps_iqr},${p99_iqr},${backend_cpu},${proxy_cpu},${peak_mem},${target_rps},${timestamp},${cpu_model},${kernel}"
+}
+
 # Parse single test case
 parse_case() {
   local proxy="$1"
   local case_name="$2"
   local case_dir="$3"
+  local phase="$4"
 
   local case_type=""
   local achieved_rps=""
@@ -107,6 +189,19 @@ parse_case() {
   local target_rps=""
   local cpu_model=""
   local kernel=""
+  local backend_container=""
+  local proxy_container=""
+
+  # Extract meta information early for iteration rows
+  if [ -f "${case_dir}/meta.json" ]; then
+    timestamp=$(jq -r '.timestamp // empty' "${case_dir}/meta.json")
+    git_sha=$(jq -r '.git_sha // empty' "${case_dir}/meta.json")
+    target_rps=$(jq -r '.target_rps // empty' "${case_dir}/meta.json")
+    cpu_model=$(jq -r '.cpu_model // empty' "${case_dir}/meta.json")
+    kernel=$(jq -r '.kernel // empty' "${case_dir}/meta.json")
+    backend_container=$(jq -r '.backend_container // empty' "${case_dir}/meta.json")
+    proxy_container=$(jq -r '.proxy_container // empty' "${case_dir}/meta.json")
+  fi
 
   # Determine test type by checking which files exist
   if [ -f "${case_dir}/wrk.txt" ]; then
@@ -136,169 +231,101 @@ parse_case() {
 
     # Count runs and collect metrics
     local rps_temp="${case_dir}/.rps_temp.txt"
+    local p50_temp="${case_dir}/.p50_temp.txt"
+    local p90_temp="${case_dir}/.p90_temp.txt"
     local p99_temp="${case_dir}/.p99_temp.txt"
+    local backend_cpu_temp="${case_dir}/.backend_cpu_temp.txt"
+    local proxy_cpu_temp="${case_dir}/.proxy_cpu_temp.txt"
+    local peak_mem_temp="${case_dir}/.peak_mem_temp.txt"
     : > "$rps_temp"
+    : > "$p50_temp"
+    : > "$p90_temp"
     : > "$p99_temp"
+    : > "$backend_cpu_temp"
+    : > "$proxy_cpu_temp"
+    : > "$peak_mem_temp"
 
     run_count=0
+
     for run_dir in "${case_dir}"/run_*; do
       if [ -d "$run_dir" ] && [ -f "${run_dir}/result.json" ]; then
         run_count=$((run_count + 1))
 
         # Extract metrics from this run
         local run_rps
+        local run_p50
+        local run_p90
         local run_p99
+        local run_errors
+        local run_dropped
         run_rps=$(jq -r '.achieved_rps // empty' "${run_dir}/result.json")
+        run_p50=$(jq -r '.latency_ms.p50 // empty' "${run_dir}/result.json")
+        run_p90=$(jq -r '.latency_ms.p90 // empty' "${run_dir}/result.json")
         run_p99=$(jq -r '.latency_ms.p99 // empty' "${run_dir}/result.json")
+        run_errors=$(jq -r '.errors // empty' "${run_dir}/result.json")
+        run_dropped=$(jq -r '.dropped // empty' "${run_dir}/result.json")
+
+        local run_backend_cpu=""
+        local run_proxy_cpu=""
+        local run_peak_mem=""
+        if [ -f "${run_dir}/docker_stats.csv" ]; then
+          if [ -n "$backend_container" ]; then
+            run_backend_cpu=$(avg_cpu_pct "$backend_container" "${run_dir}/docker_stats.csv")
+          fi
+          if [ -n "$proxy_container" ]; then
+            run_proxy_cpu=$(avg_cpu_pct "$proxy_container" "${run_dir}/docker_stats.csv")
+            run_peak_mem=$(peak_mem_mib "$proxy_container" "${run_dir}/docker_stats.csv")
+          fi
+        fi
+
+        emit_row "$git_sha" "$run_count" "0" "$phase" \
+          "$proxy" "$case_name" "$case_type" "" \
+          "$run_rps" "$run_p50" "$run_p90" "$run_p99" "$run_errors" "$run_dropped" \
+          "" "" "$run_backend_cpu" "$run_proxy_cpu" "$run_peak_mem" \
+          "$target_rps" "$timestamp" "$cpu_model" "$kernel"
 
         [ -n "$run_rps" ] && echo "$run_rps" >> "$rps_temp"
+        [ -n "$run_p50" ] && echo "$run_p50" >> "$p50_temp"
+        [ -n "$run_p90" ] && echo "$run_p90" >> "$p90_temp"
         [ -n "$run_p99" ] && echo "$run_p99" >> "$p99_temp"
+        [ -n "$run_backend_cpu" ] && echo "$run_backend_cpu" >> "$backend_cpu_temp"
+        [ -n "$run_proxy_cpu" ] && echo "$run_proxy_cpu" >> "$proxy_cpu_temp"
+        [ -n "$run_peak_mem" ] && echo "$run_peak_mem" >> "$peak_mem_temp"
       fi
     done
 
     # Calculate median and IQR
     if [ -s "$rps_temp" ]; then
       local rps_result
-      rps_result=$(sort -n "$rps_temp" | awk '{vals[NR]=$1} END {
-        n=NR;
-        if (n==0) { print ""; exit }
-        # Median
-        if (n%2==1) med=vals[(n+1)/2]; else med=(vals[n/2]+vals[n/2+1])/2;
-        # IQR (Q3-Q1)
-        if (n>=4) {
-          q1_pos=int(n/4+0.5); if (q1_pos<1) q1_pos=1;
-          q3_pos=int(3*n/4+0.5); if (q3_pos>n) q3_pos=n;
-          iqr=vals[q3_pos]-vals[q1_pos];
-        } else if (n==3) {
-          iqr=vals[3]-vals[1];
-        } else if (n==2) {
-          iqr=vals[2]-vals[1];
-        } else {
-          iqr=0;
-        }
-        printf "%.3f %.3f", med, iqr
-      }')
+      rps_result=$(median_iqr "$rps_temp" "%.3f")
       read -r achieved_rps rps_iqr <<< "$rps_result"
     fi
 
     if [ -s "$p99_temp" ]; then
       local p99_result
-      p99_result=$(sort -n "$p99_temp" | awk '{vals[NR]=$1} END {
-        n=NR;
-        if (n==0) { print ""; exit }
-        # Median
-        if (n%2==1) med=vals[(n+1)/2]; else med=(vals[n/2]+vals[n/2+1])/2;
-        # IQR (Q3-Q1)
-        if (n>=4) {
-          q1_pos=int(n/4+0.5); if (q1_pos<1) q1_pos=1;
-          q3_pos=int(3*n/4+0.5); if (q3_pos>n) q3_pos=n;
-          iqr=vals[q3_pos]-vals[q1_pos];
-        } else if (n==3) {
-          iqr=vals[3]-vals[1];
-        } else if (n==2) {
-          iqr=vals[2]-vals[1];
-        } else {
-          iqr=0;
-        }
-        printf "%.3f %.3f", med, iqr
-      }')
+      p99_result=$(median_iqr "$p99_temp" "%.3f")
       read -r p99_ms p99_iqr <<< "$p99_result"
     fi
 
-    rm -f "$rps_temp" "$p99_temp"
+    p50_ms=$(median_value "$p50_temp" "%.3f")
+    p90_ms=$(median_value "$p90_temp" "%.3f")
+    backend_cpu=$(median_value "$backend_cpu_temp" "%.2f")
+    proxy_cpu=$(median_value "$proxy_cpu_temp" "%.2f")
+    peak_mem=$(max_value "$peak_mem_temp" "%.2f")
 
-    p50_ms=""
-    p90_ms=""
-    errors="0"
-    dropped=""
-
-    # Aggregate CPU/memory across all runs
-    if [ -f "${case_dir}/meta.json" ]; then
-      local backend_container
-      local proxy_container
-      backend_container=$(jq -r '.backend_container // empty' "${case_dir}/meta.json")
-      proxy_container=$(jq -r '.proxy_container // empty' "${case_dir}/meta.json")
-
-      # Calculate median CPU and memory across all runs
-      local cpu_temp="${case_dir}/.cpu_temp.txt"
-      local mem_temp="${case_dir}/.mem_temp.txt"
-      : > "$cpu_temp"
-      : > "$mem_temp"
-
-      for run_dir in "${case_dir}"/run_*; do
-        if [ -d "$run_dir" ] && [ -f "${run_dir}/docker_stats.csv" ]; then
-          if [ -n "$proxy_container" ]; then
-            local run_cpu=$(avg_cpu_pct "$proxy_container" "${run_dir}/docker_stats.csv")
-            local run_mem=$(peak_mem_mib "$proxy_container" "${run_dir}/docker_stats.csv")
-            [ -n "$run_cpu" ] && echo "$run_cpu" >> "$cpu_temp"
-            [ -n "$run_mem" ] && echo "$run_mem" >> "$mem_temp"
-          fi
-        fi
-      done
-
-      # Calculate median from collected values
-      if [ -s "$cpu_temp" ]; then
-        proxy_cpu=$(sort -n "$cpu_temp" | awk '{vals[NR]=$1} END {
-          n=NR;
-          if (n%2==1) printf "%.2f", vals[(n+1)/2];
-          else printf "%.2f", (vals[n/2]+vals[n/2+1])/2
-        }')
-      fi
-      if [ -s "$mem_temp" ]; then
-        peak_mem=$(sort -n "$mem_temp" | awk '{vals[NR]=$1} END {
-          n=NR;
-          if (n%2==1) printf "%.2f", vals[(n+1)/2];
-          else printf "%.2f", (vals[n/2]+vals[n/2+1])/2
-        }')
-      fi
-
-      # Calculate median backend CPU
-      if [ -n "$backend_container" ]; then
-        local backend_temp="${case_dir}/.backend_cpu_temp.txt"
-        : > "$backend_temp"
-        for run_dir in "${case_dir}"/run_*; do
-          if [ -d "$run_dir" ] && [ -f "${run_dir}/docker_stats.csv" ]; then
-            local run_backend_cpu=$(avg_cpu_pct "$backend_container" "${run_dir}/docker_stats.csv")
-            [ -n "$run_backend_cpu" ] && echo "$run_backend_cpu" >> "$backend_temp"
-          fi
-        done
-        if [ -s "$backend_temp" ]; then
-          backend_cpu=$(sort -n "$backend_temp" | awk '{vals[NR]=$1} END {
-            n=NR;
-            if (n%2==1) printf "%.2f", vals[(n+1)/2];
-            else printf "%.2f", (vals[n/2]+vals[n/2+1])/2
-          }')
-        fi
-        rm -f "$backend_temp"
-      fi
-
-      rm -f "$cpu_temp" "$mem_temp"
-    fi
+    rm -f "$rps_temp" "$p50_temp" "$p90_temp" "$p99_temp" \
+      "$backend_cpu_temp" "$proxy_cpu_temp" "$peak_mem_temp"
 
   else
     echo "warn: cannot determine test type for ${case_dir}" >&2
     return
   fi
 
-  # Extract meta information
-  if [ -f "${case_dir}/meta.json" ]; then
-    timestamp=$(jq -r '.timestamp // empty' "${case_dir}/meta.json")
-    git_sha=$(jq -r '.git_sha // empty' "${case_dir}/meta.json")
-    target_rps=$(jq -r '.target_rps // empty' "${case_dir}/meta.json")
-    cpu_model=$(jq -r '.cpu_model // empty' "${case_dir}/meta.json")
-    kernel=$(jq -r '.kernel // empty' "${case_dir}/meta.json")
-  fi
-
   # Extract CPU and memory metrics from docker_stats.csv
   local stats_csv="${case_dir}/docker_stats.csv"
   if [ -f "$stats_csv" ]; then
     # Extract container names from meta.json
-    local backend_container
-    local proxy_container
     if [ -f "${case_dir}/meta.json" ]; then
-      backend_container=$(jq -r '.backend_container // empty' "${case_dir}/meta.json")
-      proxy_container=$(jq -r '.proxy_container // empty' "${case_dir}/meta.json")
-
       if [ -n "$backend_container" ]; then
         backend_cpu=$(avg_cpu_pct "$backend_container" "$stats_csv")
       fi
@@ -309,8 +336,19 @@ parse_case() {
     fi
   fi
 
-  # Output CSV row
-  echo "${proxy},${case_name},${case_type},${run_count},${achieved_rps},${p50_ms},${p90_ms},${p99_ms},${errors},${dropped},${rps_iqr},${p99_iqr},${backend_cpu},${proxy_cpu},${peak_mem},${target_rps},${timestamp},${git_sha},${cpu_model},${kernel}"
+  if [ "$case_type" = "loadgen-multi" ]; then
+    emit_row "$git_sha" "0" "1" "$phase" \
+      "$proxy" "$case_name" "$case_type" "$run_count" \
+      "$achieved_rps" "$p50_ms" "$p90_ms" "$p99_ms" "" "" \
+      "$rps_iqr" "$p99_iqr" "$backend_cpu" "$proxy_cpu" "$peak_mem" \
+      "$target_rps" "$timestamp" "$cpu_model" "$kernel"
+  else
+    emit_row "$git_sha" "1" "1" "$phase" \
+      "$proxy" "$case_name" "$case_type" "1" \
+      "$achieved_rps" "$p50_ms" "$p90_ms" "$p99_ms" "$errors" "$dropped" \
+      "" "" "$backend_cpu" "$proxy_cpu" "$peak_mem" \
+      "$target_rps" "$timestamp" "$cpu_model" "$kernel"
+  fi
 }
 
 main() {
@@ -320,8 +358,10 @@ main() {
     exit 1
   fi
 
+  local phase="measure"
+
   # CSV header
-  echo "proxy,case,type,runs,achieved_rps,p50_ms,p90_ms,p99_ms,errors,dropped,rps_iqr,p99_iqr,backend_cpu,proxy_cpu,peak_mem_mib,target_rps,timestamp,git_sha,cpu_model,kernel" > "$SUMMARY_CSV"
+  echo "git_sha,iteration,aggregate,phase,proxy,case,type,runs,achieved_rps,p50_ms,p90_ms,p99_ms,errors,dropped,rps_iqr,p99_iqr,backend_cpu,proxy_cpu,peak_mem_mib,target_rps,timestamp,cpu_model,kernel" > "$SUMMARY_CSV"
 
   # Scan all proxy/case directories
   local found_results=0
@@ -341,7 +381,7 @@ main() {
       local case_name
       case_name=$(basename "$case_dir")
 
-      parse_case "$proxy" "$case_name" "$case_dir" >> "$SUMMARY_CSV"
+      parse_case "$proxy" "$case_name" "$case_dir" "$phase" >> "$SUMMARY_CSV"
       found_results=1
     done
   done

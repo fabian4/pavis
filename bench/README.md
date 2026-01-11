@@ -206,6 +206,26 @@ To customize pavis config, edit `bench/config/pavis.yaml`.
 - **Aggregated CSV**: `bench/output/results.csv`
 - **Summary Report**: `bench/output/summary.md`
 
+**`summary.csv` semantics (from `bench/scripts/summarize.sh`):**
+- `git_sha` identifies the commit used for the benchmark run.
+- `iteration` is the repeated measurement index within a case.
+- Aggregate rows (`aggregate=1`) are derived views; iteration rows (`aggregate=0`) are raw measurements.
+- For multi-run cases, the aggregate row uses `iteration=0`.
+
+### Key Report
+
+Generate a condensed markdown report from `bench/output/summary.csv`:
+
+```bash
+bash bench/scripts/report.sh
+```
+
+To target a specific run:
+
+```bash
+RUN_ID=<sha> bash bench/scripts/report.sh
+```
+
 ### Troubleshooting
 
 **"error: bench-loadgen not found"**

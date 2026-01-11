@@ -192,13 +192,13 @@ main() {
 
       if [ "$summary_lines" -gt 0 ]; then
         echo ""
-        echo "Run 'bash bench/summarize.sh' to generate detailed CSV summary"
+        echo "Run 'bash bench/scripts/summarize.sh' to generate detailed CSV summary"
       fi
     else
       echo "All benchmarks completed for ${PROXY}"
       echo "Results written to ${RESULTS_DIR}/${PROXY}"
       echo ""
-      echo "Run 'bash bench/summarize.sh' to generate summary CSV"
+      echo "Run 'bash bench/scripts/summarize.sh' to generate summary CSV"
     fi
   fi
 }

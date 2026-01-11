@@ -156,7 +156,7 @@ jobs:
           find bench/output/ -type f -name "*.json" -o -name "*.txt" | head -20
 
       - name: Generate Summary CSV
-        run: bash bench/summarize.sh
+        run: bash bench/scripts/summarize.sh
 
       - name: Display Summary
         run: |
@@ -165,6 +165,12 @@ jobs:
           echo ""
           echo "=== Pretty Table ==="
           column -t -s, bench/output/summary.csv || cat bench/output/summary.csv
+
+      - name: Generate Key Report
+        run: bash bench/scripts/report.sh
+
+      - name: Append Key Report to Job Summary
+        run: cat bench/output/report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Complete Results
         uses: actions/upload-artifact@v4
