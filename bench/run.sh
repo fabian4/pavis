@@ -101,6 +101,9 @@ main() {
     echo ""
   fi
 
+  # Auto-detect CPU pinning availability
+  detect_cpu_pinning
+
   # Ensure bench-loadgen is built (for latency tests)
   ensure_loadgen
 

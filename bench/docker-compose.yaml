@@ -1,8 +1,10 @@
 # Benchmark Docker Compose Configuration
 # =======================================
 # Resource limits can be overridden via environment variables:
-#   CPU_LIMIT    - Number of CPU cores (default: 2)
-#   MEMORY_LIMIT - Memory limit (default: 512M)
+#   CPU_LIMIT       - Number of CPU cores (default: 2)
+#   MEMORY_LIMIT    - Memory limit (default: 512M)
+#   BACKEND_CPUSET  - CPU cores for backend (default: 0, set to empty string to disable pinning)
+#   PROXY_CPUSET    - CPU cores for proxy (default: 1-2, set to empty string to disable pinning)
 #
 # Proxies:
 #   - pavis:    Port 8080 (Rust, async)
@@ -34,7 +36,7 @@ services:
         reservations:
           cpus: '1'
           memory: 256M
-    cpuset: "0"  # Pin to CPU 0
+    cpuset: "${BACKEND_CPUSET:-0}"  # Pin to CPU 0 (set BACKEND_CPUSET="" to disable)
 
   # Pavis Proxy (Rust, async - our project)
   pavis:

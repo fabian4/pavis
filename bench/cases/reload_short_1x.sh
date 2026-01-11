@@ -399,28 +399,6 @@ main() {
     backend_saturated=$(backend_saturated_flag "$backend_cpu")
     peak_mem=$(peak_mem_mib "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
 
-    cat > "${run_dir}/summary.json" <<JSON
-{
-  "case": $(json_string "$CASE_NAME"),
-  "proxy": $(json_string "$PROXY"),
-  "load_type": $(json_string "$LOAD_TYPE"),
-  "duration_s": $DURATION_S,
-  "connections": $CONNECTIONS,
-  "target_rps": $(json_number_or_null "$TARGET_RPS"),
-  "achieved_rps": $(json_number_or_null "$achieved_rps"),
-  "dropped": $(json_number_or_null "$dropped"),
-  "p50_ms": $(json_number_or_null "$p50"),
-  "p90_ms": $(json_number_or_null "$p90"),
-  "p99_ms": $(json_number_or_null "$p99"),
-  "errors": $errors,
-  "backend_cpu_pct_avg": $(json_number_or_null "$backend_cpu"),
-  "backend_saturated": $backend_saturated,
-  "proxy_cpu_pct_avg": $(json_number_or_null "$proxy_cpu"),
-  "peak_mem_mib": $(json_number_or_null "$peak_mem"),
-  "placeholder": $PLACEHOLDER
-}
-JSON
-
     if [ -n "$achieved_rps" ]; then
       echo "$achieved_rps" >> "$rps_values"
     fi
