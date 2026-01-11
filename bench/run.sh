@@ -40,6 +40,47 @@ ensure_loadgen() {
   fi
 }
 
+detect_cpu_pinning() {
+  # Auto-detect CPU pinning availability
+  # Export BACKEND_CPUSET and PROXY_CPUSET if not already set
+
+  # Check if already explicitly set by user
+  if [ -n "${BACKEND_CPUSET+x}" ] && [ -n "${PROXY_CPUSET+x}" ]; then
+    export BACKEND_CPUSET
+    export PROXY_CPUSET
+    return 0
+  fi
+
+  # Check if CPU 0 and 1-2 are available via cgroup
+  local available_cpus=""
+  if [ -f /sys/fs/cgroup/cpuset/cpuset.cpus ]; then
+    available_cpus=$(cat /sys/fs/cgroup/cpuset/cpuset.cpus 2>/dev/null || echo "")
+  elif [ -f /sys/fs/cgroup/cpuset.cpus ]; then
+    available_cpus=$(cat /sys/fs/cgroup/cpuset.cpus 2>/dev/null || echo "")
+  else
+    # No cgroup cpuset info, assume all CPUs available
+    export BACKEND_CPUSET="${BACKEND_CPUSET:-0}"
+    export PROXY_CPUSET="${PROXY_CPUSET:-1-2}"
+    return 0
+  fi
+
+  # Check if we have access to CPU 0 (for backend)
+  if echo "$available_cpus" | grep -qE '(^|,)0(,|$|-)'; then
+    export BACKEND_CPUSET="${BACKEND_CPUSET:-0}"
+  else
+    export BACKEND_CPUSET="${BACKEND_CPUSET:-}"
+    echo "Note: CPU 0 not available (cpuset: $available_cpus), disabling backend CPU pinning"
+  fi
+
+  # Check if we have access to CPUs 1-2 (for proxy)
+  if echo "$available_cpus" | grep -qE '(^|,)[12](,|$|-)'; then
+    export PROXY_CPUSET="${PROXY_CPUSET:-1-2}"
+  else
+    export PROXY_CPUSET="${PROXY_CPUSET:-}"
+    echo "Note: CPUs 1-2 not available (cpuset: $available_cpus), disabling proxy CPU pinning"
+  fi
+}
+
 generate_pvs() {
   if [ "$PROXY" = "pavis" ]; then
     if [ -f "$PVS_CONFIG" ]; then
