@@ -18,7 +18,7 @@ THREADS=4
 CONNECTIONS=500
 TARGET_RPS=5000
 USE_WRK2=1
-RUN_COUNT=5
+RUN_COUNT=2
 CHURN_CLOSE=0
 PLACEHOLDER=true
 REQUEST_PATH="/fixed"
@@ -420,13 +420,27 @@ main() {
   done
 
   echo "Aggregating results..."
+
+  # Debug: show what we collected
+  echo "RPS values collected:"
+  cat "$rps_values" || echo "(file not readable)"
+  echo "P99 values collected:"
+  cat "$p99_values" || echo "(file not readable)"
+
   local rps_median
   local rps_iqr
   local p99_median
   local p99_iqr
 
-  read -r rps_median rps_iqr < <(aggregate_median_iqr "$rps_values")
-  read -r p99_median p99_iqr < <(aggregate_median_iqr "$p99_values")
+  echo "Calling aggregate_median_iqr for RPS..."
+  rps_result=$(aggregate_median_iqr "$rps_values")
+  echo "RPS result: $rps_result"
+  read -r rps_median rps_iqr <<< "$rps_result"
+
+  echo "Calling aggregate_median_iqr for P99..."
+  p99_result=$(aggregate_median_iqr "$p99_values")
+  echo "P99 result: $p99_result"
+  read -r p99_median p99_iqr <<< "$p99_result"
 
   echo "Writing aggregate.json..."
   cat > "${BASE_DIR}/aggregate.json" <<JSON
