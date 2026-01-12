@@ -61,6 +61,12 @@ services:
           cpus: '${CPU_LIMIT:-2}'
           memory: ${MEMORY_LIMIT:-512M}
     cpuset: "${PROXY_CPUSET:-1-2}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    sysctls:
+      - net.core.somaxconn=65535
 
   # Envoy Proxy (C++, industry standard)
   envoy:
@@ -83,6 +89,12 @@ services:
           cpus: '${CPU_LIMIT:-2}'
           memory: ${MEMORY_LIMIT:-512M}
     cpuset: "${PROXY_CPUSET:-1-2}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    sysctls:
+      - net.core.somaxconn=65535
 
   # Nginx (C, widely-used reverse proxy)
   nginx:
@@ -104,7 +116,12 @@ services:
           cpus: '${CPU_LIMIT:-2}'
           memory: ${MEMORY_LIMIT:-512M}
     cpuset: "${PROXY_CPUSET:-1-2}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
-
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    sysctls:
+      - net.core.somaxconn=65535
   # HAProxy (C, baseline control - mature, optimized)
   # Note: nbthread=2 hardcoded; CPU actually limited via cgroups
   haproxy:
@@ -126,3 +143,9 @@ services:
           cpus: '${CPU_LIMIT:-2}'
           memory: ${MEMORY_LIMIT:-512M}
     cpuset: "${PROXY_CPUSET:-1-2}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    sysctls:
+      - net.core.somaxconn=65535

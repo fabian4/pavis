@@ -17,7 +17,12 @@ bench-build:
 #   PROXY=envoy make bench                 # Test envoy
 #   CASE="throughput_short_1x" make bench  # Single test case
 bench:
-	PROXY=$${PROXY:-pavis} CASE="$${CASE:-}" bash bench/run.sh
+	@PROXY=$${PROXY:-pavis} CASE="$${CASE:-}" bash bench/run.sh
+
+# Generate summary CSV and markdown report from existing results
+bench-report:
+	@bash bench/scripts/summarize.sh
+	@bash bench/scripts/report.sh
 
 # Stop and cleanup the benchmark environment
 bench-down:

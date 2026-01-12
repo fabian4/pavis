@@ -5,5 +5,7 @@ coverage:
   ignore:
     - "crates/*/tests"
     - "crates/**/*tests.rs"
+    - "crates/pavis-benchkit"
+    - "crates/pavis-testkit"
   status:
     patch: false

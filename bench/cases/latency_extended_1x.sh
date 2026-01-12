@@ -17,7 +17,10 @@ THREADS=4
 CONNECTIONS=500
 TARGET_RPS=10000
 USE_WRK2=1
-RUN_COUNT=10
+RUN_COUNT=5
+if [ -n "${RUN_COUNT_OVERRIDE:-}" ]; then
+  RUN_COUNT="$RUN_COUNT_OVERRIDE"
+fi
 CHURN_CLOSE=0
 PLACEHOLDER=false
 REQUEST_PATH="/fixed"
@@ -28,6 +31,11 @@ COMPOSE_FILE="${COMPOSE_FILE:-${ROOT_DIR}/bench/docker-compose.yaml}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-bench-upstream}"
 BACKEND_CONTAINER="${BACKEND_CONTAINER:-bench-upstream}"
 BACKEND_PORT="${BACKEND_PORT:-8001}"
+PRETTY_OUTPUT="${ROOT_DIR}/bench/scripts/pretty.sh"
+if [ -f "$PRETTY_OUTPUT" ]; then
+  # shellcheck disable=SC1090
+  source "$PRETTY_OUTPUT"
+fi
 
 PROXY="${PROXY:-pavis}"
 PAVIS_PORT="${PAVIS_PORT:-8080}"
@@ -64,6 +72,8 @@ case "$PROXY" in
     exit 1
     ;;
  esac
+
+bench_print_case_header "$CASE_NAME" "$PROXY"
 
 PROXY_URL="http://localhost:${PROXY_PORT}${REQUEST_PATH}"
 BACKEND_URL="http://localhost:${BACKEND_PORT}/healthz"
@@ -135,21 +145,12 @@ print_cpuset() {
   local expected="$2"
   local actual
   actual=$(docker inspect -f '{{.HostConfig.CpusetCpus}}' "$container" 2>/dev/null || true)
-  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
-    if [ -n "$actual" ]; then
-      echo "cpuset ${container}: ${actual} (expected ${expected})"
-    else
-      echo "cpuset ${container}: unknown (expected ${expected})"
-    fi
-  else
-    local status="ok"
-    if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
-      status="MISMATCH"
-    elif [ -z "$actual" ]; then
-      status="unknown"
-    fi
-    echo "cpuset_${container##*-}=${actual:-none} expected=${expected} ${status}"
-  fi
+  local label="$container"
+  case "$container" in
+    bench-upstream) label="Upstream" ;;
+    bench-pavis|bench-envoy|bench-nginx|bench-haproxy) label="Proxy" ;;
+  esac
+  bench_print_cpuset_line "$label" "${actual:-}" "$expected"
 }
 
 start_stats() {
@@ -349,6 +350,9 @@ run_loadgen_warmup() {
 }
 
 main() {
+  local start_ts
+  start_ts=$(date +%s)
+
   require_cmd docker
   require_cmd awk
 
@@ -366,29 +370,24 @@ main() {
 
   start_compose
 
-  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
-    echo "backend health: ${BACKEND_URL}"
-  fi
   http_get "$BACKEND_URL" >/dev/null || {
-    echo "backend_ready=fail"
+    bench_print_backend_status "fail"
     exit 1
   }
-  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
-    echo "backend_ready=ok"
-  fi
+  bench_print_backend_status "ok"
 
   print_cpuset "$BACKEND_CONTAINER" "$BACKEND_CPUSET_EXPECTED"
   print_cpuset "$PROXY_CONTAINER" "$PROXY_CPUSET_EXPECTED"
 
-  # Print compact header
-  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
-    echo "tool=loadgen duration=${DURATION_S}s connections=${CONNECTIONS} target_rps=${TARGET_RPS} runs=${RUN_COUNT}"
-  fi
+  bench_print_tool_info "loadgen" "$DURATION_S" "$CONNECTIONS" "$TARGET_RPS"
+  bench_print_metric "🔁" "Runs" "$RUN_COUNT"
 
   # Check if DRY_RUN mode is enabled
   if [ "${DRY_RUN:-}" = "1" ] || [ "${DRY_RUN:-}" = "true" ]; then
-    echo "[DRY-RUN] Setup validated successfully"
-    echo "[DRY-RUN] Skipping benchmark execution"
+    bench_print_metric "💤" "Dry-run" "Setup validated; benchmark skipped"
+    local end_ts
+    end_ts=$(date +%s)
+    bench_print_duration $((end_ts - start_ts))
     return 0
   fi
 
@@ -432,7 +431,7 @@ main() {
     fi
   done
 
-  # Print compact summary
+  # Print summary
   if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
     local summary_rps=""
     local summary_p99=""
@@ -447,10 +446,21 @@ main() {
         summary_dropped=$((summary_dropped + dropped))
       fi
     done
-    echo "Results: rps=[${summary_rps}] p99_ms=[${summary_p99}] total_dropped=${summary_dropped}"
+    local summary_rps_trimmed
+    local summary_p99_trimmed
+    summary_rps_trimmed=$(echo "$summary_rps" | sed 's/[[:space:]]\+$//')
+    summary_p99_trimmed=$(echo "$summary_p99" | sed 's/[[:space:]]\+$//')
+    bench_print_metric "🎯" "Target RPS" "$TARGET_RPS"
+    bench_print_metric "📊" "RPS per run" "[${summary_rps_trimmed}]"
+    bench_print_metric "⏱️" "p99 per run (ms)" "[${summary_p99_trimmed}]"
+    bench_print_dropped_line "$summary_dropped"
+    bench_print_completion 0 "$summary_dropped"
   else
     echo "All $RUN_COUNT runs completed"
   fi
+  local end_ts
+  end_ts=$(date +%s)
+  bench_print_duration $((end_ts - start_ts))
   # Raw outputs kept in run_*/ subdirectories for summarize.sh to aggregate
 }
 

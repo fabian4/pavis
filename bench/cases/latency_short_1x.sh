@@ -18,6 +18,9 @@ CONNECTIONS=500
 TARGET_RPS=10000
 USE_WRK2=1
 RUN_COUNT=1
+if [ -n "${RUN_COUNT_OVERRIDE:-}" ]; then
+  RUN_COUNT="$RUN_COUNT_OVERRIDE"
+fi
 CHURN_CLOSE=0
 PLACEHOLDER=false
 REQUEST_PATH="/fixed"
@@ -28,6 +31,11 @@ COMPOSE_FILE="${COMPOSE_FILE:-${ROOT_DIR}/bench/docker-compose.yaml}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-bench-upstream}"
 BACKEND_CONTAINER="${BACKEND_CONTAINER:-bench-upstream}"
 BACKEND_PORT="${BACKEND_PORT:-8001}"
+PRETTY_OUTPUT="${ROOT_DIR}/bench/scripts/pretty.sh"
+if [ -f "$PRETTY_OUTPUT" ]; then
+  # shellcheck disable=SC1090
+  source "$PRETTY_OUTPUT"
+fi
 
 PROXY="${PROXY:-pavis}"
 PAVIS_PORT="${PAVIS_PORT:-8080}"
@@ -64,6 +72,8 @@ case "$PROXY" in
     exit 1
     ;;
  esac
+
+bench_print_case_header "$CASE_NAME" "$PROXY"
 
 PROXY_URL="http://localhost:${PROXY_PORT}${REQUEST_PATH}"
 BACKEND_URL="http://localhost:${BACKEND_PORT}/healthz"
@@ -127,21 +137,12 @@ print_cpuset() {
   local expected="$2"
   local actual
   actual=$(docker inspect -f '{{.HostConfig.CpusetCpus}}' "$container" 2>/dev/null || true)
-  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
-    if [ -n "$actual" ]; then
-      echo "cpuset ${container}: ${actual} (expected ${expected})"
-    else
-      echo "cpuset ${container}: unknown (expected ${expected})"
-    fi
-  else
-    local status="ok"
-    if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
-      status="MISMATCH"
-    elif [ -z "$actual" ]; then
-      status="unknown"
-    fi
-    echo "cpuset_${container##*-}=${actual:-none} expected=${expected} ${status}"
-  fi
+  local label="$container"
+  case "$container" in
+    bench-upstream) label="Upstream" ;;
+    bench-pavis|bench-envoy|bench-nginx|bench-haproxy) label="Proxy" ;;
+  esac
+  bench_print_cpuset_line "$label" "${actual:-}" "$expected"
 }
 
 start_stats() {
@@ -328,6 +329,9 @@ run_loadgen() {
 }
 
 main() {
+  local start_ts
+  start_ts=$(date +%s)
+
   require_cmd docker
   require_cmd awk
 
@@ -345,29 +349,23 @@ main() {
 
   start_compose
 
-  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
-    echo "backend health: ${BACKEND_URL}"
-  fi
   http_get "$BACKEND_URL" >/dev/null || {
-    echo "backend_ready=fail"
+    bench_print_backend_status "fail"
     exit 1
   }
-  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
-    echo "backend_ready=ok"
-  fi
+  bench_print_backend_status "ok"
 
   print_cpuset "$BACKEND_CONTAINER" "$BACKEND_CPUSET_EXPECTED"
   print_cpuset "$PROXY_CONTAINER" "$PROXY_CPUSET_EXPECTED"
 
-  # Print compact header
-  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
-    echo "tool=loadgen duration=${DURATION_S}s connections=${CONNECTIONS} target_rps=${TARGET_RPS}"
-  fi
+  bench_print_tool_info "loadgen" "$DURATION_S" "$CONNECTIONS" "$TARGET_RPS"
 
   # Check if DRY_RUN mode is enabled
   if [ "${DRY_RUN:-}" = "1" ] || [ "${DRY_RUN:-}" = "true" ]; then
-    echo "[DRY-RUN] Setup validated successfully"
-    echo "[DRY-RUN] Skipping benchmark execution"
+    bench_print_metric "💤" "Dry-run" "Setup validated; benchmark skipped"
+    local end_ts
+    end_ts=$(date +%s)
+    bench_print_duration $((end_ts - start_ts))
     return 0
   fi
 
@@ -395,6 +393,9 @@ main() {
   local p90
   local p99
   local dropped
+  local backend_cpu
+  local proxy_cpu
+  local peak_mem
 
   achieved_rps=$(jq -r '.achieved_rps' "$loadgen_json")
   errors=$(jq -r '.errors' "$loadgen_json")
@@ -402,11 +403,22 @@ main() {
   p90=$(jq -r '.latency_ms.p90' "$loadgen_json")
   p99=$(jq -r '.latency_ms.p99' "$loadgen_json")
   dropped=$(jq -r '.dropped' "$loadgen_json")
+  backend_cpu=$(avg_cpu_pct "$BACKEND_CONTAINER" "${run_dir}/docker_stats.csv")
+  proxy_cpu=$(avg_cpu_pct "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
+  peak_mem=$(peak_mem_mib "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
 
-  # Print compact summary
-  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
-    echo "Results: target_rps=${TARGET_RPS} achieved_rps=${achieved_rps} p50=${p50}ms p99=${p99}ms errors=${errors} dropped=${dropped}"
-  fi
+  bench_print_metric "🎯" "Target RPS" "$TARGET_RPS"
+  bench_print_metric "📊" "Achieved RPS" "$achieved_rps"
+  bench_print_metric "⏱️" "Latency" "p50=${p50}ms · p99=${p99}ms"
+  bench_print_metric "🖥️" "Backend CPU (%)" "${backend_cpu}"
+  bench_print_metric "💻" "Proxy CPU (%)" "${proxy_cpu}"
+  bench_print_metric "🧠" "Proxy peak RSS (MiB)" "${peak_mem}"
+  bench_print_errors_line "$errors"
+  bench_print_dropped_line "$dropped"
+  bench_print_completion "$errors" "$dropped"
+  local end_ts
+  end_ts=$(date +%s)
+  bench_print_duration $((end_ts - start_ts))
 
   # Raw outputs kept: loadgen.txt.json, docker_stats.csv, meta.json
 }

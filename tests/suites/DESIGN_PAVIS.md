@@ -44,6 +44,22 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 *   **Strength**: ⚠️ Needs Expansion.
 *   **Expansion**: Use deterministic "Weight Flip" (100/0 -> 0/100) to eliminate statistical flakiness.
 
+### `42_traffic_regex`
+*   **Intent**: Verify regex routing logic.
+*   **Status**: 🚧 Skipped (Verification Pending).
+
+### `43_traffic_headers`
+*   **Intent**: Verify request/response header manipulation (Set/Add/Remove).
+*   **Status**: 🚧 Skipped (Verification Pending).
+
+### `44_traffic_actions`
+*   **Intent**: Verify Redirect (3xx) and Direct Response (Static Body) actions.
+*   **Status**: 🚧 Skipped (Verification Pending).
+
+### `45_traffic_rewrite`
+*   **Intent**: Verify Path Prefix and Host Header rewriting.
+*   **Status**: 🚧 Skipped (Verification Pending).
+
 ### `50_resilience_timeout` / `51_resilience_retry`
 *   **Intent**: SLA and retry policy enforcement.
 *   **Status**: ⏳ Planned.
@@ -52,6 +68,10 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 *   **Intent**: Upgrading cleartext upstream to TLS.
 *   **Strength**: ⚠️ Needs Expansion.
 *   **Expansion**: Assert `tls.sni` in upstream response matches configuration.
+
+### `61_security_termination`
+*   **Intent**: Verify Server-side TLS termination (HTTPS Listener).
+*   **Status**: 🚧 Skipped (Verification Pending).
 
 ---
 

@@ -17,7 +17,10 @@ THREADS=4
 CONNECTIONS=100
 TARGET_RPS=""
 USE_WRK2=0
-RUN_COUNT=1
+RUN_COUNT=5
+if [ -n "${RUN_COUNT_OVERRIDE:-}" ]; then
+  RUN_COUNT="$RUN_COUNT_OVERRIDE"
+fi
 CHURN_CLOSE=0
 PLACEHOLDER=false
 REQUEST_PATH="/fixed"
@@ -28,6 +31,11 @@ COMPOSE_FILE="${COMPOSE_FILE:-${ROOT_DIR}/bench/docker-compose.yaml}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-bench-upstream}"
 BACKEND_CONTAINER="${BACKEND_CONTAINER:-bench-upstream}"
 BACKEND_PORT="${BACKEND_PORT:-8001}"
+PRETTY_OUTPUT="${ROOT_DIR}/bench/scripts/pretty.sh"
+if [ -f "$PRETTY_OUTPUT" ]; then
+  # shellcheck disable=SC1090
+  source "$PRETTY_OUTPUT"
+fi
 
 PROXY="${PROXY:-pavis}"
 PAVIS_PORT="${PAVIS_PORT:-8080}"
@@ -65,6 +73,8 @@ case "$PROXY" in
     ;;
  esac
 
+bench_print_case_header "$CASE_NAME" "$PROXY"
+
 PROXY_URL="http://localhost:${PROXY_PORT}${REQUEST_PATH}"
 BACKEND_URL="http://localhost:${BACKEND_PORT}/healthz"
 
@@ -80,7 +90,7 @@ require_cmd() {
 }
 
 json_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\"/g'
 }
 
 json_string() {
@@ -97,9 +107,11 @@ json_number_or_null() {
 
 http_get() {
   local url="$1"
-  if command -v curl >/dev/null 2>&1; then
+  if command -v curl >/dev/null 2>&1;
+  then
     curl -fsS "$url"
-  elif command -v python3 >/dev/null 2>&1; then
+  elif command -v python3 >/dev/null 2>&1;
+  then
     python3 - <<PY
 import sys, urllib.request
 url = sys.argv[1]
@@ -127,21 +139,12 @@ print_cpuset() {
   local expected="$2"
   local actual
   actual=$(docker inspect -f '{{.HostConfig.CpusetCpus}}' "$container" 2>/dev/null || true)
-  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
-    if [ -n "$actual" ]; then
-      echo "cpuset ${container}: ${actual} (expected ${expected})"
-    else
-      echo "cpuset ${container}: unknown (expected ${expected})"
-    fi
-  else
-    local status="ok"
-    if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
-      status="MISMATCH"
-    elif [ -z "$actual" ]; then
-      status="unknown"
-    fi
-    echo "cpuset_${container##*-}=${actual:-none} expected=${expected} ${status}"
-  fi
+  local label="$container"
+  case "$container" in
+    bench-upstream) label="Upstream" ;; 
+    bench-pavis|bench-envoy|bench-nginx|bench-haproxy) label="Proxy" ;; 
+  esac
+  bench_print_cpuset_line "$label" "${actual:-}" "$expected"
 }
 
 start_stats() {
@@ -193,9 +196,8 @@ to_ms() {
     return
   fi
   awk -v v="$value" 'BEGIN {
-    if (match(v, /[a-zA-Z]/)) {
-      num = substr(v, 1, RSTART-1);
-      unit = substr(v, RSTART);
+    if (match(v, /^([0-9.]+)([a-zA-Z]+)$/, m)) {
+      num=m[1]; unit=m[2];
       if (unit=="us") printf "%.3f", num/1000;
       else if (unit=="ms") printf "%.3f", num;
       else if (unit=="s") printf "%.3f", num*1000;
@@ -214,15 +216,13 @@ peak_mem_mib() {
   awk -F, -v c="$container" '$2==c {
     split($4, parts, " /");
     val=parts[1];
-    if (match(val, /[A-Za-z]/)) {
-      num = substr(val, 1, RSTART-1);
-      unit = substr(val, RSTART);
-      if (unit=="MiB") mib=num;
-      else if (unit=="GiB") mib=num*1024;
-      else if (unit=="KiB") mib=num/1024;
-      else mib=num;
-      if (mib>max) max=mib;
-    }
+    num=val; gsub(/[^0-9.]/, "", num);
+    unit=val; gsub(/[0-9.]/, "", unit);
+    if (unit=="MiB") mib=num;
+    else if (unit=="GiB") mib=num*1024;
+    else if (unit=="KiB") mib=num/1024;
+    else mib=num+0;
+    if (mib>max) max=mib;
   } END {if (max>0) printf "%.2f", max; else print "0"}' "$2"
 }
 
@@ -266,10 +266,15 @@ write_meta_json() {
   backend_digest=$(container_image_digest "$BACKEND_CONTAINER")
   proxy_digest=$(container_image_digest "$PROXY_CONTAINER")
   kernel=$(uname -r)
+
+  # CPU model - handle both Linux and macOS
   cpu_model="unknown"
   if [ -r /proc/cpuinfo ]; then
     cpu_model=$(awk -F: '/model name/ {print $2; exit}' /proc/cpuinfo | sed 's/^ *//')
+elif command -v sysctl >/dev/null 2>&1; then
+    cpu_model=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
   fi
+
   cpu_governor="unknown"
   if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
     cpu_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)
@@ -314,6 +319,9 @@ run_wrk() {
 }
 
 main() {
+  local start_ts
+  start_ts=$(date +%s)
+
   require_cmd docker
   require_cmd awk
 
@@ -326,73 +334,87 @@ main() {
 
   start_compose
 
-  if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
-    echo "backend health: ${BACKEND_URL}"
-  fi
   http_get "$BACKEND_URL" >/dev/null || {
-    echo "backend_ready=fail"
+    bench_print_backend_status "fail"
     exit 1
   }
-  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
-    echo "backend_ready=ok"
-  fi
+  bench_print_backend_status "ok"
 
   print_cpuset "$BACKEND_CONTAINER" "$BACKEND_CPUSET_EXPECTED"
   print_cpuset "$PROXY_CONTAINER" "$PROXY_CPUSET_EXPECTED"
 
-  # Print compact header
-  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
-    echo "tool=wrk duration=${DURATION_S}s connections=${CONNECTIONS}"
-  fi
+  bench_print_tool_info "wrk" "$DURATION_S" "$CONNECTIONS"
+  bench_print_metric "🔁" "Runs" "$RUN_COUNT"
 
   # Check if DRY_RUN mode is enabled
   if [ "${DRY_RUN:-}" = "1" ] || [ "${DRY_RUN:-}" = "true" ]; then
-    echo "[DRY-RUN] Setup validated successfully"
-    echo "[DRY-RUN] Skipping benchmark execution"
+    bench_print_metric "💤" "Dry-run" "Setup validated; benchmark skipped"
+    local end_ts
+    end_ts=$(date +%s)
+    bench_print_duration $((end_ts - start_ts))
     return 0
   fi
 
   write_meta_json "$BASE_DIR/meta.json"
 
-  local run_dir="$BASE_DIR"
-  local wrk_out="${run_dir}/wrk.txt"
-
-  run_wrk "$WARMUP_S" "${run_dir}/warmup.txt" >/dev/null || true
-  sleep "$COOLDOWN_S"
-
-  start_stats "${run_dir}/docker_stats.csv" "$BACKEND_CONTAINER" "$PROXY_CONTAINER"
-  run_wrk "$DURATION_S" "$wrk_out"
-  stop_stats
-
-  local rps
-  local errors
-  local p50
-  local p90
-  local p99
-  local p999
-  local backend_cpu
-  local proxy_cpu
-  local backend_saturated
-  local peak_mem
-
-  rps=$(parse_rps "$wrk_out")
-  errors=$(parse_errors "$wrk_out")
-  p50=$(to_ms "$(parse_latency_pct "50%" "$wrk_out")")
-  p90=$(to_ms "$(parse_latency_pct "90%" "$wrk_out")")
-  p99=$(to_ms "$(parse_latency_pct "99%" "$wrk_out")")
-  p999=""
-
-  backend_cpu=$(avg_cpu_pct "$BACKEND_CONTAINER" "${run_dir}/docker_stats.csv")
-  proxy_cpu=$(avg_cpu_pct "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
-  backend_saturated=$(backend_saturated_flag "$backend_cpu")
-  peak_mem=$(peak_mem_mib "$PROXY_CONTAINER" "${run_dir}/docker_stats.csv")
-
-  # Print compact summary
   if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
-    echo "Results: rps=${rps} p50=${p50}ms p99=${p99}ms errors=${errors}"
+    echo "Starting ${RUN_COUNT} runs..."
+  else
+    echo "Starting $RUN_COUNT benchmark runs..."
   fi
 
-  # Raw outputs kept: wrk.txt, docker_stats.csv, meta.json
+  for run_id in $(seq 1 "$RUN_COUNT"); do
+    if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
+      echo "=== Run $run_id/$RUN_COUNT ===" >&2
+    fi
+    local run_dir="${BASE_DIR}/run_${run_id}"
+    mkdir -p "$run_dir"
+
+    # Warmup run
+    run_wrk "$WARMUP_S" "${run_dir}/warmup.txt" >/dev/null || true
+    sleep "$COOLDOWN_S"
+
+    # Main benchmark run
+    start_stats "${run_dir}/docker_stats.csv" "$BACKEND_CONTAINER" "$PROXY_CONTAINER"
+    run_wrk "$DURATION_S" "${run_dir}/wrk.txt"
+    stop_stats
+
+    if [ "$run_id" -lt "$RUN_COUNT" ]; then
+      sleep "$COOLDOWN_S"
+    fi
+  done
+
+  # Print summary
+  if [ "${BENCH_VERBOSE:-0}" = "0" ]; then
+    local summary_rps=""
+    local summary_p99=""
+    local total_errors=0
+    for run_dir in "${BASE_DIR}"/run_*; do
+      if [ -f "${run_dir}/wrk.txt" ]; then
+        local rps=$(parse_rps "${run_dir}/wrk.txt")
+        local p99=$(to_ms "$(parse_latency_pct "99%" "${run_dir}/wrk.txt")")
+        local errors=$(parse_errors "${run_dir}/wrk.txt")
+        summary_rps="${summary_rps}${rps} "
+        summary_p99="${summary_p99}${p99} "
+        total_errors=$((total_errors + errors))
+      fi
+    done
+    local summary_rps_trimmed
+    local summary_p99_trimmed
+    summary_rps_trimmed=$(echo "$summary_rps" | sed 's/[[:space:]]\+$//')
+    summary_p99_trimmed=$(echo "$summary_p99" | sed 's/[[:space:]]\+$//')
+    bench_print_metric "📊" "RPS per run" "[${summary_rps_trimmed}]"
+    bench_print_metric "⏱️" "p99 per run (ms)" "[${summary_p99_trimmed}]"
+    bench_print_errors_line "$total_errors"
+    bench_print_completion "$total_errors" 0
+  else
+    echo "All $RUN_COUNT runs completed"
+  fi
+
+  local end_ts
+  end_ts=$(date +%s)
+  bench_print_duration $((end_ts - start_ts))
+  # Raw outputs kept: run_*/ subdirectories for summarize.sh to aggregate
 }
 
 trap stop_stats EXIT

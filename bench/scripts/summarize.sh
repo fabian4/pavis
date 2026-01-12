@@ -11,7 +11,7 @@ set -euo pipefail
 #   OUTPUT_DIR: Override default bench/output directory
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUTPUT_DIR="${1:-${OUTPUT_DIR:-${ROOT_DIR}/bench/output}}"
+OUTPUT_DIR="${1:-${OUTPUT_DIR:-${ROOT_DIR}/output}}"
 SUMMARY_CSV="${OUTPUT_DIR}/summary.csv"
 
 # Helper functions
@@ -225,9 +225,8 @@ parse_case() {
     dropped=$(jq -r '.dropped' "${case_dir}/loadgen.txt.json")
 
   elif [ -d "${case_dir}/run_1" ]; then
-    # loadgen multi-run test (reload_short_1x, latency_extended_1x)
-    # Detect by presence of run_*/ subdirectories
-    case_type="loadgen-multi"
+    # Multi-run test (Detect by presence of run_*/ subdirectories)
+    # Could be loadgen-multi (result.json) or wrk-multi (wrk.txt)
 
     # Count runs and collect metrics
     local rps_temp="${case_dir}/.rps_temp.txt"
@@ -237,6 +236,8 @@ parse_case() {
     local backend_cpu_temp="${case_dir}/.backend_cpu_temp.txt"
     local proxy_cpu_temp="${case_dir}/.proxy_cpu_temp.txt"
     local peak_mem_temp="${case_dir}/.peak_mem_temp.txt"
+    local errors_sum=0
+    local dropped_sum=0
     : > "$rps_temp"
     : > "$p50_temp"
     : > "$p90_temp"
@@ -248,22 +249,35 @@ parse_case() {
     run_count=0
 
     for run_dir in "${case_dir}"/run_*; do
-      if [ -d "$run_dir" ] && [ -f "${run_dir}/result.json" ]; then
-        run_count=$((run_count + 1))
+      if [ -d "$run_dir" ]; then
+        local run_rps=""
+        local run_p50=""
+        local run_p90=""
+        local run_p99=""
+        local run_errors=0
+        local run_dropped=0
 
-        # Extract metrics from this run
-        local run_rps
-        local run_p50
-        local run_p90
-        local run_p99
-        local run_errors
-        local run_dropped
-        run_rps=$(jq -r '.achieved_rps // empty' "${run_dir}/result.json")
-        run_p50=$(jq -r '.latency_ms.p50 // empty' "${run_dir}/result.json")
-        run_p90=$(jq -r '.latency_ms.p90 // empty' "${run_dir}/result.json")
-        run_p99=$(jq -r '.latency_ms.p99 // empty' "${run_dir}/result.json")
-        run_errors=$(jq -r '.errors // empty' "${run_dir}/result.json")
-        run_dropped=$(jq -r '.dropped // empty' "${run_dir}/result.json")
+        if [ -f "${run_dir}/result.json" ]; then
+          case_type="loadgen-multi"
+          run_rps=$(jq -r '.achieved_rps // empty' "${run_dir}/result.json")
+          run_p50=$(jq -r '.latency_ms.p50 // empty' "${run_dir}/result.json")
+          run_p90=$(jq -r '.latency_ms.p90 // empty' "${run_dir}/result.json")
+          run_p99=$(jq -r '.latency_ms.p99 // empty' "${run_dir}/result.json")
+          run_errors=$(jq -r '.errors // 0' "${run_dir}/result.json")
+          run_dropped=$(jq -r '.dropped // 0' "${run_dir}/result.json")
+        elif [ -f "${run_dir}/wrk.txt" ]; then
+          case_type="wrk-multi"
+          run_rps=$(parse_wrk_rps "${run_dir}/wrk.txt")
+          run_p50=$(to_ms "$(parse_wrk_latency_pct "50%" "${run_dir}/wrk.txt")")
+          run_p90=$(to_ms "$(parse_wrk_latency_pct "90%" "${run_dir}/wrk.txt")")
+          run_p99=$(to_ms "$(parse_wrk_latency_pct "99%" "${run_dir}/wrk.txt")")
+          run_errors=$(parse_wrk_errors "${run_dir}/wrk.txt")
+          run_dropped=""
+        else
+          continue
+        fi
+
+        run_count=$((run_count + 1))
 
         local run_backend_cpu=""
         local run_proxy_cpu=""
@@ -291,6 +305,8 @@ parse_case() {
         [ -n "$run_backend_cpu" ] && echo "$run_backend_cpu" >> "$backend_cpu_temp"
         [ -n "$run_proxy_cpu" ] && echo "$run_proxy_cpu" >> "$proxy_cpu_temp"
         [ -n "$run_peak_mem" ] && echo "$run_peak_mem" >> "$peak_mem_temp"
+        errors_sum=$((errors_sum + ${run_errors:-0}))
+        dropped_sum=$((dropped_sum + ${run_dropped:-0}))
       fi
     done
 
@@ -312,6 +328,8 @@ parse_case() {
     backend_cpu=$(median_value "$backend_cpu_temp" "%.2f")
     proxy_cpu=$(median_value "$proxy_cpu_temp" "%.2f")
     peak_mem=$(max_value "$peak_mem_temp" "%.2f")
+    errors="$errors_sum"
+    dropped="$dropped_sum"
 
     rm -f "$rps_temp" "$p50_temp" "$p90_temp" "$p99_temp" \
       "$backend_cpu_temp" "$proxy_cpu_temp" "$peak_mem_temp"
@@ -336,10 +354,10 @@ parse_case() {
     fi
   fi
 
-  if [ "$case_type" = "loadgen-multi" ]; then
+  if [ "$case_type" = "loadgen-multi" ] || [ "$case_type" = "wrk-multi" ]; then
     emit_row "$git_sha" "0" "1" "$phase" \
       "$proxy" "$case_name" "$case_type" "$run_count" \
-      "$achieved_rps" "$p50_ms" "$p90_ms" "$p99_ms" "" "" \
+      "$achieved_rps" "$p50_ms" "$p90_ms" "$p99_ms" "$errors" "$dropped" \
       "$rps_iqr" "$p99_iqr" "$backend_cpu" "$proxy_cpu" "$peak_mem" \
       "$target_rps" "$timestamp" "$cpu_model" "$kernel"
   else
@@ -393,9 +411,6 @@ main() {
   fi
 
   echo "Summary written to $SUMMARY_CSV"
-  echo ""
-  echo "Results:"
-  column -t -s, "$SUMMARY_CSV"
 }
 
 main "$@"

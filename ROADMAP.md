@@ -1,9 +1,9 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 32/70
+- **Total**: 32/74
 - **Core Features**: 26/53
-- **Technical Debt**: 6/17
+- **Technical Debt**: 6/21
 
 > **Status**: Active
 > **Focus**: Phase 4 (Security & Identity)
@@ -67,6 +67,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 ## Phase 4: Security & Identity (Critical Path)
 > **Goal**: Enterprise-grade security via frozen policies.
 > **Status**: ⏳ Planned (Promoted from Phase 6)
+> **Plan**: [security_identity.md](./docs/plan/security_identity.md)
 
 - [x] **TLS Termination**: Server-side TLS with single certificate per listener (No SNI).
 - [ ] [TODO] **mTLS (Mutual TLS)**: Client certificate validation + SPIFFE ID extraction.
@@ -76,6 +77,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 ## Phase 5: Observability (Critical Path)
 > **Goal**: Deep visibility into proxy behavior required for Operations.
 > **Status**: ⏳ Planned (Promoted from Phase 7)
+> **Plan**: [observability.md](./docs/plan/observability.md)
 
 - [ ] **Prometheus Metrics**: Exporter with request, connection, and upstream dimensions.
 - [ ] **Access Logs**: Configurable JSON/Text output to stdout or file.
@@ -149,6 +151,12 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 ### TD-6: Service Mesh & xDS
 - [ ] **[Perf] Delta xDS (Incremental)**: High CPU/Network for large meshes; full snapshot transfers. (Trigger: > 1000 Envoy resources)
 - [ ] **[Arch] Stateful Resource Tracking**: Potential for stale endpoints if EDS/CDS desync. (Trigger: Multi-cluster deployments)
+
+### TD-7: Bench TODO
+- [ ] **[Bench] Protocol & Payload Coverage**: Add TLS-on/TLS-off variants, HTTP/2/gRPC workloads, and large-payload/streaming cases so production traffic patterns are exercised.
+- [ ] **[Bench] Saturation Profiles**: Implement a combined high-concurrency + open-loop saturation case and the memory-limited resource profile promised in the methodology.
+- [ ] **[Bench] Reload Trigger Validation**: Wire real reload triggers into `bench/cases/reload_short_1x.sh` (e.g., invoking `pavctl reload`) and record latency spikes/errors for each reload window.
+- [ ] **[Bench] Metrics & Reporting**: Surface target-vs-achieved RPS deltas, p999 for closed-loop tests, detailed error classes, and network/disk stats, then embed host hardware summaries, Docker image digests, and cpuset verification data directly in the generated reports for auditability.
 
 ---
 

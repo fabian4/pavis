@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -z "${BENCH_SCRIPTS_DIR:-}" ]]; then
+  BENCH_SCRIPTS_DIR="$SCRIPT_DIR"
+fi
+if [[ -f "${BENCH_SCRIPTS_DIR}/utils.sh" ]]; then
+  # shellcheck source=bench/scripts/utils.sh
+  source "${BENCH_SCRIPTS_DIR}/utils.sh"
+fi
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -43,6 +52,17 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -f "$input" ] || die "input not found: $input"
+command -v jq >/dev/null 2>&1 || die "jq is required to parse result.json"
+
+host_info_content=""
+if [ -n "${BENCH_HOST_INFO:-}" ] && [ -f "$BENCH_HOST_INFO" ]; then
+  host_info_content=$(cat "$BENCH_HOST_INFO")
+fi
+env_details="backend_cpuset=${BACKEND_CPUSET:-auto}, proxy_cpuset=${PROXY_CPUSET:-auto}, docker_compose=${BENCH_DOCKER_COMPOSE:-unknown}, output_dir=${BENCH_OUTPUT_DIR:-$(dirname "$output")}"
+
+if command -v log_info >/dev/null 2>&1; then
+  log_info "Generating benchmark report: $output"
+fi
 
 if [ -z "$run_id_env" ]; then
   run_id_env=$(awk -F, '
@@ -89,90 +109,135 @@ mkdir -p "$out_dir"
 
 tmp_out=$(mktemp "$out_dir/report.XXXXXX")
 override_file=$(mktemp "$out_dir/report_overrides.XXXXXX")
-trap 'rm -f "$tmp_out" "$override_file"' EXIT
+openloop_file=$(mktemp "$out_dir/report_openloop.XXXXXX")
+trap 'rm -f "$tmp_out" "$override_file" "$openloop_file"' EXIT
 
 gen_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-RUN_ID="$run_id_env" INPUT="$input" python3 - <<'PY' > "$override_file"
-import csv
-import glob
-import json
-import os
-import pathlib
-import sys
+awk -F, -v run_id="$run_id_env" '
+  function norm(h) {
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", h)
+    return tolower(h)
+  }
+  function trim(x) {
+    sub(/^[[:space:]]+/, "", x)
+    sub(/[[:space:]]+$/, "", x)
+    return x
+  }
+  function unquote(x) {
+    if (x ~ /^".*"$/) {
+      sub(/^"/, "", x)
+      sub(/"$/, "", x)
+    }
+    return x
+  }
+  function field(name, raw) {
+    if (!col[name]) return ""
+    raw=$col[name]
+    raw=trim(raw)
+    raw=unquote(raw)
+    return raw
+  }
+  function truthy(val, t) {
+    t=tolower(val)
+    return (t=="1" || t=="true" || t=="yes" || t=="y")
+  }
+  function is_num(x) {
+    return x ~ /^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/
+  }
+  BEGIN {
+    alias["git_sha"]="run_id"
+  }
+  NR==1 {
+    for (i=1;i<=NF;i++) {
+      h=norm($i)
+      if (h=="") continue
+      name=(h in alias)?alias[h]:h
+      col[name]=i
+    }
+    next
+  }
+  {
+    rid=field("run_id")
+    if (run_id != "" && rid != run_id) next
+    typ=tolower(field("type"))
+    if (typ=="" || index(typ, "loadgen") != 1) next
+    proxy=field("proxy")
+    cas=field("case")
+    if (proxy=="" || cas=="") next
+    key=proxy SUBSEP cas
+    open[key]=1
+    agg_val=field("aggregate")
+    if (truthy(agg_val)) {
+      runs_str=field("runs")
+      if (runs_str != "" && is_num(runs_str)) agg_runs[key]=runs_str+0
+      next
+    }
+    iter_counts[key]++
+    dropped=field("dropped")
+    if (dropped != "" && is_num(dropped)) iter_dropped[key]+=dropped+0
+    errors=field("errors")
+    if (errors != "" && is_num(errors)) iter_errors[key]+=errors+0
+  }
+  END {
+    n=0
+    for (key in open) {
+      runs=(key in agg_runs)?agg_runs[key]:iter_counts[key]
+      if (runs <= 1) continue
+      keys[++n]=key
+    }
+    for (i=1;i<=n;i++) {
+      for (j=i+1;j<=n;j++) {
+        if (keys[i] > keys[j]) {
+          tmp=keys[i]; keys[i]=keys[j]; keys[j]=tmp
+        }
+      }
+    }
+    for (i=1;i<=n;i++) {
+      key=keys[i]
+      split(key, parts, SUBSEP)
+      printf "%s,%s,%d,%d\n", parts[1], parts[2], iter_dropped[key]+0, iter_errors[key]+0
+    }
+  }
+' "$input" > "$openloop_file"
 
-run_id = os.environ.get("RUN_ID", "").strip()
-if not run_id:
-    run_id = None
+: > "$override_file"
 
-summary_path = os.environ.get("INPUT", "bench/output/summary.csv")
-rows = []
-with open(summary_path, newline="") as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        rid = row.get("run_id") or row.get("git_sha")
-        if run_id and rid != run_id:
-            continue
-        rows.append(row)
+while IFS=, read -r proxy case csv_dropped csv_errors; do
+  [ -n "$proxy" ] || continue
+  csv_dropped=${csv_dropped:-0}
+  csv_errors=${csv_errors:-0}
+  case_dir="bench/output/$proxy/$case"
+  if [ ! -d "$case_dir" ]; then
+    echo "error: missing result.json runs for $proxy $case" >&2
+    exit 10
+  fi
+  run_paths=()
+  while IFS= read -r path; do
+    run_paths+=("$path")
+  done < <(LC_ALL=C sort <(find "$case_dir" -type f -name 'result.json' -path "*/run_*/result.json" -print))
+  if [ "${#run_paths[@]}" -eq 0 ]; then
+    echo "error: missing result.json runs for $proxy $case" >&2
+    exit 10
+  fi
+  dropped_sum=0
+  errors_sum=0
+  for path in "${run_paths[@]}"; do
+    dropped_val=$(jq -r '((.dropped // 0) | (if type == "string" and . == "" then 0 else . end) | tonumber | floor)' "$path")
+    errors_val=$(jq -r '((.errors // 0) | (if type == "string" and . == "" then 0 else . end) | tonumber | floor)' "$path")
+    dropped_sum=$((dropped_sum + dropped_val))
+    errors_sum=$((errors_sum + errors_val))
+  done
+  actual_runs=${#run_paths[@]}
+  status="override"
+  if [ "$dropped_sum" -eq "$csv_dropped" ] && [ "$errors_sum" -eq "$csv_errors" ]; then
+    status="ok"
+  fi
+  printf "validated %s %s: dropped sum = %s (%d runs) [%s]\n" "$case" "$proxy" "$dropped_sum" "$actual_runs" "$status" >&2
+  printf "%s,%s,%d,%d,%d\n" "$proxy" "$case" "$actual_runs" "$dropped_sum" "$errors_sum" >> "$override_file"
+done < "$openloop_file"
 
-openloop_keys = {}
-iter_sums = {}
-iter_counts = {}
-agg_runs = {}
-
-for row in rows:
-    typ = (row.get("type") or "").lower()
-    if not typ.startswith("loadgen"):
-        continue
-    proxy = row.get("proxy") or ""
-    case = row.get("case") or ""
-    if not proxy or not case:
-        continue
-    key = (proxy, case)
-    openloop_keys[key] = True
-    if (row.get("aggregate") or "") in ("1", "true", "True", "TRUE", "yes", "YES"):
-        runs = row.get("runs") or ""
-        if runs:
-            try:
-                agg_runs[key] = int(float(runs))
-            except ValueError:
-                pass
-        continue
-    iter_counts[key] = iter_counts.get(key, 0) + 1
-    dropped = row.get("dropped") or ""
-    errors = row.get("errors") or ""
-    if dropped:
-        iter_sums[key] = iter_sums.get(key, (0, 0))
-        iter_sums[key] = (iter_sums[key][0] + int(float(dropped)), iter_sums[key][1])
-    if errors:
-        iter_sums[key] = iter_sums.get(key, (0, 0))
-        iter_sums[key] = (iter_sums[key][0], iter_sums[key][1] + int(float(errors)))
-
-def iter_sum(key):
-    return iter_sums.get(key, (0, 0))
-
-for key in sorted(openloop_keys.keys()):
-    runs = agg_runs.get(key, iter_counts.get(key, 0))
-    if runs <= 1:
-        continue
-    proxy, case = key
-    run_paths = sorted(glob.glob(f"bench/output/{proxy}/{case}/run_*/result.json"))
-    if not run_paths:
-        print(f"error: missing result.json runs for {proxy} {case}", file=sys.stderr)
-        sys.exit(10)
-    dropped_sum = 0
-    errors_sum = 0
-    for path in run_paths:
-        data = json.loads(pathlib.Path(path).read_text())
-        dropped_sum += int(data.get("dropped", 0) or 0)
-        errors_sum += int(data.get("errors", 0) or 0)
-    csv_dropped, csv_errors = iter_sum(key)
-    status = "ok" if (dropped_sum == csv_dropped and errors_sum == csv_errors) else "override"
-    print(f"validated {case} {proxy}: dropped sum = {dropped_sum} ({len(run_paths)} runs) [{status}]", file=sys.stderr)
-    print(f"{proxy},{case},{len(run_paths)},{dropped_sum},{errors_sum}")
-PY
-
-awk -F, -v run_id="$run_id_env" -v input="$input" -v gen_at="$gen_at" -v overrides="$override_file" '
+awk -F, -v run_id="$run_id_env" -v input="$input" -v gen_at="$gen_at" -v overrides="$override_file" -v host_info="$host_info_content" -v env_details="$env_details" '
   function norm(h) {
     gsub(/^[[:space:]]+|[[:space:]]+$/, "", h)
     return tolower(h)
@@ -660,6 +725,16 @@ awk -F, -v run_id="$run_id_env" -v input="$input" -v gen_at="$gen_at" -v overrid
     print "- run_id: " run_id
     print "- proxies: " p_out
     print "- cases: " c_out
+    if (host_info != "") {
+      print "- system:"
+      hcount = split(host_info, hlines, "\n")
+      for (hi=1; hi<=hcount; hi++) {
+        if (hlines[hi] != "") print "  - " hlines[hi]
+      }
+    }
+    if (env_details != "") {
+      print "- environment: " env_details
+    }
     print ""
     print "## Interpretation Rules"
     print ""
@@ -983,6 +1058,7 @@ awk -F, -v run_id="$run_id_env" -v input="$input" -v gen_at="$gen_at" -v overrid
 ' "$input" > "$tmp_out"
 
 mv -f "$tmp_out" "$output"
+rm -f "$override_file" "$openloop_file"
 trap - EXIT
 
 echo "wrote: $output"

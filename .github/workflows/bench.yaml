@@ -27,33 +27,42 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wrk jq bc
 
+      - name: Build benchmark tools
+        run: |
+          cargo build -p pavis-benchkit --bin bench-loadgen --release
+          cargo build -p pavctl --release
+
       - name: Build Pavis Docker Image
         run: make docker-build IMAGE=pavis MODE=ci
 
-      - name: Build Bench Upstream Docker Image
+      - name: Build Upstream Docker Image
         run: make docker-build IMAGE=bench-upstream MODE=ci
 
-      - name: Build bench-loadgen
-        run: cargo build -p pavis-benchkit --bin bench-loadgen --release
+      - name: Benchmark pavis
+        run: PROXY="pavis" make bench
 
-      - name: Benchmark proxies
-        run: |
-          for proxy in pavis envoy nginx haproxy; do
-            echo "=== Benchmark $proxy ==="
-            PROXY="$proxy" make bench
-          done
+      - name: Benchmark envoy
+        run: PROXY="envoy" make bench
+
+      - name: Benchmark nginx
+        run: PROXY="nginx" make bench
+
+      - name: Benchmark haproxy
+        run: PROXY="haproxy" make bench
 
       - name: Debug on failure
         if: failure()
         working-directory: bench
         run: |
           echo "=== Docker Containers ==="
-          docker ps -a
-          echo "=== Proxy Logs ==="
-          for proxy in pavis envoy nginx haproxy; do
-            echo "--- $proxy ---"
-            docker logs bench-$proxy 2>&1 || true
-          done
+          echo "--- pavis ---"
+          docker logs bench-pavis 2>&1 || true
+          echo "--- envoy ---"
+          docker logs bench-envoy 2>&1 || true
+          echo "--- nginx ---"
+          docker logs bench-nginx 2>&1 || true
+          echo "--- haproxy ---"
+          docker logs bench-haproxy 2>&1 || true
           echo "=== Backend Logs ==="
           docker logs bench-upstream 2>&1 || true
 
@@ -62,21 +71,10 @@ jobs:
         working-directory: bench
         run: docker compose down -v
 
-      - name: Generate Summary CSV
-        run: bash bench/scripts/summarize.sh
+      - name: Generate Summary and Report
+        run: make bench-report
 
-      - name: Display Summary
-        run: |
-          echo "=== Benchmark Summary ==="
-          cat bench/output/summary.csv
-          echo ""
-          echo "=== Pretty Table ==="
-          column -t -s, bench/output/summary.csv || cat bench/output/summary.csv
-
-      - name: Generate Key Report
-        run: bash bench/scripts/report.sh
-
-      - name: Append Key Report to Job Summary
+      - name: Append Job Summary
         run: cat bench/output/report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Bench Results

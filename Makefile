@@ -48,6 +48,7 @@ help:
 	@echo ""
 	@echo "Benchmarking:"
 	@echo "  bench              - Run benchmarks (PROXY=pavis|envoy|nginx|haproxy CASE=\"...\" DRY_RUN=1)"
+	@echo "  bench-report       - Aggregate results and generate markdown report"
 	@echo "  bench-build        - Build benchmark images (pavis:local, bench-upstream:local)"
 	@echo "  bench-down         - Stop and cleanup benchmark containers"
 	@echo ""
