@@ -13,10 +13,14 @@ pub(super) fn validate_upstreams(upstreams: &[Upstream]) -> CoreValidationResult
         if !names.insert(&u.name.0) {
             return Err(CoreValidationError::DuplicateUpstream(u.name.0.clone()));
         }
-        if let TlsPolicy::Enabled { verify, sni, .. } = &u.tls
-            && matches!(verify, TlsVerify::Full)
-            && matches!(sni, SniName::Disabled)
-        {
+        if matches!(
+            &u.tls,
+            TlsPolicy::Enabled {
+                verify: TlsVerify::Full,
+                sni: SniName::Disabled,
+                ..
+            }
+        ) {
             return Err(CoreValidationError::UpstreamTlsSniDisabled(
                 u.name.0.clone(),
             ));

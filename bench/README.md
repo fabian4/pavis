@@ -7,7 +7,7 @@ The Pavis Benchmark Suite is a comprehensive performance testing framework desig
 - **[README.md](./README.md)**: Overview, Quickstart, and Usage Guide (this file).
 - **[Methodology](../docs/benchmark/METHODOLOGY.md)**: 7-dimension framework for proxy evaluation.
 - **[Benchmark Cases](../docs/benchmark/CASES.md)**: Concrete test case definitions and coverage mapping.
-- **[FAIRNESS.md](./FAIRNESS.md)**: Proxy configuration comparison and fairness guarantees.
+- **[FAIRNESS.md](../docs/benchmark/FAIRNESS.md)**: Proxy configuration comparison and fairness guarantees.
 
 ---
 

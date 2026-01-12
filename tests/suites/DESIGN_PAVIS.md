@@ -46,19 +46,19 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 
 ### `42_traffic_regex`
 *   **Intent**: Verify regex routing logic.
-*   **Status**: 🚧 Skipped (Verification Pending).
+*   **Strength**: ✅ Solid. Proves regex compilation and matching priority.
 
 ### `43_traffic_headers`
 *   **Intent**: Verify request/response header manipulation (Set/Add/Remove).
-*   **Status**: 🚧 Skipped (Verification Pending).
+*   **Strength**: ✅ Solid. Proves Set/Add/Append/Remove logic for Request and Response headers.
 
 ### `44_traffic_actions`
 *   **Intent**: Verify Redirect (3xx) and Direct Response (Static Body) actions.
-*   **Status**: 🚧 Skipped (Verification Pending).
+*   **Strength**: ✅ Solid. Proves 3xx Redirect and 200 Direct response behaviors.
 
 ### `45_traffic_rewrite`
 *   **Intent**: Verify Path Prefix and Host Header rewriting.
-*   **Status**: 🚧 Skipped (Verification Pending).
+*   **Strength**: ✅ Solid. Proves Path Prefix replacement and Host header rewriting.
 
 ### `50_resilience_timeout` / `51_resilience_retry`
 *   **Intent**: SLA and retry policy enforcement.
@@ -70,7 +70,7 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 
 ### `61_security_termination`
 *   **Intent**: Verify Server-side TLS termination (HTTPS Listener).
-*   **Status**: 🚧 Skipped (Verification Pending).
+*   **Strength**: ✅ Solid. Proves HTTPS listener and enforced mTLS.
 
 ### `62_security_mtls_handshake`
 *   **Intent**: Inbound mTLS handshake enforcement (Required/invalid CA).

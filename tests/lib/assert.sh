@@ -100,3 +100,15 @@ wait_for_port() {
         sleep 0.2
     done
 }
+
+assert_eq() {
+    local expected="$1"
+    local actual="$2"
+    local msg="$3"
+    if [ "$actual" != "$expected" ]; then
+        echo "❌ Assertion failed: $msg"
+        echo "   Expected: '$expected'"
+        echo "   Actual:   '$actual'"
+        exit 1
+    fi
+}

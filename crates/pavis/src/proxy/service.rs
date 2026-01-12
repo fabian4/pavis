@@ -323,9 +323,7 @@ impl ProxyHttp for Proxy {
             }
         }
 
-        if let Some(ca) = ca
-            && matches!(*ca, pavis_core::UpstreamCa::File { .. })
-        {
+        if matches!(ca, Some(pavis_core::UpstreamCa::File { .. })) {
             let ca_bundle = match cluster.ca_bundle() {
                 Some(bundle) => bundle,
                 None => {
