@@ -44,6 +44,10 @@ pub struct UpstreamTlsConfig {
     pub verify_hostname: Option<bool>,
     pub verify_cert: Option<bool>,
     pub sni: Option<String>,
+    #[serde(rename = "sni_mode", alias = "sniMode")]
+    pub sni_mode: Option<SniMode>,
+    #[serde(alias = "ca_bundle")]
+    pub ca_bundle_path: Option<String>,
     pub cert: Option<ClientCertConfig>,
 }
 
@@ -51,6 +55,26 @@ pub struct UpstreamTlsConfig {
 pub struct ClientCertConfig {
     pub cert_path: String,
     pub key_path: String,
+    #[serde(default)]
+    pub chain_path: Option<String>,
+    #[serde(default)]
+    pub chain_mode: Option<ClientCertChainMode>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClientCertChainMode {
+    None,
+    Embedded,
+    File,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SniMode {
+    Auto,
+    Name,
+    Disabled,
 }
 
 /// Connection pool configuration for upstream connections

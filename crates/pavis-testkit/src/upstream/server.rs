@@ -2,11 +2,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use anyhow::Result;
 use axum::Router;
-use axum_server::{tls_rustls::RustlsConfig, Handle};
+use axum_server::{Handle, tls_rustls::RustlsConfig};
 
 use crate::common::cli::UpstreamArgs;
 use crate::common::shutdown;
-use crate::upstream::routes::{router, SharedState, TransportMeta};
+use crate::upstream::routes::{SharedState, TransportMeta, router};
 use crate::upstream::tls::{self, TlsConfigPaths};
 
 pub async fn run(args: UpstreamArgs) -> Result<()> {
@@ -75,10 +75,10 @@ pub async fn run(args: UpstreamArgs) -> Result<()> {
     if !http_task.is_finished() {
         let _ = http_task.await;
     }
-    if let Some(task) = https_task {
-        if !task.is_finished() {
-            let _ = task.await;
-        }
+    if let Some(task) = https_task
+        && !task.is_finished()
+    {
+        let _ = task.await;
     }
 
     Ok(())

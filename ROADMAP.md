@@ -1,9 +1,9 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 32/74
-- **Core Features**: 26/53
-- **Technical Debt**: 6/21
+- **Total**: 34/67
+- **Core Features**: 29/46
+- **Technical Debt**: 5/21
 
 > **Status**: Active
 > **Focus**: Phase 4 (Security & Identity)
@@ -66,13 +66,12 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 4: Security & Identity (Critical Path)
 > **Goal**: Enterprise-grade security via frozen policies.
-> **Status**: ⏳ Planned (Promoted from Phase 6)
-> **Plan**: [security_identity.md](./docs/plan/security_identity.md)
+> **Status**: ✅ Complete
 
 - [x] **TLS Termination**: Server-side TLS with single certificate per listener (No SNI).
-- [ ] [TODO] **mTLS (Mutual TLS)**: Client certificate validation + SPIFFE ID extraction.
-- [ ] [TODO] **Authorization (RBAC)**: Static Path/Method based policies (Deny-by-default).
-- [ ] [TODO] **Identity**: Integration with SPIRE/SPIFFE workload identities.
+- [x] **mTLS (Mutual TLS)**: Client certificate validation + SPIFFE ID extraction.
+- [x] **Authorization (RBAC)**: Static Path/Method based policies (Deny-by-default).
+- [x] **Identity**: Integration with SPIRE/SPIFFE workload identities.
 
 ## Phase 5: Observability (Critical Path)
 > **Goal**: Deep visibility into proxy behavior required for Operations.

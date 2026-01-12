@@ -4,8 +4,8 @@ pub mod status;
 
 use crate::relay::state::AppState;
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 
 pub fn router(app_state: AppState) -> Router {

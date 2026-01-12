@@ -66,12 +66,35 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 
 ### `60_security_tls`
 *   **Intent**: Upgrading cleartext upstream to TLS.
-*   **Strength**: ⚠️ Needs Expansion.
-*   **Expansion**: Assert `tls.sni` in upstream response matches configuration.
+*   **Strength**: ✅ Solid for TLS origination. SNI behavior is covered by `66_security_tls_sni_auto`.
 
 ### `61_security_termination`
 *   **Intent**: Verify Server-side TLS termination (HTTPS Listener).
 *   **Status**: 🚧 Skipped (Verification Pending).
+
+### `62_security_mtls_handshake`
+*   **Intent**: Inbound mTLS handshake enforcement (Required/invalid CA).
+*   **Strength**: ✅ Solid. Covers no-cert, valid cert, and unknown CA cases.
+
+### `63_security_rbac_spiffe`
+*   **Intent**: SPIFFE identity match authorization.
+*   **Strength**: ✅ Solid. Covers match, mismatch, and no identity scenarios.
+
+### `64_security_rbac_prefix`
+*   **Intent**: SPIFFE prefix authorization.
+*   **Strength**: ✅ Solid. Ensures prefix match enforcement and deny-by-default.
+
+### `65_security_mtls_outbound`
+*   **Intent**: Outbound mTLS with client cert and CA verification.
+*   **Strength**: ✅ Solid. Exercises client cert + CA bundle wiring.
+
+### `66_security_tls_sni_auto`
+*   **Intent**: Auto SNI derivation and fail-fast for invalid Auto SNI configs.
+*   **Strength**: ✅ Solid. Validates DNS-based Auto SNI and rejects IP endpoints without override.
+
+### `67_security_mtls_chain_mode`
+*   **Intent**: Client cert chain_mode handling (embedded vs default none).
+*   **Strength**: ✅ Solid. Ensures embedded chains are explicit and default is leaf-only.
 
 ---
 

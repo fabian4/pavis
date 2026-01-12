@@ -76,8 +76,8 @@ fn full_yaml_and_json_apply_structural_and_semantic_defaults() {
             _ => panic!("unknown idle timeout"),
         }
         match upstream.tls {
-            TlsPolicy::Enabled { mode, .. } => {
-                assert_eq!(mode, TlsVerify::CertAndHost);
+            TlsPolicy::Enabled { verify, .. } => {
+                assert_eq!(verify, TlsVerify::Full);
             }
             TlsPolicy::Disabled => panic!("tls not enabled"),
             _ => panic!("unknown tls policy"),
@@ -157,5 +157,45 @@ fn materialize_enforces_core_validation() {
             err,
             CodecError::Core(CoreValidationError::DuplicateUpstream(_))
         ));
+    }
+}
+
+#[test]
+fn materialize_rejects_full_verify_auto_sni_with_ip_endpoint() {
+    let yaml = r#"
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    tls:
+      enabled: true
+      verify_cert: true
+      verify_hostname: true
+      sni_mode: auto
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 443
+routes: []
+"#;
+    let artifact = Artifact::new(
+        yaml.as_bytes().to_vec().into(),
+        Format::Yaml,
+        SourceInfo::unknown(),
+    );
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
+    let err = codec
+        .materialize(artifact, CompactionLevel::Off)
+        .expect_err("expected compile error");
+    match err {
+        CodecError::Compile(inner) => assert!(
+            inner
+                .to_string()
+                .contains("verify=full with sni=auto requires DNS endpoints or route host rewrite")
+        ),
+        _ => panic!("expected compile error"),
     }
 }

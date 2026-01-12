@@ -24,16 +24,52 @@ pub fn extract_spiffe_id(ssl: &SslRef) -> Option<String> {
 
 /// Extracts the SPIFFE identity from an X.509 certificate.
 pub fn extract_spiffe_id_from_cert(cert: &openssl::x509::X509) -> Option<String> {
-    // Iterate through SANs to find URI entries
+    // Iterate through SANs to find SPIFFE URI entries
+    let mut spiffe_id: Option<String> = None;
     if let Some(san) = cert.subject_alt_names() {
         for name in san.iter() {
-            if let Some(uri) = name.uri().filter(|u| u.starts_with("spiffe://")) {
-                return Some(uri.to_string());
+            if let Some(uri) = name.uri() {
+                match parse_spiffe_uri(uri) {
+                    Ok(Some(candidate)) => {
+                        if spiffe_id.is_some() {
+                            return None;
+                        }
+                        spiffe_id = Some(candidate);
+                    }
+                    Ok(None) => {}
+                    Err(()) => return None,
+                }
             }
         }
     }
 
-    None
+    spiffe_id
+}
+
+fn parse_spiffe_uri(uri: &str) -> Result<Option<String>, ()> {
+    let (scheme, rest) = match uri.split_once("://") {
+        Some(parts) => parts,
+        None => return Ok(None),
+    };
+
+    if !scheme.eq_ignore_ascii_case("spiffe") {
+        return Ok(None);
+    }
+
+    if rest.is_empty() {
+        return Err(());
+    }
+
+    let (trust_domain, path) = match rest.split_once('/') {
+        Some(parts) => parts,
+        None => return Err(()),
+    };
+
+    if trust_domain.is_empty() || path.is_empty() || path.chars().all(|c| c == '/') {
+        return Err(());
+    }
+
+    Ok(Some(format!("spiffe://{}", rest)))
 }
 
 /// A cached identity extractor that memoizes extraction results.
@@ -93,59 +129,86 @@ mod tests {
         use openssl::x509::extension::SubjectAlternativeName;
         use openssl::x509::{X509Builder, X509NameBuilder};
 
-        // 1. Generate a key pair
-        let rsa = Rsa::generate(2048).unwrap();
-        let pkey = PKey::from_rsa(rsa).unwrap();
+        fn build_cert(uris: &[&str], serial: u32) -> openssl::x509::X509 {
+            let rsa = Rsa::generate(2048).unwrap();
+            let pkey = PKey::from_rsa(rsa).unwrap();
 
-        // 2. Build a certificate with SPIFFE ID in SAN
-        let mut name = X509NameBuilder::new().unwrap();
-        name.append_entry_by_text("CN", "test").unwrap();
-        let name = name.build();
+            let mut name = X509NameBuilder::new().unwrap();
+            name.append_entry_by_text("CN", "test").unwrap();
+            let name = name.build();
 
-        let mut builder = X509Builder::new().unwrap();
-        builder.set_version(2).unwrap();
-        let serial_number = BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap();
-        builder.set_serial_number(&serial_number).unwrap();
-        builder.set_subject_name(&name).unwrap();
-        builder.set_issuer_name(&name).unwrap();
-        builder.set_pubkey(&pkey).unwrap();
-        let not_before = Asn1Time::days_from_now(0).unwrap();
-        builder.set_not_before(&not_before).unwrap();
-        let not_after = Asn1Time::days_from_now(365).unwrap();
-        builder.set_not_after(&not_after).unwrap();
+            let mut builder = X509Builder::new().unwrap();
+            builder.set_version(2).unwrap();
+            let serial_number = BigNum::from_u32(serial).unwrap().to_asn1_integer().unwrap();
+            builder.set_serial_number(&serial_number).unwrap();
+            builder.set_subject_name(&name).unwrap();
+            builder.set_issuer_name(&name).unwrap();
+            builder.set_pubkey(&pkey).unwrap();
+            let not_before = Asn1Time::days_from_now(0).unwrap();
+            builder.set_not_before(&not_before).unwrap();
+            let not_after = Asn1Time::days_from_now(365).unwrap();
+            builder.set_not_after(&not_after).unwrap();
+
+            if !uris.is_empty() {
+                let mut san = SubjectAlternativeName::new();
+                for uri in uris {
+                    san.uri(uri);
+                }
+                let san = san.build(&builder.x509v3_context(None, None)).unwrap();
+                builder.append_extension(san).unwrap();
+            }
+
+            builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+            builder.build()
+        }
 
         let spiffe_id = "spiffe://example.org/ns/foo/sa/bar";
-        let san = SubjectAlternativeName::new()
-            .uri(spiffe_id)
-            .build(&builder.x509v3_context(None, None))
-            .unwrap();
-        builder.append_extension(san).unwrap();
-
-        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
-        let cert = builder.build();
-
-        // 3. Test extraction from cert
+        let cert = build_cert(&[spiffe_id], 1);
         assert_eq!(
             extract_spiffe_id_from_cert(&cert),
             Some(spiffe_id.to_string())
         );
 
-        // 4. Test with non-spiffe URI
-        let mut builder = X509Builder::new().unwrap();
-        builder.set_version(2).unwrap();
-        builder.set_serial_number(&serial_number).unwrap();
-        builder.set_subject_name(&name).unwrap();
-        builder.set_issuer_name(&name).unwrap();
-        builder.set_pubkey(&pkey).unwrap();
-        builder.set_not_before(&not_before).unwrap();
-        builder.set_not_after(&not_after).unwrap();
-        let san = SubjectAlternativeName::new()
-            .uri("https://not-spiffe.com")
-            .build(&builder.x509v3_context(None, None))
-            .unwrap();
-        builder.append_extension(san).unwrap();
-        builder.sign(&pkey, MessageDigest::sha256()).unwrap();
-        let cert = builder.build();
+        let cert = build_cert(&["https://not-spiffe.com"], 2);
+        assert_eq!(extract_spiffe_id_from_cert(&cert), None);
+
+        let cert = build_cert(&["SPIFFE://example.org/ns/foo/sa/bar"], 3);
+        assert_eq!(
+            extract_spiffe_id_from_cert(&cert),
+            Some(spiffe_id.to_string())
+        );
+
+        let cert = build_cert(
+            &[
+                "spiffe://example.org/ns/foo/sa/bar",
+                "spiffe://example.org/ns/foo/sa/baz",
+            ],
+            4,
+        );
+        assert_eq!(extract_spiffe_id_from_cert(&cert), None);
+
+        let cert = build_cert(&["spiffe://example.org"], 5);
+        assert_eq!(extract_spiffe_id_from_cert(&cert), None);
+
+        let cert = build_cert(&["spiffe:///ns/foo/sa/bar"], 6);
+        assert_eq!(extract_spiffe_id_from_cert(&cert), None);
+
+        let cert = build_cert(
+            &[
+                "https://not-spiffe.com",
+                "spiffe://example.org/ns/foo/sa/bar",
+            ],
+            7,
+        );
+        assert_eq!(
+            extract_spiffe_id_from_cert(&cert),
+            Some(spiffe_id.to_string())
+        );
+
+        let cert = build_cert(&["spiffe://example.org//"], 8);
+        assert_eq!(extract_spiffe_id_from_cert(&cert), None);
+
+        let cert = build_cert(&["spiffe:///"], 9);
         assert_eq!(extract_spiffe_id_from_cert(&cert), None);
     }
 }

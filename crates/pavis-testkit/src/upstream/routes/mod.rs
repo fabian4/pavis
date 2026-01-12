@@ -8,12 +8,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
-    async_trait,
+    Json, Router, async_trait,
     extract::{ConnectInfo, FromRequestParts, State},
     http::{self, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{any, get, post},
-    Json, Router,
 };
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;

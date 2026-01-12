@@ -12,7 +12,7 @@ pub struct RuntimeState {
 impl RuntimeState {
     pub fn from_config(config: &ValidatedRuntimeConfig) -> anyhow::Result<Self> {
         let router = Arc::new(Router::new(config.routes.clone())?);
-        let upstream_manager = Manager::new(&config.upstreams);
+        let upstream_manager = Manager::new(&config.upstreams)?;
         Ok(Self {
             router,
             upstream_manager,
@@ -24,7 +24,7 @@ impl Default for RuntimeState {
     fn default() -> Self {
         Self {
             router: Arc::new(Router::new(vec![]).expect("empty router")),
-            upstream_manager: Manager::new(&[]),
+            upstream_manager: Manager::new(&[]).expect("empty upstream manager"),
         }
     }
 }

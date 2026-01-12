@@ -44,9 +44,16 @@ upstreams:
 
     tls:
       enabled: true
-      verify_hostname: true
       verify_cert: true
-      sni: "backend.local"
+      verify_hostname: true
+      sni_mode: auto
+      # sni: "backend.local"
+      # ca_bundle_path: "/etc/pavis/certs/upstream-ca.pem"
+      # cert:
+      #   cert_path: "/etc/pavis/certs/client.crt"
+      #   key_path: "/etc/pavis/certs/client.key"
+      #   chain_mode: "none"   # none | embedded | file
+      #   chain_path: "/etc/pavis/certs/client-chain.pem"
 
     endpoints:                # REQUIRED for static discovery
       - address: "127.0.0.1"

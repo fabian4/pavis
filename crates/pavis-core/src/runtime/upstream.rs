@@ -89,10 +89,22 @@ pub enum ConnectionLimit {
 pub enum TlsPolicy {
     Disabled,
     Enabled {
-        mode: TlsVerify,
+        verify: TlsVerify,
         sni: SniName,
         cert: ClientCert,
+        ca: UpstreamCa,
     },
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+#[archive(check_bytes)]
+#[non_exhaustive]
+pub enum ClientCertChain {
+    None,
+    Embedded,
+    File { path: Path },
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
@@ -101,26 +113,43 @@ pub enum TlsPolicy {
 #[non_exhaustive]
 pub enum ClientCert {
     Disabled,
-    Enabled { cert_path: Path, key_path: Path },
+    Enabled {
+        cert_path: Path,
+        key_path: Path,
+        chain: ClientCertChain,
+    },
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
 #[non_exhaustive]
 pub enum TlsVerify {
     Disabled,
-    Cert,
-    CertAndHost,
+    CaOnly,
+    Full,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 #[archive(check_bytes)]
 #[non_exhaustive]
 pub enum SniName {
     Auto,
-    Value(Hostname),
+    Name(Hostname),
+    Disabled,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+#[archive(check_bytes)]
+#[non_exhaustive]
+pub enum UpstreamCa {
+    System,
+    File { path: Path },
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq)]

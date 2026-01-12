@@ -8,6 +8,7 @@ pub struct RouterContext {
     pub sni_override: Option<Hostname>,
     pub start_time: std::time::Instant,
     pub client_identity: Option<String>,
+    pub rbac_denied: bool,
 }
 
 #[cfg(test)]
@@ -35,6 +36,7 @@ mod tests {
             sni_override: None,
             start_time: std::time::Instant::now(),
             client_identity: None,
+            rbac_denied: false,
         };
 
         assert_eq!(

@@ -1,6 +1,8 @@
 use super::load_balance;
 use arc_swap::ArcSwap;
 use pavis_core::{Endpoint, Upstream};
+use pingora::protocols::tls::CaType;
+use pingora::utils::tls::CertKey;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -21,10 +23,20 @@ pub struct Cluster {
     // Co-located state
     pub(crate) rr_counter: AlignedCounter,
     state: ArcSwap<ClusterState>,
+    client_cert_key: Option<Arc<CertKey>>,
+    ca_bundle: Option<Arc<CaType>>,
 }
 
 impl Cluster {
     pub fn new(config: Upstream) -> Self {
+        Self::new_with_client_cert(config, None, None)
+    }
+
+    pub fn new_with_client_cert(
+        config: Upstream,
+        client_cert_key: Option<Arc<CertKey>>,
+        ca_bundle: Option<Arc<CaType>>,
+    ) -> Self {
         let (endpoints, cumulative_weights, total_weight) =
             build_state_parts(config.endpoints.clone());
         let state = ClusterState {
@@ -36,7 +48,17 @@ impl Cluster {
             config,
             rr_counter: AlignedCounter(AtomicUsize::new(0)),
             state: ArcSwap::from_pointee(state),
+            client_cert_key,
+            ca_bundle,
         }
+    }
+
+    pub fn client_cert_key(&self) -> Option<Arc<CertKey>> {
+        self.client_cert_key.clone()
+    }
+
+    pub fn ca_bundle(&self) -> Option<Arc<CaType>> {
+        self.ca_bundle.clone()
     }
 
     pub fn select_endpoint(&self) -> Option<Endpoint> {

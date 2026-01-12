@@ -23,6 +23,10 @@ pub enum CoreValidationError {
     DestinationWeightZero(String, String, String),
     #[error("tls enabled but cert_path/key_path missing")]
     MissingTlsFiles,
+    #[error("upstream '{0}' has verify=full with sni=disabled")]
+    UpstreamTlsSniDisabled(String),
+    #[error("upstream '{0}' has verify=full with sni=auto but no DNS endpoints")]
+    UpstreamTlsAutoSniRequiresDns(String),
     #[error("invalid regex for route '{route}' (host '{host}'): {error}")]
     InvalidRegex {
         host: String,
@@ -99,8 +103,8 @@ mod tests {
         LoadBalancer, LogLevel, Metrics, Path, PathMatch, Pool, Port, Principal, RETRY_FIVE_XX,
         RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction, SampleRate,
         ServiceName, SniName, Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy,
-        TracingProvider, TryTimeout, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
-        WorkerCount,
+        TracingProvider, TryTimeout, Upstream, UpstreamCa, UpstreamId, UpstreamName, VirtualHost,
+        Weight, WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::NonZeroU16;
@@ -141,9 +145,10 @@ mod tests {
                     max: ConnectionLimit::Unlimited,
                 },
                 tls: TlsPolicy::Enabled {
-                    mode: TlsVerify::CertAndHost,
-                    sni: SniName::Value(Hostname("example.com".to_string())),
+                    verify: TlsVerify::Full,
+                    sni: SniName::Name(Hostname("example.com".to_string())),
                     cert: ClientCert::Disabled,
+                    ca: UpstreamCa::System,
                 },
                 endpoints: vec![Endpoint {
                     address: EndpointAddr::Ip {
@@ -197,6 +202,28 @@ mod tests {
     fn valid_config_passes() {
         let cfg = base_config();
         assert!(validate_runtime(cfg.clone()).is_ok());
+    }
+
+    #[test]
+    fn upstream_verify_full_rejects_disabled_sni() {
+        let mut cfg = base_config();
+        if let TlsPolicy::Enabled { sni, .. } = &mut cfg.upstreams[0].tls {
+            *sni = SniName::Disabled;
+        }
+        let err = validate_runtime(cfg).expect_err("expected validation error");
+        assert!(matches!(
+            err,
+            CoreValidationError::UpstreamTlsSniDisabled(_)
+        ));
+    }
+
+    #[test]
+    fn upstream_verify_full_auto_sni_allows_ip_endpoints() {
+        let mut cfg = base_config();
+        if let TlsPolicy::Enabled { sni, .. } = &mut cfg.upstreams[0].tls {
+            *sni = SniName::Auto;
+        }
+        assert!(validate_runtime(cfg).is_ok());
     }
 
     #[test]

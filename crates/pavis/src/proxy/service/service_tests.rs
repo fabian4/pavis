@@ -4,17 +4,19 @@ use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::Telemetry;
 use crate::upstream::Manager;
 use pavis_core::{
-    AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint,
-    EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname, HttpVersion,
-    IdleTimeout, LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, RouteAction, ServiceName, SniName, Telemetry as RuntimeTelemetry,
-    Timeout, TlsPolicy, Upstream, UpstreamId, UpstreamName, VirtualHost, Weight,
+    AccessLogPolicy, ClientCert, ClientCertChain, ConnectTimeout, ConnectionLimit, Destination,
+    Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy,
+    Host, Hostname, HttpVersion, IdleTimeout, LoadBalancer, Metrics, Path, PathMatch, Pool, Port,
+    RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction, ServiceName, SniName,
+    Telemetry as RuntimeTelemetry, Timeout, TlsPolicy, Upstream, UpstreamCa, UpstreamId,
+    UpstreamName, VirtualHost, Weight,
 };
 use pingora::http::ResponseHeader;
 use pingora::prelude::{ProxyHttp, RequestHeader, Session};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU16, NonZeroU32};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -68,6 +70,7 @@ fn apply_route_headers_populates_router_context() {
         sni_override: None,
         start_time: std::time::Instant::now(),
         client_identity: None,
+        rbac_denied: false,
     };
 
     apply_route_headers(&mut ctx, &route);
@@ -96,7 +99,7 @@ fn test_telemetry() -> Arc<Telemetry> {
 
 #[test]
 fn new_ctx_defaults_are_empty() {
-    let manager = Manager::new(&[]);
+    let manager = Manager::new(&[]).expect("manager");
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: manager,
@@ -147,6 +150,67 @@ fn upstream(name: &str, id: u16, port: u16) -> Upstream {
     }
 }
 
+fn write_pem(path: &std::path::Path, bytes: &[u8]) {
+    std::fs::write(path, bytes).expect("write pem");
+}
+
+fn build_self_signed_cert() -> (
+    openssl::pkey::PKey<openssl::pkey::Private>,
+    openssl::x509::X509,
+) {
+    use openssl::asn1::Asn1Time;
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::{X509Builder, X509NameBuilder};
+
+    let rsa = Rsa::generate(2048).expect("client key");
+    let pkey = PKey::from_rsa(rsa).expect("client pkey");
+
+    let mut name = X509NameBuilder::new().expect("client name");
+    name.append_entry_by_text("CN", "client")
+        .expect("client name cn");
+    let name = name.build();
+
+    let mut builder = X509Builder::new().expect("client builder");
+    builder.set_version(2).expect("client version");
+    builder.set_subject_name(&name).expect("client subject");
+    builder.set_issuer_name(&name).expect("client issuer");
+    builder.set_pubkey(&pkey).expect("client pubkey");
+    builder
+        .set_not_before(&Asn1Time::days_from_now(0).expect("client not_before"))
+        .expect("client not_before set");
+    builder
+        .set_not_after(&Asn1Time::days_from_now(365).expect("client not_after"))
+        .expect("client not_after set");
+    builder
+        .sign(&pkey, MessageDigest::sha256())
+        .expect("client sign");
+
+    (pkey, builder.build())
+}
+
+fn mtls_upstream(
+    name: &str,
+    id: u16,
+    port: u16,
+    cert_path: PathBuf,
+    key_path: PathBuf,
+) -> Upstream {
+    let mut upstream = upstream(name, id, port);
+    upstream.tls = TlsPolicy::Enabled {
+        verify: pavis_core::TlsVerify::Disabled,
+        sni: SniName::Auto,
+        cert: ClientCert::Enabled {
+            cert_path: pavis_core::Path(cert_path.to_string_lossy().to_string()),
+            key_path: pavis_core::Path(key_path.to_string_lossy().to_string()),
+            chain: ClientCertChain::None,
+        },
+        ca: UpstreamCa::System,
+    };
+    upstream
+}
+
 #[tokio::test]
 async fn request_filter_selects_weighted_destination() {
     let routes = vec![VirtualHost {
@@ -176,7 +240,8 @@ async fn request_filter_selects_weighted_destination() {
             ]),
         }],
     }];
-    let manager = Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]);
+    let manager =
+        Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]).expect("manager");
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
@@ -207,7 +272,7 @@ async fn request_filter_selects_weighted_destination() {
 
 #[tokio::test]
 async fn request_filter_returns_404_when_no_route_matches() {
-    let manager = Manager::new(&[]);
+    let manager = Manager::new(&[]).expect("manager");
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: manager,
@@ -263,7 +328,7 @@ async fn request_filter_applies_rewrite_policy() {
             }]),
         }],
     }];
-    let manager = Manager::new(&[upstream("backend", 1, 8081)]);
+    let manager = Manager::new(&[upstream("backend", 1, 8081)]).expect("manager");
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
@@ -316,7 +381,8 @@ async fn request_filter_skips_selection_when_no_destinations() {
             action: RouteAction::Forward(Vec::new()),
         }],
     }];
-    let manager = Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]);
+    let manager =
+        Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]).expect("manager");
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
@@ -352,9 +418,10 @@ async fn upstream_peer_defaults_sni() {
             max: ConnectionLimit::Unlimited,
         },
         tls: TlsPolicy::Enabled {
-            mode: pavis_core::TlsVerify::CertAndHost,
-            sni: pavis_core::SniName::Auto,
+            verify: pavis_core::TlsVerify::Full,
+            sni: pavis_core::SniName::Name(Hostname("example.com".to_string())),
             cert: pavis_core::ClientCert::Disabled,
+            ca: UpstreamCa::System,
         },
         endpoints: vec![Endpoint {
             address: EndpointAddr::Ip {
@@ -363,7 +430,8 @@ async fn upstream_peer_defaults_sni() {
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
         }],
-    }]);
+    }])
+    .expect("manager");
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: manager,
@@ -384,6 +452,57 @@ async fn upstream_peer_defaults_sni() {
         .await
         .expect("peer");
     assert!(peer.is_tls());
+    assert_eq!(peer.sni, "example.com");
+}
+
+#[tokio::test]
+async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
+    let manager = Manager::new(&[Upstream {
+        id: UpstreamId(NonZeroU16::new(1).unwrap()),
+        name: UpstreamName("dns".to_string()),
+        discovery: Discovery::Logical,
+        balancer: LoadBalancer::RoundRobin,
+        protocol: HttpVersion::H1,
+        pool: Pool {
+            idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
+            connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
+            max: ConnectionLimit::Unlimited,
+        },
+        tls: TlsPolicy::Enabled {
+            verify: pavis_core::TlsVerify::Full,
+            sni: pavis_core::SniName::Auto,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: UpstreamCa::System,
+        },
+        endpoints: vec![Endpoint {
+            address: EndpointAddr::Dns {
+                host: Hostname("localhost".to_string()),
+                port: Port(NonZeroU16::new(8443).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        }],
+    }])
+    .expect("manager");
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
+        upstream_manager: manager,
+    };
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let proxy = Proxy {
+        state: state_handle,
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, _client) =
+        session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("dns".to_string()));
+
+    let peer = proxy
+        .upstream_peer(&mut session, &mut ctx)
+        .await
+        .expect("peer");
+    assert!(peer.is_tls());
     assert_eq!(peer.sni, "localhost");
 }
 
@@ -391,7 +510,7 @@ async fn upstream_peer_defaults_sni() {
 async fn upstream_response_filter_applies_headers() {
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
-        upstream_manager: Manager::new(&[]),
+        upstream_manager: Manager::new(&[]).expect("manager"),
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -429,7 +548,7 @@ async fn upstream_response_filter_applies_headers() {
 async fn logging_handles_disabled_access_log() {
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
-        upstream_manager: Manager::new(&[]),
+        upstream_manager: Manager::new(&[]).expect("manager"),
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -582,7 +701,7 @@ async fn upstream_peer_fails_when_no_upstream_in_ctx() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[]),
+            upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
     };
@@ -602,7 +721,7 @@ async fn upstream_peer_fails_when_upstream_not_found() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[]),
+            upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
     };
@@ -633,7 +752,8 @@ async fn upstream_peer_fails_when_no_endpoints() {
         },
         tls: TlsPolicy::Disabled,
         endpoints: vec![],
-    }]);
+    }])
+    .expect("manager");
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -683,7 +803,7 @@ async fn test_proxy_logging_with_upstream() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[]),
+            upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
     };
@@ -720,7 +840,7 @@ async fn request_filter_handles_redirect_action() {
 
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).unwrap()),
-        upstream_manager: Manager::new(&[]),
+        upstream_manager: Manager::new(&[]).expect("manager"),
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
@@ -771,7 +891,7 @@ async fn request_filter_handles_direct_action() {
 
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).unwrap()),
-        upstream_manager: Manager::new(&[]),
+        upstream_manager: Manager::new(&[]).expect("manager"),
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
@@ -823,7 +943,7 @@ async fn request_filter_redirect_with_different_status_codes() {
 
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).unwrap()),
-        upstream_manager: Manager::new(&[]),
+        upstream_manager: Manager::new(&[]).expect("manager"),
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
@@ -873,7 +993,7 @@ async fn request_filter_direct_with_custom_status() {
 
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).unwrap()),
-        upstream_manager: Manager::new(&[]),
+        upstream_manager: Manager::new(&[]).expect("manager"),
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
@@ -944,7 +1064,7 @@ async fn test_upstream_request_filter() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[]),
+            upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
     };
@@ -983,27 +1103,28 @@ async fn test_upstream_request_filter() {
 async fn test_upstream_peer_tls_verify_variants() {
     let mut upstream_base = upstream("verify", 1, 8080);
     upstream_base.tls = TlsPolicy::Enabled {
-        mode: pavis_core::TlsVerify::Disabled,
-        sni: SniName::Auto,
+        verify: pavis_core::TlsVerify::Disabled,
+        sni: SniName::Name(Hostname("example.com".to_string())),
         cert: pavis_core::ClientCert::Disabled,
+        ca: UpstreamCa::System,
     };
 
     let test_modes = [
         (pavis_core::TlsVerify::Disabled, false, false),
-        (pavis_core::TlsVerify::Cert, false, true),
-        (pavis_core::TlsVerify::CertAndHost, true, true),
+        (pavis_core::TlsVerify::CaOnly, false, true),
+        (pavis_core::TlsVerify::Full, true, true),
     ];
 
     for (mode, verify_host, verify_cert) in test_modes {
         let mut u = upstream_base.clone();
-        if let TlsPolicy::Enabled { mode: m, .. } = &mut u.tls {
-            *m = mode;
+        if let TlsPolicy::Enabled { verify, .. } = &mut u.tls {
+            *verify = mode;
         }
 
         let proxy = Proxy {
             state: Arc::new(RuntimeStateHandle::new(RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: Manager::new(&[u]),
+                upstream_manager: Manager::new(&[u]).expect("manager"),
             })),
             telemetry: test_telemetry(),
         };
@@ -1016,6 +1137,45 @@ async fn test_upstream_peer_tls_verify_variants() {
         assert_eq!(peer.options.verify_hostname, verify_host);
         assert_eq!(peer.options.verify_cert, verify_cert);
     }
+}
+
+#[tokio::test]
+async fn upstream_peer_sets_client_cert_key() {
+    let mut dir = std::env::temp_dir();
+    dir.push(format!(
+        "pavis_upstream_client_cert_{}",
+        rand::random::<u64>()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+
+    let cert_path = dir.join("client.pem");
+    let key_path = dir.join("client.key");
+
+    let (client_key, client_cert) = build_self_signed_cert();
+    write_pem(&cert_path, &client_cert.to_pem().expect("client cert pem"));
+    write_pem(
+        &key_path,
+        &client_key
+            .private_key_to_pem_pkcs8()
+            .expect("client key pem"),
+    );
+
+    let upstream = mtls_upstream("secure", 1, 8443, cert_path, key_path);
+    let manager = Manager::new(&[upstream]).expect("manager");
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
+            upstream_manager: manager,
+        })),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.upstream_name = Some(UpstreamName("secure".to_string()));
+
+    let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+    assert!(peer.client_cert_key.is_some());
 }
 
 #[tokio::test]
@@ -1056,7 +1216,7 @@ async fn test_request_filter_direct_response_with_headers() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             router: Arc::new(crate::router::Router::new(routes).unwrap()),
-            upstream_manager: Manager::new(&[]),
+            upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
     };
@@ -1099,7 +1259,7 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
             }]),
         }],
     }];
-    let manager = Manager::new(&[upstream("backend", 1, 8081)]);
+    let manager = Manager::new(&[upstream("backend", 1, 8081)]).expect("manager");
     let state = RuntimeState {
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
@@ -1127,7 +1287,7 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
 }
 
 #[tokio::test]
-async fn upstream_peer_dns_unsupported_fails() {
+async fn upstream_peer_dns_supported() {
     let manager = Manager::new(&[Upstream {
         id: UpstreamId(NonZeroU16::new(1).unwrap()),
         name: UpstreamName("dns-upstream".to_string()),
@@ -1147,7 +1307,8 @@ async fn upstream_peer_dns_unsupported_fails() {
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
         }],
-    }]);
+    }])
+    .expect("manager");
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -1159,20 +1320,17 @@ async fn upstream_peer_dns_unsupported_fails() {
     let mut ctx = proxy.new_ctx();
     ctx.upstream_name = Some(UpstreamName("dns-upstream".to_string()));
     let res = proxy.upstream_peer(&mut session, &mut ctx).await;
-    assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("not supported yet"));
+    assert!(res.is_ok());
 }
 
 #[tokio::test]
 async fn upstream_peer_tls_and_pool_variants() {
     let mut upstream = upstream("variants", 1, 8080);
     upstream.tls = TlsPolicy::Enabled {
-        mode: pavis_core::TlsVerify::Cert,
-        sni: pavis_core::SniName::Value(Hostname("custom.sni".to_string())),
-        cert: pavis_core::ClientCert::Enabled {
-            cert_path: Path("c".to_string()),
-            key_path: Path("k".to_string()),
-        },
+        verify: pavis_core::TlsVerify::CaOnly,
+        sni: pavis_core::SniName::Name(Hostname("custom.sni".to_string())),
+        cert: pavis_core::ClientCert::Disabled,
+        ca: UpstreamCa::System,
     };
     upstream.protocol = HttpVersion::H2;
     upstream.pool.idle = IdleTimeout::Enabled(Duration(NonZeroU32::new(1000).unwrap()));
@@ -1181,7 +1339,7 @@ async fn upstream_peer_tls_and_pool_variants() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[upstream]),
+            upstream_manager: Manager::new(&[upstream]).expect("manager"),
         })),
         telemetry: test_telemetry(),
     };
@@ -1217,9 +1375,10 @@ async fn upstream_peer_sni_fallback_warning() {
             max: ConnectionLimit::Unlimited,
         },
         tls: TlsPolicy::Enabled {
-            mode: pavis_core::TlsVerify::Disabled,
+            verify: pavis_core::TlsVerify::Disabled,
             sni: pavis_core::SniName::Auto,
             cert: pavis_core::ClientCert::Disabled,
+            ca: UpstreamCa::System,
         },
         endpoints: vec![Endpoint {
             address: EndpointAddr::Ip {
@@ -1228,7 +1387,8 @@ async fn upstream_peer_sni_fallback_warning() {
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
         }],
-    }]);
+    }])
+    .expect("manager");
 
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
@@ -1245,7 +1405,7 @@ async fn upstream_peer_sni_fallback_warning() {
 
     let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
     assert!(peer.is_tls());
-    assert_eq!(peer.sni, "localhost");
+    assert_eq!(peer.sni, "");
 }
 
 #[tokio::test]
@@ -1262,9 +1422,10 @@ async fn upstream_peer_sni_override_prevents_fallback() {
             max: ConnectionLimit::Unlimited,
         },
         tls: TlsPolicy::Enabled {
-            mode: pavis_core::TlsVerify::Disabled,
+            verify: pavis_core::TlsVerify::Disabled,
             sni: pavis_core::SniName::Auto,
             cert: pavis_core::ClientCert::Disabled,
+            ca: UpstreamCa::System,
         },
         endpoints: vec![Endpoint {
             address: EndpointAddr::Ip {
@@ -1273,7 +1434,8 @@ async fn upstream_peer_sni_override_prevents_fallback() {
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
         }],
-    }]);
+    }])
+    .expect("manager");
 
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
@@ -1309,9 +1471,10 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
             max: ConnectionLimit::Unlimited,
         },
         tls: TlsPolicy::Enabled {
-            mode: pavis_core::TlsVerify::Disabled,
-            sni: pavis_core::SniName::Value(Hostname("explicit.com".to_string())),
+            verify: pavis_core::TlsVerify::Disabled,
+            sni: pavis_core::SniName::Name(Hostname("explicit.com".to_string())),
             cert: pavis_core::ClientCert::Disabled,
+            ca: UpstreamCa::System,
         },
         endpoints: vec![Endpoint {
             address: EndpointAddr::Ip {
@@ -1320,7 +1483,8 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
         }],
-    }]);
+    }])
+    .expect("manager");
 
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
@@ -1360,4 +1524,143 @@ fn test_calculate_path_rewrite_invalid_uri() {
         action: RouteAction::Forward(vec![]),
     };
     assert!(calculate_path_rewrite(&route, "/", None).is_none());
+}
+
+#[test]
+fn test_is_authorized_principal_variants() {
+    let any = pavis_core::Principal::Any;
+    let auth = pavis_core::Principal::Authenticated {
+        spiffe: "spiffe://cluster/ns/prod/sa/app1".to_string(),
+    };
+    let prefix = pavis_core::Principal::Prefix {
+        prefix: "spiffe://cluster/ns/prod/sa/".to_string(),
+    };
+
+    assert!(super::is_authorized(&any, None));
+    assert!(super::is_authorized(
+        &any,
+        Some("spiffe://example.org/ns/foo/sa/bar")
+    ));
+
+    assert!(super::is_authorized(
+        &auth,
+        Some("spiffe://cluster/ns/prod/sa/app1")
+    ));
+    assert!(!super::is_authorized(
+        &auth,
+        Some("spiffe://cluster/ns/prod/sa/app2")
+    ));
+    assert!(!super::is_authorized(&auth, None));
+
+    assert!(super::is_authorized(
+        &prefix,
+        Some("spiffe://cluster/ns/prod/sa/app1")
+    ));
+    assert!(!super::is_authorized(
+        &prefix,
+        Some("spiffe://cluster/ns/dev/sa/app1")
+    ));
+    assert!(!super::is_authorized(&prefix, None));
+}
+
+#[tokio::test]
+async fn request_filter_denies_when_principal_not_any() {
+    let routes = vec![VirtualHost {
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Exact {
+                path: Path("/secure".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
+            principal: pavis_core::Principal::Authenticated {
+                spiffe: "spiffe://cluster/ns/prod/sa/app1".to_string(),
+            },
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
+            action: RouteAction::Forward(vec![Destination {
+                upstream: UpstreamName("backend".to_string()),
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            }]),
+        }],
+    }];
+    let manager = Manager::new(&[upstream("backend", 1, 8081)]).expect("manager");
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).expect("routes")),
+        upstream_manager: manager,
+    };
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(state)),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, mut client) =
+        session_for_request(b"GET /secure HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    let should_respond = proxy
+        .request_filter(&mut session, &mut ctx)
+        .await
+        .expect("request filter");
+    assert!(should_respond);
+    assert!(ctx.upstream_name.is_none());
+
+    let mut buf = [0u8; 256];
+    let read = client.read(&mut buf).await.expect("read response");
+    let body = String::from_utf8_lossy(&buf[..read]);
+    assert!(body.contains("403"));
+}
+
+#[tokio::test]
+async fn request_filter_allows_with_matching_identity() {
+    let routes = vec![VirtualHost {
+        host: Host("*".to_string()),
+        paths: vec![pavis_core::Route {
+            matcher: PathMatch::Exact {
+                path: Path("/secure".to_string()),
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: HeadersPolicy::Disabled.into(),
+            response_headers: HeadersPolicy::Disabled.into(),
+            principal: pavis_core::Principal::Authenticated {
+                spiffe: "spiffe://cluster/ns/prod/sa/app1".to_string(),
+            },
+            rewrite: Rewrite {
+                path: RewritePath::Disabled,
+                host: RewriteHost::Disabled,
+            },
+            action: RouteAction::Forward(vec![Destination {
+                upstream: UpstreamName("backend".to_string()),
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            }]),
+        }],
+    }];
+    let manager = Manager::new(&[upstream("backend", 1, 8081)]).expect("manager");
+    let state = RuntimeState {
+        router: Arc::new(crate::router::Router::new(routes).expect("routes")),
+        upstream_manager: manager,
+    };
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(state)),
+        telemetry: test_telemetry(),
+    };
+
+    let (mut session, _client) =
+        session_for_request(b"GET /secure HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.client_identity = Some("spiffe://cluster/ns/prod/sa/app1".to_string());
+
+    let should_respond = proxy
+        .request_filter(&mut session, &mut ctx)
+        .await
+        .expect("request filter");
+    assert!(!should_respond);
+    assert_eq!(
+        ctx.upstream_name.as_ref().map(|v| v.0.as_str()),
+        Some("backend")
+    );
 }

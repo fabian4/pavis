@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use pingora::listeners::tls::TlsSettings;
 use pingora::prelude::*;
 use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
+use pingora::tls::ssl::SslVerifyMode;
+use pingora::tls::x509::X509Name;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +37,28 @@ fn log_level_to_str(level: LogLevel) -> &'static str {
         #[allow(unreachable_patterns)]
         _ => "info", // Default to info for unknown log levels
     }
+}
+
+fn configure_client_auth(
+    tls_settings: &mut TlsSettings,
+    ca_path: &pavis_core::Path,
+    require_client_cert: bool,
+) -> Result<()> {
+    let ca_list = X509Name::load_client_ca_file(&ca_path.0)
+        .with_context(|| format!("Failed to load client CA list from {}", ca_path.0))?;
+    tls_settings.set_client_ca_list(ca_list);
+
+    tls_settings
+        .set_ca_file(&ca_path.0)
+        .with_context(|| format!("Failed to load client CA file {}", ca_path.0))?;
+
+    let mut verify_mode = SslVerifyMode::PEER;
+    if require_client_cert {
+        verify_mode |= SslVerifyMode::FAIL_IF_NO_PEER_CERT;
+    }
+    tls_settings.set_verify(verify_mode);
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -145,9 +170,10 @@ fn main() -> Result<()> {
                 key_path,
                 client_auth,
             } => {
-                proxy_service
-                    .add_tls(&listen_addr_str, &cert_path.0, &key_path.0)
-                    .with_context(|| format!("Failed to add TLS listener: {}", listener.name.0))?;
+                let mut tls_settings = TlsSettings::intermediate(&cert_path.0, &key_path.0)
+                    .with_context(|| {
+                        format!("Failed to configure TLS for listener {}", listener.name.0)
+                    })?;
 
                 // Configure client certificate authentication
                 match client_auth {
@@ -155,29 +181,26 @@ fn main() -> Result<()> {
                         // No client certificate verification
                     }
                     pavis_core::ClientAuth::Optional { ca_path } => {
-                        // TODO: Configure SSL_VERIFY_PEER without SSL_VERIFY_FAIL_IF_NO_PEER_CERT
-                        // This allows the handshake to succeed even if the client doesn't present a cert
-                        // The identity will be None in the RouterContext if no cert is provided
                         tracing::debug!(
                             ca_path = %ca_path.0,
                             "Configuring optional client certificate authentication"
                         );
-                        // tls_settings = tls_settings.enable_client_cert_verification(&ca_path.0, false)?;
+                        configure_client_auth(&mut tls_settings, ca_path, false)?;
                     }
                     pavis_core::ClientAuth::Required { ca_path } => {
-                        // TODO: Configure SSL_VERIFY_PEER with SSL_VERIFY_FAIL_IF_NO_PEER_CERT
-                        // This requires the client to present a valid certificate
                         tracing::debug!(
                             ca_path = %ca_path.0,
                             "Configuring required client certificate authentication"
                         );
-                        // tls_settings = tls_settings.enable_client_cert_verification(&ca_path.0, true)?;
+                        configure_client_auth(&mut tls_settings, ca_path, true)?;
                     }
                     #[allow(unreachable_patterns)]
                     &_ => {
                         // Unknown client auth configuration
                     }
                 }
+
+                proxy_service.add_tls_with_settings(&listen_addr_str, None, tls_settings);
             }
             #[allow(unreachable_patterns)]
             &_ => {
@@ -206,6 +229,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::log_level_to_str;
     use pavis_core::{AccessLogPolicy, LogLevel, Path};
+    use std::fs;
 
     #[test]
     fn log_level_to_str_defaults_to_info() {
@@ -280,5 +304,123 @@ mod tests {
             _ => "off".to_string(),
         };
         assert_eq!(desc, "file:/tmp/test");
+    }
+
+    fn write_pem(path: &std::path::Path, bytes: &[u8]) {
+        fs::write(path, bytes).expect("write pem");
+    }
+
+    fn build_ca_cert() -> (
+        openssl::pkey::PKey<openssl::pkey::Private>,
+        openssl::x509::X509,
+    ) {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        let rsa = Rsa::generate(2048).expect("generate ca key");
+        let pkey = PKey::from_rsa(rsa).expect("ca pkey");
+
+        let mut name = X509NameBuilder::new().expect("ca name");
+        name.append_entry_by_text("CN", "Pavis Test CA")
+            .expect("ca name cn");
+        let name = name.build();
+
+        let mut builder = X509Builder::new().expect("ca builder");
+        builder.set_version(2).expect("ca version");
+        builder.set_subject_name(&name).expect("ca subject");
+        builder.set_issuer_name(&name).expect("ca issuer");
+        builder.set_pubkey(&pkey).expect("ca pubkey");
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).expect("ca not_before"))
+            .expect("ca not_before set");
+        builder
+            .set_not_after(&Asn1Time::days_from_now(365).expect("ca not_after"))
+            .expect("ca not_after set");
+        builder
+            .sign(&pkey, MessageDigest::sha256())
+            .expect("ca sign");
+
+        (pkey, builder.build())
+    }
+
+    fn build_server_cert(
+        ca_key: &openssl::pkey::PKey<openssl::pkey::Private>,
+        ca_cert: &openssl::x509::X509,
+    ) -> (
+        openssl::pkey::PKey<openssl::pkey::Private>,
+        openssl::x509::X509,
+    ) {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509Builder, X509NameBuilder};
+
+        let rsa = Rsa::generate(2048).expect("server key");
+        let pkey = PKey::from_rsa(rsa).expect("server pkey");
+
+        let mut name = X509NameBuilder::new().expect("server name");
+        name.append_entry_by_text("CN", "localhost")
+            .expect("server name cn");
+        let name = name.build();
+
+        let mut builder = X509Builder::new().expect("server builder");
+        builder.set_version(2).expect("server version");
+        builder.set_subject_name(&name).expect("server subject");
+        builder
+            .set_issuer_name(ca_cert.subject_name())
+            .expect("server issuer");
+        builder.set_pubkey(&pkey).expect("server pubkey");
+        builder
+            .set_not_before(&Asn1Time::days_from_now(0).expect("server not_before"))
+            .expect("server not_before set");
+        builder
+            .set_not_after(&Asn1Time::days_from_now(365).expect("server not_after"))
+            .expect("server not_after set");
+        builder
+            .sign(ca_key, MessageDigest::sha256())
+            .expect("server sign");
+
+        (pkey, builder.build())
+    }
+
+    #[test]
+    fn configure_client_auth_accepts_valid_ca() {
+        use super::configure_client_auth;
+        use pingora::listeners::tls::TlsSettings;
+
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("pavis_test_ca_{}", rand::random::<u64>()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+
+        let ca_path = dir.join("ca.pem");
+        let cert_path = dir.join("server.pem");
+        let key_path = dir.join("server.key");
+
+        let (ca_key, ca_cert) = build_ca_cert();
+        let (server_key, server_cert) = build_server_cert(&ca_key, &ca_cert);
+
+        write_pem(&ca_path, &ca_cert.to_pem().expect("ca pem"));
+        write_pem(&cert_path, &server_cert.to_pem().expect("server cert pem"));
+        write_pem(
+            &key_path,
+            &server_key
+                .private_key_to_pem_pkcs8()
+                .expect("server key pem"),
+        );
+
+        let mut tls_settings = TlsSettings::intermediate(
+            cert_path.to_str().expect("cert path"),
+            key_path.to_str().expect("key path"),
+        )
+        .expect("tls settings");
+
+        let ca_path = Path(ca_path.to_string_lossy().into_owned());
+        configure_client_auth(&mut tls_settings, &ca_path, true).expect("client auth");
+
+        fs::remove_dir_all(&dir).ok();
     }
 }

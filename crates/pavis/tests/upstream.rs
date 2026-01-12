@@ -50,7 +50,7 @@ fn test_upstream_load_balancer_round_robin() {
         weight: Weight(NonZeroU16::new(1).unwrap()),
     });
 
-    let manager = Manager::new(&config.upstreams);
+    let manager = Manager::new(&config.upstreams).expect("manager");
     let cluster = manager.get("backend-rr").expect("Cluster not found");
 
     let ep1 = cluster.select_endpoint().unwrap();
@@ -92,7 +92,7 @@ fn test_upstream_empty_endpoints() {
         endpoints: vec![],
     });
 
-    let manager = Manager::new(&config.upstreams);
+    let manager = Manager::new(&config.upstreams).expect("manager");
     let cluster = manager.get("empty-upstream").expect("Cluster not found");
     assert!(cluster.select_endpoint().is_none());
 }
@@ -106,17 +106,18 @@ fn test_upstream_tls_config() {
         LoadBalancer::Random,
         443,
         TlsPolicy::Enabled {
-            mode: TlsVerify::Disabled,
-            sni: pavis_core::SniName::Value(pavis_core::Hostname("secure.internal".to_string())),
+            verify: TlsVerify::Disabled,
+            sni: pavis_core::SniName::Name(pavis_core::Hostname("secure.internal".to_string())),
             cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
         },
     ));
 
     let upstream = &config.upstreams[0];
 
     match upstream.tls {
-        TlsPolicy::Enabled { mode, .. } => {
-            assert_eq!(mode, TlsVerify::Disabled);
+        TlsPolicy::Enabled { verify, .. } => {
+            assert_eq!(verify, TlsVerify::Disabled);
         }
         TlsPolicy::Disabled => panic!("tls not enabled"),
         _ => panic!("unknown tls policy"),

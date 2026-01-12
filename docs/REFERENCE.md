@@ -114,6 +114,11 @@ The following rules are mandatory for code review:
 - Regex compilation happens at runtime load/swap and is not stored in the schema.
 - **Durations**: YAML durations (`idle`, `connect`, `timeout`, `per_try`) accept human-friendly strings and are materialized into milliseconds in `RuntimeConfig`.
 - **Weights**: Endpoint weights and destination weights are `NonZeroU16` in the runtime config.
+- **Upstream TLS**:
+  - `TlsVerify::Full` requires SNI `Auto` or `Name`; `Disabled` is invalid.
+  - `SniName::Auto` resolves to a host rewrite override when present, else a DNS endpoint hostname; IP endpoints resolve to Disabled.
+  - If Auto resolves to Disabled with `verify=Full`, the config is rejected.
+  - `tls.cert.chain_mode` controls client certificate chain handling: `none|embedded|file`. `chain_path` is only valid for `file`.
 
 ### 1.3 RuntimeConfig (Rust)
 

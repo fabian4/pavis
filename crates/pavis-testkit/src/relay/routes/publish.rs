@@ -1,11 +1,11 @@
 use crate::common::cli::RelayArgs;
 use crate::relay::state::RelayState;
 use axum::{
+    Json,
     body::{self, Body},
     extract::State,
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
 
 pub async fn handler(

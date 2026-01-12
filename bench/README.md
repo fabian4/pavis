@@ -5,7 +5,8 @@ The Pavis Benchmark Suite is a comprehensive performance testing framework desig
 ## 📚 Documentation Structure
 
 - **[README.md](./README.md)**: Overview, Quickstart, and Usage Guide (this file).
-- **[DESIGN.md](./DESIGN.md)**: Detailed test case definitions, environment setup, and methodology.
+- **[Methodology](../docs/benchmark/METHODOLOGY.md)**: 7-dimension framework for proxy evaluation.
+- **[Benchmark Cases](../docs/benchmark/CASES.md)**: Concrete test case definitions and coverage mapping.
 - **[FAIRNESS.md](./FAIRNESS.md)**: Proxy configuration comparison and fairness guarantees.
 
 ---
@@ -111,7 +112,6 @@ BENCHMARK_RUNS=5 make benchmark
 ```
 bench/
 ├── README.md              # This guide
-├── DESIGN.md              # Methodology & Environment details
 ├── FAIRNESS.md            # Config comparison & Fairness checklist
 ├── run.sh                 # Main benchmark runner script
 ├── docker-compose.yaml    # Container definitions

@@ -107,6 +107,7 @@ impl AccessLog {
         session: &mut Session,
         upstream_name: Option<&str>,
         start_time: std::time::Instant,
+        rbac_denied: bool,
     ) {
         if !self.enabled {
             return;
@@ -147,6 +148,7 @@ impl AccessLog {
             bytes_sent,
             client_ip,
             request_id: request_id.to_string(),
+            rbac_denied,
         };
 
         // Non-blocking send (lossy if full)
@@ -165,6 +167,7 @@ struct LogEntry {
     bytes_sent: usize,
     client_ip: Option<SocketAddr>,
     request_id: String,
+    rbac_denied: bool,
 }
 
 fn format_log_line(entry: &LogEntry) -> String {
@@ -173,8 +176,13 @@ fn format_log_line(entry: &LogEntry) -> String {
         .as_ref()
         .map(|addr| addr.to_string())
         .unwrap_or_else(|| "-".to_string());
+    let rbac_flag = if entry.rbac_denied {
+        "rbac=deny"
+    } else {
+        "rbac=allow"
+    };
     format!(
-        "{} {} {} {} {} {} {} {} {} {}\n",
+        "{} {} {} {} {} {} {} {} {} {} {}\n",
         entry.timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ"),
         entry.method.as_str(),
         entry.host,
@@ -184,7 +192,8 @@ fn format_log_line(entry: &LogEntry) -> String {
         entry.response_time,
         entry.bytes_sent,
         client_ip,
-        entry.request_id
+        entry.request_id,
+        rbac_flag
     )
 }
 
@@ -224,8 +233,11 @@ mod tests {
             bytes_sent: 512,
             client_ip: Some("127.0.0.1:1234".parse().unwrap()),
             request_id: "req-123".to_string(),
+            rbac_denied: false,
         });
-        assert!(line.contains("GET example.com /api 200 backend-1 100 512 127.0.0.1:1234 req-123"));
+        assert!(line.contains(
+            "GET example.com /api 200 backend-1 100 512 127.0.0.1:1234 req-123 rbac=allow"
+        ));
     }
 
     #[tokio::test]
@@ -248,6 +260,7 @@ mod tests {
             bytes_sent: 512,
             client_ip: Some("127.0.0.1:1234".parse().unwrap()),
             request_id: "req-123".to_string(),
+            rbac_denied: false,
         };
         let expected = format_log_line(&entry);
         let _ = access_log.tx.try_send(entry);
@@ -286,7 +299,12 @@ mod tests {
         session.read_request().await.expect("read request");
 
         access_log
-            .log(&mut session, Some("upstream-a"), std::time::Instant::now())
+            .log(
+                &mut session,
+                Some("upstream-a"),
+                std::time::Instant::now(),
+                false,
+            )
             .await;
 
         let line = tokio::time::timeout(Duration::from_secs(1), rx.recv())
@@ -298,5 +316,6 @@ mod tests {
         assert_eq!(line.path, "/api");
         assert_eq!(line.upstream, "upstream-a");
         assert_eq!(line.request_id, "req-1");
+        assert!(!line.rbac_denied);
     }
 }

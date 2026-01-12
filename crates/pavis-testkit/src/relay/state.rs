@@ -3,7 +3,7 @@ use crate::relay::types::ArtifactMeta;
 use axum::extract::FromRef;
 use bytes::Bytes;
 use std::sync::Arc;
-use tokio::sync::{watch, RwLock};
+use tokio::sync::{RwLock, watch};
 
 #[derive(Clone, FromRef)]
 pub struct AppState {

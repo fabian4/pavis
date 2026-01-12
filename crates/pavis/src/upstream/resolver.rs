@@ -330,7 +330,7 @@ mod tests {
             }],
         };
 
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -363,7 +363,7 @@ mod tests {
             endpoints: vec![],
         };
 
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -396,7 +396,7 @@ mod tests {
             endpoints: vec![],
         };
 
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -440,7 +440,7 @@ mod tests {
             }],
         };
 
-        let manager = crate::upstream::Manager::new(&[config]);
+        let manager = crate::upstream::Manager::new(&[config]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -464,7 +464,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_dns_success() {
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -482,7 +482,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_dns_failure() {
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -500,7 +500,7 @@ mod tests {
         unsafe {
             std::env::set_var("PAVIS_DNS_SERVER", "1.2.3.4:53");
         }
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -548,7 +548,7 @@ mod tests {
             ],
         };
 
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -579,7 +579,7 @@ mod tests {
             endpoints: vec![],
         };
 
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -615,7 +615,7 @@ mod tests {
             endpoints: vec![],
         };
 
-        let manager = crate::upstream::Manager::new(&[config]);
+        let manager = crate::upstream::Manager::new(&[config]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -653,7 +653,7 @@ mod tests {
             }],
         };
 
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
@@ -672,7 +672,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upstream_resolver_service_lifecycle() {
-        let manager = crate::upstream::Manager::new(&[]);
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),

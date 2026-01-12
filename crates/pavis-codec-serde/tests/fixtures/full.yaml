@@ -6,6 +6,7 @@ upstreams:
   - name: "backend"
     tls:
       enabled: true
+      sni: "backend.local"
     endpoints:
       - address: "127.0.0.1"
         port: 8081

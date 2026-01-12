@@ -349,16 +349,6 @@ main() {
   require_cmd docker
   require_cmd awk
 
-  # Check if bench-loadgen is available (built by bench/run.sh)
-  if [ "${DRY_RUN:-}" != "1" ] && [ "${DRY_RUN:-}" != "true" ]; then
-    if [ -z "${LOADGEN_BIN:-}" ] || [ ! -x "${LOADGEN_BIN}" ]; then
-      echo "error: bench-loadgen not found at ${LOADGEN_BIN:-not set}" >&2
-      echo "Please run this script via bench/run.sh or build manually:" >&2
-      echo "  cargo build -p pavis-benchkit --bin bench-loadgen --release" >&2
-      exit 1
-    fi
-  fi
-
   mkdir -p "$BASE_DIR"
 
   start_compose

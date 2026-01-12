@@ -26,8 +26,16 @@ upstreams:
       connection_timeout: "5s"  # Connection timeout (default: 5s)
     # tls:
     #   enabled: true
+    #   verify_cert: true
     #   verify_hostname: true
-    #   sni: "backend.example.com"
+    #   sni_mode: auto
+    #   # sni: "backend.example.com"
+    #   # ca_bundle_path: "/etc/pavis/certs/upstream-ca.pem"
+    #   # cert:
+    #   #   cert_path: "/etc/pavis/certs/client.crt"
+    #   #   key_path: "/etc/pavis/certs/client.key"
+    #   #   chain_mode: "none" # none | embedded | file
+    #   #   chain_path: "/etc/pavis/certs/client-chain.pem"
     # circuit_breaker: # Not supported yet
     #   max_connections: 1024
     #   max_pending_requests: 500

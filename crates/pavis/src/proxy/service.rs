@@ -1,11 +1,13 @@
 use crate::proxy::context::RouterContext;
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
+use crate::proxy::identity::IdentityExtractor;
 use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
 use async_trait::async_trait;
 use http::Uri;
 use pavis_core::{
-    ConnectTimeout, EndpointAddr, HeadersPolicy, Hostname, HttpVersion, PathMatch, RouteAction,
+    ConnectTimeout, Discovery, EndpointAddr, HeadersPolicy, Hostname, HttpVersion, PathMatch,
+    Principal, RouteAction,
 };
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
@@ -14,6 +16,7 @@ use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
 use std::borrow::Cow;
 use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -107,6 +110,104 @@ fn calculate_path_rewrite(
     }
 }
 
+fn extract_client_identity(session: &Session) -> Option<String> {
+    let ssl = session.as_downstream().stream()?.get_ssl()?;
+    IdentityExtractor::default().extract(ssl)
+}
+
+fn resolve_sni(
+    sni: &pavis_core::SniName,
+    authority_override: Option<&Hostname>,
+    endpoint_host: Option<&Hostname>,
+) -> Option<Hostname> {
+    match sni {
+        pavis_core::SniName::Name(name) => Some(name.clone()),
+        pavis_core::SniName::Auto => authority_override
+            .cloned()
+            .or_else(|| endpoint_host.cloned()),
+        pavis_core::SniName::Disabled => None,
+        #[allow(unreachable_patterns)]
+        _ => None,
+    }
+}
+
+fn endpoint_host_for_sni(
+    upstream: &pavis_core::Upstream,
+    endpoint: &pavis_core::Endpoint,
+) -> Option<Hostname> {
+    match &endpoint.address {
+        EndpointAddr::Dns { host, .. } => Some(host.clone()),
+        EndpointAddr::Ip { .. } => {
+            if matches!(
+                upstream.discovery,
+                Discovery::Logical | Discovery::Strict { .. }
+            ) {
+                let mut selected: Option<&Hostname> = None;
+                for endpoint in &upstream.endpoints {
+                    if let EndpointAddr::Dns { host, .. } = &endpoint.address {
+                        match selected {
+                            None => selected = Some(host),
+                            Some(existing) => {
+                                if existing.0 != host.0 {
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                }
+                selected.cloned()
+            } else {
+                None
+            }
+        }
+        #[allow(unreachable_patterns)]
+        _ => None,
+    }
+}
+
+fn resolve_endpoint_addr(endpoint: &pavis_core::Endpoint) -> Result<SocketAddr> {
+    match &endpoint.address {
+        EndpointAddr::Ip { address, port } => Ok(SocketAddr::new(*address, port.0.get())),
+        EndpointAddr::Dns { host, port } => {
+            let mut addrs = match (host.0.as_str(), port.0.get()).to_socket_addrs() {
+                Ok(addrs) => addrs,
+                Err(err) => {
+                    return Error::e_explain(
+                        InternalError,
+                        format!("DNS resolution failed for {}:{} ({})", host.0, port.0, err),
+                    );
+                }
+            };
+            match addrs.next() {
+                Some(addr) => Ok(addr),
+                None => Error::e_explain(
+                    InternalError,
+                    format!(
+                        "DNS resolution returned no addresses for {}:{}",
+                        host.0, port.0
+                    ),
+                ),
+            }
+        }
+        #[allow(unreachable_patterns)]
+        _ => Error::e_explain(InternalError, "Unknown endpoint address type"),
+    }
+}
+
+fn is_authorized(principal: &Principal, client_identity: Option<&str>) -> bool {
+    match principal {
+        Principal::Any => true,
+        Principal::Authenticated { spiffe } => {
+            client_identity.is_some_and(|identity| identity == spiffe.as_str())
+        }
+        Principal::Prefix { prefix } => {
+            client_identity.is_some_and(|identity| identity.starts_with(prefix.as_str()))
+        }
+        #[allow(unreachable_patterns)]
+        _ => false,
+    }
+}
+
 #[async_trait]
 impl ProxyHttp for Proxy {
     type CTX = RouterContext;
@@ -119,7 +220,15 @@ impl ProxyHttp for Proxy {
             sni_override: None,
             start_time: std::time::Instant::now(),
             client_identity: None,
+            rbac_denied: false,
         }
+    }
+
+    async fn early_request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<()> {
+        if ctx.client_identity.is_none() {
+            ctx.client_identity = extract_client_identity(session);
+        }
+        Ok(())
     }
 
     async fn upstream_peer(
@@ -146,19 +255,8 @@ impl ProxyHttp for Proxy {
 
         let upstream = &cluster.config;
 
-        let addr = match &endpoint.address {
-            EndpointAddr::Ip { address, port } => SocketAddr::new(*address, port.0.get()),
-            EndpointAddr::Dns { host, port } => {
-                return Error::e_explain(
-                    InternalError,
-                    format!("DNS upstream {}:{} not supported yet", host.0, port.0),
-                );
-            }
-            #[allow(unreachable_patterns)]
-            &_ => {
-                return Error::e_explain(InternalError, "Unknown endpoint address type");
-            }
-        };
+        let addr = resolve_endpoint_addr(&endpoint)?;
+        let endpoint_host = endpoint_host_for_sni(upstream, &endpoint);
 
         tracing::debug!(
             upstream = %upstream_name.0,
@@ -168,32 +266,39 @@ impl ProxyHttp for Proxy {
             "forwarding request"
         );
 
-        let (use_tls, sni, verify_mode, cert) = match &upstream.tls {
-            pavis_core::TlsPolicy::Disabled => (false, None, None, None),
-            pavis_core::TlsPolicy::Enabled { mode, sni, cert } => {
+        let (use_tls, sni, verify_mode, cert, ca) = match &upstream.tls {
+            pavis_core::TlsPolicy::Disabled => (false, None, None, None, None),
+            pavis_core::TlsPolicy::Enabled {
+                verify,
+                sni,
+                cert,
+                ca,
+            } => {
                 let sni_value = match sni {
-                    pavis_core::SniName::Auto => ctx.sni_override.clone(),
-                    pavis_core::SniName::Value(name) => Some(name.clone()),
-                    #[allow(unreachable_patterns)]
-                    &_ => None,
+                    pavis_core::SniName::Name(name) => {
+                        tracing::info!(
+                            upstream = %upstream_name.0,
+                            sni = %name.0,
+                            "Using explicit SNI for upstream"
+                        );
+                        Some(name.clone())
+                    }
+                    _ => resolve_sni(sni, ctx.sni_override.as_ref(), endpoint_host.as_ref()),
                 };
-                (true, sni_value, Some(mode), Some(cert))
+                (true, sni_value, Some(*verify), Some(cert), Some(ca))
             }
             #[allow(unreachable_patterns)]
-            &_ => (false, None, None, None),
+            _ => (false, None, None, None, None),
         };
 
-        let sni_value = sni.or_else(|| ctx.sni_override.clone()).unwrap_or_else(|| {
-            if use_tls {
-                tracing::warn!(
-                    upstream = %upstream_name.0,
-                    "No SNI configured for TLS upstream, falling back to 'localhost'"
-                );
-            }
-            Hostname("localhost".to_string())
-        });
-
-        let mut peer = HttpPeer::new(addr, use_tls, sni_value.0);
+        if use_tls && matches!(verify_mode, Some(pavis_core::TlsVerify::Full)) && sni.is_none() {
+            return Error::e_explain(
+                InternalError,
+                "TLS verify=full requires SNI (auto or explicit)",
+            );
+        }
+        let sni_string = sni.map(|name| name.0).unwrap_or_else(String::new);
+        let mut peer = HttpPeer::new(addr, use_tls, sni_string);
 
         if let Some(mode) = verify_mode {
             match mode {
@@ -201,21 +306,33 @@ impl ProxyHttp for Proxy {
                     peer.options.verify_hostname = false;
                     peer.options.verify_cert = false;
                 }
-                pavis_core::TlsVerify::Cert => {
+                pavis_core::TlsVerify::CaOnly => {
                     peer.options.verify_hostname = false;
                     peer.options.verify_cert = true;
                 }
-                pavis_core::TlsVerify::CertAndHost => {
+                pavis_core::TlsVerify::Full => {
                     peer.options.verify_hostname = true;
                     peer.options.verify_cert = true;
                 }
                 #[allow(unreachable_patterns)]
-                &_ => {
+                _ => {
                     // Default to disabled for unknown verify modes
                     peer.options.verify_hostname = false;
                     peer.options.verify_cert = false;
                 }
             }
+        }
+
+        if let Some(ca) = ca
+            && matches!(*ca, pavis_core::UpstreamCa::File { .. })
+        {
+            let ca_bundle = match cluster.ca_bundle() {
+                Some(bundle) => bundle,
+                None => {
+                    return Error::e_explain(InternalError, "Upstream CA bundle not loaded");
+                }
+            };
+            peer.options.ca = Some(ca_bundle);
         }
 
         // Configure client certificate for outbound mTLS
@@ -227,18 +344,20 @@ impl ProxyHttp for Proxy {
                 pavis_core::ClientCert::Enabled {
                     cert_path,
                     key_path,
+                    ..
                 } => {
-                    // TODO: Load and configure client certificate for upstream connection
-                    // This allows the sidecar to authenticate itself to the upstream service
                     tracing::debug!(
                         cert_path = %cert_path.0,
                         key_path = %key_path.0,
                         "Configuring client certificate for upstream connection"
                     );
-                    // peer.options.set_client_cert(&cert_path.0, &key_path.0)?;
+                    let client_cert_key = cluster.client_cert_key().ok_or_else(|| {
+                        Error::explain(InternalError, "Client certificate not loaded")
+                    })?;
+                    peer.client_cert_key = Some(client_cert_key);
                 }
                 #[allow(unreachable_patterns)]
-                &_ => {
+                _ => {
                     // Unknown client cert configuration
                 }
             }
@@ -292,6 +411,20 @@ impl ProxyHttp for Proxy {
             tracing::trace!(host = %vhost.host.0, path = %route_path(route), "matched route");
 
             apply_route_headers(ctx, route);
+            if ctx.client_identity.is_none() {
+                ctx.client_identity = extract_client_identity(session);
+            }
+            if !is_authorized(&route.principal, ctx.client_identity.as_deref()) {
+                ctx.rbac_denied = true;
+                tracing::info!(
+                    host = %vhost.host.0,
+                    route = %route_path(route),
+                    principal = ?route.principal,
+                    "RBAC denied request"
+                );
+                let _ = session.respond_error(403).await;
+                return Ok(true);
+            }
 
             let host_rewrite = match &route.rewrite.host {
                 pavis_core::RewriteHost::Literal { host } => Some(host),
@@ -399,6 +532,7 @@ impl ProxyHttp for Proxy {
                 session,
                 ctx.upstream_name.as_ref().map(|name| name.0.as_str()),
                 ctx.start_time,
+                ctx.rbac_denied,
             )
             .await;
     }

@@ -2,9 +2,14 @@ use anyhow::{Context, Result};
 use std::net::IpAddr;
 use std::num::{NonZeroU16, NonZeroU32};
 
-use pavis_core::{ClientCert, ConnectTimeout, Discovery, EndpointAddr, Path, TlsVerify};
+use pavis_core::{
+    ClientCert, ClientCertChain, ConnectTimeout, Discovery, EndpointAddr, Path, SniName, TlsVerify,
+    UpstreamCa,
+};
 
-use crate::config::types::{ClientCertConfig, Endpoint, Upstream, UpstreamTlsConfig};
+use crate::config::types::{
+    ClientCertChainMode, ClientCertConfig, Endpoint, SniMode, Upstream, UpstreamTlsConfig,
+};
 
 pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Upstream>> {
     let mut runtime_upstreams = Vec::new();
@@ -75,27 +80,125 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
                 } else {
                     let verify_cert = t.verify_cert.unwrap_or(true);
                     let verify_hostname = t.verify_hostname.unwrap_or(true);
-                    let mode = match (verify_cert, verify_hostname) {
+                    let verify = match (verify_cert, verify_hostname) {
                         (false, _) => TlsVerify::Disabled,
-                        (true, false) => TlsVerify::Cert,
-                        (true, true) => TlsVerify::CertAndHost,
+                        (true, false) => TlsVerify::CaOnly,
+                        (true, true) => TlsVerify::Full,
                     };
-                    let sni = match t.sni {
-                        Some(name) => pavis_core::SniName::Value(pavis_core::Hostname(name)),
-                        None => pavis_core::SniName::Auto,
+                    let sni = match t.sni_mode {
+                        Some(SniMode::Auto) => {
+                            if t.sni.is_some() {
+                                return Err(anyhow::anyhow!(
+                                    "upstream '{}' sets sni_mode=auto but also provides sni",
+                                    u.name
+                                ));
+                            }
+                            SniName::Auto
+                        }
+                        Some(SniMode::Name) => {
+                            let name = t.sni.ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "upstream '{}' sets sni_mode=name without sni",
+                                    u.name
+                                )
+                            })?;
+                            SniName::Name(pavis_core::Hostname(name))
+                        }
+                        Some(SniMode::Disabled) => {
+                            if t.sni.is_some() {
+                                return Err(anyhow::anyhow!(
+                                    "upstream '{}' sets sni_mode=disabled but also provides sni",
+                                    u.name
+                                ));
+                            }
+                            SniName::Disabled
+                        }
+                        None => match t.sni {
+                            Some(name) => SniName::Name(pavis_core::Hostname(name)),
+                            None => SniName::Auto,
+                        },
+                    };
+                    if matches!(verify, TlsVerify::Full) && matches!(sni, SniName::Disabled) {
+                        return Err(anyhow::anyhow!(
+                            "upstream '{}' verify=full requires sni=auto or sni=name",
+                            u.name
+                        ));
+                    }
+                    let ca = match t.ca_bundle_path {
+                        Some(path) => {
+                            if path.trim().is_empty() {
+                                return Err(anyhow::anyhow!(
+                                    "upstream '{}' ca_bundle_path cannot be empty",
+                                    u.name
+                                ));
+                            }
+                            UpstreamCa::File { path: Path(path) }
+                        }
+                        None => UpstreamCa::System,
                     };
                     let cert = match t.cert {
                         None => ClientCert::Disabled,
-                        Some(cc) => ClientCert::Enabled {
-                            cert_path: Path(cc.cert_path),
-                            key_path: Path(cc.key_path),
-                        },
+                        Some(cc) => {
+                            if cc.cert_path.trim().is_empty() || cc.key_path.trim().is_empty() {
+                                return Err(anyhow::anyhow!(
+                                    "upstream '{}' cert_path and key_path must be non-empty",
+                                    u.name
+                                ));
+                            }
+                            let chain = match (cc.chain_mode, cc.chain_path) {
+                                (None, None) => ClientCertChain::None,
+                                (None, Some(path)) => {
+                                    if path.trim().is_empty() {
+                                        return Err(anyhow::anyhow!(
+                                            "upstream '{}' chain_path cannot be empty",
+                                            u.name
+                                        ));
+                                    }
+                                    ClientCertChain::File { path: Path(path) }
+                                }
+                                (Some(ClientCertChainMode::File), Some(path)) => {
+                                    if path.trim().is_empty() {
+                                        return Err(anyhow::anyhow!(
+                                            "upstream '{}' chain_path cannot be empty",
+                                            u.name
+                                        ));
+                                    }
+                                    ClientCertChain::File { path: Path(path) }
+                                }
+                                (Some(ClientCertChainMode::File), None) => {
+                                    return Err(anyhow::anyhow!(
+                                        "upstream '{}' chain_mode=file requires chain_path",
+                                        u.name
+                                    ));
+                                }
+                                (Some(ClientCertChainMode::Embedded), None) => {
+                                    ClientCertChain::Embedded
+                                }
+                                (Some(ClientCertChainMode::None), None) => ClientCertChain::None,
+                                (Some(ClientCertChainMode::Embedded), Some(_))
+                                | (Some(ClientCertChainMode::None), Some(_)) => {
+                                    return Err(anyhow::anyhow!(
+                                        "upstream '{}' chain_path is only valid with chain_mode=file",
+                                        u.name
+                                    ));
+                                }
+                            };
+                            ClientCert::Enabled {
+                                cert_path: Path(cc.cert_path),
+                                key_path: Path(cc.key_path),
+                                chain,
+                            }
+                        }
                     };
-                    pavis_core::TlsPolicy::Enabled { mode, sni, cert }
+                    pavis_core::TlsPolicy::Enabled {
+                        verify,
+                        sni,
+                        cert,
+                        ca,
+                    }
                 }
             }
         };
-
         let id = match u.id {
             Some(id) => {
                 NonZeroU16::new(id).ok_or_else(|| anyhow::anyhow!("upstream id must be > 0"))?
@@ -160,46 +263,70 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
 
         let tls = match u.tls {
             pavis_core::TlsPolicy::Disabled => None,
-            pavis_core::TlsPolicy::Enabled { mode, sni, cert } => {
-                let (verify_cert, verify_hostname) = match mode {
+            pavis_core::TlsPolicy::Enabled {
+                verify,
+                sni,
+                cert,
+                ca,
+            } => {
+                let (verify_cert, verify_hostname) = match verify {
                     TlsVerify::Disabled => (false, false),
-                    TlsVerify::Cert => (true, false),
-                    TlsVerify::CertAndHost => (true, true),
+                    TlsVerify::CaOnly => (true, false),
+                    TlsVerify::Full => (true, true),
                     #[allow(unreachable_patterns)]
                     _ => {
-                        // Sensible default: treat as CertAndHost if variant is unknown
+                        // Sensible default: treat as Full if variant is unknown
                         (true, true)
                     }
                 };
-                let sni = match sni {
-                    pavis_core::SniName::Auto => None,
-                    pavis_core::SniName::Value(name) => Some(name.0),
+                let (sni, sni_mode) = match sni {
+                    pavis_core::SniName::Auto => (None, Some(SniMode::Auto)),
+                    pavis_core::SniName::Name(name) => (Some(name.0), Some(SniMode::Name)),
+                    pavis_core::SniName::Disabled => (None, Some(SniMode::Disabled)),
                     #[allow(unreachable_patterns)]
-                    _ => {
-                        // Sensible default: treat as Auto if variant is unknown
-                        None
-                    }
+                    _ => (None, Some(SniMode::Auto)),
+                };
+                let ca_bundle_path = match ca {
+                    UpstreamCa::System => None,
+                    UpstreamCa::File { path } => Some(path.0),
+                    #[allow(unreachable_patterns)]
+                    _ => None,
                 };
                 let cert_config = match cert {
                     ClientCert::Disabled => None,
                     ClientCert::Enabled {
                         cert_path,
                         key_path,
-                    } => Some(ClientCertConfig {
-                        cert_path: cert_path.0,
-                        key_path: key_path.0,
-                    }),
-                    #[allow(unreachable_patterns)]
-                    _ => {
-                        // Sensible default: treat as Disabled if variant is unknown
-                        None
+                        chain,
+                    } => {
+                        let (chain_mode, chain_path) = match chain {
+                            ClientCertChain::None => (Some(ClientCertChainMode::None), None),
+                            ClientCertChain::Embedded => {
+                                (Some(ClientCertChainMode::Embedded), None)
+                            }
+                            ClientCertChain::File { path } => {
+                                (Some(ClientCertChainMode::File), Some(path.0))
+                            }
+                            #[allow(unreachable_patterns)]
+                            _ => (Some(ClientCertChainMode::None), None),
+                        };
+                        Some(ClientCertConfig {
+                            cert_path: cert_path.0,
+                            key_path: key_path.0,
+                            chain_path,
+                            chain_mode,
+                        })
                     }
+                    #[allow(unreachable_patterns)]
+                    _ => None,
                 };
                 Some(UpstreamTlsConfig {
                     enabled: Some(true),
                     verify_hostname: Some(verify_hostname),
                     verify_cert: Some(verify_cert),
                     sni,
+                    sni_mode,
+                    ca_bundle_path,
                     cert: cert_config,
                 })
             }
@@ -394,6 +521,8 @@ mod tests {
                 verify_hostname: None,
                 verify_cert: None,
                 sni: None,
+                sni_mode: None,
+                ca_bundle_path: None,
                 cert: None,
             }),
             circuit_breaker: None,
@@ -408,8 +537,8 @@ mod tests {
     fn tls_verify_modes_conversion() {
         let test_cases = vec![
             ((false, false), TlsVerify::Disabled),
-            ((true, false), TlsVerify::Cert),
-            ((true, true), TlsVerify::CertAndHost),
+            ((true, false), TlsVerify::CaOnly),
+            ((true, true), TlsVerify::Full),
         ];
 
         for ((cert, host), expected_mode) in test_cases {
@@ -425,6 +554,8 @@ mod tests {
                     verify_hostname: Some(host),
                     verify_cert: Some(cert),
                     sni: None,
+                    sni_mode: None,
+                    ca_bundle_path: None,
                     cert: None,
                 }),
                 circuit_breaker: None,
@@ -433,10 +564,182 @@ mod tests {
             }];
             let runtime = to_runtime(config).unwrap();
             match runtime[0].tls {
-                TlsPolicy::Enabled { mode, .. } => assert_eq!(mode, expected_mode),
+                TlsPolicy::Enabled { verify, .. } => assert_eq!(verify, expected_mode),
                 _ => panic!("expected tls enabled"),
             }
         }
+    }
+
+    #[test]
+    fn tls_verify_full_rejects_disabled_sni() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: Some(Discovery::Logical),
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                verify_hostname: Some(true),
+                verify_cert: Some(true),
+                sni: None,
+                sni_mode: Some(SniMode::Disabled),
+                ca_bundle_path: None,
+                cert: None,
+            }),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                address: "example.com".to_string(),
+                port: 443,
+                weight: None,
+            }],
+        }];
+        let err = to_runtime(config).expect_err("expected error");
+        assert!(
+            err.to_string()
+                .contains("verify=full requires sni=auto or sni=name")
+        );
+    }
+
+    #[test]
+    fn sni_mode_name_requires_sni_value() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: Some(Discovery::Logical),
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                verify_hostname: Some(true),
+                verify_cert: Some(true),
+                sni: None,
+                sni_mode: Some(SniMode::Name),
+                ca_bundle_path: None,
+                cert: None,
+            }),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                address: "example.com".to_string(),
+                port: 443,
+                weight: None,
+            }],
+        }];
+        let err = to_runtime(config).expect_err("expected error");
+        assert!(err.to_string().contains("sets sni_mode=name without sni"));
+    }
+
+    #[test]
+    fn sni_mode_auto_rejects_explicit_sni() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: Some(Discovery::Logical),
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                verify_hostname: Some(true),
+                verify_cert: Some(true),
+                sni: Some("example.com".to_string()),
+                sni_mode: Some(SniMode::Auto),
+                ca_bundle_path: None,
+                cert: None,
+            }),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                address: "example.com".to_string(),
+                port: 443,
+                weight: None,
+            }],
+        }];
+        let err = to_runtime(config).expect_err("expected error");
+        assert!(
+            err.to_string()
+                .contains("sets sni_mode=auto but also provides sni")
+        );
+    }
+
+    #[test]
+    fn client_cert_chain_mode_file_requires_chain_path() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: Some(Discovery::Logical),
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                verify_hostname: Some(false),
+                verify_cert: Some(true),
+                sni: Some("example.com".to_string()),
+                sni_mode: None,
+                ca_bundle_path: None,
+                cert: Some(ClientCertConfig {
+                    cert_path: "c.pem".to_string(),
+                    key_path: "k.pem".to_string(),
+                    chain_path: None,
+                    chain_mode: Some(ClientCertChainMode::File),
+                }),
+            }),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                address: "example.com".to_string(),
+                port: 443,
+                weight: None,
+            }],
+        }];
+        let err = to_runtime(config).expect_err("expected error");
+        assert!(
+            err.to_string()
+                .contains("chain_mode=file requires chain_path")
+        );
+    }
+
+    #[test]
+    fn client_cert_chain_mode_embedded_rejects_chain_path() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: Some(Discovery::Logical),
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                verify_hostname: Some(false),
+                verify_cert: Some(true),
+                sni: Some("example.com".to_string()),
+                sni_mode: None,
+                ca_bundle_path: None,
+                cert: Some(ClientCertConfig {
+                    cert_path: "c.pem".to_string(),
+                    key_path: "k.pem".to_string(),
+                    chain_path: Some("chain.pem".to_string()),
+                    chain_mode: Some(ClientCertChainMode::Embedded),
+                }),
+            }),
+            circuit_breaker: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                address: "example.com".to_string(),
+                port: 443,
+                weight: None,
+            }],
+        }];
+        let err = to_runtime(config).expect_err("expected error");
+        assert!(
+            err.to_string()
+                .contains("chain_path is only valid with chain_mode=file")
+        );
     }
 
     #[test]
@@ -488,9 +791,13 @@ mod tests {
                 verify_hostname: Some(true),
                 verify_cert: Some(true),
                 sni: Some("example.com".to_string()),
+                sni_mode: None,
+                ca_bundle_path: None,
                 cert: Some(ClientCertConfig {
                     cert_path: "c.pem".to_string(),
                     key_path: "k.pem".to_string(),
+                    chain_path: None,
+                    chain_mode: None,
                 }),
             }),
             circuit_breaker: None,
@@ -516,22 +823,30 @@ mod tests {
             _ => panic!("expected dns endpoint"),
         }
         match &u.tls {
-            TlsPolicy::Enabled { mode, sni, cert } => {
-                assert!(matches!(mode, pavis_core::TlsVerify::CertAndHost));
+            TlsPolicy::Enabled {
+                verify,
+                sni,
+                cert,
+                ca,
+            } => {
+                assert!(matches!(verify, pavis_core::TlsVerify::Full));
                 match sni {
-                    pavis_core::SniName::Value(s) => assert_eq!(s.0, "example.com"),
+                    pavis_core::SniName::Name(s) => assert_eq!(s.0, "example.com"),
                     _ => panic!("expected sni value"),
                 }
                 match cert {
                     pavis_core::ClientCert::Enabled {
                         cert_path,
                         key_path,
+                        chain,
                     } => {
                         assert_eq!(cert_path.0, "c.pem");
                         assert_eq!(key_path.0, "k.pem");
+                        assert!(matches!(chain, pavis_core::ClientCertChain::None));
                     }
                     _ => panic!("expected client cert"),
                 }
+                assert!(matches!(ca, pavis_core::UpstreamCa::System));
             }
             _ => panic!("expected tls enabled"),
         }
@@ -567,9 +882,10 @@ mod tests {
                 max: ConnectionLimit::Unlimited,
             },
             tls: TlsPolicy::Enabled {
-                mode: TlsVerify::Disabled,
+                verify: TlsVerify::Disabled,
                 sni: SniName::Auto,
                 cert: ClientCert::Disabled,
+                ca: pavis_core::UpstreamCa::System,
             },
             endpoints: vec![],
         };
@@ -580,10 +896,11 @@ mod tests {
         assert!(!tls.verify_cert.unwrap());
         assert!(!tls.verify_hostname.unwrap());
         assert_eq!(tls.sni, None);
+        assert!(matches!(tls.sni_mode, Some(SniMode::Auto)));
 
-        // 2. TlsVerify::Cert
-        if let TlsPolicy::Enabled { mode, .. } = &mut upstream.tls {
-            *mode = TlsVerify::Cert;
+        // 2. TlsVerify::CaOnly
+        if let TlsPolicy::Enabled { verify, .. } = &mut upstream.tls {
+            *verify = TlsVerify::CaOnly;
         }
         let serde = from_runtime(vec![upstream.clone()]);
         let tls = serde[0].tls.as_ref().unwrap();

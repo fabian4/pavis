@@ -20,8 +20,8 @@ pub use types::{
     Path, Port, SampleRate, ServiceName, Timeout, TryTimeout, UpstreamId, UpstreamName, Weight,
 };
 pub use upstream::{
-    ClientCert, ConnectionLimit, Discovery, Endpoint, EndpointAddr, HttpVersion, LoadBalancer,
-    Pool, SniName, TlsPolicy, TlsVerify, Upstream,
+    ClientCert, ClientCertChain, ConnectionLimit, Discovery, Endpoint, EndpointAddr, HttpVersion,
+    LoadBalancer, Pool, SniName, TlsPolicy, TlsVerify, Upstream, UpstreamCa,
 };
 
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};

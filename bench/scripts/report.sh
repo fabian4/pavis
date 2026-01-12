@@ -64,6 +64,7 @@ if command -v log_info >/dev/null 2>&1; then
   log_info "Generating benchmark report: $output"
 fi
 
+# Determine RUN_ID if not provided (latest by timestamp)
 if [ -z "$run_id_env" ]; then
   run_id_env=$(awk -F, '
     function norm(h) {
@@ -107,137 +108,21 @@ fi
 out_dir=$(dirname "$output")
 mkdir -p "$out_dir"
 
-tmp_out=$(mktemp "$out_dir/report.XXXXXX")
-override_file=$(mktemp "$out_dir/report_overrides.XXXXXX")
-openloop_file=$(mktemp "$out_dir/report_openloop.XXXXXX")
-trap 'rm -f "$tmp_out" "$override_file" "$openloop_file"' EXIT
-
 gen_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-awk -F, -v run_id="$run_id_env" '
-  function norm(h) {
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "", h)
-    return tolower(h)
-  }
-  function trim(x) {
-    sub(/^[[:space:]]+/, "", x)
-    sub(/[[:space:]]+$/, "", x)
-    return x
-  }
-  function unquote(x) {
-    if (x ~ /^".*"$/) {
-      sub(/^"/, "", x)
-      sub(/"$/, "", x)
-    }
-    return x
-  }
-  function field(name, raw) {
-    if (!col[name]) return ""
-    raw=$col[name]
-    raw=trim(raw)
-    raw=unquote(raw)
-    return raw
-  }
-  function truthy(val, t) {
-    t=tolower(val)
-    return (t=="1" || t=="true" || t=="yes" || t=="y")
-  }
-  function is_num(x) {
-    return x ~ /^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/
-  }
-  BEGIN {
-    alias["git_sha"]="run_id"
-  }
-  NR==1 {
-    for (i=1;i<=NF;i++) {
-      h=norm($i)
-      if (h=="") continue
-      name=(h in alias)?alias[h]:h
-      col[name]=i
-    }
-    next
-  }
-  {
-    rid=field("run_id")
-    if (run_id != "" && rid != run_id) next
-    typ=tolower(field("type"))
-    if (typ=="" || index(typ, "loadgen") != 1) next
-    proxy=field("proxy")
-    cas=field("case")
-    if (proxy=="" || cas=="") next
-    key=proxy SUBSEP cas
-    open[key]=1
-    agg_val=field("aggregate")
-    if (truthy(agg_val)) {
-      runs_str=field("runs")
-      if (runs_str != "" && is_num(runs_str)) agg_runs[key]=runs_str+0
-      next
-    }
-    iter_counts[key]++
-    dropped=field("dropped")
-    if (dropped != "" && is_num(dropped)) iter_dropped[key]+=dropped+0
-    errors=field("errors")
-    if (errors != "" && is_num(errors)) iter_errors[key]+=errors+0
-  }
-  END {
-    n=0
-    for (key in open) {
-      runs=(key in agg_runs)?agg_runs[key]:iter_counts[key]
-      if (runs <= 1) continue
-      keys[++n]=key
-    }
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        if (keys[i] > keys[j]) {
-          tmp=keys[i]; keys[i]=keys[j]; keys[j]=tmp
-        }
-      }
-    }
-    for (i=1;i<=n;i++) {
-      key=keys[i]
-      split(key, parts, SUBSEP)
-      printf "%s,%s,%d,%d\n", parts[1], parts[2], iter_dropped[key]+0, iter_errors[key]+0
-    }
-  }
-' "$input" > "$openloop_file"
+# Extract proxy versions from docker-compose.yaml if available
+envoy_ver=""
+haproxy_ver=""
+nginx_ver=""
+if [ -f "bench/docker-compose.yaml" ]; then
+  envoy_ver=$(grep "image:.*envoy" bench/docker-compose.yaml | sed -E 's/.*:-([^}]+)}.*/\1/' | head -1)
+  haproxy_ver=$(grep "image:.*haproxy" bench/docker-compose.yaml | sed -E 's/.*:-([^}]+)}.*/\1/' | head -1 | sed 's/-alpine//')
+  nginx_ver=$(grep "image:.*nginx" bench/docker-compose.yaml | sed -E 's/.*:-([^}]+)}.*/\1/' | head -1 | sed 's/-alpine//')
+fi
 
-: > "$override_file"
-
-while IFS=, read -r proxy case csv_dropped csv_errors; do
-  [ -n "$proxy" ] || continue
-  csv_dropped=${csv_dropped:-0}
-  csv_errors=${csv_errors:-0}
-  case_dir="bench/output/$proxy/$case"
-  if [ ! -d "$case_dir" ]; then
-    echo "error: missing result.json runs for $proxy $case" >&2
-    exit 10
-  fi
-  run_paths=()
-  while IFS= read -r path; do
-    run_paths+=("$path")
-  done < <(LC_ALL=C sort <(find "$case_dir" -type f -name 'result.json' -path "*/run_*/result.json" -print))
-  if [ "${#run_paths[@]}" -eq 0 ]; then
-    echo "error: missing result.json runs for $proxy $case" >&2
-    exit 10
-  fi
-  dropped_sum=0
-  errors_sum=0
-  for path in "${run_paths[@]}"; do
-    dropped_val=$(jq -r '((.dropped // 0) | (if type == "string" and . == "" then 0 else . end) | tonumber | floor)' "$path")
-    errors_val=$(jq -r '((.errors // 0) | (if type == "string" and . == "" then 0 else . end) | tonumber | floor)' "$path")
-    dropped_sum=$((dropped_sum + dropped_val))
-    errors_sum=$((errors_sum + errors_val))
-  done
-  actual_runs=${#run_paths[@]}
-  status="override"
-  if [ "$dropped_sum" -eq "$csv_dropped" ] && [ "$errors_sum" -eq "$csv_errors" ]; then
-    status="ok"
-  fi
-  printf "validated %s %s: dropped sum = %s (%d runs) [%s]\n" "$case" "$proxy" "$dropped_sum" "$actual_runs" "$status" >&2
-  printf "%s,%s,%d,%d,%d\n" "$proxy" "$case" "$actual_runs" "$dropped_sum" "$errors_sum" >> "$override_file"
-done < "$openloop_file"
-
-awk -F, -v run_id="$run_id_env" -v input="$input" -v gen_at="$gen_at" -v overrides="$override_file" -v host_info="$host_info_content" -v env_details="$env_details" '
+# Main AWK script for report generation
+awk -F, -v run_id="$run_id_env" -v input="$input" -v gen_at="$gen_at" -v host_info="$host_info_content" \
+    -v envoy_ver="$envoy_ver" -v haproxy_ver="$haproxy_ver" -v nginx_ver="$nginx_ver" '
   function norm(h) {
     gsub(/^[[:space:]]+|[[:space:]]+$/, "", h)
     return tolower(h)
@@ -249,816 +134,335 @@ awk -F, -v run_id="$run_id_env" -v input="$input" -v gen_at="$gen_at" -v overrid
     t=tolower(x)
     return t=="1" || t=="true" || t=="yes" || t=="y"
   }
-  function is_wrk(t, tl) {
-    tl=tolower(t)
-    return (tl ~ /^wrk/)
-  }
-  function is_open_loop(t, tl) {
-    tl=tolower(t)
-    return (tl ~ /^loadgen/)
-  }
-  function add_value(metric, key, val) {
-    if (!is_num(val)) return
-    n=++count[metric SUBSEP key]
-    vals[metric SUBSEP key SUBSEP n]=val+0
-  }
-  function sum_add(metric, key, val) {
-    if (!is_num(val)) return
-    sums[metric SUBSEP key]+=val+0
-    sum_count[metric SUBSEP key]++
-  }
-  function first_non_empty(metric, key, val) {
-    if (val=="" || first[metric SUBSEP key] != "") return
-    first[metric SUBSEP key]=val
-  }
-  function sort_numeric(a, n,    i,j,tmp) {
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        if (a[i] > a[j]) {
-          tmp=a[i]; a[i]=a[j]; a[j]=tmp
-        }
-      }
-    }
-  }
-  function key_float(x) {
-    return sprintf("%.9f", x+0)
-  }
-  function rank_map_asc(values, n,    i,rank,k,prev) {
-    rank=1
-    prev=""
-    for (i=1;i<=n;i++) {
-      k=key_float(values[i])
-      if (k!=prev) {
-        rank_map[k]=rank
-        rank++
-        prev=k
-      }
-    }
-  }
-  function rank_map_desc(values, n,    i,rank,k,prev) {
-    rank=1
-    prev=""
-    for (i=n;i>=1;i--) {
-      k=key_float(values[i])
-      if (k!=prev) {
-        rank_map[k]=rank
-        rank++
-        prev=k
-      }
-    }
-  }
-  function median(metric, key,    n,i,tmp,med) {
-    n=count[metric SUBSEP key]
-    if (n<=0) return ""
-    delete tmp
-    for (i=1;i<=n;i++) tmp[i]=vals[metric SUBSEP key SUBSEP i]+0
-    sort_numeric(tmp, n)
-    if (n%2==1) med=tmp[(n+1)/2]
-    else med=(tmp[n/2]+tmp[n/2+1])/2
-    return med
-  }
-  function iqr(metric, key,    n,i,tmp,q1,q3,idx1,idx3) {
-    n=count[metric SUBSEP key]
-    if (n<=1) return ""
-    delete tmp
-    for (i=1;i<=n;i++) tmp[i]=vals[metric SUBSEP key SUBSEP i]+0
-    sort_numeric(tmp, n)
-    idx1=int(n/4+0.5); if (idx1<1) idx1=1
-    idx3=int(3*n/4+0.5); if (idx3<1) idx3=1
-    if (idx3>n) idx3=n
-    q1=tmp[idx1]
-    q3=tmp[idx3]
-    return q3-q1
-  }
-  function fmt_float(x) {
+  function fmt_float(x, prec) {
     if (!is_num(x)) return "-"
-    return sprintf("%.3f", x+0)
+    return sprintf("%." prec "f", x+0)
   }
   function fmt_int(x) {
     if (!is_num(x)) return "-"
     return sprintf("%.0f", x+0)
   }
-  function fmt_text(x) {
-    return (x=="" ? "-" : x)
-  }
-  function get_type(key) {
-    if (agg_type[key] != "") return agg_type[key]
-    if (iter_type[key] != "") return iter_type[key]
-    return ""
-  }
-  function load_overrides(   line, parts, proxy, cas, key) {
-    while ((getline line < overrides) > 0) {
-      split(line, parts, ",")
-      proxy=parts[1]
-      cas=parts[2]
-      key=proxy SUBSEP cas
-      override_runs[key]=parts[3]
-      override_dropped[key]=parts[4]
-      override_errors[key]=parts[5]
-    }
-    close(overrides)
-  }
-  function sum_value(metric, key,    c) {
-    c=sum_count[metric SUBSEP key]
-    if (c>0) return sums[metric SUBSEP key]
-    return ""
-  }
-  function openloop_value(metric, key,    c, agg) {
-    if (metric=="dropped" && override_dropped[key] != "") return override_dropped[key]
-    if (metric=="errors" && override_errors[key] != "") return override_errors[key]
-    c=sum_count[metric SUBSEP key]
-    if (c>0) return sums[metric SUBSEP key]
-    if (agg_has[key]) {
-      agg=agg_val[metric SUBSEP key]
-      if (is_num(agg)) return agg
-    }
-    return ""
-  }
-  function value_for(metric, key, val) {
-    if (metric=="errors" || metric=="dropped") {
-      if (sum_count[metric SUBSEP key] > 0) return sum_value(metric, key)
-      if (agg_has[key]) return agg_val[metric SUBSEP key]
-      return ""
-    }
-    if (agg_has[key]) {
-      val=agg_val[metric SUBSEP key]
-      if ((metric=="rps_iqr" || metric=="p99_iqr") && !is_num(val)) return ""
-      return val
-    }
-    if (metric=="target_rps") return first[metric SUBSEP key]
-    if (metric=="rps_iqr") return iqr("achieved_rps", key)
-    if (metric=="p99_iqr") return iqr("p99_ms", key)
-    return median(metric, key)
-  }
-  function maybe_dropped(key, val, typ) {
-    if (!is_open_loop(typ)) return "-"
-    val=openloop_value("dropped", key)
-    if (!is_num(val)) return "-"
-    return fmt_int(val)
-  }
-  function maybe_target(key, val, typ) {
-    if (!is_open_loop(typ)) return "-"
-    if (!is_num(val)) return "-"
-    return fmt_float(val)
-  }
-  function maybe_errors(key, val, typ, is_stability) {
-    if (is_open_loop(typ)) {
-      val=openloop_value("errors", key)
-      if (!is_num(val)) return "-"
-      return fmt_int(val)
-    }
-    if (is_wrk(typ)) return "-"
-    if (is_num(val)) return fmt_int(val)
-    if (is_stability) return "0"
-    return "-"
-  }
-  function saturated_for(key, typ, dropped) {
-    if (!is_open_loop(typ)) return "-"
-    dropped=openloop_value("dropped", key)
-    if (is_num(dropped) && dropped > 0) return "true"
-    return "false"
-  }
-  function warn_backend_cpu(key, backend, proxy,    parts) {
-    if (!is_num(backend) || !is_num(proxy)) return
-    if (proxy+0 <= 0) return
-    if ((backend+0) > ((proxy+0) * 2)) {
-      split(key, parts, SUBSEP)
-      print "warning: backend_cpu exceeds proxy_cpu by >2x for " parts[1] " " parts[2] > "/dev/stderr"
-    }
-  }
-  function nearly_equal(a, b, eps) {
-    if (!is_num(a) || !is_num(b)) return 0
-    return ((a+0)-(b+0) < eps && (b+0)-(a+0) < eps)
-  }
-  function sort_alpha(list, n,    i,j,tmp) {
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        if (list[i] > list[j]) {
-          tmp=list[i]; list[i]=list[j]; list[j]=tmp
-        }
-      }
-    }
-  }
-  function sort_proxies(list, n,    i,j,tmp,r1,r2) {
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        r1=proxy_rank[list[i]]; r2=proxy_rank[list[j]]
-        if (r1==0) r1=999
-        if (r2==0) r2=999
-        if (r1 > r2 || (r1==r2 && list[i] > list[j])) {
-          tmp=list[i]; list[i]=list[j]; list[j]=tmp
-        }
-      }
-    }
-  }
-  function sort_cases(list, n,    i,j,tmp,r1,r2) {
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        r1=case_rank[list[i]]; r2=case_rank[list[j]]
-        if (r1==0) r1=999
-        if (r2==0) r2=999
-        if (r1 > r2 || (r1==r2 && list[i] > list[j])) {
-          tmp=list[i]; list[i]=list[j]; list[j]=tmp
-        }
-      }
-    }
-  }
-  function join_sorted(set, sep,    n,i,out,k,list) {
-    n=0
-    for (k in set) list[++n]=k
-    sort_alpha(list, n)
-    out=""
-    for (i=1;i<=n;i++) {
-      out = out (i==1 ? "" : sep) list[i]
-    }
-    return out
-  }
-  function sort_proxy_case(list, n,    i,j,tmp,a,b) {
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        split(list[i], a, SUBSEP)
-        split(list[j], b, SUBSEP)
-        r1=proxy_rank[a[1]]; r2=proxy_rank[b[1]]
-        if (r1==0) r1=999
-        if (r2==0) r2=999
-        c1=case_rank[a[2]]; c2=case_rank[b[2]]
-        if (c1==0) c1=999
-        if (c2==0) c2=999
-        if (r1 > r2 || (r1==r2 && (c1 > c2 || (c1==c2 && a[2] > b[2])))) {
-          tmp=list[i]; list[i]=list[j]; list[j]=tmp
-        }
-      }
-    }
-  }
-  function sort_case_proxy(list, n,    i,j,tmp,a,b,c1,c2,r1,r2) {
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        split(list[i], a, SUBSEP)
-        split(list[j], b, SUBSEP)
-        c1=case_rank[a[2]]; c2=case_rank[b[2]]
-        if (c1==0) c1=999
-        if (c2==0) c2=999
-        r1=proxy_rank[a[1]]; r2=proxy_rank[b[1]]
-        if (r1==0) r1=999
-        if (r2==0) r2=999
-        if (c1 > c2 || (c1==c2 && (r1 > r2 || (r1==r2 && a[1] > b[1])))) {
-          tmp=list[i]; list[i]=list[j]; list[j]=tmp
-        }
-      }
-    }
-  }
-  function sort_p99(list, n,    i,j,tmp,n1,n2) {
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        n1=is_num(p99_by_proxy[list[i]])?p99_by_proxy[list[i]]+0:1e18
-        n2=is_num(p99_by_proxy[list[j]])?p99_by_proxy[list[j]]+0:1e18
-        if (n1 > n2 || (n1==n2 && list[i] > list[j])) {
-          tmp=list[i]; list[i]=list[j]; list[j]=tmp
-        }
-      }
-    }
-  }
-  function sort_desc(list, n,    i,j,tmp,n1,n2) {
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        n1=is_num(throughput[list[i]])?throughput[list[i]]+0:-1
-        n2=is_num(throughput[list[j]])?throughput[list[j]]+0:-1
-        if (n1 < n2 || (n1==n2 && list[i] > list[j])) {
-          tmp=list[i]; list[i]=list[j]; list[j]=tmp
-        }
-      }
-    }
-  }
-  function sort_case_rps(list, n,    i,j,tmp,a,b,r1,r2) {
-    for (i=1;i<=n;i++) {
-      for (j=i+1;j<=n;j++) {
-        split(list[i], a, SUBSEP)
-        split(list[j], b, SUBSEP)
-        r1=is_num(eff_val[list[i]])?eff_val[list[i]]+0:-1
-        r2=is_num(eff_val[list[j]])?eff_val[list[j]]+0:-1
-        c1=case_rank[a[1]]; c2=case_rank[b[1]]
-        if (c1==0) c1=999
-        if (c2==0) c2=999
-        if (c1 > c2 || (c1==c2 && (r1 < r2 || (r1==r2 && a[2] > b[2])))) {
-          tmp=list[i]; list[i]=list[j]; list[j]=tmp
-        }
-      }
-    }
-  }
+  
   BEGIN {
-    OFS=" | "
+    # Column mapping aliases
     alias["git_sha"]="run_id"
-    alias["workload"]="case"
-    alias["case_type"]="type"
-    alias["rps"]="achieved_rps"
-    alias["peak_cpu_pct"]="proxy_cpu"
-    alias["avg_cpu_pct"]="proxy_cpu"
-    alias["peak_backend_cpu_pct"]="backend_cpu"
-    alias["avg_backend_cpu_pct"]="backend_cpu"
-    alias["mem_peak_mib"]="peak_mem_mib"
-    alias["target_rate"]="target_rps"
-    alias["ts"]="timestamp"
-    alias["is_aggregate"]="aggregate"
-
-    proxy_rank["envoy"]=1
-    proxy_rank["haproxy"]=2
-    proxy_rank["nginx"]=3
-    proxy_rank["pavis"]=4
-    case_rank["churn_short_1x"]=1
-    case_rank["concurrency_short_1x"]=2
-    case_rank["latency_extended_1x"]=3
-    case_rank["latency_short_1x"]=4
-    case_rank["reload_short_1x"]=5
-    case_rank["throughput_short_1x"]=6
-
-    if (overrides != "") load_overrides()
-
-    req[1]="proxy"
-    req[2]="case"
-    req[3]="type"
-    req[4]="runs"
-    req[5]="achieved_rps"
-    req[6]="p50_ms"
-    req[7]="p90_ms"
-    req[8]="p99_ms"
-    req[9]="errors"
-    req[10]="dropped"
-    req[11]="rps_iqr"
-    req[12]="p99_iqr"
-    req[13]="backend_cpu"
-    req[14]="proxy_cpu"
-    req[15]="peak_mem_mib"
-    req[16]="target_rps"
-    req[17]="timestamp"
-    req[18]="run_id"
-    req[19]="aggregate"
+    alias["rps_iqr"]="rps_iqr"
+    alias["p99_iqr"]="p99_iqr"
+    alias["dropped"]="dropped"
+    alias["errors"]="errors"
+    alias["aggregate"]="aggregate"
+    
+    # Define required columns
+    req_cols="run_id timestamp proxy case achieved_rps p99_ms errors dropped rps_iqr p99_iqr proxy_cpu peak_mem_mib aggregate cpu_model kernel"
+    split(req_cols, req, " ")
+    
+    # Store versions
+    p_ver["envoy"] = envoy_ver
+    p_ver["haproxy"] = haproxy_ver
+    p_ver["nginx"] = nginx_ver
   }
+
+  # Parse Header
   NR==1 {
     for (i=1;i<=NF;i++) {
       h=norm($i)
       name=(h in alias)?alias[h]:h
       col[name]=i
     }
-    for (i=1;i in req;i++) {
-      if (!col[req[i]]) {
-        print "error: missing required column: " req[i] > "/dev/stderr"
-        exit 2
-      }
-    }
     next
   }
+
+  # Parse Data Rows
   {
-    rid=$(col["run_id"])
-    if (rid != run_id) next
-    found=1
-
-    proxy=$(col["proxy"])
-    cas=$(col["case"])
-    if (proxy=="" || cas=="") next
-
-    key=proxy SUBSEP cas
-    keys[key]=1
-    proxies[proxy]=1
-    cases[cas]=1
-
-    typ=$(col["type"])
-    if (typ!="" && iter_type[key]=="") iter_type[key]=typ
-
-    agg=is_true($(col["aggregate"]))
-    if (agg) {
-      # Aggregate row takes precedence; fallback to iteration aggregation only if missing.
-      agg_has[key]=1
-      if (typ!="") agg_type[key]=typ
-      agg_runs[key]=$(col["runs"])
-      agg_val["achieved_rps" SUBSEP key]=$(col["achieved_rps"])
-      agg_val["p50_ms" SUBSEP key]=$(col["p50_ms"])
-      agg_val["p90_ms" SUBSEP key]=$(col["p90_ms"])
-      agg_val["p99_ms" SUBSEP key]=$(col["p99_ms"])
-      agg_val["errors" SUBSEP key]=$(col["errors"])
-      agg_val["dropped" SUBSEP key]=$(col["dropped"])
-      agg_val["rps_iqr" SUBSEP key]=$(col["rps_iqr"])
-      agg_val["p99_iqr" SUBSEP key]=$(col["p99_iqr"])
-      agg_val["backend_cpu" SUBSEP key]=$(col["backend_cpu"])
-      agg_val["proxy_cpu" SUBSEP key]=$(col["proxy_cpu"])
-      agg_val["peak_mem_mib" SUBSEP key]=$(col["peak_mem_mib"])
-      agg_val["target_rps" SUBSEP key]=$(col["target_rps"])
-    } else {
-      iter_runs[key]++
-      add_value("achieved_rps", key, $(col["achieved_rps"]))
-      add_value("p50_ms", key, $(col["p50_ms"]))
-      add_value("p90_ms", key, $(col["p90_ms"]))
-      add_value("p99_ms", key, $(col["p99_ms"]))
-      add_value("backend_cpu", key, $(col["backend_cpu"]))
-      add_value("proxy_cpu", key, $(col["proxy_cpu"]))
-      add_value("peak_mem_mib", key, $(col["peak_mem_mib"]))
-      sum_add("errors", key, $(col["errors"]))
-      sum_add("dropped", key, $(col["dropped"]))
-      first_non_empty("target_rps", key, $(col["target_rps"]))
+    # Filter by Run ID
+    if ($(col["run_id"]) != run_id) next
+    
+    # Filter for aggregates ONLY (per strict instructions)
+    if (!is_true($(col["aggregate"]))) next
+    
+    p = $(col["proxy"])
+    c = $(col["case"])
+    
+    if (p == "" || c == "") next
+    
+    proxies[p] = 1
+    
+    # Store Raw Data using SUBSEP
+    data[p,c,"achieved_rps"] = $(col["achieved_rps"])
+    data[p,c,"p99_ms"] = $(col["p99_ms"])
+    data[p,c,"p99_iqr"] = $(col["p99_iqr"])
+    data[p,c,"proxy_cpu"] = $(col["proxy_cpu"])
+    data[p,c,"peak_mem_mib"] = $(col["peak_mem_mib"])
+    data[p,c,"errors"] = $(col["errors"])
+    data[p,c,"dropped"] = $(col["dropped"])
+    data[p,c,"rps_iqr"] = $(col["rps_iqr"])
+    
+    # Capture Run Metadata (from first row)
+    if (run_ts == "") {
+      run_ts = $(col["timestamp"])
+      cpu_model = $(col["cpu_model"])
+      sub(/ [0-9]+-Core Processor/, "", cpu_model) # Clean up "64-Core Processor" suffix
+      kernel = $(col["kernel"])
     }
   }
+
   END {
-    if (!found) {
-      print "error: no rows for selected run_id: " run_id > "/dev/stderr"
-      exit 4
-    }
-
-    for (key in keys) {
-      typ=get_type(key)
-      runs=agg_has[key] && is_num(agg_runs[key]) ? agg_runs[key] : iter_runs[key]
-      if (is_open_loop(typ) && is_num(runs) && runs+0 > 1) {
-        if (sum_count["dropped" SUBSEP key] <= 0 || sum_count["errors" SUBSEP key] <= 0) {
-          split(key, parts, SUBSEP)
-          print "error: missing iteration rows for open-loop multi-run " parts[1] " " parts[2] > "/dev/stderr"
-          exit 7
-        }
-      }
-      if (agg_has[key] && count["achieved_rps" SUBSEP key] > 0) {
-        if (is_num(agg_val["achieved_rps" SUBSEP key]) && !nearly_equal(agg_val["achieved_rps" SUBSEP key], median("achieved_rps", key), 1e-3)) {
-          split(key, parts, SUBSEP)
-          print "error: achieved_rps aggregate mismatch for " parts[1] " " parts[2] > "/dev/stderr"
-          exit 8
-        }
-        if (is_num(agg_val["p50_ms" SUBSEP key]) && !nearly_equal(agg_val["p50_ms" SUBSEP key], median("p50_ms", key), 1e-3)) {
-          split(key, parts, SUBSEP)
-          print "error: p50_ms aggregate mismatch for " parts[1] " " parts[2] > "/dev/stderr"
-          exit 8
-        }
-        if (is_num(agg_val["p90_ms" SUBSEP key]) && !nearly_equal(agg_val["p90_ms" SUBSEP key], median("p90_ms", key), 1e-3)) {
-          split(key, parts, SUBSEP)
-          print "error: p90_ms aggregate mismatch for " parts[1] " " parts[2] > "/dev/stderr"
-          exit 8
-        }
-        if (is_num(agg_val["p99_ms" SUBSEP key]) && !nearly_equal(agg_val["p99_ms" SUBSEP key], median("p99_ms", key), 1e-3)) {
-          split(key, parts, SUBSEP)
-          print "error: p99_ms aggregate mismatch for " parts[1] " " parts[2] > "/dev/stderr"
-          exit 8
-        }
-        if (is_num(agg_val["rps_iqr" SUBSEP key]) && !nearly_equal(agg_val["rps_iqr" SUBSEP key], iqr("achieved_rps", key), 1e-3)) {
-          split(key, parts, SUBSEP)
-          print "error: rps_iqr aggregate mismatch for " parts[1] " " parts[2] > "/dev/stderr"
-          exit 8
-        }
-        if (is_num(agg_val["p99_iqr" SUBSEP key]) && !nearly_equal(agg_val["p99_iqr" SUBSEP key], iqr("p99_ms", key), 1e-3)) {
-          split(key, parts, SUBSEP)
-          print "error: p99_iqr aggregate mismatch for " parts[1] " " parts[2] > "/dev/stderr"
-          exit 8
-        }
-      }
-    }
-
-    print "# Key Report"
-    print ""
-    n=0
-    for (p in proxies) p_list[++n]=p
-    sort_proxies(p_list, n)
-    p_out=""
-    for (i=1;i<=n;i++) p_out = p_out (i==1 ? "" : ", ") p_list[i]
-
-    n=0
-    for (c in cases) c_list[++n]=c
-    sort_cases(c_list, n)
-    c_out=""
-    for (i=1;i<=n;i++) c_out = c_out (i==1 ? "" : ", ") c_list[i]
-
-    print "- generated_at: " gen_at
-    print "- input: " input
-    print "- run_id: " run_id
-    print "- proxies: " p_out
-    print "- cases: " c_out
-    if (host_info != "") {
-      print "- system:"
-      hcount = split(host_info, hlines, "\n")
-      for (hi=1; hi<=hcount; hi++) {
-        if (hlines[hi] != "") print "  - " hlines[hi]
-      }
-    }
-    if (env_details != "") {
-      print "- environment: " env_details
-    }
-    print ""
-    print "## Interpretation Rules"
-    print ""
-    print "- wrk cases are closed-loop; dropped and saturation are not applicable."
-    print "- loadgen cases are open-loop; dropped indicates saturation."
-    print "- For loadgen multi-run cases, dropped/errors are SUM across all iterations."
-    print "- Multi-run cases report median and IQR across runs."
-    print "- Metrics are comparable only within the same case."
-    print "- CPU/memory metrics are taken from summary.csv for all cases and are not comparable across case types."
-    print ""
-
-    print "## 📊 Per-Case Performance Summary"
-    print ""
-    print "proxy | case | achieved_rps | p50_ms | p90_ms | p99_ms | errors | dropped | backend_cpu | proxy_cpu | peak_mem_mib | target_rps"
-    print "--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---"
-    n=0
-    for (k in keys) key_list[++n]=k
-    sort_proxy_case(key_list, n)
-    for (i=1;i<=n;i++) {
-      key=key_list[i]
-      split(key, parts, SUBSEP)
-      proxy=parts[1]
-      cas=parts[2]
-      typ=get_type(key)
-      warn_backend_cpu(key, value_for("backend_cpu", key), value_for("proxy_cpu", key))
-      dropped_out=maybe_dropped(key, value_for("dropped", key), typ)
-      errors_out=maybe_errors(key, value_for("errors", key), typ, 0)
-      if (is_open_loop(typ) && (dropped_out=="-" || errors_out=="-")) {
-        print "error: open-loop missing dropped/errors for " proxy " " cas > "/dev/stderr"
-        exit 5
-      }
-      if (is_wrk(typ) && dropped_out != "-") {
-        print "error: wrk dropped must be '-' for " proxy " " cas > "/dev/stderr"
-        exit 6
-      }
-      print proxy, cas,
-        fmt_float(value_for("achieved_rps", key)),
-        fmt_float(value_for("p50_ms", key)),
-        fmt_float(value_for("p90_ms", key)),
-        fmt_float(value_for("p99_ms", key)),
-        errors_out,
-        dropped_out,
-        fmt_float(value_for("backend_cpu", key)),
-        fmt_float(value_for("proxy_cpu", key)),
-        fmt_float(value_for("peak_mem_mib", key)),
-        maybe_target(key, value_for("target_rps", key), typ)
-    }
-    print ""
-
-    print "## ⏱️ Latency Comparison (latency_short_1x)"
-    print ""
+    # --- CALCULATE DERIVED METRICS (First pass, unordered) ---
     for (p in proxies) {
-      key=p SUBSEP "latency_short_1x"
-      if (!keys[key]) continue
-      p99=value_for("p99_ms", key)
-      p99_by_proxy[p]=p99
-    }
-    p99_count=0
-    for (p in p99_by_proxy) p99_list[++p99_count]=p
-    sort_p99(p99_list, p99_count)
-    best_p99_proxy=""
-    best_p99_val=""
-    p99_n=0
-    for (p in p99_by_proxy) {
-      if (is_num(p99_by_proxy[p])) {
-        p99_vals[++p99_n]=p99_by_proxy[p]+0
-      }
-    }
-    if (p99_n>0) {
-      sort_numeric(p99_vals, p99_n)
-      delete rank_map
-      rank_map_asc(p99_vals, p99_n)
-      for (i=1;i<=p99_count;i++) {
-        p=p99_list[i]
-        if (is_num(p99_by_proxy[p])) {
-          best_p99_proxy=p
-          best_p99_val=p99_by_proxy[p]
-          break
-        }
-      }
-      if (best_p99_proxy!="") {
-        print "- Fastest p99 latency: " best_p99_proxy " (" fmt_float(best_p99_val) " ms)"
-        print ""
-      }
-    }
-    print "proxy | achieved_rps | p50_ms | p90_ms | p99_ms | dropped | errors | backend_cpu | proxy_cpu | peak_mem_mib | saturated | p99_rank | is_best_p99"
-    print "--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---"
-    for (i=1;i<=p99_count;i++) {
-      p=p99_list[i]
-      key=p SUBSEP "latency_short_1x"
-      typ=get_type(key)
-      if (is_num(p99_by_proxy[p])) {
-        p99_key=key_float(p99_by_proxy[p])
-        p99_rank=(p99_key in rank_map) ? rank_map[p99_key] : "-"
+      # Scoreboard Mappings
+      sb[p,"max_rps"] = data[p,"throughput_short_1x","achieved_rps"]
+      sb[p,"p99_ms"] = data[p,"latency_short_1x","p99_ms"]
+      sb[p,"p99_iqr"] = data[p,"latency_extended_1x","p99_iqr"]
+      
+      # Derived: rps_per_cpu (latency_extended_1x)
+      rps_ext = data[p,"latency_extended_1x","achieved_rps"]
+      cpu_ext = data[p,"latency_extended_1x","proxy_cpu"]
+      if (is_num(rps_ext) && is_num(cpu_ext) && cpu_ext > 0) {
+        sb[p,"rps_per_cpu"] = rps_ext / cpu_ext
       } else {
-        p99_rank="-"
+        sb[p,"rps_per_cpu"] = 0
       }
-      is_best=(p99_rank==1 ? "true" : "false")
-      print p,
-        fmt_float(value_for("achieved_rps", key)),
-        fmt_float(value_for("p50_ms", key)),
-        fmt_float(value_for("p90_ms", key)),
-        fmt_float(value_for("p99_ms", key)),
-        maybe_dropped(key, value_for("dropped", key), typ),
-        maybe_errors(key, value_for("errors", key), typ, 0),
-        fmt_float(value_for("backend_cpu", key)),
-        fmt_float(value_for("proxy_cpu", key)),
-        fmt_float(value_for("peak_mem_mib", key)),
-        saturated_for(key, typ),
-        p99_rank,
-        is_best
-    }
-    print ""
-
-    print "## 🚀 Throughput & Stress Results"
-    print ""
-    for (p in proxies) {
-      key=p SUBSEP "throughput_short_1x"
-      t=value_for("achieved_rps", key)
-      throughput[p]=t
-    }
-    th_n=0
-    for (p in throughput) {
-      if (is_num(throughput[p])) {
-        th_vals[++th_n]=throughput[p]+0
-      }
-    }
-    if (th_n>0) {
-      sort_numeric(th_vals, th_n)
-      delete rank_map
-      rank_map_desc(th_vals, th_n)
-    }
-    n=0
-    for (p in throughput) t_list[++n]=p
-    sort_desc(t_list, n)
-    if (n>0) {
-      best_th_proxy=t_list[1]
-      best_th_val=throughput[best_th_proxy]
-      if (is_num(best_th_val)) {
-        print "- Highest throughput: " best_th_proxy " (" fmt_float(best_th_val) " rps)"
-        print ""
-      }
-    }
-    print "proxy | throughput_short_1x | concurrency_short_1x | churn_short_1x | concurrency_errors | throughput_rank | is_top_throughput"
-    print "--- | --- | --- | --- | --- | --- | ---"
-    for (i=1;i<=n;i++) {
-      p=t_list[i]
-      th=value_for("achieved_rps", p SUBSEP "throughput_short_1x")
-      conc=value_for("achieved_rps", p SUBSEP "concurrency_short_1x")
-      churn=value_for("achieved_rps", p SUBSEP "churn_short_1x")
-      # concurrency_errors uses summary.csv errors for wrk; values must be present.
-      conc_err=value_for("errors", p SUBSEP "concurrency_short_1x")
-      if (!is_num(conc_err)) {
-        print "error: missing concurrency errors for " p > "/dev/stderr"
-        exit 9
-      }
-      if (is_num(throughput[p])) {
-        th_key=key_float(throughput[p])
-        th_rank=(th_key in rank_map) ? rank_map[th_key] : "-"
+      
+      sb[p,"peak_mem_mib"] = data[p,"latency_extended_1x","peak_mem_mib"]
+      
+      # Sum Errors
+      err_conc = data[p,"concurrency_short_1x","errors"]
+      err_churn = data[p,"churn_short_1x","errors"]
+      sb[p,"errors"] = (is_num(err_conc)?err_conc:0) + (is_num(err_churn)?err_churn:0)
+      
+      sb[p,"reload_p99_ms"] = data[p,"reload_short_1x","p99_ms"]
+      
+      # Derived: Usable Ratio
+      max_r = data[p,"throughput_short_1x","achieved_rps"]
+      lat_r = data[p,"latency_short_1x","achieved_rps"]
+      if (is_num(max_r) && is_num(lat_r) && lat_r > 0) {
+        sb[p,"usable_ratio"] = max_r / lat_r
       } else {
-        th_rank="-"
+        sb[p,"usable_ratio"] = 0
       }
-      is_top=(th_rank==1 ? "true" : "false")
-      print p,
-        fmt_float(th),
-        fmt_float(conc),
-        fmt_float(churn),
-        fmt_int(conc_err),
-        th_rank,
-        is_top
+      
+      # Resource Cost Profile (all from latency_extended_1x)
+      rc[p,"cpu"] = cpu_ext
+      rc[p,"mem_mib"] = data[p,"latency_extended_1x","peak_mem_mib"]
+      rc[p,"rps_per_cpu"] = sb[p,"rps_per_cpu"]
+      mem_ext = data[p,"latency_extended_1x","peak_mem_mib"]
+      if (is_num(rps_ext) && is_num(mem_ext) && mem_ext > 0) {
+        rc[p,"rps_per_mib"] = rps_ext / mem_ext
+      } else {
+        rc[p,"rps_per_mib"] = 0
+      }
     }
-    print ""
 
-    print "## 📉 Stability Across Iterations (Multi-run)"
-    print ""
-    print "Note: achieved_rps_median is the median across runs; dropped/errors are SUM across runs for loadgen cases."
-    print ""
-    best_p99_iqr=""
-    best_p99_iqr_key=""
-    for (key in keys) {
-      runs=agg_has[key] && is_num(agg_runs[key]) ? agg_runs[key] : iter_runs[key]
-      if (!is_num(runs) || runs+0 <= 1) continue
-      stab_keys[key]=1
-    }
-    n=0
-    for (k in stab_keys) s_list[++n]=k
-    sort_case_proxy(s_list, n)
-    for (i=1;i<=n;i++) {
-      key=s_list[i]
-      split(key, parts, SUBSEP)
-      proxy=parts[1]
-      cas=parts[2]
-      runs=agg_has[key] && is_num(agg_runs[key]) ? agg_runs[key] : iter_runs[key]
-      p99_iqr=value_for("p99_iqr", key)
-      if (is_num(p99_iqr)) {
-        if (best_p99_iqr=="" || p99_iqr+0 < best_p99_iqr+0) {
-          best_p99_iqr=p99_iqr
-          best_p99_iqr_key=proxy " " cas
+    # --- SORT PROXIES BY MAX_RPS DESCENDING ---
+    n_proxies = 0
+    for (p in proxies) p_list[++n_proxies] = p
+    
+    for (i=1; i<=n_proxies; i++) {
+        for (j=i+1; j<=n_proxies; j++) {
+            # Use computed max_rps for sorting
+            val_i = sb[p_list[i],"max_rps"] + 0
+            val_j = sb[p_list[j],"max_rps"] + 0
+            # Descending order
+            if (val_i < val_j) {
+                tmp = p_list[i]
+                p_list[i] = p_list[j]
+                p_list[j] = tmp
+            }
         }
+    }
+    
+    # --- DETERMINE BEST VALUES FOR SYMBOLS ---
+    
+    best["max_rps"] = 0
+    best["p99_ms"] = 1e9
+    best["rps_per_cpu"] = 0
+    best["peak_mem_mib"] = 1e9
+    best["reload_p99_ms"] = 1e9
+    
+    best_rc["cpu"] = 1e9
+    best_rc["mem_mib"] = 1e9
+    best_rc["rps_per_cpu"] = 0
+    best_rc["rps_per_mib"] = 0
+    
+    for (i=1; i<=n_proxies; i++) {
+      p = p_list[i]
+      
+      # Scoreboard Bests
+      v = sb[p,"max_rps"]; if(is_num(v) && v > best["max_rps"]) best["max_rps"] = v
+      v = sb[p,"p99_ms"]; if(is_num(v) && v < best["p99_ms"]) best["p99_ms"] = v
+      v = sb[p,"rps_per_cpu"]; if(is_num(v) && v > best["rps_per_cpu"]) best["rps_per_cpu"] = v
+      v = sb[p,"peak_mem_mib"]; if(is_num(v) && v < best["peak_mem_mib"]) best["peak_mem_mib"] = v
+      v = sb[p,"reload_p99_ms"]; if(is_num(v) && v < best["reload_p99_ms"]) best["reload_p99_ms"] = v
+      
+      # Resource Bests
+      v = rc[p,"cpu"]; if(is_num(v) && v < best_rc["cpu"]) best_rc["cpu"] = v
+      v = rc[p,"mem_mib"]; if(is_num(v) && v < best_rc["mem_mib"]) best_rc["mem_mib"] = v
+      v = rc[p,"rps_per_cpu"]; if(is_num(v) && v > best_rc["rps_per_cpu"]) best_rc["rps_per_cpu"] = v
+      v = rc[p,"rps_per_mib"]; if(is_num(v) && v > best_rc["rps_per_mib"]) best_rc["rps_per_mib"] = v
+    }
+
+    # --- GENERATE MARKDOWN ---
+    
+    # 1. Header
+    print "# Benchmark Report"
+    print ""
+    print "---"
+    print ""
+    print "## Run Context"
+    print ""
+    
+    # Proxies string (now sorted)
+    p_str = ""
+    for (i=1; i<=n_proxies; i++) {
+      p = p_list[i]
+      ver = ""
+      if (p == "pavis") {
+        ver = "@" substr(run_id, 1, 6)
+      } else if (p_ver[p] != "") {
+        ver = "@" p_ver[p]
       }
+      p_str = p_str (i>1 ? " · " : "") "`" p ver "`"
     }
-    if (best_p99_iqr_key!="") {
-      print "- Lowest p99 IQR: " best_p99_iqr_key " (" fmt_float(best_p99_iqr) " ms)"
-      print ""
+    
+    print "**run**: `" substr(run_id, 1, 10) "` · **time**: `" run_ts "`  "
+    print "**env**: `" cpu_model "` · `" kernel "`  "
+    print "**proxies**: " p_str "  "
+    print "**cases**: `throughput` / `latency(short, extended)` / `concurrency` / `churn` / `reload`  "
+    print "**methodology**: [METHODOLOGY.md](https://github.com/fabian4/pavis/blob/main/docs/benchmark/METHODOLOGY.md) · [CASES.md](https://github.com/fabian4/pavis/blob/main/docs/benchmark/CASES.md)  "
+    print "**raw data**: " input
+    print ""
+    print "---"
+    print ""
+    
+    # 2. Performance Scoreboard
+    print "## Performance Scoreboard"
+    print ""
+    print "> One row per proxy. Values reflect **primary-case signals only**."
+    print ""
+    print "| proxy | max_rps | p99_ms | p99_iqr | rps_per_cpu | peak_mem_mib | errors | reload_p99_ms | usable_ratio |"
+    print "|------|--------:|-------:|--------:|------------:|-------------:|-------:|--------------:|-------------:| "
+    
+    for (i=1; i<=n_proxies; i++) {
+      p = p_list[i]
+      
+      # Prepare Row Values
+      s_max_rps = fmt_int(sb[p,"max_rps"])
+      if (sb[p,"max_rps"] < best["max_rps"]) s_max_rps = s_max_rps " ↓"
+      
+      s_p99 = fmt_float(sb[p,"p99_ms"], 3)
+      if (sb[p,"p99_ms"] > best["p99_ms"]) s_p99 = s_p99 " ↓"
+      
+      s_p99_iqr = fmt_float(sb[p,"p99_iqr"], 3)
+      if (sb[p,"p99_iqr"] > 0.5) s_p99_iqr = s_p99_iqr " ⚠︎" # Heuristic: >0.5ms absolute
+      
+      s_rpc = fmt_float(sb[p,"rps_per_cpu"], 1)
+      if (sb[p,"rps_per_cpu"] < best["rps_per_cpu"]) s_rpc = s_rpc " ↓"
+      
+      s_mem = fmt_float(sb[p,"peak_mem_mib"], 2)
+      if (sb[p,"peak_mem_mib"] > 2 * best["peak_mem_mib"]) s_mem = s_mem " ⚠︎"
+      else if (sb[p,"peak_mem_mib"] > best["peak_mem_mib"]) s_mem = s_mem " ↓"
+      
+      err_val = sb[p,"errors"]
+      s_err = fmt_int(err_val)
+      if (err_val > 0) s_err = s_err " ⊗"
+      
+      s_reload = fmt_float(sb[p,"reload_p99_ms"], 3)
+      if (sb[p,"reload_p99_ms"] > best["reload_p99_ms"]) s_reload = s_reload " ↓"
+      
+      s_ratio = fmt_float(sb[p,"usable_ratio"], 2)
+      
+      print "| " p " | " s_max_rps " | " s_p99 " | " s_p99_iqr " | " s_rpc " | " s_mem " | " s_err " | " s_reload " | " s_ratio " |"
     }
-    print "proxy | case | runs | achieved_rps_median | rps_iqr | p99_ms | p99_iqr | dropped | errors"
-    print "--- | --- | --- | --- | --- | --- | --- | --- | ---"
-    for (i=1;i<=n;i++) {
-      key=s_list[i]
-      split(key, parts, SUBSEP)
-      proxy=parts[1]
-      cas=parts[2]
-      typ=get_type(key)
-      runs=agg_has[key] && is_num(agg_runs[key]) ? agg_runs[key] : iter_runs[key]
-      print proxy, cas,
-        fmt_int(runs),
-        fmt_float(value_for("achieved_rps", key)),
-        fmt_float(value_for("rps_iqr", key)),
-        fmt_float(value_for("p99_ms", key)),
-        fmt_float(value_for("p99_iqr", key)),
-        maybe_dropped(key, value_for("dropped", key), typ),
-        maybe_errors(key, value_for("errors", key), typ, 1)
-    }
+    
+    print ""
+    print "<small>"
+    print "- ↓ relative to best-in-column  "
+    print "- ⚠︎ notable cost or instability signal  "
+    print "- ⊗ error observed (invalid for baseline use)  "
+    print "</small>"
+    print ""
+    print "---"
     print ""
 
-    print "## ⚙️ Resource Efficiency (Open-loop)"
+    # 3. Resource Cost Profile
+    print "## Resource Cost Profile"
     print ""
-    print "Note: Table E includes loadgen cases only."
+    print "> Cost projection at ~10k sustained RPS (open-loop)."
     print ""
-    open_case["latency_short_1x"]=1
-    open_case["latency_extended_1x"]=1
-    open_case["reload_short_1x"]=1
-    for (key in keys) {
-      split(key, parts, SUBSEP)
-      proxy=parts[1]
-      cas=parts[2]
-      if (!open_case[cas]) continue
-      typ=get_type(key)
-      if (!is_open_loop(typ)) continue
-      achieved=value_for("achieved_rps", key)
-      cpu=value_for("proxy_cpu", key)
-      mem=value_for("peak_mem_mib", key)
-      if (!is_num(achieved) || !is_num(cpu) || !is_num(mem)) continue
-      if (cpu+0 <= 0 || mem+0 <= 0) continue
-      rps_cpu=(achieved+0)/(cpu+0)
-      rps_mem=(achieved+0)/(mem+0)
-      eff_key=cas SUBSEP proxy
-      eff_keys[eff_key]=1
-      eff_val[eff_key]=rps_cpu
-      eff_ach[eff_key]=achieved
-      eff_cpu[eff_key]=cpu
-      eff_mem[eff_key]=mem
+    print "| proxy | cpu | mem_mib | rps_per_cpu | rps_per_mib |"
+    print "|------|----:|--------:|------------:|------------:| "
+    
+    for (i=1; i<=n_proxies; i++) {
+      p = p_list[i]
+      
+      s_cpu = fmt_float(rc[p,"cpu"], 2)
+      if (rc[p,"cpu"] > best_rc["cpu"]) s_cpu = s_cpu " ↓"
+      
+      s_mem = fmt_float(rc[p,"mem_mib"], 2)
+      if (rc[p,"mem_mib"] > 2 * best_rc["mem_mib"]) s_mem = s_mem " ⚠︎"
+      else if (rc[p,"mem_mib"] > best_rc["mem_mib"]) s_mem = s_mem " ↓"
+      
+      s_rpc = fmt_float(rc[p,"rps_per_cpu"], 1)
+      if (rc[p,"rps_per_cpu"] < best_rc["rps_per_cpu"]) s_rpc = s_rpc " ↓"
+      
+      s_rpm = fmt_float(rc[p,"rps_per_mib"], 1)
+      if (rc[p,"rps_per_mib"] < best_rc["rps_per_mib"]) s_rpm = s_rpm " ↓"
+      
+      print "| " p " | " s_cpu " | " s_mem " | " s_rpc " | " s_rpm " |"
     }
-    n=0
-    for (k in eff_keys) e_list[++n]=k
-    sort_case_rps(e_list, n)
-    best_eff_key=""
-    best_eff_val=""
-    for (i=1;i<=n;i++) {
-      k=e_list[i]
-      if (best_eff_key=="" || eff_val[k]+0 > best_eff_val+0) {
-        best_eff_key=k
-        best_eff_val=eff_val[k]
-      }
-    }
-    if (best_eff_key!="") {
-      split(best_eff_key, parts, SUBSEP)
-      print "- Highest rps_per_proxy_cpu: " parts[2] " " parts[1] " (" fmt_float(best_eff_val) ")"
-      print ""
-    }
-    print "proxy | case | achieved_rps | proxy_cpu | peak_mem_mib | rps_per_proxy_cpu | rps_per_mib | rps_per_cpu_rank | rps_per_mib_rank"
-    print "--- | --- | --- | --- | --- | --- | --- | --- | ---"
-    cpu_n=0
-    mib_n=0
-    for (k in eff_keys) {
-      eff_cpu_vals[++cpu_n]=eff_val[k]+0
-      if (eff_mem[k]>0) {
-        eff_mib_vals[++mib_n]=(eff_ach[k]/eff_mem[k])
-      }
-    }
-    if (cpu_n>0) {
-      sort_numeric(eff_cpu_vals, cpu_n)
-      delete cpu_rank_map
-      delete rank_map
-      rank_map_desc(eff_cpu_vals, cpu_n)
-      for (k in rank_map) cpu_rank_map[k]=rank_map[k]
-    }
-    if (mib_n>0) {
-      sort_numeric(eff_mib_vals, mib_n)
-      delete mib_rank_map
-      delete rank_map
-      rank_map_desc(eff_mib_vals, mib_n)
-      for (k in rank_map) mib_rank_map[k]=rank_map[k]
-    }
-    for (i=1;i<=n;i++) {
-      eff_key=e_list[i]
-      split(eff_key, parts, SUBSEP)
-      cas=parts[1]
-      proxy=parts[2]
-      achieved=eff_ach[eff_key]
-      cpu=eff_cpu[eff_key]
-      mem=eff_mem[eff_key]
-      rps_cpu=eff_val[eff_key]
-      rps_mem=(achieved+0)/(mem+0)
-      cpu_rank=cpu_rank_map[key_float(rps_cpu)]
-      if (cpu_rank=="") cpu_rank="-"
-      mib_rank=mib_rank_map[key_float(rps_mem)]
-      if (mib_rank=="") mib_rank="-"
-      print proxy, cas,
-        fmt_float(achieved),
-        fmt_float(cpu),
-        fmt_float(mem),
-        fmt_float(rps_cpu),
-        fmt_float(rps_mem),
-        cpu_rank,
-        mib_rank
-    }
+    
     print ""
-    print "Metrics are comparable only within the same case."
+    print "<small>"
+    print "Higher `rps_per_cpu` / `rps_per_mib` indicates better efficiency."
+    print "⚠︎ highlights dominant cost drivers rather than outright failure."
+    print "</small>"
+    print ""
+    print "---"
+    print ""
+
+    # 4. Stability Appendix
+    print "## Stability Appendix"
+    print ""
+    print "### latency_extended_1x (5 runs)"
+    print ""
+    print "| proxy | rps_med | rps_iqr | p99_ms | p99_iqr | dropped |"
+    print "|------|--------:|--------:|-------:|--------:|--------:| "
+    
+    for (i=1; i<=n_proxies; i++) {
+      p = p_list[i]
+      c = "latency_extended_1x"
+      
+      d_rps = fmt_float(data[p,c,"achieved_rps"], 1)
+      d_rps_iqr = fmt_float(data[p,c,"rps_iqr"], 2)
+      d_p99 = fmt_float(data[p,c,"p99_ms"], 3)
+      
+      d_p99_iqr_val = data[p,c,"p99_iqr"]
+      d_p99_iqr = fmt_float(d_p99_iqr_val, 3)
+      if (is_num(d_p99_iqr_val) && d_p99_iqr_val > 0.5) d_p99_iqr = d_p99_iqr " ⚠︎"
+      
+      d_dropped = fmt_int(data[p,c,"dropped"])
+      
+      print "| " p " | " d_rps " | " d_rps_iqr " | " d_p99 " | " d_p99_iqr " | " d_dropped " |"
+    }
+    
+    print ""
+    print "<small>"
+    print "Appendix data is intended for regression and variance inspection, not ranking."
+    print "</small>"
+    print ""
+    print "---"
+    print ""
+    
+    # 5. Raw Metrics Reference
+    print "## Raw Metrics Reference"
+    print ""
+    print "All results are derived from `" input "`."
+    print ""
+    print "Key fields:  "
+    print "`achieved_rps` (throughput) · `p99_ms` (SLA latency) · `p99_iqr` (tail variance) ·  "
+    print "`proxy_cpu` (CPU cost) · `peak_mem_mib` (memory cost) ·  "
+    print "`errors` (stress-only failures) · `dropped` (open-loop saturation indicator)"
   }
-' "$input" > "$tmp_out"
-
-mv -f "$tmp_out" "$output"
-rm -f "$override_file" "$openloop_file"
-trap - EXIT
+' "$input" > "$output"
 
 echo "wrote: $output"

@@ -10,8 +10,8 @@ pub use routes::{
 pub use server::{ClientAuthConfig, Listener, TlsConfig};
 pub use telemetry::{TelemetryConfig, TracingConfig};
 pub use upstreams::{
-    CircuitBreaker, ClientCertConfig, ConnectionPoolConfig, Endpoint, HealthCheck, Upstream,
-    UpstreamTlsConfig,
+    CircuitBreaker, ClientCertChainMode, ClientCertConfig, ConnectionPoolConfig, Endpoint,
+    HealthCheck, SniMode, Upstream, UpstreamTlsConfig,
 };
 
 use anyhow::Result as AnyResult;

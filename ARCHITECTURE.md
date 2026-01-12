@@ -159,6 +159,11 @@ Discovery is the *only* mutable aspect of the runtime, strictly bounded to endpo
 1.  **Static**: Fixed IPs compiled into the artifact.
 2.  **StrictDns / LogicalDns**: The runtime updates endpoint lists based on TTL. This is **mechanism**, not policy. The *decision* to use DNS and the TTL parameters are frozen in the config.
 
+**Outbound TLS SNI Resolution**
+*   **Deterministic**: `SniName::Auto` resolves to a host rewrite override when present, else a DNS endpoint hostname, else Disabled.
+*   **Fail-Closed**: `TlsVerify::Full` requires SNI `Auto` or `Name`. If Auto resolves to Disabled, the config is rejected.
+*   **DNS Support**: DNS endpoints are supported at runtime; resolution failures fail the request and are logged.
+
 ### 4.4 Routing Algorithm (Hot Path)
 
 Routing uses static, optimized structures built during the artifact compilation phase (or mapped directly).

@@ -84,6 +84,7 @@ upstreams:
   - name: "backend"
     tls:
       enabled: true
+      sni: "backend.local"
     endpoints:
       - address: "127.0.0.1"
         port: 8081
@@ -123,8 +124,8 @@ routes:
             _ => panic!("unknown connect timeout"),
         }
         match upstream.tls {
-            TlsPolicy::Enabled { mode, .. } => {
-                assert_eq!(mode, TlsVerify::CertAndHost);
+            TlsPolicy::Enabled { verify, .. } => {
+                assert_eq!(verify, TlsVerify::Full);
             }
             TlsPolicy::Disabled => panic!("tls not enabled"),
             _ => panic!("unknown tls policy"),
@@ -202,11 +203,12 @@ routes:
                     max: ConnectionLimit::Limited(NonZeroU32::new(10).unwrap()),
                 },
                 tls: TlsPolicy::Enabled {
-                    mode: TlsVerify::Cert,
-                    sni: pavis_core::SniName::Value(pavis_core::Hostname(
+                    verify: TlsVerify::CaOnly,
+                    sni: pavis_core::SniName::Name(pavis_core::Hostname(
                         "backend.local".to_string(),
                     )),
                     cert: pavis_core::ClientCert::Disabled,
+                    ca: pavis_core::UpstreamCa::System,
                 },
                 endpoints: vec![Endpoint {
                     address: EndpointAddr::Ip {
