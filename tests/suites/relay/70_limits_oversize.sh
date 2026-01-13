@@ -5,7 +5,9 @@ set -e
 # Category: Limits
 # Invariants: R7 (Backpressure/Limits)
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "limits_01"

@@ -5,7 +5,9 @@ set -e
 # Category: Security & TLS
 # Description: Verifies required-mode mTLS handshakes succeed/fail as expected.
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "security_02"

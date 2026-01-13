@@ -58,9 +58,9 @@ This document outlines the current and planned feature set, explicitly calling o
 
 | Feature | Status | Note / Alternative |
 | :--- | :---: | :--- |
-| **Prometheus Metrics** | ⏳ | Planned. Critical for Ops. |
-| **Access Logs** (JSON) | ⏳ | Planned. |
-| **Distributed Tracing** (OTLP) | ⏳ | Planned. |
+| **Prometheus Metrics** | ✅ | Request/upstream metrics with bounded cardinality controls. |
+| **Access Logs** (JSON) | ✅ | Structured logging with request IDs and timing metadata. |
+| **Distributed Tracing** (OTLP) | ✅ | OpenTelemetry spans with HTTP semantic conventions. |
 | **Tap / Packet Capture** | ❌ | **Dropped**. Use system tools (`tcpdump` / `eBPF`). |
 
 ## 5. Extensibility

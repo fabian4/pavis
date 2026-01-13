@@ -6,7 +6,9 @@ set -e
 # Invariants: B (LKG)
 # Description: Valid structure/checksum, but unsupported protocol version.
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "lifecycle_04"

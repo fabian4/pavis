@@ -4,14 +4,21 @@ set -e
 # tests/run.sh
 # Main E2E test runner.
 
-export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PROJECT_ROOT="$(cd "$SCRIPT_DIR/../" && pwd)"
-export RUN_ID=${RUN_ID:-$(date +%s)}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../" && pwd)"
+export PROJECT_ROOT
+RUN_ID=${RUN_ID:-$(date +%s)}
+export RUN_ID
 
 # Source new libraries
+# shellcheck source=tests/lib/log.sh
 source "$SCRIPT_DIR/lib/log.sh"
+# shellcheck source=tests/lib/env.sh
 source "$SCRIPT_DIR/lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
+# shellcheck source=tests/lib/docker.sh
 source "$SCRIPT_DIR/lib/docker.sh"
 
 # Globals for summary
@@ -23,11 +30,13 @@ SKIPPED_CASES=0
 run_case() {
     local suite="$1"
     local script_path="$2"
-    export CASE_NAME=$(basename "$script_path" .sh)
+    CASE_NAME=$(basename "$script_path" .sh)
+    export CASE_NAME
     local case_log="$SCRIPT_DIR/temp/${suite}_${CASE_NAME}.log"
     mkdir -p "$(dirname "$case_log")"
 
-    local t_start=$(get_time)
+    local t_start
+    t_start=$(get_time)
     
     # Run the test case, buffering output
     set +e
@@ -40,18 +49,21 @@ run_case() {
     fi
     set -e
 
-    local t_end=$(get_time)
-    local duration=$(python3 -c "print(f'{($t_end - $t_start):.2f}')")
+    local t_end
+    local duration
+    t_end=$(get_time)
+    duration=$(python3 -c "print(f'{($t_end - $t_start):.2f}')")
     
     # Format the line
-    local suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
-    printf "[%s] %-25s " "$suite_upper" "$CASE_NAME"
+    local suite_upper
+    suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
+    printf "[%s] %-40s " "$suite_upper" "$CASE_NAME"
 
     TOTAL_CASES=$((TOTAL_CASES + 1))
-    if [ $status -eq 0 ]; then
+    if [ "$status" -eq 0 ]; then
         printf "✅ PASS  (%ss)\n" "$duration"
         PASSED_CASES=$((PASSED_CASES + 1))
-    elif [ $status -eq 77 ]; then # Standard SKIP code
+    elif [ "$status" -eq 77 ]; then # Standard SKIP code
         printf "⏭️ SKIP  (%ss)\n" "$duration"
         SKIPPED_CASES=$((SKIPPED_CASES + 1))
     else
@@ -64,17 +76,18 @@ run_case() {
     fi
     
     # Clean up log if success and not verbose
-    if [ $status -eq 0 ] && [ "${E2E_VERBOSE:-0}" -ne 1 ]; then
+    if [ "$status" -eq 0 ] && [ "${E2E_VERBOSE:-0}" -ne 1 ]; then
         rm -f "$case_log"
     fi
     
-    return $status
+    return "$status"
 }
 
 run_suite() {
     local suite="$1"
     local specific_case="$2"
-    local suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
+    local suite_upper
+    suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
     
     echo "▶️ SUITE: $suite_upper"
 

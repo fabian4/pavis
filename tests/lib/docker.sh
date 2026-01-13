@@ -4,7 +4,8 @@
 # Manages shared upstream infrastructure (either Docker Compose or local binaries).
 
 if [ -z "$PROJECT_ROOT" ]; then
-    export PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+    PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+    export PROJECT_ROOT
 fi
 
 SUITES_DIR="$PROJECT_ROOT/tests/suites"
@@ -47,7 +48,8 @@ resolve_compose_file() {
 
 start_upstreams_docker() {
     local suite="$1"
-    local compose_file=$(resolve_compose_file "$suite")
+    local compose_file
+    compose_file=$(resolve_compose_file "$suite")
     if [ -z "$compose_file" ]; then
         echo "❌ No docker-compose.yaml found for suite '$suite'"
         return 1
@@ -69,7 +71,8 @@ start_upstreams_docker() {
 
 
     local unhealthy=0
-    local services=$(docker compose -p "$project" -f "$compose_file" ps --format "{{.Service}}")
+    local services
+    services=$(docker compose -p "$project" -f "$compose_file" ps --format "{{.Service}}")
     for svc in $services; do
         if ! docker compose -p "$project" -f "$compose_file" ps "$svc" | grep -q "Up"; then
              echo "⚠️ Service '$svc' is not Up."
@@ -89,7 +92,8 @@ start_upstreams_docker() {
 
 stop_upstreams_docker() {
     local suite="$1"
-    local compose_file=$(resolve_compose_file "$suite")
+    local compose_file
+    compose_file=$(resolve_compose_file "$suite")
     if [ -z "$compose_file" ]; then
         return
     fi
@@ -182,7 +186,8 @@ stop_upstreams_binary() {
     if [ -d "$UPSTREAMS_PID_DIR" ]; then
         for pid_file in "$UPSTREAMS_PID_DIR"/*.pid; do
             [ -e "$pid_file" ] || continue
-            local pid=$(cat "$pid_file")
+            local pid
+            pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
                 kill "$pid" >/dev/null 2>&1 || true
                 wait "$pid" 2>/dev/null || true

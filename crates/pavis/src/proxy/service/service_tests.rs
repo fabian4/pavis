@@ -71,6 +71,11 @@ fn apply_route_headers_populates_router_context() {
         start_time: std::time::Instant::now(),
         client_identity: None,
         rbac_denied: false,
+        // Observability fields
+        upstream_timing: crate::proxy::context::UpstreamTiming::NotStarted,
+        route_pattern: crate::proxy::context::RoutePattern::NotMatched,
+        req_id: "test-req".to_string(),
+        span: crate::proxy::context::TracingSpan::Disabled,
     };
 
     apply_route_headers(&mut ctx, &route);
@@ -86,14 +91,23 @@ fn apply_route_headers_populates_router_context() {
 }
 
 fn test_telemetry() -> Arc<Telemetry> {
-    let (telemetry, _worker) = Telemetry::new(&RuntimeTelemetry {
-        level: pavis_core::LogLevel::Info,
-        pingora: pavis_core::LogLevel::Info,
-        service_name: ServiceName("svc".to_string()),
-        metrics: Metrics::Disabled,
-        access_log: AccessLogPolicy::Disabled,
-        tracing: pavis_core::TracingPolicy::Disabled,
-    });
+    let (telemetry, _worker, _metrics_worker, _tracing_service) = Telemetry::new(
+        &RuntimeTelemetry {
+            level: pavis_core::LogLevel::Info,
+
+            pingora: pavis_core::LogLevel::Info,
+
+            service_name: ServiceName("svc".to_string()),
+
+            metrics: Metrics::Disabled,
+
+            access_log: AccessLogPolicy::Disabled,
+
+            tracing: pavis_core::TracingPolicy::Disabled,
+        },
+        None,
+    );
+
     Arc::new(telemetry)
 }
 

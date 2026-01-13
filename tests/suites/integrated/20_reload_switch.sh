@@ -5,7 +5,9 @@ set -e
 # Category: End-to-End Reload
 # Invariants: I1, I2, I5
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "reload_01"
@@ -95,7 +97,7 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 # 4. Wait for Switch
 MAX_RETRIES=20
 SWITCHED=0
-for i in $(seq 1 $MAX_RETRIES); do
+for _ in $(seq 1 $MAX_RETRIES); do
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id', ''))")
     

@@ -5,7 +5,9 @@ set -e
 # Category: Traffic Management
 # Description: Verifies Redirect and Direct Response actions.
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "traffic_04"

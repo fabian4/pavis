@@ -26,8 +26,10 @@ print_summary() {
     local skipped=$4
     local global_failed=${5:-0}
     
-    local end_time=$(get_time)
-    local duration=$(python3 -c "print(f'{($end_time - $START_TIME):.2f}')")
+    local end_time
+    local duration
+    end_time=$(get_time)
+    duration=$(python3 -c "print(f'{($end_time - $START_TIME):.2f}')")
     
     echo "=================================================="
     echo "🧾 FINAL SUMMARY"

@@ -5,7 +5,9 @@ set -e
 # Category: Security & TLS
 # Invariants: C (Atomic Switch)
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "security_01"
@@ -83,7 +85,7 @@ publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
 # Wait for switch (poll for TLS enabled)
 MAX_RETRIES=20
 SWITCHED=0
-for i in $(seq 1 $MAX_RETRIES); do
+for _ in $(seq 1 $MAX_RETRIES); do
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     
     tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('enabled', False))")

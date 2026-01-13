@@ -139,6 +139,7 @@ Pavis operates as an L7 proxy. Its pipeline is fixed and optimized for the froze
 4.  **Policy**: Enforce frozen RBAC and validation rules immediately after decoding.
 5.  **Match**: `Router` executes O(1) or O(log N) lookups against the frozen routing table.
 6.  **Action**: Executes the pre-compiled `RouteAction` (Load Balance, Forward, or Reject).
+7.  **Telemetry**: Emits metrics, traces, and access logs. Cardinality is bounded by frozen `route_pattern`.
 
 ### 4.2 Runtime Memory Lifecycle (RCU)
 

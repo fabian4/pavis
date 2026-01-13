@@ -1,12 +1,15 @@
+<img src="assets/rhino.svg" alt="Pavis logo" width="96" />
+
 # Pavis
 
-**A Frozen Data Plane L7 Sidecar Proxy**
+**A Frozen Data Plane L7 Sidecar Proxy**  
+_Deterministic by construction. Zero runtime policy._
 
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](./LICENSE)
 [![Language](https://img.shields.io/badge/language-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Engine](https://img.shields.io/badge/engine-Pingora-purple.svg)](https://github.com/cloudflare/pingora)
+
 [![Status](https://img.shields.io/badge/status-Pre--Alpha-red.svg)](#project-status)
-[![Crates.io](https://img.shields.io/crates/v/pavis.svg)](https://crates.io/crates/pavis)
 [![codecov](https://codecov.io/gh/fabian4/pavis/branch/main/graph/badge.svg?token=C1DRZN5YDL)](https://codecov.io/gh/fabian4/pavis)
 
 **Pavis** is a highly opinionated L7 sidecar proxy implemented in Rust, built on the Cloudflare Pingora engine.
@@ -58,6 +61,7 @@ The Runtime is deliberately constrained to be a pure execution mechanism. It per
 *   **Rewrites**: Prefix path rewriting and Host literal rewriting.
 *   **Hot Reload**: Atomic, hitless reload of the data plane via pointer swapping.
 *   **TLS Termination**: Server-side TLS with strict file-based certificates.
+*   **Observability**: Prometheus metrics with cardinality controls, structured access logging, and distributed tracing (OTLP).
 
 ## 🧭 Roadmap (Planned)
 
@@ -66,7 +70,6 @@ The following items represent the planned architectural direction and are not gu
 *   **Resilience**: Retries, per-try timeouts, and circuit breaking.
 *   **Identity**: mTLS with SPIFFE ID extraction.
 *   **Security**: RBAC with deny-by-default policies.
-*   **Observability**: Prometheus metrics and OpenTelemetry tracing.
 *   **xDS**: Compiling Envoy xDS resources into frozen `.pvs` artifacts.
 
 ## 🚫 Explicitly Dropped / Not Supported

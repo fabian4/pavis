@@ -5,7 +5,9 @@ set -e
 # Category: Security & TLS
 # Description: Verifies SPIFFE ID authorization for prefix match.
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "security_04"

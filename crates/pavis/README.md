@@ -42,7 +42,30 @@ Implements the request matching logic. It compiles abstract routes into an execu
 Manages the global runtime state. It defines `RuntimeState` (holding the `Router` and `UpstreamManager`) and `RuntimeStateHandle`, which provides thread-safe, atomic access to the current configuration via `ArcSwap`.
 
 ### `telemetry`
-Handles observability signals. It configures access logs and integrates with the `tracing` ecosystem. It ensures that telemetry operations (like logging) do not block the request processing path.
+Handles observability signals through three pillars: metrics, access logs, and distributed tracing.
+
+**Components**:
+- `access_log`: Non-blocking structured access logging (stdout, file, or disabled)
+- `metrics`: Prometheus metrics server with cardinality controls
+- `tracing`: OpenTelemetry distributed tracing with OTLP export
+
+**Architectural Principles**:
+- Non-blocking operations: All telemetry uses `try_send` or background tasks
+- Zero-cost when disabled: Minimal overhead through explicit gating at call sites
+- Unified context: `RouterContext` serves as the single observability context per request
+- Bounded cardinality: Metrics use route patterns, never raw paths
+
+**Metrics**:
+Prometheus metrics are exposed via a dedicated HTTP server configured through `telemetry.metrics.addr`. Metrics include:
+- Request metrics (total, duration histograms) with labels: method, route_pattern, status, upstream
+- Connection metrics (active gauge, total counter)
+- Upstream metrics (requests, duration) with labels: upstream, status
+
+**Access Logging**:
+Structured logs emitted per request with timing, routing, and identity metadata. Includes unique request IDs for correlation across systems. Logs are buffered and written asynchronously via a dedicated worker.
+
+**Distributed Tracing**:
+OpenTelemetry spans are created for each request with HTTP semantic conventions. Spans include route patterns, upstream selections, RBAC decisions, and final HTTP status. Traces are exported via OTLP to collectors like Jaeger.
 
 ### `upstream`
 Manages backend clusters and endpoint resolution. It includes the `Manager` which holds `Cluster` instances, and the `UpstreamResolver` service. It handles load balancing and connection pooling configurations for defined upstreams.

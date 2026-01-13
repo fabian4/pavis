@@ -5,7 +5,9 @@ set -e
 # Category: Failure & LKG
 # Invariants: I3 (Artifact Opaqueness), I4 (System LKG)
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "lkg_01"
@@ -99,7 +101,7 @@ MAX_RETRIES=20
 
 SWITCHED=0
 
-for i in $(seq 1 $MAX_RETRIES); do
+for _ in $(seq 1 $MAX_RETRIES); do
 
     if pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo" | grep -q "backend-v2"; then
 

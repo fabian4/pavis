@@ -127,6 +127,7 @@ mod tests {
                 tracing: TracingPolicy::Enabled {
                     provider: TracingProvider::Otlp,
                     sampling: SampleRate(50),
+                    endpoint: "http://localhost:4317".to_string(),
                 },
             },
             upstreams: vec![Upstream {

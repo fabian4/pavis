@@ -1,6 +1,9 @@
-name: Bench
+name: Benchmark Test
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 env:
@@ -10,6 +13,8 @@ env:
   HAPROXY_TAG: 2.9.6-alpine
   BENCH_VERBOSE: 0
   LOADGEN_WARN: 0
+  BENCH_PROFILE: github
+  MODE: standalone
 
 jobs:
   bench:
@@ -40,15 +45,6 @@ jobs:
 
       - name: Benchmark pavis
         run: PROXY="pavis" make bench
-
-      - name: Benchmark envoy
-        run: PROXY="envoy" make bench
-
-      - name: Benchmark nginx
-        run: PROXY="nginx" make bench
-
-      - name: Benchmark haproxy
-        run: PROXY="haproxy" make bench
 
       - name: Debug on failure
         if: failure()

@@ -1,12 +1,12 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 34/67
-- **Core Features**: 29/46
+- **Total**: 38/67
+- **Core Features**: 33/46
 - **Technical Debt**: 5/21
 
 > **Status**: Active
-> **Focus**: Phase 4 (Security & Identity)
+> **Focus**: Phase 6 (Resilience & Discovery)
 > **Reference**: [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 This roadmap distinguishes between **Delivery Phases** (user-visible capabilities) and **Technical Debt** (engineering health and optimization).
@@ -75,13 +75,13 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 5: Observability (Critical Path)
 > **Goal**: Deep visibility into proxy behavior required for Operations.
-> **Status**: ⏳ Planned (Promoted from Phase 7)
+> **Status**: ✅ Complete
 > **Plan**: [observability.md](./docs/plan/observability.md)
 
-- [ ] **Prometheus Metrics**: Exporter with request, connection, and upstream dimensions.
-- [ ] **Access Logs**: Configurable JSON/Text output to stdout or file.
-- [ ] **Distributed Tracing**: OpenTelemetry (OTLP) integration for request tracing.
-- [ ] **Runtime Stats**: Internal telemetry (config version, reload counts, payload size).
+- [x] **Prometheus Metrics**: Exporter with request, connection, and upstream dimensions.
+- [x] **Access Logs**: Configurable JSON/Text output to stdout or file.
+- [x] **Distributed Tracing**: OpenTelemetry (OTLP) integration for request tracing.
+- [x] **Runtime Stats**: Internal telemetry (config version, reload counts, payload size).
 
 ## Phase 6: Resilience & Discovery
 > **Goal**: Bounded dynamic behavior for reliability.
@@ -152,9 +152,9 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 - [ ] **[Arch] Stateful Resource Tracking**: Potential for stale endpoints if EDS/CDS desync. (Trigger: Multi-cluster deployments)
 
 ### TD-7: Bench TODO
+- [ ] **[Bench] System / Kubernetes (kind) Mode**: Implement lifecycle-oriented benchmarks (Configuration Reload, Rollback, Recovery) in a full cluster context. (Planned: Post-Standalone stabilization)
 - [ ] **[Bench] Protocol & Payload Coverage**: Add TLS-on/TLS-off variants, HTTP/2/gRPC workloads, and large-payload/streaming cases so production traffic patterns are exercised.
 - [ ] **[Bench] Saturation Profiles**: Implement a combined high-concurrency + open-loop saturation case and the memory-limited resource profile promised in the methodology.
-- [ ] **[Bench] Reload Trigger Validation**: Wire real reload triggers into `bench/cases/reload_short_1x.sh` (e.g., invoking `pavctl reload`) and record latency spikes/errors for each reload window.
 - [ ] **[Bench] Metrics & Reporting**: Surface target-vs-achieved RPS deltas, p999 for closed-loop tests, detailed error classes, and network/disk stats, then embed host hardware summaries, Docker image digests, and cpuset verification data directly in the generated reports for auditability.
 
 ---

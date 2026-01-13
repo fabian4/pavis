@@ -5,7 +5,9 @@ set -e
 # Category: Smoke & Bootstrap
 # Invariants: I1 (End-to-End Publish), I2 (Hot Reload Pipeline)
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "smoke_01"
@@ -75,7 +77,7 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 # Poll until 200 OK
 MAX_RETRIES=20
 SUCCESS=0
-for i in $(seq 1 $MAX_RETRIES); do
+for _ in $(seq 1 $MAX_RETRIES); do
     if pavis_curl_body -f "http://127.0.0.1:$PORT_PAVIS/echo" > /dev/null; then
         SUCCESS=1
         break

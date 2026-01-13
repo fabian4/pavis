@@ -160,8 +160,21 @@ emit_row() {
   local timestamp="${21}"
   local cpu_model="${22}"
   local kernel="${23}"
+  local bench_profile="${24}"
+  local bench_mode="${25}"
+  local bench_payload_size="${26}"
+  local bench_tls="${27}"
+  local bench_metrics="${28}"
+  local backend_cpuset="${29}"
+  local proxy_cpuset="${30}"
+  local bench_docker_compose="${31}"
+  local bench_host_cores="${32}"
+  local bench_host_cpuset_effective="${33}"
+  local bench_host_mem_total="${34}"
+  local bench_proxy_cpu_limit="${35}"
+  local bench_proxy_mem_limit="${36}"
 
-  echo "${git_sha},${iteration},${aggregate},${phase},${proxy},${case_name},${case_type},${runs},${achieved_rps},${p50_ms},${p90_ms},${p99_ms},${errors},${dropped},${rps_iqr},${p99_iqr},${backend_cpu},${proxy_cpu},${peak_mem},${target_rps},${timestamp},${cpu_model},${kernel}"
+  echo "${git_sha},${iteration},${aggregate},${phase},${proxy},${case_name},${case_type},${runs},${achieved_rps},${p50_ms},${p90_ms},${p99_ms},${errors},${dropped},${rps_iqr},${p99_iqr},${backend_cpu},${proxy_cpu},${peak_mem},${target_rps},${timestamp},${cpu_model},${kernel},${bench_profile},${bench_mode},${bench_payload_size},${bench_tls},${bench_metrics},${backend_cpuset},${proxy_cpuset},${bench_docker_compose},${bench_host_cores},${bench_host_cpuset_effective},${bench_host_mem_total},${bench_proxy_cpu_limit},${bench_proxy_mem_limit}"
 }
 
 # Parse single test case
@@ -189,6 +202,19 @@ parse_case() {
   local target_rps=""
   local cpu_model=""
   local kernel=""
+  local bench_profile=""
+  local bench_mode=""
+  local bench_payload_size=""
+  local bench_tls=""
+  local bench_metrics=""
+  local backend_cpuset=""
+  local proxy_cpuset=""
+  local bench_docker_compose=""
+  local bench_host_cores=""
+  local bench_host_cpuset_effective=""
+  local bench_host_mem_total=""
+  local bench_proxy_cpu_limit=""
+  local bench_proxy_mem_limit=""
   local backend_container=""
   local proxy_container=""
 
@@ -199,6 +225,19 @@ parse_case() {
     target_rps=$(jq -r '.target_rps // empty' "${case_dir}/meta.json")
     cpu_model=$(jq -r '.cpu_model // empty' "${case_dir}/meta.json")
     kernel=$(jq -r '.kernel // empty' "${case_dir}/meta.json")
+    bench_profile=$(jq -r '.bench_profile // empty' "${case_dir}/meta.json")
+    bench_mode=$(jq -r '.bench_mode // empty' "${case_dir}/meta.json")
+    bench_payload_size=$(jq -r '.bench_payload_size // empty' "${case_dir}/meta.json")
+    bench_tls=$(jq -r '.bench_tls // empty' "${case_dir}/meta.json")
+    bench_metrics=$(jq -r '.bench_metrics // empty' "${case_dir}/meta.json")
+    backend_cpuset=$(jq -r '.backend_cpuset // empty' "${case_dir}/meta.json")
+    proxy_cpuset=$(jq -r '.proxy_cpuset // empty' "${case_dir}/meta.json")
+    bench_docker_compose=$(jq -r '.bench_docker_compose // empty' "${case_dir}/meta.json")
+    bench_host_cores=$(jq -r '.bench_host_cores // empty' "${case_dir}/meta.json")
+    bench_host_cpuset_effective=$(jq -r '.bench_host_cpuset_effective // empty' "${case_dir}/meta.json")
+    bench_host_mem_total=$(jq -r '.bench_host_mem_total // empty' "${case_dir}/meta.json")
+    bench_proxy_cpu_limit=$(jq -r '.bench_proxy_cpu_limit // empty' "${case_dir}/meta.json")
+    bench_proxy_mem_limit=$(jq -r '.bench_proxy_mem_limit // empty' "${case_dir}/meta.json")
     backend_container=$(jq -r '.backend_container // empty' "${case_dir}/meta.json")
     proxy_container=$(jq -r '.proxy_container // empty' "${case_dir}/meta.json")
   fi
@@ -296,7 +335,10 @@ parse_case() {
           "$proxy" "$case_name" "$case_type" "" \
           "$run_rps" "$run_p50" "$run_p90" "$run_p99" "$run_errors" "$run_dropped" \
           "" "" "$run_backend_cpu" "$run_proxy_cpu" "$run_peak_mem" \
-          "$target_rps" "$timestamp" "$cpu_model" "$kernel"
+          "$target_rps" "$timestamp" "$cpu_model" "$kernel" \
+          "$bench_profile" "$bench_mode" "$bench_payload_size" "$bench_tls" "$bench_metrics" \
+          "$backend_cpuset" "$proxy_cpuset" "$bench_docker_compose" \
+          "$bench_host_cores" "$bench_host_cpuset_effective" "$bench_host_mem_total" "$bench_proxy_cpu_limit" "$bench_proxy_mem_limit"
 
         [ -n "$run_rps" ] && echo "$run_rps" >> "$rps_temp"
         [ -n "$run_p50" ] && echo "$run_p50" >> "$p50_temp"
@@ -359,13 +401,19 @@ parse_case() {
       "$proxy" "$case_name" "$case_type" "$run_count" \
       "$achieved_rps" "$p50_ms" "$p90_ms" "$p99_ms" "$errors" "$dropped" \
       "$rps_iqr" "$p99_iqr" "$backend_cpu" "$proxy_cpu" "$peak_mem" \
-      "$target_rps" "$timestamp" "$cpu_model" "$kernel"
+      "$target_rps" "$timestamp" "$cpu_model" "$kernel" \
+      "$bench_profile" "$bench_mode" "$bench_payload_size" "$bench_tls" "$bench_metrics" \
+      "$backend_cpuset" "$proxy_cpuset" "$bench_docker_compose" \
+      "$bench_host_cores" "$bench_host_cpuset_effective" "$bench_host_mem_total" "$bench_proxy_cpu_limit" "$bench_proxy_mem_limit"
   else
     emit_row "$git_sha" "1" "1" "$phase" \
       "$proxy" "$case_name" "$case_type" "1" \
       "$achieved_rps" "$p50_ms" "$p90_ms" "$p99_ms" "$errors" "$dropped" \
       "" "" "$backend_cpu" "$proxy_cpu" "$peak_mem" \
-      "$target_rps" "$timestamp" "$cpu_model" "$kernel"
+      "$target_rps" "$timestamp" "$cpu_model" "$kernel" \
+      "$bench_profile" "$bench_mode" "$bench_payload_size" "$bench_tls" "$bench_metrics" \
+      "$backend_cpuset" "$proxy_cpuset" "$bench_docker_compose" \
+      "$bench_host_cores" "$bench_host_cpuset_effective" "$bench_host_mem_total" "$bench_proxy_cpu_limit" "$bench_proxy_mem_limit"
   fi
 }
 
@@ -379,7 +427,7 @@ main() {
   local phase="measure"
 
   # CSV header
-  echo "git_sha,iteration,aggregate,phase,proxy,case,type,runs,achieved_rps,p50_ms,p90_ms,p99_ms,errors,dropped,rps_iqr,p99_iqr,backend_cpu,proxy_cpu,peak_mem_mib,target_rps,timestamp,cpu_model,kernel" > "$SUMMARY_CSV"
+  echo "git_sha,iteration,aggregate,phase,proxy,case,type,runs,achieved_rps,p50_ms,p90_ms,p99_ms,errors,dropped,rps_iqr,p99_iqr,backend_cpu,proxy_cpu_avg,proxy_mem_peak_mib,target_rps,timestamp,cpu_model,kernel,bench_profile,bench_mode,bench_payload_size,bench_tls,bench_metrics,backend_cpuset,proxy_cpuset,bench_docker_compose,bench_host_cores,bench_host_cpuset_effective,bench_host_mem_total,bench_proxy_cpu_limit,bench_proxy_mem_limit" > "$SUMMARY_CSV"
 
   # Scan all proxy/case directories
   local found_results=0
@@ -398,6 +446,7 @@ main() {
 
       local case_name
       case_name=$(basename "$case_dir")
+      case_name="${case_name%%__*}"
 
       parse_case "$proxy" "$case_name" "$case_dir" "$phase" >> "$SUMMARY_CSV"
       found_results=1

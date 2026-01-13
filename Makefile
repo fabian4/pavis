@@ -19,11 +19,11 @@ include make/docs.mk
 # High-level Orchestration
 .PHONY: ci ci-local help
 
-# CI pipeline (format check, lint, unit tests)
-ci: fmt-check lint test
+# CI pipeline (format check, lint, shellcheck, unit tests)
+ci: fmt-check lint shellcheck test
 
-# Local CI pipeline (format, lint, unit tests)
-ci-local: fmt lint test
+# Local CI pipeline (format, lint, shellcheck, unit tests)
+ci-local: fmt lint shellcheck test
 
 # Show available commands
 help:
@@ -40,6 +40,7 @@ help:
 	@echo "  run-upstream       - Run pavis-upstream fixture (requires TLS_CERT_FILE/TLS_KEY_FILE)"
 	@echo "  fmt                - Format code"
 	@echo "  lint               - Run clippy"
+	@echo "  shellcheck         - Run shellcheck on bash scripts"
 	@echo ""
 	@echo "Test Commands:"
 	@echo "  test               - Run unit tests"
@@ -48,6 +49,7 @@ help:
 	@echo ""
 	@echo "Benchmarking:"
 	@echo "  bench              - Run benchmarks (PROXY=pavis|envoy|nginx|haproxy CASE=\"...\" DRY_RUN=1)"
+	@echo "  bench-all          - Run benchmarks for all proxies sequentially"
 	@echo "  bench-report       - Aggregate results and generate markdown report"
 	@echo "  bench-build        - Build benchmark images (pavis:local, bench-upstream:local)"
 	@echo "  bench-down         - Stop and cleanup benchmark containers"

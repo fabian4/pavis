@@ -9,7 +9,6 @@ pub struct TelemetryConfig {
     pub service_name: Option<String>,
     #[serde(rename = "metrics", alias = "prometheus_addr")]
     pub metrics: Option<String>,
-    /// Access log: "stdout" (default), "off", or file path
     pub access_log: Option<AccessLogPolicy>,
     pub tracing: Option<TracingConfig>,
 }
@@ -18,4 +17,5 @@ pub struct TelemetryConfig {
 pub struct TracingConfig {
     pub provider: Option<String>,
     pub sampling: Option<u32>,
+    pub endpoint: Option<String>,
 }

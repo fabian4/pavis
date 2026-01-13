@@ -1,4 +1,4 @@
-.PHONY: build binary-build docker-build run-pavis run-relay run-upstream fmt fmt-check lint coverage-report
+.PHONY: build binary-build docker-build run-pavis run-relay run-upstream fmt fmt-check lint shellcheck coverage-report
 
 BUILDER ?= builder
 ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
@@ -112,3 +112,18 @@ fmt-check:
 # Lint all code using Clippy
 lint:
 	cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::all
+
+# Run shellcheck on bash scripts (requires shellcheck)
+shellcheck:
+	@sh -c 'if command -v rg >/dev/null 2>&1; then \
+		files=$$(rg --files -g "*.sh"); \
+	else \
+		files=$$(find . -type f -name "*.sh" \
+			-not -path "./target/*" \
+			-not -path "./.git/*"); \
+	fi; \
+	if [ -z "$$files" ]; then \
+		echo "No shell scripts found."; \
+		exit 0; \
+	fi; \
+	shellcheck -x -S warning $$files'

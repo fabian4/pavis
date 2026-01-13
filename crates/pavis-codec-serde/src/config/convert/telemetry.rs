@@ -39,8 +39,16 @@ pub(super) fn to_runtime(telemetry: TelemetryConfig) -> Result<RuntimeTelemetry>
                 "zipkin" => TracingProvider::Zipkin,
                 _ => TracingProvider::Otlp,
             };
-            let sampling = SampleRate(tracing.sampling.unwrap_or(0));
-            TracingPolicy::Enabled { provider, sampling }
+            let sampling = SampleRate(tracing.sampling.unwrap_or(100));
+            // Apply default endpoint if not specified (codec responsibility)
+            let endpoint = tracing
+                .endpoint
+                .unwrap_or_else(|| "http://localhost:4317".to_string());
+            TracingPolicy::Enabled {
+                provider,
+                sampling,
+                endpoint,
+            }
         }
     };
 
@@ -68,18 +76,21 @@ pub(super) fn from_runtime(telemetry: RuntimeTelemetry) -> TelemetryConfig {
         access_log: Some(telemetry.access_log),
         tracing: match telemetry.tracing {
             TracingPolicy::Disabled => None,
-            TracingPolicy::Enabled { provider, sampling } => {
-                Some(crate::config::types::TracingConfig {
-                    provider: Some(match provider {
-                        TracingProvider::Otlp => "otlp".to_string(),
-                        TracingProvider::Jaeger => "jaeger".to_string(),
-                        TracingProvider::Zipkin => "zipkin".to_string(),
-                        #[allow(unreachable_patterns)]
-                        _ => "otlp".to_string(),
-                    }),
-                    sampling: Some(sampling.0),
-                })
-            }
+            TracingPolicy::Enabled {
+                provider,
+                sampling,
+                endpoint,
+            } => Some(crate::config::types::TracingConfig {
+                provider: Some(match provider {
+                    TracingProvider::Otlp => "otlp".to_string(),
+                    TracingProvider::Jaeger => "jaeger".to_string(),
+                    TracingProvider::Zipkin => "zipkin".to_string(),
+                    #[allow(unreachable_patterns)]
+                    _ => "otlp".to_string(),
+                }),
+                sampling: Some(sampling.0),
+                endpoint: Some(endpoint),
+            }),
             #[allow(unreachable_patterns)]
             _ => None,
         },
@@ -181,11 +192,14 @@ mod tests {
                 tracing: Some(TracingConfig {
                     provider: Some(input.to_string()),
                     sampling: Some(100),
+                    endpoint: None,
                 }),
             };
             let runtime = to_runtime(config).unwrap();
             match runtime.tracing {
-                TracingPolicy::Enabled { provider, sampling } => {
+                TracingPolicy::Enabled {
+                    provider, sampling, ..
+                } => {
                     let provider_matches = match expected {
                         TracingProvider::Otlp => matches!(provider, TracingProvider::Otlp),
                         TracingProvider::Jaeger => matches!(provider, TracingProvider::Jaeger),
@@ -213,6 +227,7 @@ mod tests {
             tracing: TracingPolicy::Enabled {
                 provider: TracingProvider::Zipkin,
                 sampling: SampleRate(50),
+                endpoint: "http://otel-collector:4317".to_string(),
             },
         };
 
@@ -224,5 +239,78 @@ mod tests {
         let tracing = serde.tracing.unwrap();
         assert_eq!(tracing.provider.as_deref(), Some("zipkin"));
         assert_eq!(tracing.sampling, Some(50));
+        assert_eq!(
+            tracing.endpoint.as_deref(),
+            Some("http://otel-collector:4317")
+        );
+    }
+
+    #[test]
+    fn to_runtime_applies_default_endpoint_when_omitted() {
+        let config = TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            metrics: None,
+            access_log: None,
+            tracing: Some(TracingConfig {
+                provider: Some("otlp".to_string()),
+                sampling: Some(100),
+                endpoint: None, // Omitted - should default
+            }),
+        };
+        let runtime = to_runtime(config).unwrap();
+        match runtime.tracing {
+            TracingPolicy::Enabled { endpoint, .. } => {
+                assert_eq!(endpoint, "http://localhost:4317");
+            }
+            _ => panic!("expected enabled tracing"),
+        }
+    }
+
+    #[test]
+    fn to_runtime_uses_explicit_endpoint_when_provided() {
+        let config = TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            metrics: None,
+            access_log: None,
+            tracing: Some(TracingConfig {
+                provider: Some("otlp".to_string()),
+                sampling: Some(100),
+                endpoint: Some("http://custom-endpoint:4318".to_string()),
+            }),
+        };
+        let runtime = to_runtime(config).unwrap();
+        match runtime.tracing {
+            TracingPolicy::Enabled { endpoint, .. } => {
+                assert_eq!(endpoint, "http://custom-endpoint:4318");
+            }
+            _ => panic!("expected enabled tracing"),
+        }
+    }
+
+    #[test]
+    fn to_runtime_defaults_sampling_to_100_percent() {
+        let config = TelemetryConfig {
+            level: None,
+            pingora: None,
+            service_name: None,
+            metrics: None,
+            access_log: None,
+            tracing: Some(TracingConfig {
+                provider: Some("otlp".to_string()),
+                sampling: None, // Omitted - should default to 100
+                endpoint: None,
+            }),
+        };
+        let runtime = to_runtime(config).unwrap();
+        match runtime.tracing {
+            TracingPolicy::Enabled { sampling, .. } => {
+                assert_eq!(sampling.0, 100);
+            }
+            _ => panic!("expected enabled tracing"),
+        }
     }
 }

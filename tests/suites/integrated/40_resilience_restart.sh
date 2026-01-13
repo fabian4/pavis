@@ -5,7 +5,9 @@ set -e
 # Category: Resilience
 # Invariants: I2, I4
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "resilience_restart"
@@ -52,7 +54,7 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" -H "x-pavis-version
 
 # Wait for V1 to be active
 MAX_RETRIES=50
-for i in $(seq 1 $MAX_RETRIES); do
+for _ in $(seq 1 $MAX_RETRIES); do
     if pavis_curl_body -f "http://127.0.0.1:$PORT_PAVIS/echo" > /dev/null; then break; fi
     sleep 0.1
 done
@@ -63,7 +65,7 @@ stop_sut "relay"
 
 # 3. Assert Traffic Continues (LKG)
 # We send a few requests to be sure
-for i in {1..5}; do
+for _ in {1..5}; do
     assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
     sleep 0.1
 done
@@ -84,7 +86,7 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" -H "x-pavis-version
 # 6. Assert Runtime picks up V2
 MAX_RETRIES=50
 SWITCHED=0
-for i in $(seq 1 $MAX_RETRIES); do
+for _ in $(seq 1 $MAX_RETRIES); do
     if pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo" | grep -q "backend-v2"; then
         SWITCHED=1
         break

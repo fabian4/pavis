@@ -7,7 +7,8 @@ assert_body() {
     local url="$1"
     local expected="$2"
     shift 2
-    local actual=$(pavis_curl_body "$url" "$@")
+    local actual
+    actual=$(pavis_curl_body "$url" "$@")
     if [[ "$actual" != *"$expected"* ]]; then
         echo "❌ Assertion failed: Expected body to contain '$expected', got '$actual'"
         return 1
@@ -18,7 +19,8 @@ assert_status() {
     local url="$1"
     local expected="$2"
     shift 2
-    local actual=$(pavis_curl_body -o /dev/null -w "%{http_code}" "$url" "$@")
+    local actual
+    actual=$(pavis_curl_body -o /dev/null -w "%{http_code}" "$url" "$@")
     if [ "$actual" != "$expected" ]; then
         echo "❌ Assertion failed: Expected status $expected, got $actual"
         return 1
@@ -37,7 +39,8 @@ assert_status_eq() {
     local file="$1"
     local expected="$2"
     # First line of curl -i is "HTTP/1.1 200 OK"
-    local actual=$(head -n 1 "$file" | awk '{print $2}')
+    local actual
+    actual=$(head -n 1 "$file" | awk '{print $2}')
     if [ "$actual" != "$expected" ]; then
         echo "❌ Assertion failed: Expected status $expected, got $actual"
         return 1
@@ -48,7 +51,8 @@ assert_header_eq() {
     local file="$1"
     local name="$2"
     local expected="$3"
-    local actual=$(header_value "$file" "$name")
+    local actual
+    actual=$(header_value "$file" "$name")
     if [ "$actual" != "$expected" ]; then
         echo "❌ Assertion failed: Expected header '$name' to be '$expected', got '$actual'"
         return 1
@@ -68,14 +72,16 @@ wait_for_url() {
     local url="$1"
     local timeout="${2:-30}"
     shift 2
-    local extra_args="$@"
-    local start_time=$(date +%s)
+    local extra_args=("$@")
+    local start_time
+    start_time=$(date +%s)
 
     while true; do
-        if curl -s -o /dev/null $extra_args "$url"; then
+        if curl -s -o /dev/null "${extra_args[@]}" "$url"; then
             return 0
         fi
-        local current_time=$(date +%s)
+        local current_time
+        current_time=$(date +%s)
         if [ $((current_time - start_time)) -ge "$timeout" ]; then
             echo "Timeout waiting for $url"
             return 1
@@ -87,13 +93,15 @@ wait_for_url() {
 wait_for_port() {
     local port="$1"
     local timeout="${2:-10}"
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
 
     while true; do
         if nc -z 127.0.0.1 "$port" 2>/dev/null; then
             return 0
         fi
-        local current_time=$(date +%s)
+        local current_time
+        current_time=$(date +%s)
         if [ $((current_time - start_time)) -ge "$timeout" ]; then
             return 1
         fi

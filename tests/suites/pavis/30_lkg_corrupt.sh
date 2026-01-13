@@ -5,7 +5,9 @@ set -e
 # Category: Failure & LKG
 # Invariants: B (LKG)
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "lifecycle_03"
@@ -91,7 +93,7 @@ publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v3.pvs"
 # 9. Wait for V3 switch
 MAX_RETRIES=20
 SWITCHED=0
-for i in $(seq 1 $MAX_RETRIES); do
+for _ in $(seq 1 $MAX_RETRIES); do
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     if [[ "$response" == *"backend-v2"* ]]; then # backend-v2 is mock-upstream id for port 8082
         SWITCHED=1

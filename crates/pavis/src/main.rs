@@ -9,6 +9,7 @@ use pingora::tls::x509::X509Name;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tracing_subscriber::{Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
 use pavis::agent::{Backoff, ConfigAgent, lkg_version};
 use pavis::load::{self, RuntimeLoadError};
@@ -78,6 +79,7 @@ fn main() -> Result<()> {
 
     let config = Arc::new(config);
 
+    // Setup logging (Subscriber + Reloadable OpenTelemetry Layer)
     let log_level = log_level_to_str(config.telemetry.level);
     let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
@@ -87,8 +89,20 @@ fn main() -> Result<()> {
         .add_directive(format!("pingora={}", p_str).parse()?)
         .add_directive(format!("pingora_core={}", p_str).parse()?);
 
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let fmt_layer = tracing_subscriber::fmt::layer();
 
+    // Custom reloadable layer. transparent to downcasting.
+    let reload_handle: pavis::telemetry::tracing::ReloadHandle =
+        pavis::telemetry::tracing::ReloadableLayer::new();
+    let otel_layer = reload_handle.clone();
+
+    // Register layers. Order matters: otel_layer is typed for Registry,
+    // so it must be applied directly to Registry.
+    Registry::default()
+        .with(otel_layer)
+        .with(fmt_layer)
+        .with(filter)
+        .init();
     let access_log_desc = match &config.telemetry.access_log {
         AccessLogPolicy::Disabled => "off".to_string(),
         AccessLogPolicy::Stdout => "stdout".to_string(),
@@ -149,7 +163,8 @@ fn main() -> Result<()> {
         Ok::<_, anyhow::Error>(Arc::new(agent))
     });
 
-    let (telemetry, access_log_worker) = Telemetry::new(&config.telemetry);
+    let (telemetry, access_log_worker, metrics_worker, tracing_service) =
+        Telemetry::new(&config.telemetry, Some(reload_handle));
     let telemetry = Arc::new(telemetry);
     let resolver = UpstreamResolver::new(state_handle.clone(), Duration::from_secs(10));
 
@@ -218,6 +233,12 @@ fn main() -> Result<()> {
 
     server.add_service(access_log_worker);
     server.add_service(resolver);
+    server.add_service(tracing_service);
+
+    if let Some(metrics_worker) = metrics_worker {
+        server.add_service(metrics_worker);
+    }
+
     if let Some(agent) = config_agent {
         let agent = agent?;
         server.add_service(agent.worker());

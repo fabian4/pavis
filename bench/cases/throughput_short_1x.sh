@@ -9,20 +9,17 @@ set -euo pipefail
 # - If service names/ports differ, adjust the variables in the Config section.
 
 CASE_NAME="throughput_short_1x"
-LOAD_TYPE="closed-loop"
 DURATION_S=30
 WARMUP_S=5
 COOLDOWN_S=5
 THREADS=4
 CONNECTIONS=100
 TARGET_RPS=""
-USE_WRK2=0
 RUN_COUNT=5
 if [ -n "${RUN_COUNT_OVERRIDE:-}" ]; then
   RUN_COUNT="$RUN_COUNT_OVERRIDE"
 fi
 CHURN_CLOSE=0
-PLACEHOLDER=false
 REQUEST_PATH="/fixed"
 
 # Config (single place to adjust service names/ports)
@@ -78,7 +75,7 @@ bench_print_case_header "$CASE_NAME" "$PROXY"
 PROXY_URL="http://localhost:${PROXY_PORT}${REQUEST_PATH}"
 BACKEND_URL="http://localhost:${BACKEND_PORT}/healthz"
 
-RESULTS_ROOT="${ROOT_DIR}/bench/output/${PROXY}/${CASE_NAME}"
+RESULTS_ROOT="${ROOT_DIR}/bench/output/${PROXY}/${CASE_NAME}${BENCH_CASE_SUFFIX:+__${BENCH_CASE_SUFFIX}}"
 # TIMESTAMP removed - using simple path
 BASE_DIR="${RESULTS_ROOT}"
 
@@ -132,19 +129,6 @@ start_compose() {
     docker compose -f "$COMPOSE_FILE" stop "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1 || true
     docker compose -f "$COMPOSE_FILE" --profile sut up -d --force-recreate "$BACKEND_SERVICE" "$PROXY_SERVICE" >/dev/null 2>&1
   fi
-}
-
-print_cpuset() {
-  local container="$1"
-  local expected="$2"
-  local actual
-  actual=$(docker inspect -f '{{.HostConfig.CpusetCpus}}' "$container" 2>/dev/null || true)
-  local label="$container"
-  case "$container" in
-    bench-upstream) label="Upstream" ;; 
-    bench-pavis|bench-envoy|bench-nginx|bench-haproxy) label="Proxy" ;; 
-  esac
-  bench_print_cpuset_line "$label" "${actual:-}" "$expected"
 }
 
 start_stats() {
@@ -226,10 +210,6 @@ peak_mem_mib() {
   } END {if (max>0) printf "%.2f", max; else print "0"}' "$2"
 }
 
-backend_saturated_flag() {
-  awk -v v="$1" 'BEGIN {if (v+0 > 80) print "true"; else print "false"}'
-}
-
 container_image_id() {
   docker inspect -f '{{.Image}}' "$1" 2>/dev/null || echo "unknown"
 }
@@ -260,6 +240,19 @@ write_meta_json() {
   local cpu_model
   local cpu_governor
   local git_sha
+  local bench_profile
+  local bench_mode
+  local bench_payload_size
+  local bench_tls
+  local bench_metrics
+  local backend_cpuset
+  local proxy_cpuset
+  local bench_docker_compose
+  local bench_host_cores
+  local bench_host_cpuset_effective
+  local bench_host_mem_total
+  local bench_proxy_cpu_limit
+  local bench_proxy_mem_limit
 
   backend_image_id=$(container_image_id "$BACKEND_CONTAINER")
   proxy_image_id=$(container_image_id "$PROXY_CONTAINER")
@@ -280,6 +273,19 @@ elif command -v sysctl >/dev/null 2>&1; then
     cpu_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)
   fi
   git_sha=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "unknown")
+  bench_profile="${BENCH_PROFILE:-}"
+  bench_mode="${BENCH_MODE:-}"
+  bench_payload_size="${BENCH_PAYLOAD_SIZE:-}"
+  bench_tls="${BENCH_TLS:-}"
+  bench_metrics="${BENCH_METRICS:-}"
+  backend_cpuset="${BACKEND_CPUSET:-}"
+  proxy_cpuset="${PROXY_CPUSET:-}"
+  bench_docker_compose="${BENCH_DOCKER_COMPOSE:-}"
+  bench_host_cores="${BENCH_HOST_CORES:-}"
+  bench_host_cpuset_effective="${BENCH_HOST_CPUSET_EFFECTIVE:-}"
+  bench_host_mem_total="${BENCH_HOST_MEM_TOTAL:-}"
+  bench_proxy_cpu_limit="${BENCH_PROXY_CPU_LIMIT:-}"
+  bench_proxy_mem_limit="${BENCH_PROXY_MEM_LIMIT:-}"
 
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -299,6 +305,19 @@ elif command -v sysctl >/dev/null 2>&1; then
   "cpu_model": $(json_string "$cpu_model"),
   "cpu_governor": $(json_string "$cpu_governor"),
   "git_sha": $(json_string "$git_sha"),
+  "bench_profile": $(json_string "$bench_profile"),
+  "bench_mode": $(json_string "$bench_mode"),
+  "bench_payload_size": $(json_string "$bench_payload_size"),
+  "bench_tls": $(json_string "$bench_tls"),
+  "bench_metrics": $(json_string "$bench_metrics"),
+  "backend_cpuset": $(json_string "$backend_cpuset"),
+  "proxy_cpuset": $(json_string "$proxy_cpuset"),
+  "bench_docker_compose": $(json_string "$bench_docker_compose"),
+  "bench_host_cores": $(json_string "$bench_host_cores"),
+  "bench_host_cpuset_effective": $(json_string "$bench_host_cpuset_effective"),
+  "bench_host_mem_total": $(json_string "$bench_host_mem_total"),
+  "bench_proxy_cpu_limit": $(json_string "$bench_proxy_cpu_limit"),
+  "bench_proxy_mem_limit": $(json_string "$bench_proxy_mem_limit"),
   "target_rps": $(json_number_or_null "$TARGET_RPS")
 }
 JSON
@@ -311,10 +330,14 @@ run_wrk() {
   if [ "$CHURN_CLOSE" -eq 1 ]; then
     header_args=(-H "Connection: close")
   fi
+  local taskset_cmd=()
+  if [[ -n "${BENCH_LOADGEN_CPUSET:-}" ]] && command -v taskset >/dev/null 2>&1; then
+    taskset_cmd=(taskset -c "$BENCH_LOADGEN_CPUSET")
+  fi
   if [ "${BENCH_VERBOSE:-0}" = "1" ]; then
-    wrk -t "$THREADS" -c "$CONNECTIONS" -d "${duration}s" "${header_args[@]}" "$PROXY_URL" | tee "$outfile"
+    "${taskset_cmd[@]}" wrk -t "$THREADS" -c "$CONNECTIONS" -d "${duration}s" "${header_args[@]}" "$PROXY_URL" | tee "$outfile"
   else
-    wrk -t "$THREADS" -c "$CONNECTIONS" -d "${duration}s" "${header_args[@]}" "$PROXY_URL" > "$outfile"
+    "${taskset_cmd[@]}" wrk -t "$THREADS" -c "$CONNECTIONS" -d "${duration}s" "${header_args[@]}" "$PROXY_URL" > "$outfile"
   fi
 }
 
@@ -339,9 +362,6 @@ main() {
     exit 1
   }
   bench_print_backend_status "ok"
-
-  print_cpuset "$BACKEND_CONTAINER" "$BACKEND_CPUSET_EXPECTED"
-  print_cpuset "$PROXY_CONTAINER" "$PROXY_CPUSET_EXPECTED"
 
   bench_print_tool_info "wrk" "$DURATION_S" "$CONNECTIONS"
   bench_print_metric "🔁" "Runs" "$RUN_COUNT"
@@ -391,9 +411,12 @@ main() {
     local total_errors=0
     for run_dir in "${BASE_DIR}"/run_*; do
       if [ -f "${run_dir}/wrk.txt" ]; then
-        local rps=$(parse_rps "${run_dir}/wrk.txt")
-        local p99=$(to_ms "$(parse_latency_pct "99%" "${run_dir}/wrk.txt")")
-        local errors=$(parse_errors "${run_dir}/wrk.txt")
+        local rps
+        local p99
+        local errors
+        rps=$(parse_rps "${run_dir}/wrk.txt")
+        p99=$(to_ms "$(parse_latency_pct "99%" "${run_dir}/wrk.txt")")
+        errors=$(parse_errors "${run_dir}/wrk.txt")
         summary_rps="${summary_rps}${rps} "
         summary_p99="${summary_p99}${p99} "
         total_errors=$((total_errors + errors))
@@ -401,8 +424,8 @@ main() {
     done
     local summary_rps_trimmed
     local summary_p99_trimmed
-    summary_rps_trimmed=$(echo "$summary_rps" | sed 's/[[:space:]]\+$//')
-    summary_p99_trimmed=$(echo "$summary_p99" | sed 's/[[:space:]]\+$//')
+    summary_rps_trimmed=${summary_rps%"${summary_rps##*[![:space:]]}"}
+    summary_p99_trimmed=${summary_p99%"${summary_p99##*[![:space:]]}"}
     bench_print_metric "📊" "RPS per run" "[${summary_rps_trimmed}]"
     bench_print_metric "⏱️" "p99 per run (ms)" "[${summary_p99_trimmed}]"
     bench_print_errors_line "$total_errors"

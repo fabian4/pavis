@@ -11,10 +11,10 @@ run_benchmark() {
   : "${BENCH_CASES_DIR:?}"
   : "${BENCH_OUTPUT_DIR:?}"
   : "${BENCH_PROXY:?}"
-  local open_loop_cases="${BENCH_OPEN_LOOP_CASES:-latency_short_1x latency_extended_1x reload_short_1x}"
+  local open_loop_cases="${BENCH_OPEN_LOOP_CASES:-latency_short_1x latency_extended_1x}"
 
   if [[ -d "${BENCH_OUTPUT_DIR}/${BENCH_PROXY}" ]]; then
-    log_info "Removing previous results for ${BENCH_PROXY}"
+    log_warn "Removing previous results for ${BENCH_PROXY}"
     rm -rf "${BENCH_OUTPUT_DIR:?}/${BENCH_PROXY}"
   fi
   ensure_dir "${BENCH_OUTPUT_DIR}/${BENCH_PROXY}"
@@ -27,6 +27,97 @@ run_benchmark() {
     log_info "Dry-run mode enabled; skipping summary aggregation"
     return
   fi
+}
+
+format_mem_mib() {
+  local kib="$1"
+  if [[ -z "$kib" ]]; then
+    echo "unknown"
+    return
+  fi
+  awk -v v="$kib" 'BEGIN {printf "%.0fMiB", v/1024}'
+}
+
+count_cpuset_string() {
+  local cpuset="$1"
+  if [[ -z "$cpuset" ]]; then
+    echo "0"
+    return
+  fi
+  awk -v s="$cpuset" 'BEGIN {
+    n=split(s, parts, ",");
+    total=0;
+    for (i=1; i<=n; i++) {
+      p=parts[i];
+      if (p ~ /^[0-9]+-[0-9]+$/) {
+        split(p, r, "-");
+        a=r[1]+0; b=r[2]+0;
+        if (a<=b) total+=b-a+1; else total+=a-b+1;
+      } else if (p ~ /^[0-9]+$/) {
+        total+=1;
+      }
+    }
+    print total;
+  }'
+}
+
+payload_size_to_bytes() {
+  local value="$1"
+  local upper
+  upper=$(printf '%s' "$value" | tr '[:lower:]' '[:upper:]')
+  if [[ "$upper" =~ ^([0-9]+)KIB$ ]]; then
+    echo "$((10#${BASH_REMATCH[1]} * 1024))"
+  elif [[ "$upper" =~ ^([0-9]+)KB$ ]]; then
+    echo "$((10#${BASH_REMATCH[1]} * 1000))"
+  elif [[ "$upper" =~ ^([0-9]+)MIB$ ]]; then
+    echo "$((10#${BASH_REMATCH[1]} * 1024 * 1024))"
+  elif [[ "$upper" =~ ^([0-9]+)MB$ ]]; then
+    echo "$((10#${BASH_REMATCH[1]} * 1000 * 1000))"
+  elif [[ "$upper" =~ ^([0-9]+)B$ ]]; then
+    echo "$((10#${BASH_REMATCH[1]}))"
+  else
+    echo ""
+  fi
+}
+
+log_case_environment() {
+  local case_name="$1"
+  local mem_kib=""
+  local cpuset_effective="unknown"
+  local effective_cores="0"
+  local docker_cpu_limit="${CPU_LIMIT:-}"
+  local docker_mem_limit="${MEMORY_LIMIT:-}"
+  local proxy_pin="${PROXY_CPUSET:-none}"
+  local backend_pin="${BACKEND_CPUSET:-none}"
+  local loadgen_pin="${BENCH_LOADGEN_CPUSET:-none}"
+  if [[ -r /proc/meminfo ]]; then
+    mem_kib=$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo)
+  fi
+  local mem_total
+  mem_total=$(format_mem_mib "$mem_kib")
+  if [[ -r /sys/fs/cgroup/cpuset.cpus.effective ]]; then
+    cpuset_effective=$(cat /sys/fs/cgroup/cpuset.cpus.effective 2>/dev/null || echo "unknown")
+  elif [[ -r /sys/fs/cgroup/cpuset/cpuset.cpus.effective ]]; then
+    cpuset_effective=$(cat /sys/fs/cgroup/cpuset/cpuset.cpus.effective 2>/dev/null || echo "unknown")
+  fi
+  if [[ "$cpuset_effective" != "unknown" ]]; then
+    effective_cores=$(count_cpuset_string "$cpuset_effective")
+  fi
+  if [[ "$proxy_pin" != "none" ]]; then
+    proxy_pin="{${proxy_pin//,/\,}}"
+  fi
+
+  export BENCH_HOST_CORES="${effective_cores}"
+  export BENCH_HOST_CPUSET_EFFECTIVE="${cpuset_effective}"
+  export BENCH_HOST_MEM_TOTAL="${mem_total}"
+  export BENCH_PROXY_CPU_LIMIT="${docker_cpu_limit:-unset}"
+  export BENCH_PROXY_MEM_LIMIT="${docker_mem_limit:-unset}"
+
+  log_info "Case ${case_name} on ${BENCH_PROXY}"
+  log_info "Host capacity | cores=${effective_cores} (cpuset=${cpuset_effective:-unknown}), mem=${mem_total}"
+  log_info "CPU pinning   | backend=${backend_pin}, proxy=${proxy_pin}, loadgen=${loadgen_pin}"
+  log_info "Limits        | proxy_cpu=${docker_cpu_limit:-unset}, proxy_mem=${docker_mem_limit:-unset}"
+  log_info "Environment   | compose=${BENCH_DOCKER_COMPOSE:-unset}"
 }
 
 run_case() {
@@ -48,21 +139,56 @@ run_case() {
       BENCH_LOADGEN_BIN="${BENCH_ROOT}/target/release/bench-loadgen"
   fi
 
-  if [[ "$BENCH_DRY_RUN" == "1" || "$BENCH_DRY_RUN" == "true" ]]; then
-    log_info "[DRY-RUN] Skipping case ${case_name} (proxy=${BENCH_PROXY})"
-    return
+  local payload_matrix=("$BENCH_PAYLOAD_SIZE")
+  if [[ "${BENCH_PROFILE:-}" == "workstation" ]]; then
+    if [[ "$case_name" == "throughput_short_1x" || "$case_name" == "latency_short_1x" || "$case_name" == "latency_extended_1x" ]]; then
+      payload_matrix=("64B" "4KiB")
+    fi
   fi
 
-  echo "::group::${case_name} Case 🚀"
-  (
-    export PROXY="$BENCH_PROXY"
-    export DRY_RUN="$BENCH_DRY_RUN"
-    export BENCH_VERBOSE="$BENCH_VERBOSE"
-    export RUN_COUNT_OVERRIDE="$run_count_override"
-    export LOADGEN_BIN="$BENCH_LOADGEN_BIN"
-    "$script_path"
-  )
-  echo "::endgroup::"
+  for payload_size in "${payload_matrix[@]}"; do
+    local payload_bytes
+    payload_bytes=$(payload_size_to_bytes "$payload_size")
+    if [[ -z "$payload_bytes" ]]; then
+      exit_with_error "Invalid BENCH_PAYLOAD_SIZE: $payload_size"
+    fi
+
+    local payload_suffix
+    payload_suffix=$(printf '%s' "$payload_size" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '_')
+    export BENCH_CASE_SUFFIX="payload_${payload_suffix}"
+    persist_env_var "BENCH_CASE_SUFFIX" "$BENCH_CASE_SUFFIX"
+    export BENCH_PAYLOAD_SIZE="$payload_size"
+    export BENCH_PAYLOAD_BYTES="$payload_bytes"
+    persist_env_var "BENCH_PAYLOAD_SIZE" "$BENCH_PAYLOAD_SIZE"
+    persist_env_var "BENCH_PAYLOAD_BYTES" "$BENCH_PAYLOAD_BYTES"
+
+    log_case_environment "$case_name"
+
+    if [[ "$BENCH_DRY_RUN" == "1" || "$BENCH_DRY_RUN" == "true" ]]; then
+      log_info "[DRY-RUN] Skipping case ${case_name} (proxy=${BENCH_PROXY})"
+      continue
+    fi
+
+    echo "::group::${case_name} Case 🚀"
+    (
+      export PROXY="$BENCH_PROXY"
+      export DRY_RUN="$BENCH_DRY_RUN"
+      export BENCH_VERBOSE="$BENCH_VERBOSE"
+      export RUN_COUNT_OVERRIDE="$run_count_override"
+      export LOADGEN_BIN="$BENCH_LOADGEN_BIN"
+      export BENCH_PROFILE="$BENCH_PROFILE"
+      export BENCH_MODE="$BENCH_MODE"
+      export BENCH_PAYLOAD_SIZE="$BENCH_PAYLOAD_SIZE"
+      export BENCH_PAYLOAD_BYTES="$BENCH_PAYLOAD_BYTES"
+      export BENCH_TLS="$BENCH_TLS"
+      export BENCH_METRICS="$BENCH_METRICS"
+      export BACKEND_CPUSET="$BACKEND_CPUSET"
+      export PROXY_CPUSET="$PROXY_CPUSET"
+      export BENCH_LOADGEN_CPUSET="$BENCH_LOADGEN_CPUSET"
+      "$script_path"
+    )
+    echo "::endgroup::"
+  done
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

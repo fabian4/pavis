@@ -92,9 +92,25 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 *   **Intent**: Auto SNI derivation and fail-fast for invalid Auto SNI configs.
 *   **Strength**: ✅ Solid. Validates DNS-based Auto SNI and rejects IP endpoints without override.
 
-### `67_security_mtls_chain_mode`
+### 67_security_mtls_chain_mode
 *   **Intent**: Client cert chain_mode handling (embedded vs default none).
 *   **Strength**: ✅ Solid. Ensures embedded chains are explicit and default is leaf-only.
+
+### 70_obs_metrics
+*   **Intent**: Verify Prometheus metrics exposition and correctness.
+*   **Strength**: ✅ Solid. Validates request counts, latencies, and label correctness (route patterns).
+
+### 71_obs_access_log
+*   **Intent**: Verify structured access logging to file.
+*   **Strength**: ✅ Solid. Validates JSON format and presence of all metadata fields (req_id, upstream timing).
+
+### 72_obs_tracing_context
+*   **Intent**: Verify W3C trace context propagation to upstreams.
+*   **Strength**: ✅ Solid. Ensures `traceparent` headers are injected when tracing is enabled.
+
+### 73_obs_cardinality
+*   **Intent**: Verify cardinality protection for metrics.
+*   **Strength**: ✅ Solid. Proves that unmatched routes drop labels and increment the drop counter instead of polluting metrics.
 
 ---
 

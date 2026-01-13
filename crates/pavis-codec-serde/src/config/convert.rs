@@ -189,6 +189,7 @@ routes:
                 tracing: TracingPolicy::Enabled {
                     provider: TracingProvider::Otlp,
                     sampling: pavis_core::SampleRate(10),
+                    endpoint: "http://localhost:4317".to_string(),
                 },
             },
             upstreams: vec![Upstream {

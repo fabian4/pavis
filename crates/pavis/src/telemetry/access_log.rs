@@ -3,6 +3,7 @@ use pavis_core::AccessLogPolicy;
 use pingora::protocols::l4::socket::SocketAddr;
 use pingora::proxy::Session;
 use pingora::services::Service;
+use serde::Serialize;
 use std::sync::Arc;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -102,13 +103,7 @@ impl AccessLog {
         (Self { tx, enabled }, worker)
     }
 
-    pub async fn log(
-        &self,
-        session: &mut Session,
-        upstream_name: Option<&str>,
-        start_time: std::time::Instant,
-        rbac_denied: bool,
-    ) {
+    pub async fn log(&self, session: &mut Session, ctx: &crate::proxy::context::RouterContext) {
         if !self.enabled {
             return;
         }
@@ -127,15 +122,26 @@ impl AccessLog {
             .map(|r| r.status.as_u16())
             .unwrap_or(0);
 
-        let upstream = upstream_name.unwrap_or("-");
-        let response_time = start_time.elapsed().as_millis();
+        let upstream = ctx
+            .upstream_name
+            .as_ref()
+            .map(|u| u.0.as_str())
+            .unwrap_or("-");
+        let response_time = ctx.start_time.elapsed().as_millis();
         let client_ip = session.client_addr().cloned();
         let bytes_sent = session.body_bytes_sent();
-        let request_id = req
-            .headers
-            .get("x-request-id")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("-");
+
+        let route_pattern = match &ctx.route_pattern {
+            crate::proxy::context::RoutePattern::Matched { pattern } => pattern.as_ref(),
+            crate::proxy::context::RoutePattern::NotMatched => "-",
+        };
+
+        let upstream_duration_ms = match &ctx.upstream_timing {
+            crate::proxy::context::UpstreamTiming::Started(start) => {
+                Some(start.elapsed().as_millis())
+            }
+            crate::proxy::context::UpstreamTiming::NotStarted => None,
+        };
 
         let entry = LogEntry {
             timestamp: chrono::Utc::now(),
@@ -147,8 +153,10 @@ impl AccessLog {
             response_time,
             bytes_sent,
             client_ip,
-            request_id: request_id.to_string(),
-            rbac_denied,
+            request_id: ctx.req_id.clone(),
+            rbac_denied: ctx.rbac_denied,
+            route_pattern: route_pattern.to_string(),
+            upstream_duration_ms,
         };
 
         // Non-blocking send (lossy if full)
@@ -156,8 +164,10 @@ impl AccessLog {
     }
 }
 
+#[derive(Serialize)]
 struct LogEntry {
     timestamp: chrono::DateTime<chrono::Utc>,
+    #[serde(serialize_with = "serialize_method")]
     method: http::Method,
     host: String,
     path: String,
@@ -165,36 +175,39 @@ struct LogEntry {
     upstream: String,
     response_time: u128,
     bytes_sent: usize,
+    #[serde(serialize_with = "serialize_socket_addr")]
     client_ip: Option<SocketAddr>,
     request_id: String,
     rbac_denied: bool,
+    route_pattern: String,
+    upstream_duration_ms: Option<u128>,
+}
+
+fn serialize_method<S>(method: &http::Method, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(method.as_str())
+}
+
+fn serialize_socket_addr<S>(addr: &Option<SocketAddr>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match addr {
+        Some(a) => serializer.serialize_str(&a.to_string()),
+        None => serializer.serialize_str("-"),
+    }
 }
 
 fn format_log_line(entry: &LogEntry) -> String {
-    let client_ip = entry
-        .client_ip
-        .as_ref()
-        .map(|addr| addr.to_string())
-        .unwrap_or_else(|| "-".to_string());
-    let rbac_flag = if entry.rbac_denied {
-        "rbac=deny"
-    } else {
-        "rbac=allow"
-    };
-    format!(
-        "{} {} {} {} {} {} {} {} {} {} {}\n",
-        entry.timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ"),
-        entry.method.as_str(),
-        entry.host,
-        entry.path,
-        entry.status,
-        entry.upstream,
-        entry.response_time,
-        entry.bytes_sent,
-        client_ip,
-        entry.request_id,
-        rbac_flag
-    )
+    match serde_json::to_string(entry) {
+        Ok(json) => format!("{}\n", json),
+        Err(e) => {
+            eprintln!("Failed to serialize access log entry: {}", e);
+            String::new()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -223,7 +236,9 @@ mod tests {
     #[test]
     fn test_format_log_line() {
         let line = format_log_line(&LogEntry {
-            timestamp: chrono::Utc::now(),
+            timestamp: chrono::DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
             method: Method::GET,
             host: "example.com".to_string(),
             path: "/api".to_string(),
@@ -234,10 +249,21 @@ mod tests {
             client_ip: Some("127.0.0.1:1234".parse().unwrap()),
             request_id: "req-123".to_string(),
             rbac_denied: false,
+            route_pattern: "/api/*".to_string(),
+            upstream_duration_ms: Some(50),
         });
-        assert!(line.contains(
-            "GET example.com /api 200 backend-1 100 512 127.0.0.1:1234 req-123 rbac=allow"
-        ));
+        // JSON format should contain all fields
+        assert!(line.contains("\"method\":\"GET\""));
+        assert!(line.contains("\"host\":\"example.com\""));
+        assert!(line.contains("\"path\":\"/api\""));
+        assert!(line.contains("\"status\":200"));
+        assert!(line.contains("\"upstream\":\"backend-1\""));
+        assert!(line.contains("\"response_time\":100"));
+        assert!(line.contains("\"bytes_sent\":512"));
+        assert!(line.contains("\"request_id\":\"req-123\""));
+        assert!(line.contains("\"rbac_denied\":false"));
+        assert!(line.contains("\"route_pattern\":\"/api/*\""));
+        assert!(line.contains("\"upstream_duration_ms\":50"));
     }
 
     #[tokio::test]
@@ -250,7 +276,9 @@ mod tests {
 
         // Inject a log manually
         let entry = LogEntry {
-            timestamp: chrono::Utc::now(),
+            timestamp: chrono::DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
             method: Method::GET,
             host: "example.com".to_string(),
             path: "/api".to_string(),
@@ -261,6 +289,8 @@ mod tests {
             client_ip: Some("127.0.0.1:1234".parse().unwrap()),
             request_id: "req-123".to_string(),
             rbac_denied: false,
+            route_pattern: "/api/*".to_string(),
+            upstream_duration_ms: Some(50),
         };
         let expected = format_log_line(&entry);
         let _ = access_log.tx.try_send(entry);
@@ -287,25 +317,38 @@ mod tests {
 
     #[tokio::test]
     async fn access_log_emits_entry_for_request() {
+        use crate::proxy::context::{RoutePattern, RouterContext, TracingSpan, UpstreamTiming};
+        use pavis_core::{HeadersPolicy, UpstreamName};
+        use std::sync::Arc;
+
         let (access_log, mut worker) = AccessLog::new(&AccessLogPolicy::Stdout);
         let mut rx = worker.rx.take().expect("rx");
 
         let (mut client, server) = tokio::io::duplex(1024);
         client
-            .write_all(b"GET /api HTTP/1.1\r\nHost: example.com\r\nx-request-id: req-1\r\n\r\n")
+            .write_all(b"GET /api HTTP/1.1\r\nHost: example.com\r\n\r\n")
             .await
             .expect("write request");
         let mut session = Session::new_h1(Box::new(server));
         session.read_request().await.expect("read request");
 
-        access_log
-            .log(
-                &mut session,
-                Some("upstream-a"),
-                std::time::Instant::now(),
-                false,
-            )
-            .await;
+        let ctx = RouterContext {
+            upstream_name: Some(UpstreamName("upstream-a".to_string())),
+            request_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
+            response_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
+            sni_override: None,
+            start_time: std::time::Instant::now(),
+            client_identity: None,
+            rbac_denied: false,
+            upstream_timing: UpstreamTiming::NotStarted,
+            route_pattern: RoutePattern::Matched {
+                pattern: Arc::from("/api/*"),
+            },
+            req_id: "req-1".to_string(),
+            span: TracingSpan::Disabled,
+        };
+
+        access_log.log(&mut session, &ctx).await;
 
         let line = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -317,5 +360,6 @@ mod tests {
         assert_eq!(line.upstream, "upstream-a");
         assert_eq!(line.request_id, "req-1");
         assert!(!line.rbac_denied);
+        assert_eq!(line.route_pattern, "/api/*");
     }
 }

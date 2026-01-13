@@ -25,6 +25,7 @@ jobs:
         run: |
           make fmt-check
           make lint
+          make shellcheck
 
       - name: Run Unit Tests
         run: make test

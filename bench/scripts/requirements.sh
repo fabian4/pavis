@@ -26,6 +26,10 @@ check_requirements() {
     exit_with_error "docker compose is required (Docker 20.10+)"
   fi
 
+  if [[ "${BENCH_PROFILE:-}" == "workstation" ]]; then
+    require_cmd taskset
+  fi
+
   log_info "All required tools detected"
 }
 

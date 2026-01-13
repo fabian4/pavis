@@ -5,7 +5,9 @@ set -e
 # Category: Traffic Behavior Under Reload
 # Invariants: A (No-Drop)
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "traffic_02"
@@ -49,7 +51,7 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 
 # Assert V1 (100% backend-v1)
 
-for i in {1..20}; do
+for _ in {1..20}; do
 
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 
@@ -105,7 +107,7 @@ MAX_RETRIES=20
 
 SWITCHED=0
 
-for i in $(seq 1 $MAX_RETRIES); do
+for _ in $(seq 1 $MAX_RETRIES); do
 
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 
@@ -135,7 +137,7 @@ fi
 
 # Assert V2 (100% backend-v2)
 
-for i in {1..20}; do
+for _ in {1..20}; do
 
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 
@@ -237,7 +239,7 @@ sleep 2
 
 c1=0; c2=0
 
-for i in {1..50}; do
+for _ in {1..50}; do
 
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 

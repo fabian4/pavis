@@ -131,6 +131,73 @@ The canonical Rust schema lives in these files:
 - `crates/pavis-core/src/runtime/routing.rs`
 - `crates/pavis-core/src/runtime/headers.rs`
 
+### 1.4 Observability Configuration
+
+Pavis provides comprehensive observability through Prometheus metrics, structured access logging, and distributed tracing (OpenTelemetry).
+
+#### Metrics
+
+**Configuration**: `telemetry.metrics`
+
+Prometheus metrics are exposed on a dedicated HTTP endpoint for scraping.
+
+**Fields**:
+- `addr` (required): Socket address for the metrics HTTP server (e.g., `"127.0.0.1:9090"`)
+
+**Metrics Exported**:
+- `pavis_http_requests_total` - Total HTTP requests (labels: method, route_pattern, status, upstream)
+- `pavis_http_request_duration_seconds` - Request duration histogram (labels: method, route_pattern, status, upstream)
+- `pavis_http_inflight_requests` - Active requests gauge
+- `pavis_connections_total` - Total connections counter
+- `pavis_upstream_requests_total` - Upstream requests (labels: upstream, status)
+- `pavis_upstream_request_duration_seconds` - Upstream duration histogram (labels: upstream, status)
+
+**Cardinality Controls**: All metrics use bounded labels (route_pattern, not raw paths) to prevent cardinality explosion.
+
+#### Access Logs
+
+**Configuration**: `telemetry.access_log`
+
+Structured access logs emitted per request with timing and routing metadata.
+
+**Modes**:
+- `Disabled` - No access logging
+- `Stdout` - Emit to stdout
+- `File { path }` - Write to file path
+
+**Log Fields**:
+- `timestamp` - Request timestamp (RFC3339)
+- `method` - HTTP method
+- `path` - Request path
+- `status` - HTTP status code
+- `duration_ms` - Total request duration
+- `upstream` - Selected upstream name (if forwarded)
+- `upstream_latency_ms` - Upstream-specific latency
+- `req_id` - Unique request ID (format: `req-{unix_nanos}-{random_u32}`)
+- `rbac_denied` - Boolean indicating RBAC denial
+
+#### Distributed Tracing
+
+**Configuration**: `telemetry.tracing`
+
+OpenTelemetry distributed tracing with OTLP export.
+
+**Fields**:
+- `provider` - Always `Otlp` for OpenTelemetry Protocol
+- `sampling` - Sampling rate percentage (0-100)
+- `endpoint` - OTLP collector endpoint (e.g., `"http://localhost:4317"`)
+
+**Span Attributes**:
+- HTTP semantic conventions: `http.method`, `http.target`, `http.host`, `http.status_code`
+- Routing: `route.pattern`, `upstream`
+- Observability: `http.request_id`
+- RBAC: `rbac.denied` (when applicable)
+
+**Span Status**:
+- 2xx-3xx responses: `Ok`
+- 4xx responses: `Error` ("Client error")
+- 5xx responses: `Error` ("Server error")
+
 ---
 
 ## 2. Relay HTTP API Reference

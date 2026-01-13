@@ -69,17 +69,6 @@ bench_print_backend_status() {
   fi
 }
 
-bench_print_cpuset_line() {
-  local label="$1"
-  local actual="$2"
-  local expected="$3"
-  
-  if [[ -z "$actual" ]]; then actual="none"; fi
-  # Template: "- Upstream CPU: 0% (expected 0%)"
-  # I will add the % sign to match template, assuming 'expected' is numeric-ish
-  echo "- $label CPU: ${actual}% (expected ${expected}%)"
-}
-
 bench_print_tool_info() {
   local tool="$1"
   local duration="$2"
@@ -94,7 +83,6 @@ bench_print_tool_info() {
 }
 
 bench_print_metric() {
-  local emoji="$1" # Ignored for template consistency
   local label="$2"
   local value="$3"
 

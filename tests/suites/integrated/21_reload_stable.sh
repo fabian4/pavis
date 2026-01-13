@@ -5,7 +5,9 @@ set -e
 # Category: End-to-End Reload
 # Invariants: I2 (Hot Reload Pipeline)
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "reload_02"
@@ -64,7 +66,7 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 
 # Wait & Assert Stability
 # We loop requests to ensure no drops
-for i in {1..20}; do
+for _ in {1..20}; do
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     if [[ "$response" != *"backend-v1"* ]]; then
         echo "❌ Traffic failure during idempotent update"

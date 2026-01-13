@@ -10,9 +10,35 @@ Our goal is not merely to measure speed, but to quantify predictability, efficie
 
 ---
 
-## 2. Core Evaluation Dimensions
+## 2. Benchmark Execution Modes
 
-The following seven dimensions constitute the primary axes of evaluation. Every comprehensive benchmark suite must address these dimensions to provide a complete performance profile.
+To ensure scientific rigor and clarity of purpose, all Pavis benchmarks are executed in one of two distinct modes.
+
+### 2.1. Standalone Dataplane Mode
+*   **Purpose:** Measure the **intrinsic performance** of the data plane in isolation.
+*   **Environment:** Minimal Docker or bare-metal environment.
+*   **Constraints:** Static configuration only; no control-plane components (Relay, Config Agent) are present.
+*   **Target Dimensions:** Capacity (#1), Tail Latency (#2), Stability (#3), Resource Efficiency (#4), Stress Behavior (#5), and Consistency (#7).
+*   **Comparability:** Primary mode for benchmarking Pavis against industry-standard proxies (Envoy, Nginx).
+
+### 2.2. System / Kubernetes Mode
+*   **Purpose:** Measure **control-plane assisted lifecycle behavior** and system-wide reliability.
+*   **Environment:** Kubernetes (kind) cluster.
+*   **Constraints:** Includes full system components (Relay, Agent); configuration is dynamic and pushed during tests.
+*   **Target Dimensions:** Operational Characteristics (#6), Recovery (#B), and Durability (#Gate).
+*   **Comparability:** Architecture-specific; measures the maturity of the Pavis ecosystem rather than micro-performance.
+
+### 2.3. Execution Profiles & Authority
+Benchmark execution is further constrained by environment profile.
+
+*   **github (CI-only):** Pavis-only regression signal; skips `latency_extended_1x`. Reports are generated from `summary.csv` and are **non-authoritative** due to shared runner variance.
+*   **workstation (authoritative):** Dedicated hardware required. CPU pinning is mandatory with a 4-core allocation (1 loadgen/wrk, 1 upstream, 2 proxy) and a 1GiB proxy memory limit. Standalone payload matrix runs `throughput_short_1x`, `latency_short_1x`, and `latency_extended_1x` at `64B` and `4KiB`.
+
+---
+
+## 3. Core Evaluation Dimensions
+
+The following seven dimensions constitute the primary axes of evaluation. Every comprehensive benchmark suite must address these dimensions to provide a complete performance profile. The dimensions are invariant across execution modes.
 
 ### 2.1. Performance Ceiling (Capacity)
 *   **The Question:** At what point does the system fail to process requests successfully?
@@ -73,7 +99,7 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 
 ---
 
-## 3. Derived Dimensions
+## 4. Derived Dimensions
 
 Derived dimensions are not independent tests; they are specific analytical cuts of data gathered during the Core dimension tests.
 
@@ -97,7 +123,7 @@ Derived dimensions are not independent tests; they are specific analytical cuts 
 
 ---
 
-## 4. Release Gate Dimension
+## 5. Release Gate Dimension
 
 This dimension is computationally expensive and is reserved for major release candidates or publication checkpoints, rather than daily CI runs.
 
@@ -112,7 +138,7 @@ This dimension is computationally expensive and is reserved for major release ca
 
 ---
 
-## 5. Methodology Guardrails
+## 6. Methodology Guardrails
 
 To ensure data integrity and comparability, the following practices are strictly enforced:
 
@@ -124,7 +150,7 @@ To ensure data integrity and comparability, the following practices are strictly
 
 ---
 
-## 6. Intended Outcomes
+## 7. Intended Outcomes
 
 By adhering to this framework, we ensure:
 *   **Accountability:** Architecture decisions are backed by data, not intuition.

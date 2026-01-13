@@ -5,7 +5,9 @@ set -e
 # Category: Robustness
 # Invariants: R2 (Versioned), R3 (Efficient Long-Poll)
 
+# shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
+# shellcheck source=tests/lib/assert.sh
 source "$(dirname "$0")/../../lib/assert.sh"
 
 setup_test "robustness_01"

@@ -5,7 +5,8 @@
 
 # Ensure Project Root is set
 if [ -z "$PROJECT_ROOT" ]; then
-    export PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+    PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+    export PROJECT_ROOT
 fi
 
 export TEST_MODE=${TEST_MODE:-binary}
@@ -22,7 +23,8 @@ CERTS_DIR="$PROJECT_ROOT/tests/suites/config/certs"
 
 setup_test() {
     local case_name="$1"
-    local timestamp=$(date +%s%N)
+    local timestamp
+    timestamp=$(date +%s%N)
     TEST_TMP="$PROJECT_ROOT/tests/temp/${case_name}_${timestamp}"
     mkdir -p "$TEST_TMP"
     export TEST_TMP
@@ -43,7 +45,8 @@ cleanup_test() {
     if [ -d "$TEST_TMP/pids" ]; then
         for pid_file in "$TEST_TMP/pids"/*.pid; do
             [ -e "$pid_file" ] || continue
-            local pid=$(cat "$pid_file")
+            local pid
+            pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
                 kill -TERM "$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
             fi
@@ -51,7 +54,8 @@ cleanup_test() {
         
         for container_file in "$TEST_TMP/pids"/*.container; do
             [ -e "$container_file" ] || continue
-            local container_id=$(cat "$container_file")
+            local container_id
+            container_id=$(cat "$container_file")
             docker stop "$container_id" >/dev/null 2>&1 || true
         done
     fi
@@ -128,12 +132,14 @@ stop_sut() {
     local container_file="$TEST_TMP/pids/$name.container"
 
     if [ -f "$pid_file" ]; then
-        local pid=$(cat "$pid_file")
+        local pid
+        pid=$(cat "$pid_file")
         kill -9 "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
         rm -f "$pid_file"
     elif [ -f "$container_file" ]; then
-        local container_id=$(cat "$container_file")
+        local container_id
+        container_id=$(cat "$container_file")
         docker stop "$container_id" >/dev/null 2>&1 || true
         rm -f "$container_file"
     fi
@@ -179,7 +185,8 @@ run_pavis() {
             cmd_args+=("--relay-url" "$relay_url")
         fi
 
-        local container_id=$(docker "${docker_args[@]}" "$PAVIS_IMAGE" "${cmd_args[@]}")
+        local container_id
+        container_id=$(docker "${docker_args[@]}" "$PAVIS_IMAGE" "${cmd_args[@]}")
         record_container "$container_id" "$name"
     fi
 }
@@ -217,7 +224,8 @@ EOF
         RUST_LOG=debug "$RELAY_BIN" --config "$config_path" > "$TEST_TMP/logs/${name}.log" 2>&1 &
         record_pid $! "$name"
     else
-        local container_id=$(docker run -d --rm \
+        local container_id
+        container_id=$(docker run -d --rm \
             --user "$(id -u):$(id -g)" \
             --network host \
             -e RUST_LOG=debug \
@@ -236,7 +244,8 @@ run_mock_relay() {
         RUST_LOG=debug "$MOCK_RELAY_BIN" --listen "127.0.0.1:$port" > "$TEST_TMP/logs/${name}.log" 2>&1 &
         record_pid $! "$name"
     else
-        local container_id=$(docker run -d --rm \
+        local container_id
+        container_id=$(docker run -d --rm \
             --user "$(id -u):$(id -g)" \
             --network host \
             -e RUST_LOG=debug \

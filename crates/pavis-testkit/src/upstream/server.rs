@@ -75,10 +75,11 @@ pub async fn run(args: UpstreamArgs) -> Result<()> {
     if !http_task.is_finished() {
         let _ = http_task.await;
     }
-    if let Some(task) = https_task
-        && !task.is_finished()
-    {
-        let _ = task.await;
+    #[allow(clippy::collapsible_if)]
+    if let Some(task) = https_task {
+        if !task.is_finished() {
+            let _ = task.await;
+        }
     }
 
     Ok(())

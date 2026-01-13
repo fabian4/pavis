@@ -49,6 +49,7 @@ pub enum TracingPolicy {
     Enabled {
         provider: TracingProvider,
         sampling: SampleRate,
+        endpoint: String,
     },
 }
 

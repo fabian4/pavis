@@ -1,4 +1,4 @@
-.PHONY: bench bench-build bench-down
+.PHONY: bench bench-build bench-down bench-all
 
 # Build images required for benchmarking
 bench-build:
@@ -18,6 +18,12 @@ bench-build:
 #   CASE="throughput_short_1x" make bench  # Single test case
 bench:
 	@PROXY=$${PROXY:-pavis} CASE="$${CASE:-}" bash bench/run.sh
+
+# Run benchmarks for all proxies sequentially
+bench-all:
+	@for proxy in pavis envoy nginx haproxy; do \
+		PROXY="$$proxy" MODE="$${MODE:-standalone}" BENCH_PROFILE="$${BENCH_PROFILE:-workstation}" CASE="$${CASE:-}" bash bench/run.sh; \
+	done
 
 # Generate summary CSV and markdown report from existing results
 bench-report:
