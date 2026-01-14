@@ -79,10 +79,18 @@ fn configure_client_auth(
     };
 
     // TODO: wire the verifier into Pingora once its Rustls settings expose a setter.
+    // PENDING: https://github.com/cloudflare/pingora/issues/791
     Ok(())
 }
 
 fn main() -> Result<()> {
+    // Install the default crypto provider (aws-lc-rs) globally.
+    // This is required because we might have both 'ring' (via reqwest) and 'aws-lc-rs' (via pingora) enabled,
+    // which prevents rustls from automatically selecting one.
+    if CryptoProvider::install_default(aws_lc_rs::default_provider()).is_err() {
+        // Already installed, which is fine.
+    }
+
     let args = Args::parse();
 
     // Load configuration (LKG)

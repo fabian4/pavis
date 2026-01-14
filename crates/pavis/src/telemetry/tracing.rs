@@ -157,6 +157,11 @@ impl TracingService {
         reload_handle: Option<ReloadHandle>,
         runtime_slot: Arc<OnceLock<TracingRuntime>>,
     ) -> Self {
+        // Set global propagator for context propagation (sync)
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+        );
+
         Self {
             config,
             service_name,
@@ -215,11 +220,6 @@ impl Service for TracingService {
                         .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
                         .with_config(config)
                         .build();
-
-                    // Set global propagator for context propagation
-                    opentelemetry::global::set_text_map_propagator(
-                        opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-                    );
 
                     let tracer = provider.tracer("pavis");
 

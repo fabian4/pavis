@@ -5,6 +5,7 @@ use pavis_core::ValidatedRuntimeConfig;
 use std::sync::Arc;
 
 pub struct RuntimeState {
+    pub config: ValidatedRuntimeConfig,
     pub router: Arc<Router>,
     pub upstream_manager: Manager,
 }
@@ -14,6 +15,7 @@ impl RuntimeState {
         let router = Arc::new(Router::new(config.routes.clone())?);
         let upstream_manager = Manager::new(&config.upstreams)?;
         Ok(Self {
+            config: config.clone(),
             router,
             upstream_manager,
         })
@@ -22,7 +24,23 @@ impl RuntimeState {
 
 impl Default for RuntimeState {
     fn default() -> Self {
+        let empty_config = pavis_core::RuntimeConfig {
+            listeners: vec![],
+            routes: vec![],
+            upstreams: vec![],
+            telemetry: pavis_core::Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Error,
+                service_name: pavis_core::ServiceName("pavis".to_string()),
+                metrics: pavis_core::Metrics::Disabled,
+                access_log: pavis_core::AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            },
+        };
+        // Safety: Default RuntimeConfig is empty and valid
+        let config = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(empty_config) };
         Self {
+            config,
             router: Arc::new(Router::new(vec![]).expect("empty router")),
             upstream_manager: Manager::new(&[]).expect("empty upstream manager"),
         }

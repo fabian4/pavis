@@ -152,6 +152,7 @@ fn load_client_cert_key(
 }
 
 fn load_ca_bundle(path: &Path) -> Result<Arc<CaType>> {
+    tracing::debug!(path = %path.display(), "loading upstream CA bundle");
     let ca_file = fs::File::open(path)
         .with_context(|| format!("failed to read CA bundle {}", path.display()))?;
     let mut ca_reader = BufReader::new(ca_file);
@@ -160,14 +161,25 @@ fn load_ca_bundle(path: &Path) -> Result<Arc<CaType>> {
         .context("failed to parse CA bundle")?;
 
     if certs.is_empty() {
-        anyhow::bail!("CA bundle is empty");
+        anyhow::bail!("CA bundle is empty at {}", path.display());
     }
+
+    tracing::debug!(count = certs.len(), "parsed certificates from CA bundle");
 
     let wrapped: Vec<WrappedX509> = certs
         .into_iter()
         .enumerate()
         .map(|(idx, cert)| {
             let cert_bytes = cert.to_vec();
+            // Parse locally for debug logging
+            if let Ok((_, x509)) = X509Certificate::from_der(cert_bytes.as_slice()) {
+                tracing::debug!(
+                    idx = idx,
+                    subject = %x509.subject(),
+                    issuer = %x509.issuer(),
+                    "loaded CA cert"
+                );
+            }
             wrap_ca_cert(cert_bytes).with_context(|| {
                 format!(
                     "failed to parse certificate {} in CA bundle {}",

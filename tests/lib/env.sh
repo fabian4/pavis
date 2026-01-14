@@ -83,37 +83,99 @@ get_free_port() {
     python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()'
 }
 
+generate_signed_cert() {
+    local name="$1"
+    local type="$2" # server or client
+    local out_dir="$3"
+    local ca_cert="$4"
+    local ca_key="$5"
+    local cn="${6:-localhost}"
+
+    local cnf_file="$out_dir/${name}.cnf"
+
+    if [ "$type" == "server" ]; then
+        cat > "$cnf_file" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+[req_distinguished_name]
+CN = $cn
+[v3_req]
+basicConstraints = CA:FALSE
+subjectAltName = @alt_names
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+[alt_names]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+[v3_sign]
+basicConstraints = CA:FALSE
+subjectAltName = @alt_names
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+EOF
+    else
+        cat > "$cnf_file" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+[req_distinguished_name]
+CN = $cn
+[v3_req]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+[v3_sign]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+EOF
+    fi
+
+    openssl req -newkey rsa:2048 -nodes \
+        -keyout "$out_dir/${name}.key" \
+        -out "$out_dir/${name}.csr" \
+        -config "$cnf_file" -extensions v3_req
+
+    openssl x509 -req -in "$out_dir/${name}.csr" \
+        -CA "$ca_cert" -CAkey "$ca_key" -CAcreateserial \
+        -out "$out_dir/${name}.pem" -days 365 \
+        -extfile "$cnf_file" -extensions v3_sign
+}
+
 generate_certs() {
     if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
         echo "🔑 Generating upstream certificates..."
     fi
+    rm -rf "$CERTS_DIR"
     mkdir -p "$CERTS_DIR"
     
+    # Config for CA
+    cat > "$CERTS_DIR/ca.cnf" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_ca
+prompt = no
+[req_distinguished_name]
+CN = Pavis Test CA
+[v3_ca]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+EOF
+
     # 1. Generate CA
     openssl req -x509 -newkey rsa:2048 -nodes \
         -keyout "$CERTS_DIR/ca.key" \
         -out "$CERTS_DIR/ca.pem" \
-        -subj "/CN=Pavis Test CA" -days 365 2>/dev/null
+        -days 365 -config "$CERTS_DIR/ca.cnf"
 
-    # 2. Generate Server Key/CSR
-    openssl req -newkey rsa:2048 -nodes \
-        -keyout "$CERTS_DIR/upstream_tls.key" \
-        -out "$CERTS_DIR/upstream.csr" \
-        -subj "/CN=localhost" 2>/dev/null
+    # 2. Generate Server Cert
+    generate_signed_cert "upstream_tls" "server" "$CERTS_DIR" "$CERTS_DIR/ca.pem" "$CERTS_DIR/ca.key"
 
-    # 3. Sign Server Cert with CA
-    # Create extension file for SAN and BasicConstraints
-    cat > "$CERTS_DIR/ext.cnf" <<EOF
-basicConstraints=CA:FALSE
-subjectAltName=DNS:localhost,IP:127.0.0.1
-keyUsage = digitalSignature, keyEncipherment
-extendedKeyUsage = serverAuth
-EOF
-
-    openssl x509 -req -in "$CERTS_DIR/upstream.csr" \
-        -CA "$CERTS_DIR/ca.pem" -CAkey "$CERTS_DIR/ca.key" -CAcreateserial \
-        -out "$CERTS_DIR/upstream_tls.pem" -days 365 \
-        -extfile "$CERTS_DIR/ext.cnf" 2>/dev/null
+    # 3. Generate Client Cert (Default)
+    generate_signed_cert "client" "client" "$CERTS_DIR" "$CERTS_DIR/ca.pem" "$CERTS_DIR/ca.key" "pavis-client"
 }
 
 cleanup_certs() {

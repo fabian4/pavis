@@ -64,6 +64,8 @@ impl Service for AccessLogWorker {
                                     if let Some(w) = &mut file_writer {
                                         if let Err(e) = w.write_all(log_line.as_bytes()).await {
                                             eprintln!("Failed to write to access log: {}", e);
+                                        } else if let Err(e) = w.flush().await {
+                                            eprintln!("Failed to flush access log: {}", e);
                                         }
                                     }
                                 }
@@ -103,7 +105,17 @@ impl AccessLog {
     }
 
     pub async fn log(&self, session: &mut Session, ctx: &crate::proxy::context::RouterContext) {
-        if !self.enabled {
+        // Use dynamic config if available, fallback to static
+        let enabled = if let Some(state) = &ctx.runtime_state {
+            matches!(
+                state.config.telemetry.access_log,
+                AccessLogPolicy::Stdout | AccessLogPolicy::File(_)
+            )
+        } else {
+            self.enabled
+        };
+
+        if !enabled {
             return;
         }
 

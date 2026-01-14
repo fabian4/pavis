@@ -93,6 +93,7 @@ pub fn router(shared: SharedState, transport: TransportMeta) -> Router {
         .route("/flaky", get(stub_flaky))
         .route("/received", get(stub_received))
         .route("/reset", post(reset::handler))
+        .fallback(any(echo::handler))
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()))
         .with_state(state)
 }

@@ -177,6 +177,7 @@ impl ConfigAgent {
 
         self.state.store(state);
         self.current_version.store(version, Ordering::SeqCst);
+        tracing::info!(version = version, "Applied configuration update");
         Ok(())
     }
 

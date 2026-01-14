@@ -439,8 +439,24 @@ impl ProxyHttp for Proxy {
         let uri_path = req_header.uri.path();
         let uri_query = req_header.uri.query();
 
-        // Check if tracing is initialized
-        if self.telemetry.tracing.get().is_some() {
+        // Check if tracing is initialized AND enabled in current config
+        let state = self.state.load();
+        ctx.runtime_state = Some(state.clone());
+
+        let tracing_enabled = if let pavis_core::TracingPolicy::Enabled { sampling, .. } =
+            &state.config.telemetry.tracing
+        {
+            // Simple sampling check (0 or >0) for enabling the span creation.
+            // Detailed sampling happens in the OTel SDK, but if sampling is 0, we can skip span creation.
+            // However, we need the span for context propagation even if not sampled?
+            // If sampling is 0, the sampler will drop it.
+            // But we check self.telemetry.tracing to see if the RUNTIME is available.
+            self.telemetry.tracing.get().is_some() && sampling.0 > 0
+        } else {
+            false
+        };
+
+        if tracing_enabled {
             let span = tracing::info_span!(
                 "http_request",
                 http.method = %req_header.method,
@@ -459,9 +475,6 @@ impl ProxyHttp for Proxy {
             host = ?host_header,
             "incoming request"
         );
-
-        let state = self.state.load();
-        ctx.runtime_state = Some(state.clone());
 
         if let Some((vhost, route)) = state.router.match_request(host_header, uri_path) {
             tracing::trace!(host = %vhost.host.0, path = %route_path(route), "matched route");
@@ -535,6 +548,10 @@ impl ProxyHttp for Proxy {
                         let weight = dest.weight.0.get() as u32;
                         if pick < weight {
                             ctx.upstream_name = Some(dest.upstream.clone());
+                            tracing::debug!(
+                                upstream = %dest.upstream.0,
+                                "Selected upstream"
+                            );
 
                             if let TracingSpan::Active(ref span) = ctx.span {
                                 span.record("upstream", dest.upstream.0.as_str());

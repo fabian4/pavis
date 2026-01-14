@@ -102,9 +102,13 @@ fn parse_cpuset(cpuset: &str) -> Result<Vec<usize>, String> {
 
         if let Some((start, end)) = part.split_once('-') {
             // Range like "1-3"
-            let start: usize = start.trim().parse()
+            let start: usize = start
+                .trim()
+                .parse()
                 .map_err(|_| format!("invalid CPU ID in range: {}", start))?;
-            let end: usize = end.trim().parse()
+            let end: usize = end
+                .trim()
+                .parse()
                 .map_err(|_| format!("invalid CPU ID in range: {}", end))?;
 
             if start > end {
@@ -116,7 +120,8 @@ fn parse_cpuset(cpuset: &str) -> Result<Vec<usize>, String> {
             }
         } else {
             // Single CPU like "0"
-            let cpu: usize = part.parse()
+            let cpu: usize = part
+                .parse()
                 .map_err(|_| format!("invalid CPU ID: {}", part))?;
             cpu_ids.push(cpu);
         }
@@ -135,13 +140,17 @@ fn apply_cpu_affinity(cpuset: &str) -> Result<(), String> {
     let cpu_ids = parse_cpuset(cpuset)?;
 
     // Get available core IDs
-    let core_ids = core_affinity::get_core_ids()
-        .ok_or_else(|| "failed to get core IDs".to_string())?;
+    let core_ids =
+        core_affinity::get_core_ids().ok_or_else(|| "failed to get core IDs".to_string())?;
 
     // Validate that requested CPUs exist
     for &cpu_id in &cpu_ids {
         if cpu_id >= core_ids.len() {
-            return Err(format!("CPU {} does not exist (max: {})", cpu_id, core_ids.len() - 1));
+            return Err(format!(
+                "CPU {} does not exist (max: {})",
+                cpu_id,
+                core_ids.len() - 1
+            ));
         }
     }
 

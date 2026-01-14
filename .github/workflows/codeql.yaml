@@ -1,4 +1,4 @@
-name: codeql
+name: CodeQL Analysis
 
 on:
   push:
@@ -21,9 +21,18 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: rust
+          queries: security-and-quality
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config cmake clang make \
+            libssl-dev zlib1g-dev ca-certificates
+
+      - name: Build (explicit)
+        run: |
+          cargo build --workspace --all-targets --all-features --locked
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3

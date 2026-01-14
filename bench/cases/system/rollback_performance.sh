@@ -34,10 +34,10 @@ main() {
 
   # Get proxy-specific configuration
   local pod_label
-  local container_name
+#  local container_name
   local proxy_port
   pod_label=$(get_proxy_pod_label)
-  container_name=$(get_proxy_container_name)
+#  container_name=$(get_proxy_container_name)
   proxy_port=$(get_proxy_port)
 
   local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}"

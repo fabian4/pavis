@@ -13,7 +13,7 @@ INSTANCE_ID ?= pavis-upstream
 build:
 	cargo build --workspace
 
-# Build release binaries (CRATE=workspace|pavis|pavis-relay|...)
+# Build release binaries (CRATE=workspace|pavis|pavis-relay|... [BIN=name])
 binary-build:
 	@set -e; \
 	if [ "$(CRATE)" = "workspace" ]; then \
@@ -23,13 +23,18 @@ binary-build:
 		if [ "$$CRATE_NAME" = "relay" ]; then \
 			CRATE_NAME="pavis-relay"; \
 		fi; \
-		cargo build --release -p $$CRATE_NAME; \
+		CMD="cargo build --release -p $$CRATE_NAME"; \
+		if [ -n "$(BIN)" ]; then \
+			CMD="$$CMD --bin $(BIN)"; \
+		fi; \
+		$$CMD; \
 	fi
 
-# Build Docker image (IMAGE=pavis|relay|mock-upstream|mock-relay|bench-upstream, MODE=local|ci)
+# Build Docker image (IMAGE=pavis|relay|mock-upstream|mock-relay|bench-upstream|envoy-xds-server, MODE=local|ci)
 docker-build:
 	@set -e; \
 	BUILD_ARGS=""; \
+	BUILD_CONTEXT="."; \
 	if [ "$(IMAGE)" = "pavis" ]; then \
 		DOCKERFILE=crates/pavis/Dockerfile; \
 		TAG=pavis:local; \
@@ -47,8 +52,12 @@ docker-build:
 	elif [ "$(IMAGE)" = "bench-upstream" ]; then \
 		DOCKERFILE=crates/pavis-benchkit/Dockerfile; \
 		TAG=pavis-bench-upstream:local; \
+	elif [ "$(IMAGE)" = "envoy-xds-server" ]; then \
+		DOCKERFILE=bench/k8s/envoy/xds-server/Dockerfile; \
+		TAG=envoy-xds-server:local; \
+		BUILD_CONTEXT="bench/k8s/envoy/xds-server/"; \
 	else \
-		echo "Unsupported IMAGE=$(IMAGE) (use pavis, relay, mock-upstream, mock-relay, or bench-upstream)"; \
+		echo "Unsupported IMAGE=$(IMAGE) (use pavis, relay, mock-upstream, mock-relay, bench-upstream, or envoy-xds-server)"; \
 		exit 2; \
 	fi; \
 	if [ "$(MODE)" = "local" ]; then \
@@ -60,7 +69,7 @@ docker-build:
 			--cache-from=type=local,src=.buildx-cache \
 			--cache-to=type=local,dest=.buildx-cache,mode=max \
 			--load \
-			.; \
+			$$BUILD_CONTEXT; \
 	elif [ "$(MODE)" = "ci" ]; then \
 		docker buildx build \
 			--file $$DOCKERFILE \
@@ -69,7 +78,7 @@ docker-build:
 			--cache-from=type=gha \
 			--cache-to=type=gha,mode=max \
 			--load \
-			.; \
+			$$BUILD_CONTEXT; \
 	else \
 		echo "Unsupported MODE=$(MODE) (use local or ci)"; \
 		exit 2; \

@@ -333,6 +333,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -366,6 +367,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -399,6 +401,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -443,6 +446,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[config]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -467,6 +471,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -485,6 +490,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -503,6 +509,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -551,6 +558,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -582,6 +590,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -618,6 +627,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[config]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -656,6 +666,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
@@ -675,6 +686,7 @@ mod tests {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
             crate::state::RuntimeState {
+                config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
             },
