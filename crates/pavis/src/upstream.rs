@@ -6,14 +6,19 @@
 //! 2. **Atomic Updates**: Dynamic updates to upstream state must be atomic or eventually consistent without blocking readers.
 //! 3. **Distributed State**: Load balancing state (e.g., RR counters) should be distributed or aligned to prevent false sharing.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
+use ouroboros::self_referencing;
 use pingora::protocols::tls::CaType;
-use pingora::tls::{pkey::PKey, x509::X509};
-use pingora::utils::tls::CertKey;
+use pingora::utils::tls::{CertKey, WrappedX509};
+use static_assertions::const_assert_eq;
 use std::collections::HashMap;
 use std::fs;
+use std::io::BufReader;
+use std::mem::{ManuallyDrop, align_of, size_of};
 use std::path::Path;
+use std::ptr;
 use std::sync::Arc;
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 use pavis_core::Upstream;
 
@@ -92,15 +97,19 @@ fn load_client_cert_key(
     key_path: &Path,
     chain: &pavis_core::ClientCertChain,
 ) -> Result<Arc<CertKey>> {
-    let cert_bytes = fs::read(cert_path)
+    let cert_file = fs::File::open(cert_path)
         .with_context(|| format!("failed to read client cert {}", cert_path.display()))?;
-    let key_bytes = fs::read(key_path)
-        .with_context(|| format!("failed to read client key {}", key_path.display()))?;
-    let certs =
-        X509::stack_from_pem(&cert_bytes).context("failed to parse client cert PEM bundle")?;
+    let mut cert_reader = BufReader::new(cert_file);
+
+    // Collect every certificate in the PEM bundle.
+    let certs: Vec<_> = rustls_pemfile::certs(&mut cert_reader)
+        .collect::<Result<_, _>>()
+        .context("failed to parse client cert PEM bundle")?;
+
     if certs.is_empty() {
         anyhow::bail!("client cert bundle is empty");
     }
+
     let mut selected = match chain {
         pavis_core::ClientCertChain::Embedded => certs,
         pavis_core::ClientCertChain::None | pavis_core::ClientCertChain::File { .. } => {
@@ -112,28 +121,100 @@ fn load_client_cert_key(
         #[allow(unreachable_patterns)]
         _ => certs,
     };
+
     if let pavis_core::ClientCertChain::File { path } = chain {
-        let chain_bytes = fs::read(Path::new(&path.0))
+        let chain_file = fs::File::open(Path::new(&path.0))
             .with_context(|| format!("failed to read client cert chain {}", path.0.as_str()))?;
-        let chain_certs =
-            X509::stack_from_pem(&chain_bytes).context("failed to parse client cert chain")?;
+        let mut chain_reader = BufReader::new(chain_file);
+        let chain_certs: Vec<_> = rustls_pemfile::certs(&mut chain_reader)
+            .collect::<Result<_, _>>()
+            .context("failed to parse client cert chain")?;
+
         if chain_certs.is_empty() {
             anyhow::bail!("client cert chain is empty");
         }
         selected.extend(chain_certs);
     }
-    let key = PKey::private_key_from_pem(&key_bytes).context("failed to parse client key PEM")?;
-    Ok(Arc::new(CertKey::new(selected, key)))
+
+    let key_file = fs::File::open(key_path)
+        .with_context(|| format!("failed to read client key {}", key_path.display()))?;
+    let mut key_reader = BufReader::new(key_file);
+
+    // Use the first private key in the bundle.
+    let key = rustls_pemfile::private_key(&mut key_reader)
+        .context("failed to parse client key PEM")?
+        .ok_or_else(|| anyhow::anyhow!("no private key found in {}", key_path.display()))?;
+
+    let selected_ders: Vec<Vec<u8>> = selected.into_iter().map(|c| c.to_vec()).collect();
+    let key_der = key.secret_der().to_vec();
+
+    Ok(Arc::new(CertKey::new(selected_ders, key_der)))
 }
 
 fn load_ca_bundle(path: &Path) -> Result<Arc<CaType>> {
-    let ca_bytes =
-        fs::read(path).with_context(|| format!("failed to read CA bundle {}", path.display()))?;
-    let certs = X509::stack_from_pem(&ca_bytes).context("failed to parse CA bundle")?;
+    let ca_file = fs::File::open(path)
+        .with_context(|| format!("failed to read CA bundle {}", path.display()))?;
+    let mut ca_reader = BufReader::new(ca_file);
+    let certs: Vec<_> = rustls_pemfile::certs(&mut ca_reader)
+        .collect::<Result<_, _>>()
+        .context("failed to parse CA bundle")?;
+
     if certs.is_empty() {
         anyhow::bail!("CA bundle is empty");
     }
-    Ok(Arc::new(certs.into_boxed_slice()))
+
+    let wrapped: Vec<WrappedX509> = certs
+        .into_iter()
+        .enumerate()
+        .map(|(idx, cert)| {
+            let cert_bytes = cert.to_vec();
+            wrap_ca_cert(cert_bytes).with_context(|| {
+                format!(
+                    "failed to parse certificate {} in CA bundle {}",
+                    idx + 1,
+                    path.display()
+                )
+            })
+        })
+        .collect::<Result<_>>()?;
+
+    let ca_wrapped: Arc<[WrappedX509]> = Arc::from(wrapped);
+    Ok(ca_wrapped as Arc<CaType>)
+}
+
+#[self_referencing]
+struct WrappedX509Shim {
+    raw_cert: Vec<u8>,
+    #[borrows(raw_cert)]
+    #[covariant]
+    cert: X509Certificate<'this>,
+}
+
+const_assert_eq!(size_of::<WrappedX509Shim>(), size_of::<WrappedX509>());
+const_assert_eq!(align_of::<WrappedX509Shim>(), align_of::<WrappedX509>());
+
+fn shim_into_wrapped(shim: WrappedX509Shim) -> WrappedX509 {
+    let shim = ManuallyDrop::new(shim);
+    // SAFETY: Layouts match because the shim mirrors WrappedX509 and we assert size/alignment.
+    unsafe { ptr::read((&*shim) as *const WrappedX509Shim as *const WrappedX509) }
+}
+
+fn wrap_ca_cert(cert: Vec<u8>) -> Result<WrappedX509> {
+    X509Certificate::from_der(cert.as_slice())
+        .map_err(|err| anyhow!("{err}"))
+        .context("failed to parse CA certificate")?;
+
+    let shim = WrappedX509ShimBuilder {
+        raw_cert: cert,
+        cert_builder: |raw| {
+            X509Certificate::from_der(raw.as_slice())
+                .expect("validated CA certificate must remain valid")
+                .1
+        },
+    }
+    .build();
+
+    Ok(shim_into_wrapped(shim))
 }
 
 #[cfg(test)]
@@ -181,48 +262,23 @@ mod tests {
         std::fs::write(path, bytes).expect("write pem");
     }
 
-    fn write_pem_bundle(path: &std::path::Path, certs: &[openssl::x509::X509]) {
-        let mut bundle = Vec::new();
+    fn write_pem_bundle(path: &std::path::Path, certs: &[String]) {
+        let mut bundle = String::new();
         for cert in certs {
-            bundle.extend_from_slice(&cert.to_pem().expect("cert pem"));
+            bundle.push_str(cert);
         }
-        write_pem(path, &bundle);
+        write_pem(path, bundle.as_bytes());
     }
 
-    fn build_self_signed_cert() -> (
-        openssl::pkey::PKey<openssl::pkey::Private>,
-        openssl::x509::X509,
-    ) {
-        use openssl::asn1::Asn1Time;
-        use openssl::hash::MessageDigest;
-        use openssl::pkey::PKey;
-        use openssl::rsa::Rsa;
-        use openssl::x509::{X509Builder, X509NameBuilder};
-
-        let rsa = Rsa::generate(2048).expect("client key");
-        let pkey = PKey::from_rsa(rsa).expect("client pkey");
-
-        let mut name = X509NameBuilder::new().expect("client name");
-        name.append_entry_by_text("CN", "client")
-            .expect("client name cn");
-        let name = name.build();
-
-        let mut builder = X509Builder::new().expect("client builder");
-        builder.set_version(2).expect("client version");
-        builder.set_subject_name(&name).expect("client subject");
-        builder.set_issuer_name(&name).expect("client issuer");
-        builder.set_pubkey(&pkey).expect("client pubkey");
-        builder
-            .set_not_before(&Asn1Time::days_from_now(0).expect("client not_before"))
-            .expect("client not_before set");
-        builder
-            .set_not_after(&Asn1Time::days_from_now(365).expect("client not_after"))
-            .expect("client not_after set");
-        builder
-            .sign(&pkey, MessageDigest::sha256())
-            .expect("client sign");
-
-        (pkey, builder.build())
+    // Pure-Rust replacement for OpenSSL cert generation
+    fn build_self_signed_cert() -> (String, String) {
+        let mut params = rcgen::CertificateParams::new(vec!["client".to_string()]).unwrap();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "client");
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let cert = params.self_signed(&key_pair).unwrap();
+        (key_pair.serialize_pem(), cert.pem())
     }
 
     fn mtls_upstream(cert_path: PathBuf, key_path: PathBuf) -> Upstream {
@@ -274,14 +330,9 @@ mod tests {
         let cert_path = dir.join("client.pem");
         let key_path = dir.join("client.key");
 
-        let (client_key, client_cert) = build_self_signed_cert();
-        write_pem(&cert_path, &client_cert.to_pem().expect("client cert pem"));
-        write_pem(
-            &key_path,
-            &client_key
-                .private_key_to_pem_pkcs8()
-                .expect("client key pem"),
-        );
+        let (client_key_pem, client_cert_pem) = build_self_signed_cert();
+        write_pem(&cert_path, client_cert_pem.as_bytes());
+        write_pem(&key_path, client_key_pem.as_bytes());
 
         let upstreams = vec![mtls_upstream(cert_path, key_path)];
         let manager = Manager::new(&upstreams).expect("manager");
@@ -298,13 +349,8 @@ mod tests {
         let cert_path = dir.join("missing.pem");
         let key_path = dir.join("client.key");
 
-        let (client_key, _client_cert) = build_self_signed_cert();
-        write_pem(
-            &key_path,
-            &client_key
-                .private_key_to_pem_pkcs8()
-                .expect("client key pem"),
-        );
+        let (client_key_pem, _client_cert_pem) = build_self_signed_cert();
+        write_pem(&key_path, client_key_pem.as_bytes());
 
         let upstreams = vec![mtls_upstream(cert_path, key_path)];
         let err = Manager::new(&upstreams).err().expect("manager should fail");
@@ -323,8 +369,8 @@ mod tests {
         let cert_path = dir.join("client.pem");
         let key_path = dir.join("missing.key");
 
-        let (_client_key, client_cert) = build_self_signed_cert();
-        write_pem(&cert_path, &client_cert.to_pem().expect("client cert pem"));
+        let (_client_key_pem, client_cert_pem) = build_self_signed_cert();
+        write_pem(&cert_path, client_cert_pem.as_bytes());
 
         let upstreams = vec![mtls_upstream(cert_path, key_path)];
         let err = Manager::new(&upstreams).err().expect("manager should fail");
@@ -344,13 +390,8 @@ mod tests {
         let key_path = dir.join("client.key");
 
         std::fs::write(&cert_path, b"not a cert").expect("write invalid cert");
-        let (client_key, _client_cert) = build_self_signed_cert();
-        write_pem(
-            &key_path,
-            &client_key
-                .private_key_to_pem_pkcs8()
-                .expect("client key pem"),
-        );
+        let (client_key_pem, _client_cert_pem) = build_self_signed_cert();
+        write_pem(&key_path, client_key_pem.as_bytes());
 
         let upstreams = vec![mtls_upstream(cert_path, key_path)];
         let err = Manager::new(&upstreams).err().expect("manager should fail");
@@ -370,16 +411,11 @@ mod tests {
         let key_path = dir.join("client.key");
         let chain_path = dir.join("chain.pem");
 
-        let (client_key, client_cert) = build_self_signed_cert();
-        let (_extra_key, extra_cert) = build_self_signed_cert();
-        write_pem(&cert_path, &client_cert.to_pem().expect("client cert pem"));
-        write_pem(
-            &key_path,
-            &client_key
-                .private_key_to_pem_pkcs8()
-                .expect("client key pem"),
-        );
-        write_pem(&chain_path, &extra_cert.to_pem().expect("chain cert pem"));
+        let (client_key_pem, client_cert_pem) = build_self_signed_cert();
+        let (_extra_key_pem, extra_cert_pem) = build_self_signed_cert();
+        write_pem(&cert_path, client_cert_pem.as_bytes());
+        write_pem(&key_path, client_key_pem.as_bytes());
+        write_pem(&chain_path, extra_cert_pem.as_bytes());
 
         let upstreams = vec![mtls_upstream_with_chain(
             cert_path,
@@ -402,15 +438,10 @@ mod tests {
         let cert_path = dir.join("client.pem");
         let key_path = dir.join("client.key");
 
-        let (client_key, client_cert) = build_self_signed_cert();
-        let (_extra_key, extra_cert) = build_self_signed_cert();
-        write_pem_bundle(&cert_path, &[client_cert, extra_cert]);
-        write_pem(
-            &key_path,
-            &client_key
-                .private_key_to_pem_pkcs8()
-                .expect("client key pem"),
-        );
+        let (client_key_pem, client_cert_pem) = build_self_signed_cert();
+        let (_extra_key_pem, extra_cert_pem) = build_self_signed_cert();
+        write_pem_bundle(&cert_path, &[client_cert_pem, extra_cert_pem]);
+        write_pem(&key_path, client_key_pem.as_bytes());
 
         let upstreams = vec![mtls_upstream(cert_path, key_path)];
         let err = Manager::new(&upstreams).err().expect("manager should fail");
@@ -433,15 +464,10 @@ mod tests {
         let cert_path = dir.join("client.pem");
         let key_path = dir.join("client.key");
 
-        let (client_key, client_cert) = build_self_signed_cert();
-        let (_extra_key, extra_cert) = build_self_signed_cert();
-        write_pem_bundle(&cert_path, &[client_cert, extra_cert]);
-        write_pem(
-            &key_path,
-            &client_key
-                .private_key_to_pem_pkcs8()
-                .expect("client key pem"),
-        );
+        let (client_key_pem, client_cert_pem) = build_self_signed_cert();
+        let (_extra_key_pem, extra_cert_pem) = build_self_signed_cert();
+        write_pem_bundle(&cert_path, &[client_cert_pem, extra_cert_pem]);
+        write_pem(&key_path, client_key_pem.as_bytes());
 
         let upstreams = vec![mtls_upstream_with_chain(
             cert_path,
@@ -460,8 +486,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create temp dir");
 
         let ca_path = dir.join("ca.pem");
-        let (_ca_key, ca_cert) = build_self_signed_cert();
-        write_pem(&ca_path, &ca_cert.to_pem().expect("ca cert pem"));
+        let (_ca_key_pem, ca_cert_pem) = build_self_signed_cert();
+        write_pem(&ca_path, ca_cert_pem.as_bytes());
 
         let upstreams = vec![Upstream {
             id: UpstreamId(NonZeroU16::new(1).unwrap()),

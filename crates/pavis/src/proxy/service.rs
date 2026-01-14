@@ -1,6 +1,5 @@
-use crate::proxy::context::RouterContext;
+use crate::proxy::context::{RouterContext, TracingSpan};
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
-use crate::proxy::identity::IdentityExtractor;
 use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
 use async_trait::async_trait;
@@ -133,9 +132,10 @@ fn calculate_path_rewrite(
     }
 }
 
-fn extract_client_identity(session: &Session) -> Option<String> {
-    let ssl = session.as_downstream().stream()?.get_ssl()?;
-    IdentityExtractor::default().extract(ssl)
+fn extract_client_identity(_session: &Session) -> Option<String> {
+    // TODO: Implement peer certificate extraction for Rustls mode in Pingora 0.6.0.
+    // The current Stream trait does not expose peer_certificate in a backend-agnostic way.
+    None
 }
 
 fn resolve_sni(
@@ -248,6 +248,7 @@ impl ProxyHttp for Proxy {
             route_pattern: crate::proxy::context::RoutePattern::NotMatched,
             req_id: generate_request_id(),
             span: crate::proxy::context::TracingSpan::Disabled,
+            runtime_state: None,
         }
     }
 
@@ -269,7 +270,14 @@ impl ProxyHttp for Proxy {
         };
 
         // O(1) lookup using Manager
-        let state = self.state.load();
+        // Use PINNED state when available, otherwise fall back to latest snapshot (e.g., tests)
+        let state = match ctx.runtime_state.clone() {
+            Some(state) => state,
+            None => {
+                tracing::debug!("Runtime state missing from context; using latest snapshot");
+                self.state.load()
+            }
+        };
         let cluster = match state.upstream_manager.get(upstream_name.0.as_str()) {
             Some(u) => u,
             None => return Error::e_explain(InternalError, "Upstream not found in config"),
@@ -442,7 +450,7 @@ impl ProxyHttp for Proxy {
                 otel.kind = "server",
             );
 
-            ctx.span = crate::proxy::context::TracingSpan::Active(span);
+            ctx.span = TracingSpan::Active(span);
         }
 
         tracing::debug!(
@@ -453,6 +461,8 @@ impl ProxyHttp for Proxy {
         );
 
         let state = self.state.load();
+        ctx.runtime_state = Some(state.clone());
+
         if let Some((vhost, route)) = state.router.match_request(host_header, uri_path) {
             tracing::trace!(host = %vhost.host.0, path = %route_path(route), "matched route");
 
@@ -460,8 +470,10 @@ impl ProxyHttp for Proxy {
                 pattern: Arc::from(route_path(route)),
             };
 
-            if let crate::proxy::context::TracingSpan::Active(ref span) = ctx.span {
-                span.record("route.pattern", route_path(route));
+            if let crate::proxy::context::RoutePattern::Matched { ref pattern } = ctx.route_pattern
+                && let TracingSpan::Active(ref span) = ctx.span
+            {
+                span.record("route.pattern", pattern.as_ref());
             }
 
             apply_route_headers(ctx, route);
@@ -471,7 +483,7 @@ impl ProxyHttp for Proxy {
             if !is_authorized(&route.principal, ctx.client_identity.as_deref()) {
                 ctx.rbac_denied = true;
 
-                if let crate::proxy::context::TracingSpan::Active(ref span) = ctx.span {
+                if let TracingSpan::Active(ref span) = ctx.span {
                     span.record("rbac.denied", true);
                     span.record("error", "RBAC denied");
                 }
@@ -524,7 +536,7 @@ impl ProxyHttp for Proxy {
                         if pick < weight {
                             ctx.upstream_name = Some(dest.upstream.clone());
 
-                            if let crate::proxy::context::TracingSpan::Active(ref span) = ctx.span {
+                            if let TracingSpan::Active(ref span) = ctx.span {
                                 span.record("upstream", dest.upstream.0.as_str());
                             }
 
@@ -578,7 +590,7 @@ impl ProxyHttp for Proxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        if let crate::proxy::context::TracingSpan::Active(ref span) = ctx.span {
+        if let TracingSpan::Active(ref span) = ctx.span {
             let context = span.context();
             opentelemetry::global::get_text_map_propagator(|propagator| {
                 propagator.inject_context(&context, &mut HeaderInjector(upstream_request))
@@ -645,7 +657,7 @@ impl ProxyHttp for Proxy {
         }
 
         #[allow(clippy::collapsible_if)]
-        if let crate::proxy::context::TracingSpan::Active(ref span) = ctx.span {
+        if let TracingSpan::Active(ref span) = ctx.span {
             if let Some(response) = session.response_written() {
                 let status_code = response.status.as_u16();
                 span.record("http.status_code", status_code);

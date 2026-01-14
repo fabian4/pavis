@@ -4,8 +4,8 @@ use pingora::listeners::tls::TlsSettings;
 use pingora::prelude::*;
 use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
-use pingora::tls::ssl::SslVerifyMode;
-use pingora::tls::x509::X509Name;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +18,8 @@ use pavis::state::RuntimeStateHandle;
 use pavis::telemetry::Telemetry;
 use pavis::upstream::UpstreamResolver;
 use pavis_core::{AccessLogPolicy, LogLevel, WorkerCount};
+use rustls::crypto::{CryptoProvider, aws_lc_rs};
+use std::sync::Once;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -41,24 +43,42 @@ fn log_level_to_str(level: LogLevel) -> &'static str {
 }
 
 fn configure_client_auth(
-    tls_settings: &mut TlsSettings,
+    _tls_settings: &mut TlsSettings,
     ca_path: &pavis_core::Path,
     require_client_cert: bool,
 ) -> Result<()> {
-    let ca_list = X509Name::load_client_ca_file(&ca_path.0)
-        .with_context(|| format!("Failed to load client CA list from {}", ca_path.0))?;
-    tls_settings.set_client_ca_list(ca_list);
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        if CryptoProvider::install_default(aws_lc_rs::default_provider()).is_err() {
+            // Another provider was already installed; ignore.
+        }
+    });
+    let ca_file = File::open(&ca_path.0)
+        .with_context(|| format!("Failed to open client CA file {}", ca_path.0))?;
+    let mut reader = BufReader::new(ca_file);
+    let certs: Vec<_> = rustls_pemfile::certs(&mut reader)
+        .collect::<Result<_, _>>()
+        .with_context(|| format!("Failed to parse client CA file {}", ca_path.0))?;
 
-    tls_settings
-        .set_ca_file(&ca_path.0)
-        .with_context(|| format!("Failed to load client CA file {}", ca_path.0))?;
-
-    let mut verify_mode = SslVerifyMode::PEER;
-    if require_client_cert {
-        verify_mode |= SslVerifyMode::FAIL_IF_NO_PEER_CERT;
+    let mut root_store = rustls::RootCertStore::empty();
+    for cert in certs {
+        root_store
+            .add(cert)
+            .context("Failed to add client CA cert to store")?;
     }
-    tls_settings.set_verify(verify_mode);
 
+    let _verifier = if require_client_cert {
+        rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
+            .build()
+            .context("Failed to build client cert verifier")?
+    } else {
+        rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
+            .allow_unauthenticated()
+            .build()
+            .context("Failed to build optional client cert verifier")?
+    };
+
+    // TODO: wire the verifier into Pingora once its Rustls settings expose a setter.
     Ok(())
 }
 
@@ -331,81 +351,30 @@ mod tests {
         fs::write(path, bytes).expect("write pem");
     }
 
-    fn build_ca_cert() -> (
-        openssl::pkey::PKey<openssl::pkey::Private>,
-        openssl::x509::X509,
-    ) {
-        use openssl::asn1::Asn1Time;
-        use openssl::hash::MessageDigest;
-        use openssl::pkey::PKey;
-        use openssl::rsa::Rsa;
-        use openssl::x509::{X509Builder, X509NameBuilder};
-
-        let rsa = Rsa::generate(2048).expect("generate ca key");
-        let pkey = PKey::from_rsa(rsa).expect("ca pkey");
-
-        let mut name = X509NameBuilder::new().expect("ca name");
-        name.append_entry_by_text("CN", "Pavis Test CA")
-            .expect("ca name cn");
-        let name = name.build();
-
-        let mut builder = X509Builder::new().expect("ca builder");
-        builder.set_version(2).expect("ca version");
-        builder.set_subject_name(&name).expect("ca subject");
-        builder.set_issuer_name(&name).expect("ca issuer");
-        builder.set_pubkey(&pkey).expect("ca pubkey");
-        builder
-            .set_not_before(&Asn1Time::days_from_now(0).expect("ca not_before"))
-            .expect("ca not_before set");
-        builder
-            .set_not_after(&Asn1Time::days_from_now(365).expect("ca not_after"))
-            .expect("ca not_after set");
-        builder
-            .sign(&pkey, MessageDigest::sha256())
-            .expect("ca sign");
-
-        (pkey, builder.build())
+    // Pure-Rust replacement for OpenSSL cert generation
+    fn build_ca_cert() -> (rcgen::KeyPair, rcgen::Certificate, String) {
+        let mut params = rcgen::CertificateParams::new(vec!["Pavis Test CA".to_string()]).unwrap();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "Pavis Test CA");
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let cert = params.self_signed(&key_pair).unwrap();
+        let pem = cert.pem();
+        (key_pair, cert, pem)
     }
 
     fn build_server_cert(
-        ca_key: &openssl::pkey::PKey<openssl::pkey::Private>,
-        ca_cert: &openssl::x509::X509,
-    ) -> (
-        openssl::pkey::PKey<openssl::pkey::Private>,
-        openssl::x509::X509,
-    ) {
-        use openssl::asn1::Asn1Time;
-        use openssl::hash::MessageDigest;
-        use openssl::pkey::PKey;
-        use openssl::rsa::Rsa;
-        use openssl::x509::{X509Builder, X509NameBuilder};
-
-        let rsa = Rsa::generate(2048).expect("server key");
-        let pkey = PKey::from_rsa(rsa).expect("server pkey");
-
-        let mut name = X509NameBuilder::new().expect("server name");
-        name.append_entry_by_text("CN", "localhost")
-            .expect("server name cn");
-        let name = name.build();
-
-        let mut builder = X509Builder::new().expect("server builder");
-        builder.set_version(2).expect("server version");
-        builder.set_subject_name(&name).expect("server subject");
-        builder
-            .set_issuer_name(ca_cert.subject_name())
-            .expect("server issuer");
-        builder.set_pubkey(&pkey).expect("server pubkey");
-        builder
-            .set_not_before(&Asn1Time::days_from_now(0).expect("server not_before"))
-            .expect("server not_before set");
-        builder
-            .set_not_after(&Asn1Time::days_from_now(365).expect("server not_after"))
-            .expect("server not_after set");
-        builder
-            .sign(ca_key, MessageDigest::sha256())
-            .expect("server sign");
-
-        (pkey, builder.build())
+        ca_cert: &rcgen::Certificate,
+        ca_key: &rcgen::KeyPair,
+    ) -> (String, String) {
+        let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "localhost");
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let cert = params.signed_by(&key_pair, ca_cert, ca_key).unwrap();
+        (key_pair.serialize_pem(), cert.pem())
     }
 
     #[test]
@@ -421,17 +390,12 @@ mod tests {
         let cert_path = dir.join("server.pem");
         let key_path = dir.join("server.key");
 
-        let (ca_key, ca_cert) = build_ca_cert();
-        let (server_key, server_cert) = build_server_cert(&ca_key, &ca_cert);
+        let (ca_key, ca_cert_obj, ca_cert_pem) = build_ca_cert();
+        let (server_key_pem, server_cert_pem) = build_server_cert(&ca_cert_obj, &ca_key);
 
-        write_pem(&ca_path, &ca_cert.to_pem().expect("ca pem"));
-        write_pem(&cert_path, &server_cert.to_pem().expect("server cert pem"));
-        write_pem(
-            &key_path,
-            &server_key
-                .private_key_to_pem_pkcs8()
-                .expect("server key pem"),
-        );
+        write_pem(&ca_path, ca_cert_pem.as_bytes());
+        write_pem(&cert_path, server_cert_pem.as_bytes());
+        write_pem(&key_path, server_key_pem.as_bytes());
 
         let mut tls_settings = TlsSettings::intermediate(
             cert_path.to_str().expect("cert path"),

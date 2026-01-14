@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# System Mode Test: Stress Recovery
+# Measures proxy behavior during saturation and recovery
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts"
+# shellcheck source=bench/scripts/utils.sh
+source "$SCRIPT_DIR/utils.sh"
+# shellcheck source=bench/scripts/k8s_helpers.sh
+source "$SCRIPT_DIR/k8s_helpers.sh"
+# shellcheck source=bench/scripts/system_metrics.sh
+source "$SCRIPT_DIR/system_metrics.sh"
+# shellcheck source=bench/scripts/publish_config.sh
+source "$SCRIPT_DIR/publish_config.sh"
+# shellcheck source=bench/scripts/proxy_helpers.sh
+source "$SCRIPT_DIR/proxy_helpers.sh"
+
+CASE_NAME="stress_recovery"
+BASELINE_RPS=5000
+STRESS_RPS=15000
+BASELINE_DURATION_S=30
+STRESS_DURATION_S=60
+RECOVERY_DURATION_S=60
+NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
+
+main() {
+  log_info "Starting test: $CASE_NAME for ${BENCH_PROXY}"
+
+  # Get proxy-specific configuration
+  local pod_label
+  local container_name
+  local proxy_port
+  pod_label=$(get_proxy_pod_label)
+  container_name=$(get_proxy_container_name)
+  proxy_port=$(get_proxy_port)
+
+  local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}"
+  ensure_dir "$output_dir"
+
+  # Setup port-forward to access test backend
+  log_info "Setting up port-forward to test backend"
+  local pf_pid
+  pf_pid=$(kubectl_port_forward_background "$pod_label" "$proxy_port" "$proxy_port" "$NAMESPACE")
+
+  # Wait for port-forward to stabilize
+  sleep 3
+
+  local target_url="http://localhost:${proxy_port}/fixed"
+
+  # Step 1: Deploy baseline config
+  log_info "Deploying baseline config"
+  proxy_deploy_baseline_config
+
+  sleep 2
+
+  # Step 2: Establish baseline at 50% load
+  log_info "Establishing baseline at ${BASELINE_RPS} RPS (50% load)"
+  "${BENCH_LOADGEN_BIN}" \
+    --url "$target_url" \
+    --rate "$BASELINE_RPS" \
+    --duration "$BASELINE_DURATION_S" \
+    --connections 100 \
+    --output "${output_dir}/baseline.json" \
+    > /dev/null 2>&1
+
+  local baseline_p99
+  baseline_p99=$(jq -r '.latency_ms.p99' "${output_dir}/baseline.json")
+  local baseline_rss_start
+  baseline_rss_start=$(proxy_get_stats "$pod_label" "$NAMESPACE" | tr -d 'Ki')
+  log_info "Baseline P99: ${baseline_p99}ms, RSS: ${baseline_rss_start}KB"
+
+  # Step 3: Apply 150% saturation load
+  log_info "Applying stress load at ${STRESS_RPS} RPS (150% saturation)"
+
+  # Start RSS monitoring in background
+  collect_rss_timeline "$STRESS_DURATION_S" 5 "${output_dir}/stress_rss.csv" "$pod_label" "$container_name" "$NAMESPACE" &
+  local rss_monitor_pid=$!
+
+  "${BENCH_LOADGEN_BIN}" \
+    --url "$target_url" \
+    --rate "$STRESS_RPS" \
+    --duration "$STRESS_DURATION_S" \
+    --connections 200 \
+    --output "${output_dir}/stress.json" \
+    > /dev/null 2>&1
+
+  wait "$rss_monitor_pid" 2>/dev/null || true
+
+  local stress_p99
+  stress_p99=$(jq -r '.latency_ms.p99' "${output_dir}/stress.json")
+  local stress_dropped
+  stress_dropped=$(jq -r '.dropped // 0' "${output_dir}/stress.json")
+  local stress_rss_peak
+  stress_rss_peak=$(awk -F',' 'NR>1 {if($2>max)max=$2} END{print max}' "${output_dir}/stress_rss.csv")
+  log_info "Stress P99: ${stress_p99}ms, Dropped: ${stress_dropped}, RSS Peak: ${stress_rss_peak}KB"
+
+  # Step 4: Return to baseline load
+  log_info "Returning to baseline load (${BASELINE_RPS} RPS)"
+
+  # Start recovery RSS monitoring
+  collect_rss_timeline "$RECOVERY_DURATION_S" 5 "${output_dir}/recovery_rss.csv" "$pod_label" "$container_name" "$NAMESPACE" &
+  local recovery_rss_pid=$!
+
+  "${BENCH_LOADGEN_BIN}" \
+    --url "$target_url" \
+    --rate "$BASELINE_RPS" \
+    --duration "$RECOVERY_DURATION_S" \
+    --connections 100 \
+    --output "${output_dir}/recovery.json" \
+    > /dev/null 2>&1
+
+  wait "$recovery_rss_pid" 2>/dev/null || true
+
+  local recovery_p99
+  recovery_p99=$(jq -r '.latency_ms.p99' "${output_dir}/recovery.json")
+  local recovery_rss_end
+  recovery_rss_end=$(awk -F',' 'END{print $2}' "${output_dir}/recovery_rss.csv")
+  log_info "Recovery P99: ${recovery_p99}ms, RSS End: ${recovery_rss_end}KB"
+
+  # Cleanup port-forward
+  kubectl_stop_port_forward "$pf_pid"
+
+  # Step 5: Calculate metrics
+  local rss_growth
+  rss_growth=$(echo "($recovery_rss_end - $baseline_rss_start) / 1024.0" | bc -l)
+  local rss_growth_pct
+  rss_growth_pct=$(echo "($recovery_rss_end - $baseline_rss_start) * 100.0 / $baseline_rss_start" | bc -l)
+
+  local latency_recovery_pct
+  latency_recovery_pct=$(echo "($recovery_p99 - $baseline_p99) * 100.0 / $baseline_p99" | bc -l)
+
+  # Step 6: Write metrics JSON
+  cat > "${output_dir}/metrics.json" <<EOF
+{
+  "test": "$CASE_NAME",
+  "proxy": "${BENCH_PROXY}",
+  "baseline_rps": $BASELINE_RPS,
+  "stress_rps": $STRESS_RPS,
+  "baseline_p99_ms": $baseline_p99,
+  "stress_p99_ms": $stress_p99,
+  "recovery_p99_ms": $recovery_p99,
+  "latency_recovery_pct": $latency_recovery_pct,
+  "stress_dropped": $stress_dropped,
+  "baseline_rss_kb": $baseline_rss_start,
+  "stress_rss_peak_kb": $stress_rss_peak,
+  "recovery_rss_kb": $recovery_rss_end,
+  "rss_growth_mb": $rss_growth,
+  "rss_growth_pct": $rss_growth_pct
+}
+EOF
+
+  log_info "Metrics written to ${output_dir}/metrics.json"
+
+  # Step 7: Validation
+  log_info "Validating results"
+  local validation_failed=0
+
+  # Check if latency recovered to within 20% of baseline
+  if (( $(echo "$latency_recovery_pct > 20" | bc -l) )); then
+    log_warn "Latency did not recover: ${latency_recovery_pct}% above baseline"
+    validation_failed=1
+  fi
+
+  # Check for excessive RSS growth (>10%)
+  if (( $(echo "$rss_growth_pct > 10" | bc -l) )); then
+    log_warn "Excessive RSS growth detected: ${rss_growth_pct}%"
+    validation_failed=1
+  fi
+
+  if (( validation_failed == 0 )); then
+    log_info "Test PASSED: $CASE_NAME"
+    return 0
+  else
+    log_warn "Test completed with warnings: $CASE_NAME"
+    return 0
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

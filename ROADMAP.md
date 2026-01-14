@@ -76,7 +76,6 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 ## Phase 5: Observability (Critical Path)
 > **Goal**: Deep visibility into proxy behavior required for Operations.
 > **Status**: ✅ Complete
-> **Plan**: [observability.md](./docs/plan/observability.md)
 
 - [x] **Prometheus Metrics**: Exporter with request, connection, and upstream dimensions.
 - [x] **Access Logs**: Configurable JSON/Text output to stdout or file.

@@ -13,11 +13,15 @@ run_benchmark() {
   : "${BENCH_PROXY:?}"
   local open_loop_cases="${BENCH_OPEN_LOOP_CASES:-latency_short_1x latency_extended_1x}"
 
-  if [[ -d "${BENCH_OUTPUT_DIR}/${BENCH_PROXY}" ]]; then
-    log_warn "Removing previous results for ${BENCH_PROXY}"
-    rm -rf "${BENCH_OUTPUT_DIR:?}/${BENCH_PROXY}"
+  # System mode uses different output directory structure
+  local mode="${BENCH_MODE:-standalone}"
+  local output_subdir="${BENCH_OUTPUT_DIR}/${mode}/${BENCH_PROXY}"
+
+  if [[ -d "$output_subdir" ]]; then
+    log_warn "Removing previous results for ${BENCH_PROXY} (${mode} mode)"
+    rm -rf "${output_subdir}"
   fi
-  ensure_dir "${BENCH_OUTPUT_DIR}/${BENCH_PROXY}"
+  ensure_dir "$output_subdir"
 
   for case_name in $BENCH_CASES; do
     run_case "$case_name" "$open_loop_cases"

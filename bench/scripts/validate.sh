@@ -26,6 +26,7 @@ validate_inputs() {
   local report_path="${BENCH_REPORT_MD:-$output_dir/report.md}"
   local input_file=""
   local loadgen_warn="${LOADGEN_WARN:-0}"
+  local background="${BENCH_BACKGROUND:-0}"
 
   local i=0
   while [[ $i -lt ${#args[@]} ]]; do
@@ -94,6 +95,10 @@ validate_inputs() {
         loadgen_warn=1
         i=$((i+1))
         ;;
+      --background)
+        background=1
+        i=$((i+1))
+        ;;
       --help)
         cat <<'USAGE'
 Usage: bench/run.sh [options]
@@ -113,6 +118,7 @@ Usage: bench/run.sh [options]
   --runs <N>
   --open-loop-iterations <N>
   --loadgen-warn
+  --background              Run in background mode with persistent logging
 USAGE
         return 0
         ;;
@@ -146,18 +152,43 @@ USAGE
   fi
 
   if [[ -z "$mode" ]]; then
-    exit_with_error "MODE is required (set MODE=standalone for bench/run.sh)"
+    log_info "MODE not set, will run both standalone and system modes"
+    mode="both"
   fi
 
-  if [[ "$mode" != "standalone" ]]; then
-    exit_with_error "Invalid MODE for bench/run.sh: $mode (expected standalone)"
+  if [[ "$mode" != "standalone" && "$mode" != "system" && "$mode" != "both" ]]; then
+    exit_with_error "Invalid MODE: $mode (expected standalone, system, or unset for both)"
   fi
 
-  if [[ -z "$cases" ]]; then
-    exit_with_error "No benchmark cases specified"
+  # System mode constraints
+  if [[ "$mode" == "system" || "$mode" == "both" ]]; then
+    if [[ "$profile" == "github" ]]; then
+      exit_with_error "MODE=system requires BENCH_PROFILE=workstation (not supported in GitHub CI)"
+    fi
   fi
 
-  local cases_dir="${BENCH_ROOT}/bench/cases"
+  # If running both modes, validate both case directories exist
+  if [[ "$mode" == "both" ]]; then
+    local standalone_cases_dir="${BENCH_ROOT}/bench/cases/standalone"
+    local system_cases_dir="${BENCH_ROOT}/bench/cases/system"
+
+    if [[ ! -d "$standalone_cases_dir" ]]; then
+      exit_with_error "Standalone cases directory not found: $standalone_cases_dir"
+    fi
+
+    if [[ ! -d "$system_cases_dir" ]]; then
+      exit_with_error "System cases directory not found: $system_cases_dir"
+    fi
+
+    # For both mode, we'll use standalone cases dir as default
+    # System mode will override this in its execution
+    cases_dir="$standalone_cases_dir"
+  elif [[ "$mode" == "system" ]]; then
+    cases_dir="${BENCH_ROOT}/bench/cases/system"
+  else
+    cases_dir="${BENCH_ROOT}/bench/cases/standalone"
+  fi
+
   for case_name in $cases; do
     local script_path="$cases_dir/${case_name}.sh"
     if [[ ! -x "$script_path" ]]; then
@@ -235,6 +266,7 @@ USAGE
   export BENCH_PVS_CONFIG="${BENCH_ROOT}/bench/config/pavis.pvs"
   export BENCH_DOCKER_COMPOSE="${BENCH_ROOT}/bench/docker-compose.yaml"
   export LOADGEN_WARN="$loadgen_warn"
+  export BENCH_BACKGROUND="$background"
 
   log_info "Proxy: $BENCH_PROXY"
   log_info "Cases: $BENCH_CASES"

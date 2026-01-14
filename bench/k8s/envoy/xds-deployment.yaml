@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-xds
+  namespace: bench-system
+  labels:
+    app: envoy-xds
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: envoy-xds
+  template:
+    metadata:
+      labels:
+        app: envoy-xds
+    spec:
+      containers:
+      - name: xds-server
+        image: envoy-xds-server:local
+        imagePullPolicy: Never
+        ports:
+        - name: grpc
+          containerPort: 18000
+          protocol: TCP
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 3
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy-xds
+  namespace: bench-system
+  labels:
+    app: envoy-xds
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc
+    port: 18000
+    targetPort: grpc
+    protocol: TCP
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: envoy-xds

@@ -86,3 +86,28 @@ collect_system_info() {
   arch="$(uname -m 2>/dev/null || true)"
   printf 'cpu=%s\nkernel=%s\narch=%s\n' "${cpu:-unknown}" "${kernel:-unknown}" "${arch:-unknown}"
 }
+
+generate_log_filename() {
+  local timestamp
+  timestamp=$(date -u +"%Y%m%d_%H%M%S")
+  echo "bench_${timestamp}.log"
+}
+
+is_background_mode() {
+  [[ "${BENCH_BACKGROUND:-0}" == "1" || "${BENCH_BACKGROUND:-0}" == "true" ]]
+}
+
+print_background_info() {
+  local log_file="$1"
+  local pid="$2"
+  printf '\n'
+  printf '=== Background Mode Enabled ===\n'
+  printf 'Process ID: %s\n' "$pid"
+  printf 'Log file: %s\n' "$log_file"
+  printf 'Monitor: tail -f %s\n' "$log_file"
+  printf 'Stop: kill %s\n' "$pid"
+  printf '\n'
+  printf 'The benchmark will continue running even if SSH disconnects.\n'
+  printf 'Check progress: tail -f %s\n' "$log_file"
+  printf '\n'
+}

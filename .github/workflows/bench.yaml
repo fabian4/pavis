@@ -14,11 +14,11 @@ env:
   BENCH_VERBOSE: 0
   LOADGEN_WARN: 0
   BENCH_PROFILE: github
-  MODE: standalone
 
 jobs:
-  bench:
+  bench-standalone:
     runs-on: ubuntu-latest
+    if: false
 
     steps:
       - name: Checkout repository
@@ -34,8 +34,8 @@ jobs:
 
       - name: Build benchmark tools
         run: |
-          cargo build -p pavis-benchkit --bin bench-loadgen --release
-          cargo build -p pavctl --release
+          make binary-build CRATE=pavis-benchkit BIN=bench-loadgen
+          make binary-build CRATE=pavctl
 
       - name: Build Pavis Docker Image
         run: make docker-build IMAGE=pavis MODE=ci
@@ -43,8 +43,8 @@ jobs:
       - name: Build Upstream Docker Image
         run: make docker-build IMAGE=bench-upstream MODE=ci
 
-      - name: Benchmark pavis
-        run: PROXY="pavis" make bench
+      - name: Benchmark pavis (standalone mode)
+        run: MODE=standalone PROXY=pavis make bench-standalone
 
       - name: Debug on failure
         if: failure()
@@ -71,12 +71,79 @@ jobs:
         run: make bench-report
 
       - name: Append Job Summary
-        run: cat bench/output/report.md >> "$GITHUB_STEP_SUMMARY"
+        run: cat bench/output/standalone/report.md >> "$GITHUB_STEP_SUMMARY" || cat bench/output/report.md >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Upload Bench Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-output
+          name: bench-output-standalone
+          path: bench/output/
+          retention-days: 30
+
+  bench-system:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install kind, kubectl, jq, and bc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+          # Install kubectl
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+          # Install kind
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Build benchmark tools
+        run: |
+          make binary-build CRATE=pavis-benchkit BIN=bench-loadgen
+          make binary-build CRATE=pavctl
+
+      - name: Build System Mode Docker Images
+        run: make bench-system-build
+
+      - name: Run System Mode Benchmarks (pavis)
+        run: MODE=system PROXY=pavis BENCH_PROFILE=workstation make bench-system
+        continue-on-error: true
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          echo "=== Kind Cluster Info ==="
+          kind get clusters || true
+          kubectl get nodes -o wide || true
+          kubectl get pods -n bench-system -o wide || true
+
+          echo "=== Pod Logs ==="
+          kubectl logs -n bench-system -l app=pavis-relay --tail=100 || true
+          kubectl logs -n bench-system -l app=test-backend -c pavis-sidecar --tail=100 || true
+          kubectl logs -n bench-system -l app=test-backend -c upstream --tail=100 || true
+
+      - name: Cleanup System Mode
+        if: always()
+        run: make bench-system-down
+
+      - name: Generate Summary and Report
+        run: make bench-report || true
+
+      - name: Append Job Summary
+        run: cat bench/output/system/report.md >> "$GITHUB_STEP_SUMMARY" || cat bench/output/report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload Bench Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-output-system
           path: bench/output/
           retention-days: 30

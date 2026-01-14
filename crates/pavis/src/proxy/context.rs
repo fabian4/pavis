@@ -1,3 +1,4 @@
+use crate::state::RuntimeState;
 use pavis_core::{HeadersPolicy, Hostname, UpstreamName};
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,6 +15,9 @@ pub struct RouterContext {
     pub route_pattern: RoutePattern,
     pub req_id: String,
     pub span: TracingSpan,
+    /// Pinned configuration snapshot for this request.
+    /// Captured in `request_filter` to ensure atomicity across routing and upstream selection.
+    pub runtime_state: Option<Arc<RuntimeState>>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +106,7 @@ mod tests {
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-123".to_string(),
             span: TracingSpan::Disabled,
+            runtime_state: None,
         };
 
         assert_eq!(
@@ -138,6 +143,7 @@ mod tests {
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-1".to_string(),
             span: TracingSpan::Disabled,
+            runtime_state: None,
         };
 
         assert_eq!(ctx.upstream_label(), "-");
@@ -159,6 +165,7 @@ mod tests {
             },
             req_id: "req-1".to_string(),
             span: TracingSpan::Disabled,
+            runtime_state: None,
         };
 
         ctx.start_upstream();
@@ -185,6 +192,7 @@ mod tests {
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-1".to_string(),
             span: TracingSpan::Disabled,
+            runtime_state: None,
         };
 
         std::thread::sleep(std::time::Duration::from_millis(10));

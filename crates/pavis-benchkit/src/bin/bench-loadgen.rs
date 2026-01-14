@@ -58,6 +58,10 @@ struct Args {
     /// Output file path (default: stdout)
     #[clap(long)]
     output: Option<String>,
+
+    /// CPU affinity cpuset (e.g., "0", "1-2", "0,3"). Linux only.
+    #[clap(long)]
+    cpuset: Option<String>,
 }
 
 impl Args {
@@ -80,6 +84,78 @@ impl Args {
             .map_err(|e| format!("invalid URL: {}", e))?;
         Ok(())
     }
+}
+
+// ============================================================================
+// CPU Affinity
+// ============================================================================
+
+/// Parse cpuset string like "0", "1-2", "0,3" into a list of CPU IDs.
+fn parse_cpuset(cpuset: &str) -> Result<Vec<usize>, String> {
+    let mut cpu_ids = Vec::new();
+
+    for part in cpuset.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+
+        if let Some((start, end)) = part.split_once('-') {
+            // Range like "1-3"
+            let start: usize = start.trim().parse()
+                .map_err(|_| format!("invalid CPU ID in range: {}", start))?;
+            let end: usize = end.trim().parse()
+                .map_err(|_| format!("invalid CPU ID in range: {}", end))?;
+
+            if start > end {
+                return Err(format!("invalid range: {} > {}", start, end));
+            }
+
+            for cpu in start..=end {
+                cpu_ids.push(cpu);
+            }
+        } else {
+            // Single CPU like "0"
+            let cpu: usize = part.parse()
+                .map_err(|_| format!("invalid CPU ID: {}", part))?;
+            cpu_ids.push(cpu);
+        }
+    }
+
+    if cpu_ids.is_empty() {
+        return Err("cpuset is empty".to_string());
+    }
+
+    Ok(cpu_ids)
+}
+
+/// Apply CPU affinity based on cpuset string.
+/// Returns Ok(()) on success, Err on failure.
+fn apply_cpu_affinity(cpuset: &str) -> Result<(), String> {
+    let cpu_ids = parse_cpuset(cpuset)?;
+
+    // Get available core IDs
+    let core_ids = core_affinity::get_core_ids()
+        .ok_or_else(|| "failed to get core IDs".to_string())?;
+
+    // Validate that requested CPUs exist
+    for &cpu_id in &cpu_ids {
+        if cpu_id >= core_ids.len() {
+            return Err(format!("CPU {} does not exist (max: {})", cpu_id, core_ids.len() - 1));
+        }
+    }
+
+    // Set affinity to first CPU in the list
+    // Note: core_affinity crate pins to a single core, not a set
+    // For multi-core cpuset, we pin to the first core
+    let target_core = core_ids[cpu_ids[0]];
+
+    if !core_affinity::set_for_current(target_core) {
+        return Err(format!("failed to set CPU affinity to core {}", cpu_ids[0]));
+    }
+
+    eprintln!("CPU affinity set to core {}", cpu_ids[0]);
+    Ok(())
 }
 
 // ============================================================================
@@ -384,11 +460,23 @@ async fn execute_request(
 // Main Execution
 // ============================================================================
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     args.validate()?;
 
+    // Apply CPU affinity BEFORE starting tokio runtime
+    if let Some(ref cpuset) = args.cpuset {
+        apply_cpu_affinity(cpuset)?;
+    }
+
+    // Start tokio runtime and run async main
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main(args))
+}
+
+async fn async_main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let uri: Uri = args.url.parse()?;
     let duration = Duration::from_secs(args.duration);
     let timeout = Duration::from_secs(args.timeout);

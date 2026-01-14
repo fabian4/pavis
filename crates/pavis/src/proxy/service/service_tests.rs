@@ -76,6 +76,7 @@ fn apply_route_headers_populates_router_context() {
         route_pattern: crate::proxy::context::RoutePattern::NotMatched,
         req_id: "test-req".to_string(),
         span: crate::proxy::context::TracingSpan::Disabled,
+        runtime_state: None,
     };
 
     apply_route_headers(&mut ctx, &route);
@@ -168,40 +169,14 @@ fn write_pem(path: &std::path::Path, bytes: &[u8]) {
     std::fs::write(path, bytes).expect("write pem");
 }
 
-fn build_self_signed_cert() -> (
-    openssl::pkey::PKey<openssl::pkey::Private>,
-    openssl::x509::X509,
-) {
-    use openssl::asn1::Asn1Time;
-    use openssl::hash::MessageDigest;
-    use openssl::pkey::PKey;
-    use openssl::rsa::Rsa;
-    use openssl::x509::{X509Builder, X509NameBuilder};
-
-    let rsa = Rsa::generate(2048).expect("client key");
-    let pkey = PKey::from_rsa(rsa).expect("client pkey");
-
-    let mut name = X509NameBuilder::new().expect("client name");
-    name.append_entry_by_text("CN", "client")
-        .expect("client name cn");
-    let name = name.build();
-
-    let mut builder = X509Builder::new().expect("client builder");
-    builder.set_version(2).expect("client version");
-    builder.set_subject_name(&name).expect("client subject");
-    builder.set_issuer_name(&name).expect("client issuer");
-    builder.set_pubkey(&pkey).expect("client pubkey");
-    builder
-        .set_not_before(&Asn1Time::days_from_now(0).expect("client not_before"))
-        .expect("client not_before set");
-    builder
-        .set_not_after(&Asn1Time::days_from_now(365).expect("client not_after"))
-        .expect("client not_after set");
-    builder
-        .sign(&pkey, MessageDigest::sha256())
-        .expect("client sign");
-
-    (pkey, builder.build())
+fn build_self_signed_cert() -> (String, String) {
+    let mut params = rcgen::CertificateParams::new(vec!["client".to_string()]).unwrap();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "client");
+    let key_pair = rcgen::KeyPair::generate().unwrap();
+    let cert = params.self_signed(&key_pair).unwrap();
+    (key_pair.serialize_pem(), cert.pem())
 }
 
 fn mtls_upstream(
@@ -1165,14 +1140,9 @@ async fn upstream_peer_sets_client_cert_key() {
     let cert_path = dir.join("client.pem");
     let key_path = dir.join("client.key");
 
-    let (client_key, client_cert) = build_self_signed_cert();
-    write_pem(&cert_path, &client_cert.to_pem().expect("client cert pem"));
-    write_pem(
-        &key_path,
-        &client_key
-            .private_key_to_pem_pkcs8()
-            .expect("client key pem"),
-    );
+    let (client_key_pem, client_cert_pem) = build_self_signed_cert();
+    write_pem(&cert_path, client_cert_pem.as_bytes());
+    write_pem(&key_path, client_key_pem.as_bytes());
 
     let upstream = mtls_upstream("secure", 1, 8443, cert_path, key_path);
     let manager = Manager::new(&[upstream]).expect("manager");

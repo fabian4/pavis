@@ -233,11 +233,21 @@ fn workspace_root() -> PathBuf {
     dir
 }
 
+fn pavctl_bin_name() -> &'static str {
+    if cfg!(windows) {
+        "pavctl.exe"
+    } else {
+        "pavctl"
+    }
+}
+
 fn debug_pavctl_path(root: &Path) -> PathBuf {
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        return PathBuf::from(target_dir).join("debug/pavctl");
+        return PathBuf::from(target_dir)
+            .join("debug")
+            .join(pavctl_bin_name());
     }
-    root.join("target/debug/pavctl")
+    root.join("target").join("debug").join(pavctl_bin_name())
 }
 
 fn pavctl_bin_helper(env_val: Option<String>) -> PathBuf {
@@ -258,13 +268,13 @@ fn pavctl_bin_from(mut dir: PathBuf) -> PathBuf {
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
         let target_path = PathBuf::from(target_dir);
 
-        let release = target_path.join("release/pavctl");
+        let release = target_path.join("release").join(pavctl_bin_name());
 
         if release.exists() {
             return release;
         }
 
-        let debug = target_path.join("debug/pavctl");
+        let debug = target_path.join("debug").join(pavctl_bin_name());
 
         if debug.exists() {
             return debug;
@@ -283,13 +293,13 @@ fn pavctl_bin_from(mut dir: PathBuf) -> PathBuf {
 
     // Prefer release binary if it exists (common in CI after build step)
 
-    let release_path = dir.join("target/release/pavctl");
+    let release_path = dir.join("target").join("release").join(pavctl_bin_name());
 
     if release_path.exists() {
         return release_path;
     }
 
-    let debug_path = dir.join("target/debug/pavctl");
+    let debug_path = dir.join("target").join("debug").join(pavctl_bin_name());
 
     if debug_path.exists() {
         return debug_path;
@@ -321,7 +331,7 @@ fn pavctl_bin_finds_release_binary() {
     std::fs::write(dir.path().join("Cargo.lock"), "").expect("lock");
     let release_dir = dir.path().join("target/release");
     std::fs::create_dir_all(&release_dir).expect("release dir");
-    let release_path = release_dir.join("pavctl");
+    let release_path = release_dir.join(pavctl_bin_name());
     std::fs::write(&release_path, b"").expect("release bin");
 
     let resolved = pavctl_bin_from(dir.path().to_owned());

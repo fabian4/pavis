@@ -30,6 +30,10 @@ fn minimal_config() -> RuntimeConfig {
 }
 
 fn get_binary_path() -> PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_pavis") {
+        return PathBuf::from(path);
+    }
+
     let mut dir = std::env::current_dir().unwrap();
     loop {
         if dir.join("Cargo.lock").exists() {
@@ -40,15 +44,23 @@ fn get_binary_path() -> PathBuf {
         }
     }
 
-    let debug_path = dir.join("target/debug/pavis");
+    let debug_path = with_bin_extension(dir.join("target/debug/pavis"));
     if debug_path.exists() {
         return debug_path;
     }
-    let release_path = dir.join("target/release/pavis");
+    let release_path = with_bin_extension(dir.join("target/release/pavis"));
     if release_path.exists() {
         return release_path;
     }
     panic!("Pavis binary not found");
+}
+
+fn with_bin_extension(path: PathBuf) -> PathBuf {
+    if cfg!(windows) {
+        path.with_extension("exe")
+    } else {
+        path
+    }
 }
 
 fn wait_for_log_line(child: &mut Child, needle: &str, timeout: Duration) {

@@ -88,17 +88,17 @@ SUT_ID_INITIAL=$(get_sut_id "pavis")
 
 # 6. Publish V2 to Relay (Hot Reload) with concurrent traffic
 # We start a background traffic loop to prove zero-drop
+BURST_COUNT=200
 (
-    for i in {1..100}; do
+    for i in $(seq 1 $BURST_COUNT); do
         pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo" > "$TEST_TMP/burst_$i" || echo "FAIL" > "$TEST_TMP/burst_$i"
-        # Brief pause to spread requests across the reload window
-        sleep 0.01
+        # Burst as fast as possible to catch the transition
     done
 ) &
 TRAFFIC_PID=$!
 
 # Small delay to ensure traffic is flowing before publish
-sleep 0.2
+sleep 0.1
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
 
 # Wait for traffic loop to finish
@@ -106,33 +106,36 @@ wait $TRAFFIC_PID
 
 # 7. Assert Zero-Drop and Atomic Switch
 V1_COUNT=0; V2_COUNT=0; FAIL_COUNT=0
-for i in {1..100}; do
+V2_STARTED=0
+for i in $(seq 1 $BURST_COUNT); do
     content=$(cat "$TEST_TMP/burst_$i")
     if [[ "$content" == "FAIL" ]]; then
         FAIL_COUNT=$((FAIL_COUNT+1))
+    elif [[ "$content" == *"backend-v2"* ]]; then
+        V2_COUNT=$((V2_COUNT+1))
+        V2_STARTED=1
     elif [[ "$content" == *"backend-v1"* ]]; then
         V1_COUNT=$((V1_COUNT+1))
-        # If we already saw V2, then seeing V1 again is a bug (non-atomic or regression)
-        if [ $V2_COUNT -gt 0 ]; then
+        # Invariant C: Atomic switch (no request spans multiple versions, and monotonic)
+        if [ $V2_STARTED -eq 1 ]; then
             echo "❌ Non-atomic switch detected! V1 seen after V2 at request $i"
             exit 1
         fi
-    elif [[ "$content" == *"backend-v2"* ]]; then
-        V2_COUNT=$((V2_COUNT+1))
     else
+        echo "❌ Unexpected response: $content"
         FAIL_COUNT=$((FAIL_COUNT+1))
     fi
 done
 
 echo "Burst results: v1=$V1_COUNT, v2=$V2_COUNT, fail=$FAIL_COUNT"
 if [ $FAIL_COUNT -gt 0 ]; then
-    echo "❌ Zero-drop violated: $FAIL_COUNT requests failed during reload"
+    echo "❌ Invariant A (No-Drop) violated: $FAIL_COUNT requests failed during reload"
     exit 1
 fi
 if [ $V2_COUNT -eq 0 ]; then
-    echo "❌ Reload did not happen during burst"
-    # Note: This might happen if publish is too fast, but we'll see.
-    # We poll later anyway.
+    echo "❌ Reload did not happen during burst (Timing issue)"
+    # Fallback: just ensure it reloads eventually
+    wait_for_url "http://127.0.0.1:$PORT_PAVIS/echo" 5 "backend-v2"
 fi
 
 # 8. Assert ID Constant

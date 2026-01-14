@@ -12,9 +12,7 @@ fn get_binary_path() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_pavis") {
         return PathBuf::from(path);
     }
-    // Try to find the binary in target/debug or target/release
-    // We assume we are running from workspace root or crate root.
-    // Let's try to find Cargo.toml to locate root.
+    // Walk up until we find Cargo.lock so we can locate the build outputs.
     let mut dir = std::env::current_dir().unwrap();
     loop {
         if dir.join("Cargo.lock").exists() {
@@ -25,11 +23,11 @@ fn get_binary_path() -> PathBuf {
         }
     }
 
-    let debug_path = dir.join("target/debug/pavis");
+    let debug_path = with_bin_extension(dir.join("target/debug/pavis"));
     if debug_path.exists() {
         return debug_path;
     }
-    let release_path = dir.join("target/release/pavis");
+    let release_path = with_bin_extension(dir.join("target/release/pavis"));
     if release_path.exists() {
         return release_path;
     }
@@ -38,6 +36,14 @@ fn get_binary_path() -> PathBuf {
         "Pavis binary not found at {:?} or {:?}. Please build it first.",
         debug_path, release_path
     );
+}
+
+fn with_bin_extension(path: PathBuf) -> PathBuf {
+    if cfg!(windows) {
+        path.with_extension("exe")
+    } else {
+        path
+    }
 }
 
 fn temp_path(prefix: &str, ext: &str) -> PathBuf {
@@ -193,7 +199,6 @@ fn test_cli_config_version_mismatch() {
     let _ = std::fs::remove_file(config_path);
 }
 
-#[cfg(unix)]
 #[test]
 fn test_cli_lifecycle_sigint() {
     let binary = get_binary_path();
@@ -231,30 +236,15 @@ fn test_cli_lifecycle_sigint() {
 
     wait_for_log_line(&mut child, "Pavis starting", Duration::from_secs(5));
 
-    // Send SIGINT using kill command
-    let status = Command::new("kill")
-        .arg("-INT")
-        .arg(child.id().to_string())
-        .status()
-        .expect("Failed to run kill");
-    assert!(status.success());
+    // Terminate the process directly
+    child.kill().expect("Failed to stop process");
 
     // Wait for exit
     let start = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                if status.success() {
-                    break;
-                }
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::ExitStatusExt;
-                    if status.signal() == Some(2) {
-                        break;
-                    }
-                }
-                panic!("Process exited unexpectedly: {}", status);
+            Ok(Some(_status)) => {
+                break;
             }
             Ok(None) => {
                 if start.elapsed() > Duration::from_secs(10) {

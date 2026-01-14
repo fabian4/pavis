@@ -348,15 +348,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_ingest_read_failure() -> Result<()> {
-        // Skip test if running as root (root can read files regardless of permissions)
-        #[cfg(unix)]
-        {
-            if nix::unistd::geteuid().is_root() {
-                eprintln!("Skipping test_file_ingest_read_failure: running as root");
-                return Ok(());
-            }
-        }
-
         let mut file = NamedTempFile::new()?;
         file.as_file_mut().write_all(b"v1")?;
         let path = file.path().to_path_buf();
@@ -373,40 +364,20 @@ mod tests {
             panic!("Expected initial artifact");
         }
 
-        // Change permissions to unreadable to cause read failure
-        // This should trigger a Metadata/Any event in notify, or at least we hope so.
-        // If notify doesn't trigger on chmod, we might need to rely on something else or accept this test is platform dependent.
+        // Replace the file with a directory so subsequent reads fail everywhere.
+        std::fs::remove_file(&yaml_path)?;
+        std::fs::create_dir(&yaml_path)?;
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let metadata = std::fs::metadata(&yaml_path)?;
-            let mut perms = metadata.permissions();
-            perms.set_mode(0o000); // No read permission
-            std::fs::set_permissions(&yaml_path, perms)?;
-
-            // Wait for debounce and error
-            if let Some(res) = stream.next().await {
-                assert!(res.is_err());
-                let err = res.unwrap_err();
-                assert!(matches!(err, IngestError::Io(_)));
-                // Verify it's permission denied
-                assert!(
-                    err.to_string().contains("Permission denied")
-                        || err.to_string().contains("os error 13")
-                );
-            } else {
-                panic!("Expected error from stream");
-            }
-
-            // Restore permissions so we can clean up
-            let metadata = std::fs::metadata(&yaml_path)?;
-            let mut perms = metadata.permissions();
-            perms.set_mode(0o644);
-            std::fs::set_permissions(&yaml_path, perms)?;
+        // Wait for debounce and error
+        if let Some(res) = stream.next().await {
+            assert!(res.is_err());
+            let err = res.unwrap_err();
+            assert!(matches!(err, IngestError::Io(_)));
+        } else {
+            panic!("Expected error from stream");
         }
 
-        std::fs::remove_file(&yaml_path).ok();
+        std::fs::remove_dir_all(&yaml_path).ok();
 
         Ok(())
     }
@@ -573,51 +544,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_ingest_read_failure_and_closed_stream() -> Result<()> {
-        // Skip on root/windows where permission tricks are hard
-        #[cfg(unix)]
-        {
-            if nix::unistd::geteuid().is_root() {
-                return Ok(());
-            }
+        let mut file = NamedTempFile::new()?;
+        file.as_file_mut().write_all(b"v1")?;
+        let path = file.path().to_path_buf();
+        let yaml_path = path.with_extension("yaml");
+        std::fs::rename(&path, &yaml_path)?;
 
-            let mut file = NamedTempFile::new()?;
-            file.as_file_mut().write_all(b"v1")?;
-            let path = file.path().to_path_buf();
-            let yaml_path = path.with_extension("yaml");
-            std::fs::rename(&path, &yaml_path)?;
+        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(10));
+        let stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
 
-            let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(10));
-            let stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+        // Drop stream
+        drop(stream);
 
-            // Drop stream
-            drop(stream);
+        // Replace the file with a directory to trigger a read failure when the watcher fires again.
+        std::fs::remove_file(&yaml_path)?;
+        std::fs::create_dir(&yaml_path)?;
 
-            // Make unreadable
-            use std::os::unix::fs::PermissionsExt;
-            let metadata = std::fs::metadata(&yaml_path)?;
-            let mut perms = metadata.permissions();
-            perms.set_mode(0o000);
-            std::fs::set_permissions(&yaml_path, perms)?;
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
-            // Trigger update (touch the file/metadata if possible, or wait for poll?)
-            // Writing to it might fail if we don't have write permissions either.
-            // But we can try to write if we kept write permission? No 000 removes all.
-            // We can change mtime?
-            // Or just wait for poll interval? Poll interval is 2s, too long.
-
-            // Actually, we can just rely on the permission change being an event itself on some platforms (chmod is Modify(Metadata)).
-            // Or we can try to spawn a writer that fails but triggers event?
-
-            // Let's just wait a bit. If notify picks up the chmod, it tries to read and fails.
-            tokio::time::sleep(Duration::from_millis(50)).await;
-
-            // Restore permissions
-            let mut perms = std::fs::metadata(&yaml_path)?.permissions();
-            perms.set_mode(0o644);
-            std::fs::set_permissions(&yaml_path, perms)?;
-
-            std::fs::remove_file(yaml_path)?;
-        }
+        std::fs::remove_dir_all(&yaml_path)?;
         Ok(())
     }
 

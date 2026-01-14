@@ -68,9 +68,14 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(RelayError::Http(msg)) => assert!(
-                msg.to_lowercase().contains("address already in use") || msg.contains("ADDRINUSE")
-            ),
+            Err(RelayError::Http(msg)) => {
+                let msg_lower = msg.to_lowercase();
+                assert!(
+                    msg_lower.contains("address already in use")
+                        || msg_lower.contains("only one usage")
+                        || msg.contains("ADDRINUSE")
+                );
+            }
             _ => panic!("Expected RelayError::Http, got {:?}", result),
         }
     }

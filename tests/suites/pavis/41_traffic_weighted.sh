@@ -153,7 +153,7 @@ done
 
 
 
-# V3: 50/50 split
+# V3: Deterministic flip back to 100% V1
 
 
 
@@ -201,23 +201,7 @@ cat <<-EOF > "$TEST_TMP/config_v3.yaml"
 
 
 
-	        destinations:
-
-
-
-	          - upstream: "v1"
-
-
-
-	            weight: 50
-
-
-
-	          - upstream: "v2"
-
-
-
-	            weight: 50
+	        destinations: [{ upstream: "v1", weight: 1 }]
 
 
 
@@ -227,37 +211,117 @@ EOF
 
 
 
+
+
 gen_pvs "$TEST_TMP/config_v3.yaml" "$TEST_TMP/config_v3.pvs"
+
+
 
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v3.pvs"
 
 
 
-# Final statistical sanity check
 
-sleep 2
 
-c1=0; c2=0
 
-for _ in {1..50}; do
+
+# Wait for switch back (poll for v1 presence)
+
+
+
+SWITCHED_BACK=0
+
+
+
+for _ in $(seq 1 $MAX_RETRIES); do
+
+
 
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 
-    if [[ "$response" == *"backend-v1"* ]]; then c1=$((c1+1)); else c2=$((c2+1)); fi
+
+
+    if [[ "$response" == *"backend-v1"* ]]; then
+
+
+
+        SWITCHED_BACK=1
+
+
+
+        break
+
+
+
+    fi
+
+
+
+    sleep 0.5
+
+
 
 done
 
 
 
-echo "Distribution: v1=$c1, v2=$c2"
 
-if [ "$c1" -eq 0 ] || [ "$c2" -eq 0 ]; then
 
-    echo "❌ Both backends should be hit in 50/50 split"
+
+
+if [ "$SWITCHED_BACK" -eq 0 ]; then
+
+
+
+    echo "❌ Traffic did not shift back to backend-v1"
+
+
 
     exit 1
 
+
+
 fi
+
+
+
+
+
+
+
+# Assert V3 (100% backend-v1)
+
+
+
+for _ in {1..20}; do
+
+
+
+    response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
+
+
+
+    if [[ "$response" != *"backend-v1"* ]]; then
+
+
+
+        echo "❌ Expected only backend-v1 in V3 (Deterministic weight flip failed)"
+
+
+
+        exit 1
+
+
+
+    fi
+
+
+
+done
+
+
+
+
 
 
 

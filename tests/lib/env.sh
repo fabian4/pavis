@@ -88,10 +88,32 @@ generate_certs() {
         echo "🔑 Generating upstream certificates..."
     fi
     mkdir -p "$CERTS_DIR"
+    
+    # 1. Generate CA
     openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout "$CERTS_DIR/ca.key" \
+        -out "$CERTS_DIR/ca.pem" \
+        -subj "/CN=Pavis Test CA" -days 365 2>/dev/null
+
+    # 2. Generate Server Key/CSR
+    openssl req -newkey rsa:2048 -nodes \
         -keyout "$CERTS_DIR/upstream_tls.key" \
-        -out "$CERTS_DIR/upstream_tls.pem" \
-        -subj "/CN=localhost" -days 365 2>/dev/null
+        -out "$CERTS_DIR/upstream.csr" \
+        -subj "/CN=localhost" 2>/dev/null
+
+    # 3. Sign Server Cert with CA
+    # Create extension file for SAN and BasicConstraints
+    cat > "$CERTS_DIR/ext.cnf" <<EOF
+basicConstraints=CA:FALSE
+subjectAltName=DNS:localhost,IP:127.0.0.1
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+EOF
+
+    openssl x509 -req -in "$CERTS_DIR/upstream.csr" \
+        -CA "$CERTS_DIR/ca.pem" -CAkey "$CERTS_DIR/ca.key" -CAcreateserial \
+        -out "$CERTS_DIR/upstream_tls.pem" -days 365 \
+        -extfile "$CERTS_DIR/ext.cnf" 2>/dev/null
 }
 
 cleanup_certs() {
@@ -179,6 +201,7 @@ run_pavis() {
             --network host
             -e RUST_LOG=debug
             -v "$TEST_TMP:$TEST_TMP:rw"
+            -v "$CERTS_DIR:$CERTS_DIR:ro"
         )
         local cmd_args=("--config" "$config_path")
         if [ -n "$relay_url" ]; then
@@ -188,6 +211,8 @@ run_pavis() {
         local container_id
         container_id=$(docker "${docker_args[@]}" "$PAVIS_IMAGE" "${cmd_args[@]}")
         record_container "$container_id" "$name"
+        docker logs -f "$container_id" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "${name}_logs"
     fi
 }
 
@@ -233,6 +258,8 @@ EOF
             "$RELAY_IMAGE" \
             --config "$config_path")
         record_container "$container_id" "$name"
+        docker logs -f "$container_id" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "${name}_logs"
     fi
 }
 
@@ -252,6 +279,8 @@ run_mock_relay() {
             "$MOCK_RELAY_IMAGE" \
             --listen "0.0.0.0:$port")
         record_container "$container_id" "$name"
+        docker logs -f "$container_id" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "${name}_logs"
     fi
 }
 

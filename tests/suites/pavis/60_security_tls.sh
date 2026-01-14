@@ -47,6 +47,10 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 
 # Assert V1 (HTTP)
 response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
+if [ -z "$response" ]; then
+    echo "❌ Empty response from Pavis"
+    exit 1
+fi
 tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('enabled'))")
 if [ "$tls_enabled" == "True" ] || [ "$tls_enabled" == "true" ]; then
     echo "❌ Expected HTTP initially, got TLS enabled"
@@ -88,11 +92,13 @@ SWITCHED=0
 for _ in $(seq 1 $MAX_RETRIES); do
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     
-    tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('enabled', False))")
-    
-    if [ "$tls_enabled" == "True" ] || [ "$tls_enabled" == "true" ]; then
-        SWITCHED=1
-        break
+    if [ -n "$response" ]; then
+        tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('enabled', False))")
+        
+        if [ "$tls_enabled" == "True" ] || [ "$tls_enabled" == "true" ]; then
+            SWITCHED=1
+            break
+        fi
     fi
     sleep 0.5
 done

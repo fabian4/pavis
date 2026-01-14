@@ -1,39 +1,90 @@
-# Core Audit Summary (crates/pavis-core)
+Audit Phase: Core Audit
+Target Crate: crates/pavis-core
+Generation Timestamp: 2026-01-14T12:00:00Z
+AI Model: Gemini
 
-## 1. Scope & Method Recap
-This audit covered the `crates/pavis-core` crate, focusing on its role as the canonical type and validation library for the Pavis system.
-**Phases Completed:** Inventory (0), Boundary (1), Invariants (2), Errors (3), Safety (4), Compatibility & Performance (5).
-**Out of Scope:** Runtime behavior (networking, async), downstream crates (`pavis-pvs`, `pavis-relay`), and integration tests outside this crate.
+# 1. Executive Verdict
 
-## 2. Overall Assessment
-**Verdict:** **Core is mostly sound but requires fixes before lock-in.**
+**Verdict:** Sound
 
-The crate excels in safety and boundary enforcement. It is panic-free, type-safe, and free of I/O or runtime pollution. However, it faces **significant compatibility risks** due to a lack of evolution strategies (public fields, exhaustive enums) and has one notable performance hotspot in its validation logic.
+The `pavis-core` crate is a robust, pure-data library that successfully isolates configuration definitions and validation logic from runtime effects. It exhibits zero I/O, threading, or async behavior, strictly adhering to the architectural boundary requirements. The validation logic is comprehensive, enforcing semantic invariants (uniqueness, referential integrity, format correctness) beyond simple type safety. While there are minor API design risks regarding evolution (rigidity) and a confusing safety contract in the `ValidatedRuntimeConfig` wrapper, the codebase is free of Undefined Behavior (UB) risks and is structurally ready for production lock-in.
 
-## 3. Cross-Phase Risk Synthesis
+# 2. Top System Risks
 
-| Risk | Origin Phase(s) | Impact |
+1.  **Ambiguous Validation Contract (Phase 2):**
+    The `ValidatedRuntimeConfig` type, intended to serve as a witness of validity, exposes two constructor methods with identical implementations but conflicting safety contracts:
+    -   `pub unsafe fn from_trusted` (implies validation is a safety invariant)
+    -   `pub fn assume_validated` (implies validation is optional/advisory)
+    This allows safe code to trivially bypass validation, undermining the type's guarantee without an `unsafe` block.
+
+2.  **API Rigidity (Phase 5):**
+    The primary configuration structures (e.g., `RuntimeConfig`, `Listener`) expose all fields as `pub`. While flexible for serialization, this prevents non-breaking addition of fields in the future (breaking struct literal construction) because `#[non_exhaustive]` is applied inconsistently (used on Enums, but not on top-level Structs).
+
+3.  **Regex Compilation Overhead (Phase 5):**
+    The `validate_routes` function compiles regexes (`Regex::new`) inside a loop for every validation pass. While the configuration size is likely bounded in practice, this represents a linear performance cost relative to the number of regex routes, which could be significant for very large configurations.
+
+# 3. Readiness Assessment
+
+| Criteria | Status | Notes |
 | :--- | :--- | :--- |
-| **Brittle API Evolution** | Phase 5 (Compat) | **Critical**. Public structs and exhaustive enums define a "frozen" API. Any addition of fields or variants will be a breaking change for all downstream consumers, making iterative development painful. |
-| **Validation Allocations** | Phase 5 (Perf) | **High**. The route validation logic clones string paths for *every* route entry to perform duplicate detection. This creates unnecessary allocator pressure scaling linearly with config size. |
-| **Duplicate VirtualHosts** | Phase 2 (Invariants) | **Medium**. The validation logic checks for duplicate routes *within* a host but allows multiple `VirtualHost` entries for the same domain (e.g., two blocks for `example.com`), leading to undefined runtime behavior. |
-| **Generic TLS Error** | Phase 3 (Errors) | **Low**. The `MissingTlsFiles` error lacks context (Listener Name), making it difficult to debug configurations with multiple listeners. |
+| **Invariants Enforced?** | **Yes** | enforced via `validate_runtime` (referential integrity, uniqueness, formats) and types (`NonZeroU16`). |
+| **Diagnosable Errors?** | **Yes** | `CoreValidationError` provides specific context (field names, values) for all failure modes. |
+| **Safety Acceptable?** | **Yes** | No Undefined Behavior risks found. `unsafe` is used correctly for trusted deserialization, though the safe bypass (`assume_validated`) is a logical flaw. |
+| **API Compatibility?** | **Yes** | `rkyv` guarantees layout. `non_exhaustive` on enums aids evolution. Public fields on structs are a known rigidity trade-off. |
 
-## 4. Readiness Assessment
+# 4. Recommended Next Steps
 
-*   **Invariants Enforced?** **MOSTLY**. Strong type-level guarantees (`NonZeroU16`), but missing uniqueness checks for VirtualHosts and Listeners.
-*   **Diagnosable Error Model?** **YES**. Structured `thiserror` types are used consistently, with one minor context gap.
-*   **Safety & Panic Risks?** **YES**. The crate is exceptionally safe, with zero production panics or unsafe memory operations.
-*   **Compat & Perf Bounded?** **NO**. Compatibility is the weakest area; performance has a clear optimization target.
+1.  **Clarify Validation Contract:** Deprecate or remove `assume_validated` in favor of `unsafe fn from_trusted` to enforce the "validation as a contract" model, or document clearly that validation is for logical correctness only, not memory safety.
+2.  **Adopt Builder Pattern:** Introduce builder types or constructor functions for `RuntimeConfig` and its children to mitigate the breaking change risk of adding new configuration fields.
+3.  **Optimize Regex Validation:** Consider using `lazy_static` or a compilation cache if validation performance becomes a bottleneck, though the current "validate on load" model is acceptable for Phase 1.
+4.  **Verify Edition:** Confirm the intent of `edition = "2024"` in `Cargo.toml`. While likely a placeholder for the next edition, it should be verified against the project's compiler support matrix.
 
-## 5. Recommended Next Actions
+# 5. Detailed Analysis
 
-1.  **Blocker**: Add `#[non_exhaustive]` to all public enums (`LoadBalancer`, `HttpVersion`, etc.) and consider builder patterns or private fields for structs to enable future expansion.
-2.  **Fix**: Rewrite `validate_routes` to store `&str` references in the duplicate detection set, eliminating the `path.clone()` hotspot.
-3.  **Fix**: Add validation logic to enforce uniqueness of `VirtualHost` domains and `Listener` names.
-4.  **Proceed**: Begin the audit of `crates/pavis-pvs` (Phase 0), as the core data structures are semantically stable enough to review their serialization format.
+## Phase 0: Inventory & API Surface
+-   **Structure:** Clean separation between `runtime` (types) and `validate` (logic).
+-   **Dependencies:** Minimal and appropriate (`rkyv`, `serde`, `regex`, `thiserror`, `http`).
+-   **API:** Exports `RuntimeConfig`, `ValidatedRuntimeConfig`, and validation functions.
 
-## 6. Relationship to Downstream Crates
+## Phase 1: Boundary & Dependency Audit
+-   **I/O & Side Effects:** **PASSED.** No `std::fs`, `std::net` (except types), or async usage found.
+-   **Dependencies:** All dependencies are used for data manipulation or validation only. `validate_server` checks certificate paths are non-empty strings but strictly avoids filesystem checks, correctly pushing I/O to the runtime layer.
 
-*   **pavis-pvs**: relies on `pavis-core` types for schema definition. The "Brittle API" risk means changes here will force major version bumps in the PVS format.
-*   **runtime**: relies on `ValidatedRuntimeConfig` for safety. The "Duplicate VirtualHost" gap means the runtime currently must handle (or mishandle) colliding host definitions.
+## Phase 2: Invariants & Correctness
+-   **Enforcement:** Strong enforcement of semantic invariants:
+    -   *Uniqueness:* Listener names, Upstream names, VirtualHost domains.
+    -   *Referential Integrity:* Routes must reference existing upstreams (`UnknownDestination`).
+    -   *Constraints:* `verify=full` requires SNI; Regex routes cannot use rewrites.
+-   **Gap:** The `assume_validated` bypass mentioned in Risks.
+    ```rust
+    // crates/pavis-core/src/runtime.rs
+    pub fn assume_validated(runtime: RuntimeConfig) -> Self { Self { runtime } }
+    ```
+
+## Phase 3: Error Model & Diagnostics
+-   **Quality:** Errors are strongly typed and context-rich.
+    ```rust
+    // crates/pavis-core/src/validate.rs
+    #[error("route '{0}' (host '{1}') references unknown upstream '{2}'")]
+    UnknownDestination(String, String, String),
+    ```
+-   **Panic Policy:** No usage of `unwrap`, `expect`, or `panic!` found in library code. `Regex::new` and `HeaderName::from_str` failures are correctly mapped to `CoreValidationError`.
+
+## Phase 4: Safety & Undefined Behavior
+-   **Unsafe Code:** Limited to `from_trusted` (justified) and test helpers.
+    ```rust
+    // crates/pavis-core/src/runtime.rs
+    pub unsafe fn from_trusted(runtime: RuntimeConfig) -> Self { Self { runtime } }
+    ```
+-   **Memory Safety:** Relies on `rkyv` for zero-copy safety. `#[archive(check_bytes)]` is correctly applied to all `Archive` types, ensuring deserialization validates memory layout.
+
+## Phase 5: Compatibility & Performance
+-   **Evolution:** `#[non_exhaustive]` is used on all Enums (`TlsConfig`, `LoadBalancer`, etc.), which is excellent. Structs rely on public fields.
+-   **Performance:**
+    -   Validation iterates collections and creates `HashSet`s. Complexity is generally linear $O(N)$.
+    -   Regex compilation is repeated per validation.
+    ```rust
+    // crates/pavis-core/src/validate/routes.rs
+    let _compiled = Regex::new(&path.0).map_err(...)
+    ```
+    -   Strings are cloned into Errors, which is acceptable for the failure path.

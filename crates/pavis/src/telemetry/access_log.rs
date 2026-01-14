@@ -4,7 +4,6 @@ use pingora::protocols::l4::socket::SocketAddr;
 use pingora::proxy::Session;
 use pingora::services::Service;
 use serde::Serialize;
-use std::sync::Arc;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
@@ -23,7 +22,7 @@ pub struct AccessLogWorker {
 impl Service for AccessLogWorker {
     async fn start_service(
         &mut self,
-        _fds: Option<Arc<tokio::sync::Mutex<pingora::server::Fds>>>,
+        _fds: Option<std::sync::Arc<tokio::sync::Mutex<pingora::server::Fds>>>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
         _threads: usize,
     ) {
@@ -346,6 +345,7 @@ mod tests {
             },
             req_id: "req-1".to_string(),
             span: TracingSpan::Disabled,
+            runtime_state: None,
         };
 
         access_log.log(&mut session, &ctx).await;

@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "Pavis runtime"
 
 [dependencies]
-pingora = { version = "0.6.0", features = ["proxy", "openssl"] }
+pingora = { version = "0.6.0", default-features = false, features = ["proxy", "rustls"] }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
@@ -21,11 +21,17 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
 arc-swap = "1.7.1"
-reqwest = { version = "0.12", default-features = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
 hickory-resolver = "0.25.2"
-openssl = "0.10"
+# openssl removed to ensure clean Windows builds
+rustls = "0.23"
+rustls-pemfile = "2.1"
+webpki-roots = "0.26"
+x509-parser = "0.16"
+ouroboros = "0.18"
+static_assertions = "1.1"
 
 # Observability (Phase 5)
 metrics = "0.22"
@@ -39,3 +45,4 @@ tracing-opentelemetry = "0.22"
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
 axum = "0.7"
+rcgen = "0.13" # Pure-Rust replacement for OpenSSL cert generation

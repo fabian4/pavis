@@ -126,4 +126,8 @@ shellcheck:
 		echo "No shell scripts found."; \
 		exit 0; \
 	fi; \
+	if ! command -v shellcheck >/dev/null 2>&1; then \
+		echo "shellcheck not found; skipping"; \
+		exit 0; \
+	fi; \
 	shellcheck -x -S warning $$files'

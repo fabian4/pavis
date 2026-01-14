@@ -26,39 +26,18 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 *   **Strength**: ⚠️ Needs Expansion. Proves "eventual" reload, but not "Zero-Drop" during transition.
 *   **Expansion**: Add sequential request burst (100 reqs) during `publish`. Assert 100% status 200.
 
-### `30_lkg_corrupt`
-*   **Intent**: Rejection of binary corruption during reload.
-*   **Strength**: ⚠️ Needs Expansion.
-*   **Expansion**: Publish Valid V3 *after* rejection to prove the runtime isn't "stuck" in a failed state.
+### `30_lkg`
+*   **Intent**: Unified LKG enforcement covering corrupt payloads *and* incompatible protocol versions.
+*   **Strength**: ✅ Solid. Sequentially proves corrupt/incompatible artifacts are rejected and recovery to the next valid artifact succeeds.
 
-### `31_lkg_incompatible`
-*   **Intent**: Rejection of semantically unsupported artifacts.
-*   **Strength**: ✅ Solid (Scoped to current version tampering).
-
-### `40_traffic_matcher`
-*   **Intent**: Dynamic matching precedence evolution.
-*   **Strength**: ✅ Solid. Strictly proves logic switch.
+### `40_traffic_routing_semantics`
+*   **Intent**: Exercise matcher precedence, regex routing, header policies, route actions, and rewrites in a single artifact.
+*   **Strength**: ✅ Solid. Multiple request variants prove each semantic without rebooting the runtime.
 
 ### `41_traffic_weighted`
 *   **Intent**: Traffic splitting via weight changes.
 *   **Strength**: ⚠️ Needs Expansion.
 *   **Expansion**: Use deterministic "Weight Flip" (100/0 -> 0/100) to eliminate statistical flakiness.
-
-### `42_traffic_regex`
-*   **Intent**: Verify regex routing logic.
-*   **Strength**: ✅ Solid. Proves regex compilation and matching priority.
-
-### `43_traffic_headers`
-*   **Intent**: Verify request/response header manipulation (Set/Add/Remove).
-*   **Strength**: ✅ Solid. Proves Set/Add/Append/Remove logic for Request and Response headers.
-
-### `44_traffic_actions`
-*   **Intent**: Verify Redirect (3xx) and Direct Response (Static Body) actions.
-*   **Strength**: ✅ Solid. Proves 3xx Redirect and 200 Direct response behaviors.
-
-### `45_traffic_rewrite`
-*   **Intent**: Verify Path Prefix and Host Header rewriting.
-*   **Strength**: ✅ Solid. Proves Path Prefix replacement and Host header rewriting.
 
 ### `50_resilience_timeout` / `51_resilience_retry`
 *   **Intent**: SLA and retry policy enforcement.
@@ -68,13 +47,9 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 *   **Intent**: Upgrading cleartext upstream to TLS.
 *   **Strength**: ✅ Solid for TLS origination. SNI behavior is covered by `66_security_tls_sni_auto`.
 
-### `61_security_termination`
-*   **Intent**: Verify Server-side TLS termination (HTTPS Listener).
-*   **Strength**: ✅ Solid. Proves HTTPS listener and enforced mTLS.
-
-### `62_security_mtls_handshake`
-*   **Intent**: Inbound mTLS handshake enforcement (Required/invalid CA).
-*   **Strength**: ✅ Solid. Covers no-cert, valid cert, and unknown CA cases.
+### `61_security_inbound_mtls`
+*   **Intent**: Single case covering HTTPS termination, successful mTLS, and unknown-CA rejection.
+*   **Strength**: ✅ Solid. Sequential steps prove no-cert success, trusted-client success, and untrusted failure without restarting the proxy.
 
 ### `63_security_rbac_spiffe`
 *   **Intent**: SPIFFE identity match authorization.
@@ -97,8 +72,8 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 *   **Strength**: ✅ Solid. Ensures embedded chains are explicit and default is leaf-only.
 
 ### 70_obs_metrics
-*   **Intent**: Verify Prometheus metrics exposition and correctness.
-*   **Strength**: ✅ Solid. Validates request counts, latencies, and label correctness (route patterns).
+*   **Intent**: Verify Prometheus metrics exposition plus label-cardinality protection.
+*   **Strength**: ✅ Solid. Proves counters/gauges for matched routes and verifies drops when unmatched paths exceed label limits.
 
 ### 71_obs_access_log
 *   **Intent**: Verify structured access logging to file.
@@ -107,10 +82,6 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 ### 72_obs_tracing_context
 *   **Intent**: Verify W3C trace context propagation to upstreams.
 *   **Strength**: ✅ Solid. Ensures `traceparent` headers are injected when tracing is enabled.
-
-### 73_obs_cardinality
-*   **Intent**: Verify cardinality protection for metrics.
-*   **Strength**: ✅ Solid. Proves that unmatched routes drop labels and increment the drop counter instead of polluting metrics.
 
 ---
 
