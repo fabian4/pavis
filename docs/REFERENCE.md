@@ -119,6 +119,7 @@ The following rules are mandatory for code review:
   - `SniName::Auto` resolves to a host rewrite override when present, else a DNS endpoint hostname; IP endpoints resolve to Disabled.
   - If Auto resolves to Disabled with `verify=Full`, the config is rejected.
   - `tls.cert.chain_mode` controls client certificate chain handling: `none|embedded|file`. `chain_path` is only valid for `file`.
+  - **Rustls Backend Limitation**: `ca_bundle_path` and client cert configurations (`cert`, `key`, `chain_mode`) are parsed but ignored by Pingora's rustls connector. Custom CA verification and client certificate presentation require the OpenSSL/BoringSSL backend.
 
 ### 1.3 RuntimeConfig (Rust)
 
@@ -244,3 +245,41 @@ Operational status and health. Returns internal state (name, active version, che
 ### 2.2 Protocol Details
 
 The Relay ensures configuration propagation via HTTP Long-Polling. See `docs/SPECIFICATIONS.md` for the server-side state machine and long-polling logic.
+
+---
+
+## 3. TLS Backend Capabilities
+
+Pavis supports TLS functionality through Pingora, which offers both rustls and OpenSSL/BoringSSL backends.
+
+### 3.1 Rustls Backend (Default)
+
+The current default build uses the rustls backend, which has the following limitations due to upstream Pingora implementation:
+
+**Limitations:**
+- **Inbound Client Certificate Authentication (mTLS)**: Not supported. Pingora's rustls `TlsSettings` does not expose an API to inject a `rustls::server::ClientCertVerifier`. Configuration fields like `listeners.tls.client_auth` are validated but have no effect at runtime.
+- **Per-Peer CA Verification**: Not supported. The `upstreams.tls.ca_bundle_path` field is parsed but ignored by the connector. All upstream TLS verification uses the system CA bundle only.
+- **Client Certificate Presentation**: Not supported. Upstream client cert configurations (`upstreams.tls.cert.*`) are validated but ignored.
+
+**Available Features:**
+- Server-side TLS termination (single cert per listener)
+- Upstream TLS origination with hostname verification (system CA bundle)
+- SNI configuration for outbound connections
+
+### 3.2 OpenSSL/BoringSSL Backend
+
+When built with the OpenSSL/BoringSSL backend (via build-time feature flags), the following additional capabilities are available:
+
+- Inbound client certificate authentication (mTLS) with configurable CA bundles
+- Per-peer CA verification for upstream connections via `ca_bundle_path`
+- Client certificate presentation to upstream services
+- Full SPIFFE ID extraction from client certificates
+
+### 3.3 Backend Selection
+
+The TLS backend is selected at build time. Pavis currently defaults to rustls. To use OpenSSL/BoringSSL features:
+
+1. Build with OpenSSL feature flags (see build documentation)
+2. Ensure OpenSSL libraries are available in the deployment environment
+
+**Note**: Pavis does not implement workarounds for rustls limitations. The project is waiting for upstream Pingora to add rustls support for these features.

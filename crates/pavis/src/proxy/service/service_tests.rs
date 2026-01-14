@@ -3,6 +3,7 @@ use crate::proxy::context::RouterContext;
 use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::Telemetry;
 use crate::upstream::Manager;
+use arc_swap::ArcSwap;
 use pavis_core::{
     AccessLogPolicy, ClientCert, ClientCertChain, ConnectTimeout, ConnectionLimit, Destination,
     Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy,
@@ -13,6 +14,7 @@ use pavis_core::{
 };
 use pingora::http::ResponseHeader;
 use pingora::prelude::{ProxyHttp, RequestHeader, Session};
+use rustls::RootCertStore;
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU16, NonZeroU32};
@@ -112,6 +114,10 @@ fn test_telemetry() -> Arc<Telemetry> {
     Arc::new(telemetry)
 }
 
+fn test_ca_store() -> Arc<ArcSwap<RootCertStore>> {
+    Arc::new(ArcSwap::from_pointee(RootCertStore::empty()))
+}
+
 #[test]
 fn new_ctx_defaults_are_empty() {
     let manager = Manager::new(&[]).expect("manager");
@@ -124,6 +130,7 @@ fn new_ctx_defaults_are_empty() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let before = Instant::now();
@@ -241,6 +248,7 @@ async fn request_filter_selects_weighted_destination() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -273,6 +281,7 @@ async fn request_filter_returns_404_when_no_route_matches() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -330,6 +339,7 @@ async fn request_filter_applies_rewrite_policy() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -385,6 +395,7 @@ async fn request_filter_skips_selection_when_no_destinations() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -435,6 +446,7 @@ async fn upstream_peer_defaults_sni() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -487,6 +499,7 @@ async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -513,6 +526,7 @@ async fn upstream_response_filter_applies_headers() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let mut ctx = proxy.new_ctx();
@@ -552,6 +566,7 @@ async fn logging_handles_disabled_access_log() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -703,6 +718,7 @@ async fn upstream_peer_fails_when_no_upstream_in_ctx() {
             upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -724,6 +740,7 @@ async fn upstream_peer_fails_when_upstream_not_found() {
             upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -761,6 +778,7 @@ async fn upstream_peer_fails_when_no_endpoints() {
             upstream_manager: manager,
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -808,6 +826,7 @@ async fn test_proxy_logging_with_upstream() {
             upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -848,6 +867,7 @@ async fn request_filter_handles_redirect_action() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -900,6 +920,7 @@ async fn request_filter_handles_direct_action() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -953,6 +974,7 @@ async fn request_filter_redirect_with_different_status_codes() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -1004,6 +1026,7 @@ async fn request_filter_direct_with_custom_status() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -1074,6 +1097,7 @@ async fn test_upstream_request_filter() {
             upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
     let mut ctx = proxy.new_ctx();
     ctx.request_headers = HeadersPolicy::Enabled {
@@ -1135,6 +1159,7 @@ async fn test_upstream_peer_tls_verify_variants() {
                 upstream_manager: Manager::new(&[u]).expect("manager"),
             })),
             telemetry: test_telemetry(),
+            ca_store: test_ca_store(),
         };
 
         let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -1172,6 +1197,7 @@ async fn upstream_peer_sets_client_cert_key() {
             upstream_manager: manager,
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -1224,6 +1250,7 @@ async fn test_request_filter_direct_response_with_headers() {
             upstream_manager: Manager::new(&[]).expect("manager"),
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) = session_for_request(b"GET /direct HTTP/1.1\r\n\r\n").await;
@@ -1274,6 +1301,7 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) = session_for_request(
@@ -1322,6 +1350,7 @@ async fn upstream_peer_dns_supported() {
             upstream_manager: manager,
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -1350,6 +1379,7 @@ async fn upstream_peer_tls_and_pool_variants() {
             upstream_manager: Manager::new(&[upstream]).expect("manager"),
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -1405,6 +1435,7 @@ async fn upstream_peer_sni_fallback_warning() {
             upstream_manager: manager,
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     // Request without Host header
@@ -1453,6 +1484,7 @@ async fn upstream_peer_sni_override_prevents_fallback() {
             upstream_manager: manager,
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -1503,6 +1535,7 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
             upstream_manager: manager,
         })),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -1608,6 +1641,7 @@ async fn request_filter_denies_when_principal_not_any() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -1660,6 +1694,7 @@ async fn request_filter_allows_with_matching_identity() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =

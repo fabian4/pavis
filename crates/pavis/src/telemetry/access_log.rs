@@ -60,7 +60,6 @@ impl Service for AccessLogWorker {
                                     print!("{}", log_line);
                                 }
                                 AccessLogPolicy::File(_) => {
-                                    #[allow(clippy::collapsible_if)]
                                     if let Some(w) = &mut file_writer {
                                         if let Err(e) = w.write_all(log_line.as_bytes()).await {
                                             eprintln!("Failed to write to access log: {}", e);

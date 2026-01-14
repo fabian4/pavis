@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use pingora::services::Service;
 use reqwest::Client;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -11,7 +11,10 @@ use crate::state::{RuntimeState, RuntimeStateHandle};
 
 use crate::agent::backoff::Backoff;
 use crate::agent::lkg::{tmp_path_for, version_path_for, write_atomic, write_version};
+use pavis_core::RuntimeConfig;
 use pavis_pvs::PAVIS_VERSION_HEADER;
+
+type UpdateCallback = Box<dyn Fn(&RuntimeConfig) + Send + Sync>;
 
 pub struct ConfigAgent {
     relay_base: String,
@@ -21,6 +24,7 @@ pub struct ConfigAgent {
     backoff: Backoff,
     state: Arc<RuntimeStateHandle>,
     current_version: AtomicU64,
+    on_update_callback: Mutex<Option<UpdateCallback>>,
 }
 
 pub struct ConfigAgentWorker {
@@ -83,7 +87,15 @@ impl ConfigAgent {
             backoff,
             state,
             current_version: AtomicU64::new(0),
+            on_update_callback: Mutex::new(None),
         })
+    }
+
+    pub fn on_update<F>(&self, callback: F)
+    where
+        F: Fn(&RuntimeConfig) + Send + Sync + 'static,
+    {
+        *self.on_update_callback.lock().unwrap() = Some(Box::new(callback));
     }
 
     pub fn worker(self: Arc<Self>) -> ConfigAgentWorker {
@@ -112,6 +124,7 @@ impl ConfigAgent {
             backoff,
             state,
             current_version: AtomicU64::new(current_version),
+            on_update_callback: Mutex::new(None),
         }
     }
 
@@ -177,6 +190,11 @@ impl ConfigAgent {
 
         self.state.store(state);
         self.current_version.store(version, Ordering::SeqCst);
+
+        if let Some(callback) = self.on_update_callback.lock().unwrap().as_ref() {
+            callback(&validated);
+        }
+
         tracing::info!(version = version, "Applied configuration update");
         Ok(())
     }

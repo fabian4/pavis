@@ -44,42 +44,42 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 *   **Status**: ⏳ Planned.
 
 ### `60_security_tls`
-*   **Intent**: Upgrading cleartext upstream to TLS.
-*   **Strength**: ✅ Solid for TLS origination. SNI behavior is covered by `66_security_tls_sni_auto`.
+*   **Intent**: Upgrading cleartext upstream to TLS with custom CA verification.
+*   **Strength**: ⏭️ Skipped under rustls backend (upstream limitation: per-peer CA not supported).
 
 ### `61_security_inbound_mtls`
-*   **Intent**: Single case covering HTTPS termination, successful mTLS, and unknown-CA rejection.
-*   **Strength**: ✅ Solid. Sequential steps prove no-cert success, trusted-client success, and untrusted failure without restarting the proxy.
+*   **Intent**: HTTPS termination with client certificate validation and unknown-CA rejection.
+*   **Strength**: ⏭️ Skipped under rustls backend (upstream limitation: inbound mTLS not supported).
 
-### `63_security_rbac_spiffe`
+### `62_security_rbac_spiffe`
 *   **Intent**: SPIFFE identity match authorization.
 *   **Strength**: ✅ Solid. Covers match, mismatch, and no identity scenarios.
 
-### `64_security_rbac_prefix`
+### `63_security_rbac_prefix`
 *   **Intent**: SPIFFE prefix authorization.
 *   **Strength**: ✅ Solid. Ensures prefix match enforcement and deny-by-default.
 
-### `65_security_mtls_outbound`
+### `64_security_mtls_outbound`
 *   **Intent**: Outbound mTLS with client cert and CA verification.
-*   **Strength**: ✅ Solid. Exercises client cert + CA bundle wiring.
+*   **Strength**: ⏭️ Skipped under rustls backend (upstream limitation: per-peer CA and client cert not supported).
 
-### `66_security_tls_sni_auto`
+### `65_security_tls_sni_auto`
 *   **Intent**: Auto SNI derivation and fail-fast for invalid Auto SNI configs.
-*   **Strength**: ✅ Solid. Validates DNS-based Auto SNI and rejects IP endpoints without override.
+*   **Strength**: ⏭️ Skipped under rustls backend (upstream limitation: per-peer CA verification required).
 
-### 67_security_mtls_chain_mode
+### `66_security_mtls_chain_mode`
 *   **Intent**: Client cert chain_mode handling (embedded vs default none).
-*   **Strength**: ✅ Solid. Ensures embedded chains are explicit and default is leaf-only.
+*   **Strength**: ⏭️ Skipped under rustls backend (upstream limitation: client cert presentation not supported).
 
-### 70_obs_metrics
+### `70_obs_metrics`
 *   **Intent**: Verify Prometheus metrics exposition plus label-cardinality protection.
 *   **Strength**: ✅ Solid. Proves counters/gauges for matched routes and verifies drops when unmatched paths exceed label limits.
 
-### 71_obs_access_log
+### `71_obs_access_log`
 *   **Intent**: Verify structured access logging to file.
 *   **Strength**: ✅ Solid. Validates JSON format and presence of all metadata fields (req_id, upstream timing).
 
-### 72_obs_tracing_context
+### `72_obs_tracing_context`
 *   **Intent**: Verify W3C trace context propagation to upstreams.
 *   **Strength**: ✅ Solid. Ensures `traceparent` headers are injected when tracing is enabled.
 

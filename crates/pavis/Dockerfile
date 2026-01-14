@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM lukemathwalker/cargo-chef:latest-rust-1.85 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.92 AS chef
 WORKDIR /app
 
 FROM chef AS planner
@@ -28,12 +28,9 @@ RUN --mount=type=cache,target=/app/target \
     cargo build --release -p pavis && \
     cp /app/target/release/pavis /tmp/pavis_tmp
 
-FROM builder AS final
-
-FROM gcr.io/distroless/cc-debian12
+FROM gcr.io/distroless/base-debian12
 COPY --from=builder /tmp/pavis_tmp /usr/local/bin/pavis
 
 ENV PAVIS_CONFIG=/etc/pavis/config.pvs
-
 ENTRYPOINT ["pavis"]
 CMD ["--config", "/etc/pavis/config.pvs"]

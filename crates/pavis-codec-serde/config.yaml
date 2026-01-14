@@ -30,6 +30,9 @@ upstreams:
     #   verify_hostname: true
     #   sni_mode: auto
     #   # sni: "backend.example.com"
+    #   #
+    #   # WARNING: The following options require the OpenSSL/BoringSSL backend.
+    #   # With the default rustls backend, these are parsed but ignored:
     #   # ca_bundle_path: "/etc/pavis/certs/upstream-ca.pem"
     #   # cert:
     #   #   cert_path: "/etc/pavis/certs/client.crt"

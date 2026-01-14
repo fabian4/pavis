@@ -17,6 +17,20 @@ Pavis is optimized for the **Sidecar Model**, where the proxy represents a singl
 *   **Constraint**: A listener binds to a port and serves exactly one TLS certificate.
 *   **Rationale (Frozen Model)**: Multi-tenant SSL termination introduces runtime decision branching dependent on unbounded inputs (SNI headers). By freezing the certificate at listener bind time, we guarantee constant-time handshake logic.
 
+#### 1.1 TLS Backend Constraints (Rustls)
+
+Pavis uses Pingora's TLS abstraction, which supports both rustls and OpenSSL/BoringSSL backends. The current default build uses rustls.
+
+**Rustls Backend Limitations (Upstream Pingora):**
+*   **No Inbound mTLS**: Pingora's rustls `TlsSettings` does not expose an API to configure client certificate verification. The frozen configuration supports `client_auth` definitions, but the runtime cannot enforce them when using rustls.
+*   **No Per-Peer CA Verification**: The rustls connector ignores `peer.get_ca()` and uses only the connector-level system CA bundle. Custom `ca_bundle_path` configurations are parsed and validated but have no effect at runtime.
+
+**OpenSSL/BoringSSL Backend:**
+*   Both inbound mTLS and per-peer CA verification are fully supported.
+*   Available via build-time feature flags.
+
+**Design Decision**: Pavis does not implement workarounds or runtime compatibility shims for these rustls limitations. The project is explicitly waiting for upstream Pingora to add rustls support. This maintains architectural simplicity and avoids divergence from the upstream framework.
+
 #### 2. No Inline Certificates
 Configuration files (`.pvs`) must not contain sensitive key material.
 *   **Constraint**: TLS configuration accepts **File Paths** only.

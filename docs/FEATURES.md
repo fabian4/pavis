@@ -38,12 +38,15 @@ This document outlines the current and planned feature set, explicitly calling o
 | Feature | Status | Note / Alternative |
 | :--- | :---: | :--- |
 | **Server TLS** (Termination) | ✅ | Single cert per listener supported. |
-| **Upstream TLS** (Origination) | ✅ | Supported with deterministic SNI and verification. |
-| **mTLS** (Mutual TLS) | ✅ | Client Cert Validation + SPIFFE ID. |
+| **Upstream TLS** (Origination) | ⚠️ | Supported. System CA bundle only (rustls). Custom CAs require OpenSSL backend. |
+| **Inbound mTLS** (Client Cert Validation) | ⚠️ | Requires OpenSSL/BoringSSL backend. Not available with rustls. |
+| **Outbound mTLS** (Client Cert to Upstream) | ⚠️ | Requires OpenSSL/BoringSSL backend for custom CAs. Not available with rustls. |
 | **RBAC** (Path/Method Auth) | ✅ | Deny-by-default policies. |
 | **SNI Multi-Cert** | ❌ | **Dropped**. Sidecars usually have 1 identity. Use Ingress for multi-domain. |
 | **External Auth** (OIDC/OAuth) | ❌ | **Dropped**. Sidecar handles Service-to-Service, not End-User Login. |
 | **WAF** (ModSecurity) | ❌ | **Dropped**. Performance killer. Use dedicated firewall. |
+
+**Note on TLS Backend**: The current default build uses Pingora's rustls backend. mTLS features (both inbound client authentication and outbound custom CA verification) require the OpenSSL/BoringSSL backend due to upstream Pingora limitations. Rustls support for these features is blocked on Pingora. See README.md for details.
 
 ## 3. Resilience
 

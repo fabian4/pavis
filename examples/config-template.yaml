@@ -19,6 +19,11 @@ listeners:
     tls:
       cert_path: "/etc/pavis/certs/server.crt"
       key_path: "/etc/pavis/certs/server.key"
+      #
+      # WARNING: Client certificate authentication requires OpenSSL/BoringSSL backend.
+      # With the default rustls backend, client_auth is parsed but ignored:
+      # client_auth: !required
+      #   ca_path: "/etc/pavis/certs/client-ca.pem"
 
 telemetry:
   level: "info"
@@ -48,6 +53,9 @@ upstreams:
       verify_hostname: true
       sni_mode: auto
       # sni: "backend.local"
+      #
+      # WARNING: The following options require the OpenSSL/BoringSSL backend.
+      # With the default rustls backend, these are parsed but ignored:
       # ca_bundle_path: "/etc/pavis/certs/upstream-ca.pem"
       # cert:
       #   cert_path: "/etc/pavis/certs/client.crt"

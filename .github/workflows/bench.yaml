@@ -111,7 +111,7 @@ jobs:
           make binary-build CRATE=pavctl
 
       - name: Build System Mode Docker Images
-        run: make bench-system-build
+        run: make bench-system-build MODE=ci
 
       - name: Run System Mode Benchmarks (pavis)
         run: MODE=system PROXY=pavis BENCH_PROFILE=workstation make bench-system

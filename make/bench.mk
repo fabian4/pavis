@@ -8,8 +8,8 @@
 
 # Build images required for standalone mode benchmarking
 bench-standalone-build:
-	$(MAKE) docker-build IMAGE=pavis MODE=local
-	$(MAKE) docker-build IMAGE=bench-upstream MODE=local
+	$(MAKE) docker-build IMAGE=pavis MODE=$(MODE)
+	$(MAKE) docker-build IMAGE=bench-upstream MODE=$(MODE)
 
 # Run case scripts (from bench/cases/standalone) for a single proxy in standalone mode
 # Environment variables:
@@ -51,11 +51,11 @@ bench-down: bench-standalone-down
 # Build images required for system mode benchmarking
 bench-system-build:
 	@echo "Building Docker images for system mode..."
-	$(MAKE) docker-build IMAGE=pavis MODE=local
-	$(MAKE) docker-build IMAGE=relay MODE=local
-	$(MAKE) docker-build IMAGE=bench-upstream MODE=local
+	$(MAKE) docker-build IMAGE=pavis MODE=$(MODE)
+	$(MAKE) docker-build IMAGE=relay MODE=$(MODE)
+	$(MAKE) docker-build IMAGE=bench-upstream MODE=$(MODE)
 	@echo "Building envoy xDS server image..."
-	$(MAKE) docker-build IMAGE=envoy-xds-server MODE=local
+	$(MAKE) docker-build IMAGE=envoy-xds-server MODE=$(MODE)
 
 # Run system mode benchmarks for a single proxy
 # Environment variables:

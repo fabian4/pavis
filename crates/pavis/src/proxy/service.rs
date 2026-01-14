@@ -2,6 +2,7 @@ use crate::proxy::context::{RouterContext, TracingSpan};
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
 use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use http::Uri;
 use pavis_core::{
@@ -13,6 +14,7 @@ use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
+use rustls::RootCertStore;
 use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
@@ -23,6 +25,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 pub struct Proxy {
     pub state: Arc<RuntimeStateHandle>,
     pub telemetry: Arc<Telemetry>,
+    pub ca_store: Arc<ArcSwap<RootCertStore>>,
 }
 
 impl Proxy {}
@@ -358,16 +361,6 @@ impl ProxyHttp for Proxy {
             }
         }
 
-        if matches!(ca, Some(pavis_core::UpstreamCa::File { .. })) {
-            let ca_bundle = match cluster.ca_bundle() {
-                Some(bundle) => bundle,
-                None => {
-                    return Error::e_explain(InternalError, "Upstream CA bundle not loaded");
-                }
-            };
-            peer.options.ca = Some(ca_bundle);
-        }
-
         // Configure client certificate for outbound mTLS
         if let Some(cert_config) = cert {
             match cert_config {
@@ -392,6 +385,46 @@ impl ProxyHttp for Proxy {
                 #[allow(unreachable_patterns)]
                 _ => {
                     // Unknown client cert configuration
+                }
+            }
+        }
+
+        // Configure CA bundle for upstream TLS verification
+        // TODO: Pingora's rustls connector does not currently support per-peer CA certificates.
+        // See: https://github.com/cloudflare/pingora/blob/main/pingora-core/src/connectors/tls/rustls/mod.rs
+        // The rustls connector has a TODO comment: "setup CA/verify cert store from peer"
+        // Currently, the CA bundle is set here but will be ignored by the connector.
+        // Options to fix:
+        // 1. Wait for pingora to implement this feature
+        // 2. Switch to OpenSSL backend (features = ["proxy", "openssl"])
+        // 3. Implement a custom rustls connector that respects peer.get_ca()
+        if let Some(ca_config) = ca {
+            match ca_config {
+                pavis_core::UpstreamCa::System => {
+                    // Use system CA bundle (default)
+                    tracing::debug!("Using system CA bundle for upstream TLS verification");
+                }
+                pavis_core::UpstreamCa::File { path } => {
+                    // Load CA bundle from cluster
+                    if let Some(ca_bundle) = cluster.ca_bundle() {
+                        tracing::debug!(
+                            upstream = %upstream_name.0,
+                            ca_path = %path.0,
+                            ca_count = ca_bundle.len(),
+                            "Setting custom CA bundle for upstream TLS verification (NOTE: Currently not used by pingora rustls connector)"
+                        );
+                        peer.options.ca = Some(ca_bundle);
+                    } else {
+                        tracing::warn!(
+                            upstream = %upstream_name.0,
+                            ca_path = %path.0,
+                            "CA bundle configured but not loaded in cluster"
+                        );
+                    }
+                }
+                #[allow(unreachable_patterns)]
+                _ => {
+                    // Unknown CA configuration
                 }
             }
         }
@@ -673,19 +706,18 @@ impl ProxyHttp for Proxy {
             metrics.decrement_active_connections();
         }
 
-        #[allow(clippy::collapsible_if)]
-        if let TracingSpan::Active(ref span) = ctx.span {
-            if let Some(response) = session.response_written() {
-                let status_code = response.status.as_u16();
-                span.record("http.status_code", status_code);
+        if let TracingSpan::Active(ref span) = ctx.span
+            && let Some(response) = session.response_written()
+        {
+            let status_code = response.status.as_u16();
+            span.record("http.status_code", status_code);
 
-                if status_code >= 500 {
-                    span.record("error", true);
-                    span.record("error.type", "server_error");
-                } else if status_code >= 400 {
-                    span.record("error", true);
-                    span.record("error.type", "client_error");
-                }
+            if status_code >= 500 {
+                span.record("error", true);
+                span.record("error.type", "server_error");
+            } else if status_code >= 400 {
+                span.record("error", true);
+                span.record("error.type", "client_error");
             }
         }
     }

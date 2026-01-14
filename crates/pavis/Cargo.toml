@@ -25,8 +25,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
 hickory-resolver = "0.25.2"
-# openssl removed to ensure clean Windows builds
-rustls = "0.23"
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 rustls-pemfile = "2.1"
 webpki-roots = "0.26"
 x509-parser = "0.16"

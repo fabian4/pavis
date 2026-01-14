@@ -24,6 +24,13 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/grpc"
+
+	clusterservice "github.com/envoyproxy/go-control-plane/envoy/service/cluster/v3"
+	discoverygrpc "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	endpointservice "github.com/envoyproxy/go-control-plane/envoy/service/endpoint/v3"
+	listenerservice "github.com/envoyproxy/go-control-plane/envoy/service/listener/v3"
+	routeservice "github.com/envoyproxy/go-control-plane/envoy/service/route/v3"
 )
 
 const (
@@ -217,8 +224,18 @@ func main() {
 		log.Fatalf("Failed to create initial snapshot: %v", err)
 	}
 
-	// Start gRPC xDS server
-	grpcServer := server.NewServer(ctx, xds.cache, nil)
+	// Create gRPC server
+	grpcServer := grpc.NewServer()
+
+	// Register xDS services
+	// The server.NewServer returns an implementation of all xDS services
+	srv := server.NewServer(ctx, xds.cache, nil)
+	discoverygrpc.RegisterAggregatedDiscoveryServiceServer(grpcServer, srv)
+	endpointservice.RegisterEndpointDiscoveryServiceServer(grpcServer, srv)
+	clusterservice.RegisterClusterDiscoveryServiceServer(grpcServer, srv)
+	routeservice.RegisterRouteDiscoveryServiceServer(grpcServer, srv)
+	listenerservice.RegisterListenerDiscoveryServiceServer(grpcServer, srv)
+
 	grpcListener, err := net.Listen("tcp", fmt.Sprintf(":%d", grpcPort))
 	if err != nil {
 		log.Fatalf("Failed to listen on gRPC port: %v", err)

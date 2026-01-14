@@ -60,8 +60,19 @@ The Runtime is deliberately constrained to be a pure execution mechanism. It per
 *   **Header Manipulation**: Deterministic insert, remove, and overwrite.
 *   **Rewrites**: Prefix path rewriting and Host literal rewriting.
 *   **Hot Reload**: Atomic, hitless reload of the data plane via pointer swapping.
-*   **TLS Termination**: Server-side TLS with strict file-based certificates.
+*   **TLS Termination**: Server-side TLS with strict file-based certificates (OpenSSL/BoringSSL backend only).
+*   **Upstream TLS Origination**: Client-side TLS with hostname verification (system CA bundle only with current rustls backend).
 *   **Observability**: Prometheus metrics with cardinality controls, structured access logging, and distributed tracing (OTLP).
+
+### TLS Backend Limitations (Rustls)
+
+Pavis currently uses Pingora's rustls backend, which has the following limitations due to upstream Pingora constraints:
+
+1. **No Inbound mTLS (Client Certificate Authentication)**: Pingora's rustls listener does not expose an API to configure client certificate verification. Server-side client certificate authentication is not available. This feature requires the OpenSSL/BoringSSL backend.
+
+2. **No Per-Peer CA Verification**: Upstream TLS connections can only use the system-wide CA bundle. Custom CA certificates specified via `ca_bundle_path` are ignored by the rustls connector. Upstreams relying on private or custom CAs are not supported. This feature requires the OpenSSL/BoringSSL backend.
+
+These are upstream limitations in Pingora. Pavis does not implement local workarounds and is waiting for upstream fixes. Users requiring these features should use the OpenSSL/BoringSSL backend (available via build-time feature flags; see build documentation).
 
 ## 🧭 Roadmap (Planned)
 

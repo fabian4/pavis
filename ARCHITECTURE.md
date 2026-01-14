@@ -165,6 +165,22 @@ Discovery is the *only* mutable aspect of the runtime, strictly bounded to endpo
 *   **Fail-Closed**: `TlsVerify::Full` requires SNI `Auto` or `Name`. If Auto resolves to Disabled, the config is rejected.
 *   **DNS Support**: DNS endpoints are supported at runtime; resolution failures fail the request and are logged.
 
+**TLS Backend Architecture**
+
+Pavis delegates TLS functionality to Pingora, which abstracts over rustls and OpenSSL/BoringSSL. The backend is selected at compile time.
+
+**Rustls Backend (Default)**:
+- Minimal dependencies, smaller binary size
+- Blocked features: inbound mTLS, per-peer CA verification
+- Suitable for: outbound-only proxies, system CA trust model
+
+**OpenSSL/BoringSSL Backend**:
+- Full TLS feature set
+- Required for: inbound mTLS, private CA environments, client cert presentation
+- Larger dependency footprint
+
+The Runtime does not abstract over backend differences. Feature availability is determined entirely by the build-time backend selection. Configuration validation in `pavis-core` accepts all TLS fields regardless of backend; runtime enforcement depends on Pingora's capabilities.
+
 ### 4.4 Routing Algorithm (Hot Path)
 
 Routing uses static, optimized structures built during the artifact compilation phase (or mapped directly).

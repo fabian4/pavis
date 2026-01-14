@@ -66,12 +66,15 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 4: Security & Identity (Critical Path)
 > **Goal**: Enterprise-grade security via frozen policies.
-> **Status**: ✅ Complete
+> **Status**: ⚠️ Partial (TLS Backend Limitations)
 
 - [x] **TLS Termination**: Server-side TLS with single certificate per listener (No SNI).
-- [x] **mTLS (Mutual TLS)**: Client certificate validation + SPIFFE ID extraction.
+- [ ] **Inbound mTLS (Client Cert Validation)**: Blocked on Pingora rustls backend. Available with OpenSSL backend.
+- [ ] **Outbound mTLS (Custom CA Verification)**: Blocked on Pingora rustls backend. Available with OpenSSL backend.
 - [x] **Authorization (RBAC)**: Static Path/Method based policies (Deny-by-default).
-- [x] **Identity**: Integration with SPIRE/SPIFFE workload identities.
+- [x] **Identity**: Integration with SPIRE/SPIFFE workload identities (SPIFFE ID extraction available with OpenSSL backend).
+
+**TLS Backend Note**: The current default build uses Pingora's rustls connector, which does not support inbound client certificate authentication or per-peer CA verification. These features are available when building with the OpenSSL/BoringSSL backend. Pavis is waiting for upstream Pingora to add rustls support for these capabilities.
 
 ## Phase 5: Observability (Critical Path)
 > **Goal**: Deep visibility into proxy behavior required for Operations.

@@ -11,14 +11,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
+use arc_swap::ArcSwap;
 use pavis::agent::{Backoff, ConfigAgent, lkg_version};
 use pavis::load::{self, RuntimeLoadError};
 use pavis::proxy::Proxy;
 use pavis::state::RuntimeStateHandle;
 use pavis::telemetry::Telemetry;
 use pavis::upstream::UpstreamResolver;
-use pavis_core::{AccessLogPolicy, LogLevel, WorkerCount};
-use rustls::crypto::{CryptoProvider, aws_lc_rs};
+use pavis_core::{AccessLogPolicy, LogLevel, RuntimeConfig, WorkerCount};
+use rustls::RootCertStore;
+use rustls::crypto::{CryptoProvider, ring};
 use std::sync::Once;
 
 #[derive(Parser, Debug)]
@@ -49,7 +51,7 @@ fn configure_client_auth(
 ) -> Result<()> {
     static INSTALL: Once = Once::new();
     INSTALL.call_once(|| {
-        if CryptoProvider::install_default(aws_lc_rs::default_provider()).is_err() {
+        if CryptoProvider::install_default(ring::default_provider()).is_err() {
             // Another provider was already installed; ignore.
         }
     });
@@ -83,11 +85,46 @@ fn configure_client_auth(
     Ok(())
 }
 
+fn create_root_store(config: &RuntimeConfig) -> RootCertStore {
+    let mut root_store = RootCertStore::empty();
+
+    // Use webpki-roots directly
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let mut custom_count = 0;
+    for u in &config.upstreams {
+        if let pavis_core::TlsPolicy::Enabled { ca, .. } = &u.tls
+            && let pavis_core::UpstreamCa::File { path } = ca
+        {
+            match File::open(&path.0) {
+                Ok(file) => {
+                    let mut reader = BufReader::new(file);
+                    for cert in rustls_pemfile::certs(&mut reader).flatten() {
+                        if let Err(err) = root_store.add(cert) {
+                            tracing::warn!(path = %path.0, error = %err, "Failed to add certificate to root store");
+                        } else {
+                            custom_count += 1;
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::error!(path = %path.0, error = %err, "Failed to read upstream CA bundle");
+                }
+            }
+        }
+    }
+    tracing::info!(
+        custom_ca_count = custom_count,
+        "Created root store with system roots and custom CAs"
+    );
+    root_store
+}
+
 fn main() -> Result<()> {
-    // Install the default crypto provider (aws-lc-rs) globally.
+    // Install the default crypto provider (ring) globally.
     // This is required because we might have both 'ring' (via reqwest) and 'aws-lc-rs' (via pingora) enabled,
     // which prevents rustls from automatically selecting one.
-    if CryptoProvider::install_default(aws_lc_rs::default_provider()).is_err() {
+    if CryptoProvider::install_default(ring::default_provider()).is_err() {
         // Already installed, which is fine.
     }
 
@@ -170,8 +207,13 @@ fn main() -> Result<()> {
     if let Some(threads) = max_threads {
         server_conf.threads = threads as usize;
     }
+
+    let ca_store = Arc::new(ArcSwap::from_pointee(create_root_store(&config)));
+
     let mut server = Server::new_with_opt_and_conf(None, server_conf);
     server.bootstrap();
+
+    let server_conf_arc = server.configuration.clone();
 
     let runtime_state = pavis::state::RuntimeState::from_config(&config)?;
     let state_handle = Arc::new(RuntimeStateHandle::new(runtime_state));
@@ -188,6 +230,13 @@ fn main() -> Result<()> {
             backoff,
         )?;
         agent.set_current_version(lkg_version);
+
+        let ca_store_clone = ca_store.clone();
+        agent.on_update(move |config| {
+            ca_store_clone.store(Arc::new(create_root_store(config)));
+            tracing::info!("Updated global CA root store from new configuration");
+        });
+
         Ok::<_, anyhow::Error>(Arc::new(agent))
     });
 
@@ -200,9 +249,10 @@ fn main() -> Result<()> {
         let proxy_app = Proxy {
             state: state_handle.clone(),
             telemetry: telemetry.clone(),
+            ca_store: ca_store.clone(),
         };
 
-        let mut proxy_service = http_proxy_service(&server.configuration, proxy_app);
+        let mut proxy_service = http_proxy_service(&server_conf_arc, proxy_app);
         let listen_addr_str = listener.address.to_string();
         match &listener.tls {
             pavis_core::TlsConfig::Disabled => {

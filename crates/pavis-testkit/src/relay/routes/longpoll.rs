@@ -24,18 +24,17 @@ pub async fn handler(
     let timeout_dur = Duration::from_millis(timeout_val);
 
     // Check immediate
-    #[allow(clippy::collapsible_if)]
-    if let Some((meta, data)) = state.get_current().await {
-        if meta.etag != client_etag {
-            let mut headers = HeaderMap::new();
-            headers.insert(header::ETAG, meta.etag.parse().unwrap());
-            headers.insert("x-pavis-version", meta.rev.to_string().parse().unwrap());
-            headers.insert(
-                header::CONTENT_TYPE,
-                "application/octet-stream".parse().unwrap(),
-            );
-            return (headers, data).into_response();
-        }
+    if let Some((meta, data)) = state.get_current().await
+        && meta.etag != client_etag
+    {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ETAG, meta.etag.parse().unwrap());
+        headers.insert("x-pavis-version", meta.rev.to_string().parse().unwrap());
+        headers.insert(
+            header::CONTENT_TYPE,
+            "application/octet-stream".parse().unwrap(),
+        );
+        return (headers, data).into_response();
     }
 
     // Wait

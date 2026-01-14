@@ -5,13 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bench/scripts/utils.sh
 source "$SCRIPT_DIR/utils.sh"
 
-default_cases="throughput_short_1x latency_short_1x latency_extended_1x concurrency_short_1x churn_short_1x"
+default_cases_standalone="throughput_short_1x latency_short_1x latency_extended_1x concurrency_short_1x churn_short_1x"
+default_cases_system="stress_recovery config_reload_convergence rollback_performance"
+
 validate_inputs() {
   local args=("$@")
   load_persisted_env
 
   local proxy="${BENCH_PROXY:-${PROXY:-pavis}}"
-  local cases="${BENCH_CASES:-${CASE:-$default_cases}}"
+  local cases="${BENCH_CASES:-${CASE:-}}"
   local dry_run="${BENCH_DRY_RUN:-${DRY_RUN:-0}}"
   local verbose="${BENCH_VERBOSE:-0}"
   local runs="${BENCH_BENCHMARK_RUNS:-${BENCHMARK_RUNS:-1}}"
@@ -156,6 +158,14 @@ USAGE
     mode="both"
   fi
 
+  if [[ -z "$cases" ]]; then
+    if [[ "$mode" == "system" ]]; then
+      cases="$default_cases_system"
+    else
+      cases="$default_cases_standalone"
+    fi
+  fi
+
   if [[ "$mode" != "standalone" && "$mode" != "system" && "$mode" != "both" ]]; then
     exit_with_error "Invalid MODE: $mode (expected standalone, system, or unset for both)"
   fi
@@ -228,7 +238,7 @@ USAGE
     fi
   fi
 
-  if [[ "$profile" == "workstation" && "$cases" == "$default_cases" ]]; then
+  if [[ "$profile" == "workstation" && "$cases" == "$default_cases_standalone" ]]; then
     log_info "Workstation profile runs payload matrix for throughput/latency cases"
   fi
 

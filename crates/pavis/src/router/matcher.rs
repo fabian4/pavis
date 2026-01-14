@@ -1,7 +1,6 @@
 use crate::router::{CompiledVirtualHost, RouteZone, Router};
 use pavis_core::{PathMatch, Route, VirtualHost};
 
-#[allow(clippy::collapsible_if)]
 pub(crate) fn match_request<'a>(
     router: &'a Router,
     host_header: Option<&str>,
@@ -43,12 +42,11 @@ pub(crate) fn match_request<'a>(
     };
 
     // 1. Try exact host match
-    if let Some(host) = normalized_host {
-        if let Some(vhost) = router.exact_hosts.get(host) {
-            if let Some(found) = try_match(vhost) {
-                return Some(found);
-            }
-        }
+    if let Some(host) = normalized_host
+        && let Some(vhost) = router.exact_hosts.get(host)
+        && let Some(found) = try_match(vhost)
+    {
+        return Some(found);
     }
 
     // 2. Try wildcard host matches (order preserved from config)
@@ -72,22 +70,19 @@ pub(crate) fn match_request<'a>(
             normalized_host.is_some_and(|h| h == pattern)
         };
 
-        if is_match {
-            if let Some(found) = try_match(vhost) {
-                return Some(found);
-            }
+        if is_match && let Some(found) = try_match(vhost) {
+            return Some(found);
         }
     }
 
     None
 }
 
-#[allow(clippy::collapsible_if)]
 fn normalize_host(host: &str) -> &str {
-    if let Some(stripped) = host.strip_prefix('[') {
-        if let Some(end) = stripped.find(']') {
-            return &stripped[..end];
-        }
+    if let Some(stripped) = host.strip_prefix('[')
+        && let Some(end) = stripped.find(']')
+    {
+        return &stripped[..end];
     }
     if let Some((host_only, _port)) = host.split_once(':') {
         return host_only;
