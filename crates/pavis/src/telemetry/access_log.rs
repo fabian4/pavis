@@ -1,3 +1,4 @@
+use crate::proxy::context::RequestId;
 use async_trait::async_trait;
 use pavis_core::AccessLogPolicy;
 use pingora::protocols::l4::socket::SocketAddr;
@@ -163,7 +164,7 @@ impl AccessLog {
             response_time,
             bytes_sent,
             client_ip,
-            request_id: ctx.req_id.clone(),
+            request_id: ctx.req_id,
             rbac_denied: ctx.rbac_denied,
             route_pattern: route_pattern.to_string(),
             upstream_duration_ms,
@@ -187,7 +188,7 @@ struct LogEntry {
     bytes_sent: usize,
     #[serde(serialize_with = "serialize_socket_addr")]
     client_ip: Option<SocketAddr>,
-    request_id: String,
+    request_id: RequestId,
     rbac_denied: bool,
     route_pattern: String,
     upstream_duration_ms: Option<u128>,
@@ -257,7 +258,7 @@ mod tests {
             response_time: 100,
             bytes_sent: 512,
             client_ip: Some("127.0.0.1:1234".parse().unwrap()),
-            request_id: "req-123".to_string(),
+            request_id: "req-123".parse().unwrap(),
             rbac_denied: false,
             route_pattern: "/api/*".to_string(),
             upstream_duration_ms: Some(50),
@@ -297,7 +298,7 @@ mod tests {
             response_time: 100,
             bytes_sent: 512,
             client_ip: Some("127.0.0.1:1234".parse().unwrap()),
-            request_id: "req-123".to_string(),
+            request_id: "req-123".parse().unwrap(),
             rbac_denied: false,
             route_pattern: "/api/*".to_string(),
             upstream_duration_ms: Some(50),
@@ -354,7 +355,7 @@ mod tests {
             route_pattern: RoutePattern::Matched {
                 pattern: Arc::from("/api/*"),
             },
-            req_id: "req-1".to_string(),
+            req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
             runtime_state: None,
         };
@@ -369,7 +370,7 @@ mod tests {
         assert_eq!(line.host, "example.com");
         assert_eq!(line.path, "/api");
         assert_eq!(line.upstream, "upstream-a");
-        assert_eq!(line.request_id, "req-1");
+        assert_eq!(line.request_id.as_str(), "req-1");
         assert!(!line.rbac_denied);
         assert_eq!(line.route_pattern, "/api/*");
     }

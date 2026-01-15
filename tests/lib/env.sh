@@ -393,7 +393,9 @@ gen_minimal_pvs() {
     
     local yaml_path="${pvs_path}.yaml"
     cat <<-EOF > "$yaml_path"
-	listeners: []
+	listeners:
+	  - name: "listener-$id"
+	    address: "127.0.0.1:0"
 	upstreams:
 	  - name: "dummy-$id"
 	    endpoints: []

@@ -16,7 +16,7 @@ Following a comprehensive audit of the Pavis stack (`core`, `pvs`, `runtime`, `e
 | **R-01** | Runtime | **Reload Consistency:** Request phases (filter vs peer) may see different config snapshots during hot reload. | **Critical** | **Fix** | **Done** |
 | **R-02** | Core | **Ambiguous Validation:** `assume_validated` vs `from_trusted` allows safe bypass of validation logic. | **High** | **Refactor** | **Done** |
 | **R-03** | Core | **API Rigidity:** Public struct fields prevent non-breaking additions (missing `#[non_exhaustive]` on structs). | **High** | **Refactor** | **Done** |
-| **R-04** | Runtime | **Request ID Allocation:** `String` allocation in ultra-hot path. | **Medium** | **Optimize** | **Open** |
+| **R-04** | Runtime | **Request ID Allocation:** `String` allocation in ultra-hot path. | **Medium** | **Optimize** | **Done** |
 | **R-05** | PVS | **Payload Limit:** Hardcoded 100MB limit may block massive deployments. | **Medium** | **Config** | **Open** |
 | **R-06** | E2E | **Environment Assumptions:** Reliance on host network/ports causes CI flakiness risks. | **Medium** | **Containerize** | **Open** |
 | **R-07** | E2E | **Cert Lifecycle:** No tests for certificate rotation. | **Medium** | **Test** | **Open** |
@@ -54,7 +54,7 @@ Following a comprehensive audit of the Pavis stack (`core`, `pvs`, `runtime`, `e
 - **Problem:** `format!` allocates a new `String` for every request.
 - **Fix:** Use a thread-local formatter or a fixed-size stack buffer (e.g., `compact_str`, `ulid`, or `uuid`) to eliminate heap allocation.
 - **Outcome:** Reduced heap churn and GC pressure.
-- **Status:** Open (confirmed: request IDs built via `format!` in hot path).
+- **Status:** Done (request IDs now use a fixed-size stack buffer in the hot path).
 
 #### [R-08] Regex Compilation Optimization (Core)
 - **Problem:** Validation compiles all regexes, potentially slow for large configs.

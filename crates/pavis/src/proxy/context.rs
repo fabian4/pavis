@@ -1,7 +1,118 @@
 use crate::state::RuntimeState;
 use pavis_core::{HeadersPolicy, Hostname, UpstreamName};
+use serde::Serialize;
 use std::sync::Arc;
 use std::time::Instant;
+
+const REQUEST_ID_MAX_LEN: usize = 48;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct RequestId {
+    buf: [u8; REQUEST_ID_MAX_LEN],
+    len: u8,
+}
+
+#[derive(Debug)]
+pub struct RequestIdParseError;
+
+impl std::fmt::Display for RequestIdParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("request id is too long")
+    }
+}
+
+impl std::error::Error for RequestIdParseError {}
+
+impl RequestId {
+    pub fn from_parts(nanos: u128, random: u32) -> Self {
+        let mut id = Self::empty();
+        id.push_bytes(b"req-");
+        id.push_u128(nanos);
+        id.push_byte(b'-');
+        id.push_u128(u128::from(random));
+        id
+    }
+
+    pub fn as_str(&self) -> &str {
+        let len = self.len as usize;
+        unsafe { std::str::from_utf8_unchecked(&self.buf[..len]) }
+    }
+
+    fn empty() -> Self {
+        Self {
+            buf: [0; REQUEST_ID_MAX_LEN],
+            len: 0,
+        }
+    }
+
+    fn push_byte(&mut self, value: u8) {
+        let len = self.len as usize;
+        debug_assert!(len < REQUEST_ID_MAX_LEN);
+        if len >= REQUEST_ID_MAX_LEN {
+            return;
+        }
+        self.buf[len] = value;
+        self.len = (len + 1) as u8;
+    }
+
+    fn push_bytes(&mut self, bytes: &[u8]) {
+        let len = self.len as usize;
+        debug_assert!(len + bytes.len() <= REQUEST_ID_MAX_LEN);
+        if len + bytes.len() > REQUEST_ID_MAX_LEN {
+            return;
+        }
+        self.buf[len..len + bytes.len()].copy_from_slice(bytes);
+        self.len = (len + bytes.len()) as u8;
+    }
+
+    fn push_u128(&mut self, mut value: u128) {
+        if value == 0 {
+            self.push_byte(b'0');
+            return;
+        }
+
+        let mut tmp = [0u8; 39];
+        let mut idx = 0;
+        while value > 0 {
+            let digit = (value % 10) as u8;
+            tmp[idx] = b'0' + digit;
+            idx += 1;
+            value /= 10;
+        }
+
+        for pos in (0..idx).rev() {
+            self.push_byte(tmp[pos]);
+        }
+    }
+}
+
+impl std::fmt::Display for RequestId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for RequestId {
+    type Err = RequestIdParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.len() > REQUEST_ID_MAX_LEN {
+            return Err(RequestIdParseError);
+        }
+        let mut id = Self::empty();
+        id.push_bytes(value.as_bytes());
+        Ok(id)
+    }
+}
+
+impl Serialize for RequestId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
 
 pub struct RouterContext {
     pub upstream_name: Option<UpstreamName>,
@@ -13,7 +124,7 @@ pub struct RouterContext {
     pub client_identity: Option<String>,
     pub rbac_denied: bool,
     pub route_pattern: RoutePattern,
-    pub req_id: String,
+    pub req_id: RequestId,
     pub span: TracingSpan,
     /// Pinned configuration snapshot for this request.
     /// Captured in `request_filter` to ensure atomicity across routing and upstream selection.
@@ -104,7 +215,7 @@ mod tests {
             rbac_denied: false,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::NotMatched,
-            req_id: "req-123".to_string(),
+            req_id: "req-123".parse().unwrap(),
             span: TracingSpan::Disabled,
             runtime_state: None,
         };
@@ -141,7 +252,7 @@ mod tests {
             rbac_denied: false,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::NotMatched,
-            req_id: "req-1".to_string(),
+            req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
             runtime_state: None,
         };
@@ -163,7 +274,7 @@ mod tests {
             route_pattern: RoutePattern::Matched {
                 pattern: Arc::from("/api"),
             },
-            req_id: "req-1".to_string(),
+            req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
             runtime_state: None,
         };
@@ -190,7 +301,7 @@ mod tests {
             rbac_denied: false,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::NotMatched,
-            req_id: "req-1".to_string(),
+            req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
             runtime_state: None,
         };

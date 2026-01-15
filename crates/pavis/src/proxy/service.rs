@@ -1,4 +1,4 @@
-use crate::proxy::context::{RouterContext, TracingSpan};
+use crate::proxy::context::{RequestId, RouterContext, TracingSpan};
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
 use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
@@ -43,13 +43,13 @@ impl opentelemetry::propagation::Injector for HeaderInjector<'_> {
     }
 }
 
-fn generate_request_id() -> String {
+fn generate_request_id() -> RequestId {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let random_val: u32 = rand::rng().random();
-    format!("req-{}-{}", now, random_val)
+    RequestId::from_parts(now, random_val)
 }
 
 fn apply_route_headers(ctx: &mut RouterContext, route: &pavis_core::Route) {

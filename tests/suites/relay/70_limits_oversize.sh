@@ -39,7 +39,9 @@ SIZE=$(stat -f%z "$TEST_TMP/valid.pvs" 2>/dev/null || stat -c%s "$TEST_TMP/valid
 if [ "$SIZE" -le 100 ]; then
     echo "⚠️ Minimal PVS is too small ($SIZE bytes), adding more data..."
     cat <<-EOF > "$TEST_TMP/large.yaml"
-	listeners: []
+	listeners:
+	  - name: "listener-large"
+	    address: "127.0.0.1:0"
 	upstreams:
 	  - name: "large-upstream-to-increase-artifact-size-beyond-the-limit"
 	    endpoints: []

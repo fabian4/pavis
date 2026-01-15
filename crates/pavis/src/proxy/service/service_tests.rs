@@ -76,7 +76,7 @@ fn apply_route_headers_populates_router_context() {
         // Observability fields
         upstream_timing: crate::proxy::context::UpstreamTiming::NotStarted,
         route_pattern: crate::proxy::context::RoutePattern::NotMatched,
-        req_id: "test-req".to_string(),
+        req_id: "test-req".parse().unwrap(),
         span: crate::proxy::context::TracingSpan::Disabled,
         runtime_state: None,
     };
