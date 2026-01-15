@@ -186,9 +186,9 @@ run_case() {
       export BENCH_PAYLOAD_BYTES="$BENCH_PAYLOAD_BYTES"
       export BENCH_TLS="$BENCH_TLS"
       export BENCH_METRICS="$BENCH_METRICS"
-      export BACKEND_CPUSET="$BACKEND_CPUSET"
-      export PROXY_CPUSET="$PROXY_CPUSET"
-      export BENCH_LOADGEN_CPUSET="$BENCH_LOADGEN_CPUSET"
+      export BACKEND_CPUSET="${BACKEND_CPUSET:-}"
+      export PROXY_CPUSET="${PROXY_CPUSET:-}"
+      export BENCH_LOADGEN_CPUSET="${BENCH_LOADGEN_CPUSET:-}"
       "$script_path"
     )
     echo "::endgroup::"

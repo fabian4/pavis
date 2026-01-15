@@ -1,9 +1,12 @@
 use crate::runtime::{PathMatch, RewritePath, Route, RouteAction, Upstream, VirtualHost};
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 use super::headers::validate_headers;
 use super::{CoreValidationError, CoreValidationResult};
+
+static REGEX_CACHE: OnceLock<Mutex<HashMap<String, Regex>>> = OnceLock::new();
 
 pub(super) fn validate_routes(
     routes: &[VirtualHost],
@@ -42,12 +45,7 @@ pub(super) fn validate_routes(
                         route: path.0.clone(),
                     });
                 }
-                let _compiled =
-                    Regex::new(&path.0).map_err(|e| CoreValidationError::InvalidRegex {
-                        host: vhost.host.0.clone(),
-                        route: path.0.clone(),
-                        error: e.to_string(),
-                    })?;
+                validate_regex(&path.0, &vhost.host.0)?;
 
                 // Constraint Check: Reject Rewrite configurations if PathMatch::Regex is used.
                 if !matches!(route.rewrite.path, RewritePath::Disabled) {
@@ -70,6 +68,27 @@ pub(super) fn validate_routes(
             validate_action(&route.action, route, vhost, &upstream_names)?;
         }
     }
+    Ok(())
+}
+
+fn validate_regex(path: &str, host: &str) -> CoreValidationResult<()> {
+    let cache = REGEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if cache
+        .lock()
+        .expect("regex cache lock poisoned")
+        .contains_key(path)
+    {
+        return Ok(());
+    }
+
+    let compiled = Regex::new(path).map_err(|e| CoreValidationError::InvalidRegex {
+        host: host.to_string(),
+        route: path.to_string(),
+        error: e.to_string(),
+    })?;
+
+    let mut guard = cache.lock().expect("regex cache lock poisoned");
+    guard.entry(path.to_string()).or_insert(compiled);
     Ok(())
 }
 

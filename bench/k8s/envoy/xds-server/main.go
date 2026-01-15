@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	clusterservice "github.com/envoyproxy/go-control-plane/envoy/service/cluster/v3"
 	discoverygrpc "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
@@ -171,8 +172,18 @@ func (s *xdsServer) makeSnapshot() (*cache.Snapshot, error) {
 			Rds: &hcm.Rds{
 				ConfigSource: &core.ConfigSource{
 					ResourceApiVersion: core.ApiVersion_V3,
-					ConfigSourceSpecifier: &core.ConfigSource_Ads{
-						Ads: &core.AggregatedConfigSource{},
+					ConfigSourceSpecifier: &core.ConfigSource_ApiConfigSource{
+						ApiConfigSource: &core.ApiConfigSource{
+							ApiType:             core.ApiConfigSource_GRPC,
+							TransportApiVersion: core.ApiVersion_V3,
+							GrpcServices: []*core.GrpcService{{
+								TargetSpecifier: &core.GrpcService_EnvoyGrpc_{
+									EnvoyGrpc: &core.GrpcService_EnvoyGrpc{
+										ClusterName: "xds_cluster",
+									},
+								},
+							}},
+						},
 					},
 				},
 				RouteConfigName: routeConfigName,
@@ -294,7 +305,20 @@ func main() {
 	}
 
 	// Create gRPC server
-	grpcServer := grpc.NewServer()
+	// Create gRPC server with keepalive options for Envoy compatibility
+	var kaep = keepalive.EnforcementPolicy{
+		MinTime:             30 * time.Second,  // Don't allow pings more often than every 30s
+		PermitWithoutStream: true,              // CRITICAL: Allow pings when no streams are active
+	}
+	var kasp = keepalive.ServerParameters{
+		Time:    60 * time.Second,  // Send keepalive ping every 60s
+		Timeout: 20 * time.Second,  // Wait 20s for ping response
+	}
+	grpcServer := grpc.NewServer(
+		grpc.MaxConcurrentStreams(1000),
+		grpc.KeepaliveEnforcementPolicy(kaep),
+		grpc.KeepaliveParams(kasp),
+	)
 
 	// Register xDS services with callbacks
 	// The server.NewServer returns an implementation of all xDS services
@@ -311,19 +335,21 @@ func main() {
 		log.Fatalf("Failed to listen on gRPC port: %v", err)
 	}
 
+	// Start HTTP API server in goroutine instead
 	go func() {
-		log.Printf("Starting gRPC xDS server on :%d", grpcPort)
-		if err := grpcServer.Serve(grpcListener); err != nil {
-			log.Fatalf("gRPC server failed: %v", err)
+		http.HandleFunc("/v1/publish", xds.handlePublish)
+		http.HandleFunc("/health", xds.handleHealth)
+		log.Printf("Starting HTTP API server on :%d", httpPort)
+		if err := http.ListenAndServe(fmt.Sprintf(":%d", httpPort), nil); err != nil {
+			log.Fatalf("HTTP server failed: %v", err)
 		}
 	}()
 
-	// Start HTTP API server
-	http.HandleFunc("/v1/publish", xds.handlePublish)
-	http.HandleFunc("/health", xds.handleHealth)
-
-	log.Printf("Starting HTTP API server on :%d", httpPort)
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", httpPort), nil); err != nil {
-		log.Fatalf("HTTP server failed: %v", err)
+	// Start gRPC server in main goroutine (BLOCKING)
+	log.Printf("Starting gRPC xDS server on :%d", grpcPort)
+	log.Printf("About to serve on listener: %v", grpcListener.Addr())
+	log.Printf("gRPC services registered: ADS, CDS, LDS, RDS, EDS")
+	if err := grpcServer.Serve(grpcListener); err != nil {
+		log.Fatalf("gRPC server failed: %v", err)
 	}
 }
