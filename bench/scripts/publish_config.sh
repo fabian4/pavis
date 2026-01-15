@@ -61,11 +61,11 @@ publish_to_pavis_relay() {
   fi
 
   local temp_pvs
-  temp_pvs=$(mktemp)
+  temp_pvs=$(mktemp --suffix=.pvs)
   build_pvs_from_config "$config_file" "$temp_pvs"
 
   local temp_response
-  temp_response=$(mktemp)
+  temp_response=$(mktemp --suffix=.txt)
   local http_code
   http_code=$(curl -s -o "$temp_response" -w "%{http_code}" -X POST "$relay_url" \
     -H "Content-Type: application/octet-stream" \
@@ -129,7 +129,7 @@ generate_pavis_config() {
 # Usage: deploy_baseline_config
 deploy_baseline_config() {
   local temp_config
-  temp_config=$(mktemp)
+  temp_config=$(mktemp --suffix=.yaml)
 
   generate_pavis_config 1 "$temp_config" 0.0
   publish_to_pavis_relay "$temp_config" 1
@@ -147,7 +147,7 @@ deploy_degraded_config() {
   local drop_rate="${2:-1.0}"
 
   local temp_config
-  temp_config=$(mktemp)
+  temp_config=$(mktemp --suffix=.yaml)
 
   generate_pavis_config "$version" "$temp_config" "$drop_rate"
   publish_to_pavis_relay "$temp_config" "$version"
@@ -161,7 +161,7 @@ rollback_config() {
   local target_version="$1"
 
   local temp_config
-  temp_config=$(mktemp)
+  temp_config=$(mktemp --suffix=.yaml)
 
   generate_pavis_config "$target_version" "$temp_config" 0.0
   publish_to_pavis_relay "$temp_config" "$target_version"
@@ -178,7 +178,7 @@ trigger_config_update() {
   local drop_rate="${2:-0.0}"
 
   local temp_config
-  temp_config=$(mktemp)
+  temp_config=$(mktemp --suffix=.yaml)
 
   generate_pavis_config "$new_version" "$temp_config" "$drop_rate"
   publish_to_pavis_relay "$temp_config" "$new_version"

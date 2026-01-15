@@ -219,7 +219,7 @@ Goal: Ensure `.pvs` handling is safe under hostile or corrupted input.
 
 Tasks:
 1. Unsafe Code:
-   - Identify and justify all unsafe blocks (especially around zero-copy / rkyv).
+   - Identify and justify all unsafe blocks (especially around rkyv and binary validation).
 
 2. Panic & Crash Risks:
    - Check slice indexing, integer overflow, unchecked length arithmetic.

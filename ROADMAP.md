@@ -118,8 +118,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 > **Status**: ⏳ Planned
 
 - [ ] **Graceful Shutdown**: Connection draining sequences.
-- [ ] **Admin API**: Runtime inspection endpoints and dynamic log level adjustment.
-- [ ] **Tuning**: Configurable poll intervals and timeouts.
+- [ ] **Admin API**: Read-only runtime inspection endpoints (`/admin/health`, `/admin/stats`).
 
 ## Phase 8: xDS & Service Mesh Integration
 > **Goal**: Compile-time adaptation of external control planes.

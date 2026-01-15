@@ -7,7 +7,6 @@ Its primary responsibilities are:
 - Defining the 64-byte PVS header structure.
 - Serializing `RuntimeConfig` objects into the binary format with computed checksums.
 - Reading and validating `.pvs` files, including header checks and payload verification.
-- Providing memory-mapped I/O support for efficient loading of large configurations.
 
 It explicitly does not handle:
 - Logic for parsing human-readable formats (YAML/JSON).
@@ -16,7 +15,6 @@ It explicitly does not handle:
 ## 2. Features
 - **Tamper-Evident Format**: Every `.pvs` file includes a SHA-256 checksum of the payload in its header, verified upon loading.
 - **Zero-Copy Serialization**: Leverages `rkyv` for high-performance, alignment-aware serialization of the configuration payload.
-- **Memory-Mapped Loading**: Supports `mmap` via the `memmap2` crate to load configuration files instantly without copying the entire payload into heap memory.
 - **Strict Versioning**: Enforces protocol version matching to prevent runtime incompatibility.
 
 ## 3. Module Breakdown
@@ -33,7 +31,7 @@ Responsible for the creation of `.pvs` artifacts. It serializes the `RuntimeConf
 ### `verify`
 Implements the full verification pipeline.
 - `verify`: Checks magic bytes, version, and checksum for in-memory bytes.
-- `verify_file`: Performs the same checks on a file path using memory mapping.
+- `verify_file`: Performs the same checks on a file path using streamed reads.
 - `VerifiedPvs`: A wrapper that holds validated data, ensuring access only occurs after integrity checks pass.
 
 ### `error`

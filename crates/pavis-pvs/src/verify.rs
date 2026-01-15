@@ -4,10 +4,11 @@ use crate::header::{
     algorithm_label, checksum_hex, compute_checksum,
 };
 use crate::read::parse_header;
-use memmap2::Mmap;
 use pavis_core::RuntimeConfig;
 use rkyv::Deserialize as _;
+use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::{ErrorKind, Read};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -53,7 +54,6 @@ pub struct VerifiedPvs {
 #[derive(Debug)]
 enum VerifiedBytes {
     Owned(Vec<u8>),
-    Mapped(Mmap),
 }
 
 impl VerifiedPvs {
@@ -84,7 +84,6 @@ impl VerifiedPvs {
     pub fn bytes(&self) -> &[u8] {
         match &*self.bytes {
             VerifiedBytes::Owned(bytes) => bytes,
-            VerifiedBytes::Mapped(mmap) => mmap,
         }
     }
 
@@ -92,11 +91,9 @@ impl VerifiedPvs {
         match Arc::try_unwrap(self.bytes) {
             Ok(inner) => match inner {
                 VerifiedBytes::Owned(bytes) => bytes,
-                VerifiedBytes::Mapped(mmap) => mmap.to_vec(),
             },
             Err(arc) => match &*arc {
                 VerifiedBytes::Owned(bytes) => bytes.clone(),
-                VerifiedBytes::Mapped(mmap) => mmap.to_vec(),
             },
         }
     }
@@ -112,15 +109,19 @@ pub fn verify(bytes: &[u8]) -> PvsResult<VerifiedPvs> {
 }
 
 pub fn read_from_path(path: impl AsRef<Path>) -> PvsResult<VerifiedPvs> {
-    let file = fs::File::open(path).map_err(PvsError::Io)?;
-    let mmap = unsafe { Mmap::map(&file).map_err(PvsError::Io)? };
-    verify_mapped(mmap)
+    let (header, bytes) = read_verified_file(path)?;
+    let payload = &bytes[HEADER_SIZE..];
+    let _archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
+        .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
+    Ok(VerifiedPvs {
+        header,
+        bytes: Arc::new(VerifiedBytes::Owned(bytes)),
+    })
 }
 
 pub fn verify_file(path: impl AsRef<Path>) -> PvsResult<()> {
-    let file = fs::File::open(path).map_err(PvsError::Io)?;
-    let mmap = unsafe { Mmap::map(&file).map_err(PvsError::Io)? };
-    let (_, payload) = verify_bytes(&mmap)?;
+    let (_header, bytes) = read_verified_file(path)?;
+    let payload = &bytes[HEADER_SIZE..];
     rkyv::check_archived_root::<RuntimeConfig>(payload)
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
     Ok(())
@@ -143,23 +144,7 @@ fn verify_bytes(bytes: &[u8]) -> PvsResult<(PvsHeader, &[u8])> {
 
     let header = parse_header(&bytes[..HEADER_SIZE])?;
 
-    if &header.magic != PAVIS_MAGIC {
-        return Err(PvsError::InvalidMagic {
-            expected: String::from_utf8_lossy(PAVIS_MAGIC).to_string(),
-            found: String::from_utf8_lossy(&header.magic).to_string(),
-        });
-    }
-
-    if header.version != PAVIS_VERSION {
-        return Err(PvsError::VersionMismatch {
-            file: header.version,
-            expected: PAVIS_VERSION,
-        });
-    }
-
-    if header.algorithm != PAVIS_HASH_ALGORITHM_SHA256 {
-        return Err(PvsError::UnsupportedAlgorithm(header.algorithm));
-    }
+    validate_header(&header)?;
 
     let payload = &bytes[HEADER_SIZE..];
     let computed_checksum = compute_checksum(payload);
@@ -192,21 +177,9 @@ fn verify_owned(bytes: Vec<u8>) -> PvsResult<VerifiedPvs> {
     })
 }
 
-fn verify_mapped(mmap: Mmap) -> PvsResult<VerifiedPvs> {
-    let (header, payload) = verify_bytes(&mmap)?;
-    let _archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
-        .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
-    Ok(VerifiedPvs {
-        header,
-        bytes: Arc::new(VerifiedBytes::Mapped(mmap)),
-    })
-}
-
 pub fn load(path: impl AsRef<Path>) -> PvsResult<RuntimeConfig> {
-    let file = fs::File::open(path).map_err(PvsError::Io)?;
-    let mmap = unsafe { Mmap::map(&file).map_err(PvsError::Io)? };
-
-    let (_header, payload) = verify_bytes(&mmap)?;
+    let (_header, bytes) = read_verified_file(path)?;
+    let payload = &bytes[HEADER_SIZE..];
     let archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
     let mut deserializer = rkyv::de::deserializers::SharedDeserializeMap::new();
@@ -214,6 +187,99 @@ pub fn load(path: impl AsRef<Path>) -> PvsResult<RuntimeConfig> {
         .deserialize(&mut deserializer)
         .map_err(|e| PvsError::CorruptArchive(format!("Deserialization error: {:?}", e)))?;
     Ok(config)
+}
+
+fn validate_header(header: &PvsHeader) -> PvsResult<()> {
+    if &header.magic != PAVIS_MAGIC {
+        return Err(PvsError::InvalidMagic {
+            expected: String::from_utf8_lossy(PAVIS_MAGIC).to_string(),
+            found: String::from_utf8_lossy(&header.magic).to_string(),
+        });
+    }
+
+    if header.version != PAVIS_VERSION {
+        return Err(PvsError::VersionMismatch {
+            file: header.version,
+            expected: PAVIS_VERSION,
+        });
+    }
+
+    if header.algorithm != PAVIS_HASH_ALGORITHM_SHA256 {
+        return Err(PvsError::UnsupportedAlgorithm(header.algorithm));
+    }
+
+    Ok(())
+}
+
+fn read_verified_file(path: impl AsRef<Path>) -> PvsResult<(PvsHeader, Vec<u8>)> {
+    let mut file = fs::File::open(path).map_err(PvsError::Io)?;
+    let metadata = file.metadata().map_err(PvsError::Io)?;
+    let file_len = metadata.len().min(usize::MAX as u64) as usize;
+
+    if file_len < HEADER_SIZE {
+        return Err(PvsError::TooSmall {
+            min: HEADER_SIZE,
+            actual: file_len,
+        });
+    }
+
+    if file_len > HEADER_SIZE + MAX_PAYLOAD_SIZE {
+        return Err(PvsError::PayloadTooLarge {
+            max: MAX_PAYLOAD_SIZE,
+            found: file_len - HEADER_SIZE,
+        });
+    }
+
+    let mut header_buf = [0u8; HEADER_SIZE];
+    if let Err(err) = file.read_exact(&mut header_buf) {
+        if err.kind() == ErrorKind::UnexpectedEof {
+            let actual = file
+                .metadata()
+                .map_err(PvsError::Io)?
+                .len()
+                .min(usize::MAX as u64) as usize;
+            return Err(PvsError::TooSmall {
+                min: HEADER_SIZE,
+                actual,
+            });
+        }
+        return Err(PvsError::Io(err));
+    }
+
+    let header = parse_header(&header_buf)?;
+    validate_header(&header)?;
+
+    let mut bytes = Vec::with_capacity(file_len);
+    bytes.extend_from_slice(&header_buf);
+
+    let mut hasher = Sha256::new();
+    let mut payload_len = 0usize;
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf).map_err(PvsError::Io)?;
+        if n == 0 {
+            break;
+        }
+        payload_len = payload_len.saturating_add(n);
+        if payload_len > MAX_PAYLOAD_SIZE {
+            return Err(PvsError::PayloadTooLarge {
+                max: MAX_PAYLOAD_SIZE,
+                found: payload_len,
+            });
+        }
+        hasher.update(&buf[..n]);
+        bytes.extend_from_slice(&buf[..n]);
+    }
+
+    let computed_checksum: [u8; 32] = hasher.finalize().into();
+    if computed_checksum != header.checksum {
+        return Err(PvsError::ChecksumMismatch {
+            expected: to_hex(&header.checksum),
+            found: to_hex(&computed_checksum),
+        });
+    }
+
+    Ok((header, bytes))
 }
 
 #[cfg(test)]

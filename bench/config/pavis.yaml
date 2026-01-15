@@ -23,9 +23,8 @@ routes:
     paths:
       - matcher: !exact
           path: "/health"
-        action: !direct
-          status: 200
-          body: "OK"
+        status: 200
+        body: "OK"
       - matcher: !prefix
           path: "/"
         destinations:

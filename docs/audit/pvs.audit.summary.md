@@ -7,16 +7,16 @@ AI Model: Gemini
 
 **Verdict:** Sound
 
-The `pavis-pvs` crate implements a secure, robust, and opaque binary protocol for configuration distribution. It strictly enforces the boundary between artifact layout and business logic, delegating semantic interpretation to `pavis-core` while handling integrity (SHA-256) and layout validation (`rkyv`) itself. The code is defensive, with excellent error diagnostics and appropriate limits (e.g., 100MB payload cap) to prevent Denial of Service. While `mmap` usage introduces theoretical safety risks from external file modification, this is a standard and acceptable trade-off for zero-copy performance in this context.
+The `pavis-pvs` crate implements a secure, robust, and opaque binary protocol for configuration distribution. It strictly enforces the boundary between artifact layout and business logic, delegating semantic interpretation to `pavis-core` while handling integrity (SHA-256) and layout validation (`rkyv`) itself. The code is defensive, with excellent error diagnostics and appropriate limits (e.g., 100MB payload cap) to prevent Denial of Service. File verification streams payload bytes for checksum validation and then performs `rkyv` structural checks.
 
 # 2. Top System Risks
 
 1.  **Memory Mapping Safety (Phase 4):**
-    The use of `mmap` for reading configuration files (`verify_file`, `load`) is inherently unsafe if the underlying file is truncated or modified by another process during access. This can technically lead to Undefined Behavior (SIGBUS), though it is the standard mechanism for high-performance loaders.
+    File verification reads and validates payload bytes before `rkyv` checks, avoiding `mmap`-related SIGBUS risks.
 2.  **Hardcoded Payload Limit (Phase 2):**
     The 100MB `MAX_PAYLOAD_SIZE` constant is hardcoded. While a sensible default for DoS protection, legitimate configurations exceeding this size will be rejected with no runtime override capability.
 3.  **Double-Scan Overhead (Phase 5):**
-    Validation requires two full passes over the payload: one for SHA-256 checksum verification and a second for `rkyv` structural validation. This linear `O(2N)` cost is acceptable for reliability but represents a fixed performance floor.
+    Validation requires a checksum pass and a `rkyv` structural validation pass over the payload. Streaming checksum reduces extra disk reads, but the `rkyv` scan still requires a full pass.
 
 # 3. Readiness Assessment
 
@@ -38,7 +38,7 @@ The `pavis-pvs` crate implements a secure, robust, and opaque binary protocol fo
 ## Phase 0: Inventory & Artifact Surface
 -   **Responsibility:** Purely handles the `.pvs` binary envelope (Header + Rkyv Payload).
 -   **API:** Clean separation. `header.rs` defines the wire format. `verify.rs` and `write.rs` handle I/O and checks.
--   **Dependencies:** `sha2` (integrity), `memmap2` (perf), `rkyv` (layout), `thiserror` (errors). Minimal and focused.
+-   **Dependencies:** `sha2` (integrity), `rkyv` (layout), `thiserror` (errors). Minimal and focused.
 
 ## Phase 1: Boundary & Responsibility Audit
 -   **Semantic Logic:** **PASSED.** The crate treats the payload as an opaque byte slice, only casting it to `RuntimeConfig` for structural validation (`check_archived_root`). It never inspects fields of the config.
@@ -69,7 +69,7 @@ The `pavis-pvs` crate implements a secure, robust, and opaque binary protocol fo
 -   **Panic Policy:** Safe. `unwrap` in `parse_header` is protected by length checks.
 
 ## Phase 4: Safety & Malformed Input Resistance
--   **Unsafe:** `unsafe { Mmap::map(&file) }`. This is encapsulated in `read_from_path` and `verify_file`.
+-   **Unsafe:** No `unsafe` blocks in the PVS validation path.
 -   **DoS:** Protected by `MAX_PAYLOAD_SIZE`.
 -   **Memory Safety:** `rkyv` ensures that even if the checksum passes (collision), the structural layout of the payload is valid before access.
 
@@ -77,5 +77,5 @@ The `pavis-pvs` crate implements a secure, robust, and opaque binary protocol fo
 -   **Evolution:** `_reserved: [u8; 20]` in header allows for future extensions (e.g., compression flags) without breaking header layout.
 -   **Performance:**
     -   `write`: Allocates 2x payload size (Serializer + Output Buffer).
-    -   `read`: Zero-copy via `mmap`.
+    -   `read`: Streaming reads with checksum verification before `rkyv` validation.
     -   `verify`: Linear scan.

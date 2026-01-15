@@ -4,7 +4,7 @@
 
 ## 1. Frozen Artifact Specification (PVS Protocol)
 
-The `.pvs` file is the embodiment of the **Frozen Data Plane**. It is a rigid, byte-aligned binary artifact designed for direct memory mapping (`mmap`).
+The `.pvs` file is the embodiment of the **Frozen Data Plane**. It is a rigid, byte-aligned binary artifact designed for streaming verification (checksum) followed by `rkyv` layout checks.
 
 **Purpose**: To provide the runtime with a zero-copy, pre-validated memory image of the configuration.
 
