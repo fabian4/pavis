@@ -18,6 +18,10 @@ export MOCK_RELAY_BIN=${MOCK_RELAY_BIN:-$PROJECT_ROOT/target/release/pavis-mock-
 export PAVIS_IMAGE=${PAVIS_IMAGE:-pavis:local}
 export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:local}
 export MOCK_RELAY_IMAGE=${MOCK_RELAY_IMAGE:-pavis-mock-relay:local}
+export UPSTREAM_HTTP_PORT_V1=${UPSTREAM_HTTP_PORT_V1:-8081}
+export UPSTREAM_HTTP_PORT_V2=${UPSTREAM_HTTP_PORT_V2:-8082}
+export UPSTREAM_HTTPS_PORT_V1=${UPSTREAM_HTTPS_PORT_V1:-8443}
+export UPSTREAM_HTTPS_PORT_V2=${UPSTREAM_HTTPS_PORT_V2:-8444}
 
 CERTS_DIR="$PROJECT_ROOT/tests/suites/config/certs"
 
@@ -134,15 +138,29 @@ extendedKeyUsage = clientAuth
 EOF
     fi
 
-    openssl req -newkey rsa:2048 -nodes \
-        -keyout "$out_dir/${name}.key" \
-        -out "$out_dir/${name}.csr" \
-        -config "$cnf_file" -extensions v3_req
+    if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
+        openssl req -newkey rsa:2048 -nodes \
+            -keyout "$out_dir/${name}.key" \
+            -out "$out_dir/${name}.csr" \
+            -config "$cnf_file" -extensions v3_req
+    else
+        openssl req -newkey rsa:2048 -nodes \
+            -keyout "$out_dir/${name}.key" \
+            -out "$out_dir/${name}.csr" \
+            -config "$cnf_file" -extensions v3_req > /dev/null 2>&1
+    fi
 
-    openssl x509 -req -in "$out_dir/${name}.csr" \
-        -CA "$ca_cert" -CAkey "$ca_key" -CAcreateserial \
-        -out "$out_dir/${name}.pem" -days 365 \
-        -extfile "$cnf_file" -extensions v3_sign
+    if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
+        openssl x509 -req -in "$out_dir/${name}.csr" \
+            -CA "$ca_cert" -CAkey "$ca_key" -CAcreateserial \
+            -out "$out_dir/${name}.pem" -days 365 \
+            -extfile "$cnf_file" -extensions v3_sign
+    else
+        openssl x509 -req -in "$out_dir/${name}.csr" \
+            -CA "$ca_cert" -CAkey "$ca_key" -CAcreateserial \
+            -out "$out_dir/${name}.pem" -days 365 \
+            -extfile "$cnf_file" -extensions v3_sign > /dev/null 2>&1
+    fi
 }
 
 generate_certs() {
@@ -166,16 +184,26 @@ keyUsage = critical, digitalSignature, cRLSign, keyCertSign
 EOF
 
     # 1. Generate CA
-    openssl req -x509 -newkey rsa:2048 -nodes \
-        -keyout "$CERTS_DIR/ca.key" \
-        -out "$CERTS_DIR/ca.pem" \
-        -days 365 -config "$CERTS_DIR/ca.cnf"
+    if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
+        openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$CERTS_DIR/ca.key" \
+            -out "$CERTS_DIR/ca.pem" \
+            -days 365 -config "$CERTS_DIR/ca.cnf"
+    else
+        openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$CERTS_DIR/ca.key" \
+            -out "$CERTS_DIR/ca.pem" \
+            -days 365 -config "$CERTS_DIR/ca.cnf" > /dev/null 2>&1
+    fi
 
     # 2. Generate Server Cert
     generate_signed_cert "upstream_tls" "server" "$CERTS_DIR" "$CERTS_DIR/ca.pem" "$CERTS_DIR/ca.key"
 
     # 3. Generate Client Cert (Default)
     generate_signed_cert "client" "client" "$CERTS_DIR" "$CERTS_DIR/ca.pem" "$CERTS_DIR/ca.key" "pavis-client"
+
+    # Ensure Docker containers (non-root) can read certs.
+    chmod -R a+rX "$CERTS_DIR"
 }
 
 cleanup_certs() {

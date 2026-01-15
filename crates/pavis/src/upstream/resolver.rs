@@ -265,9 +265,33 @@ fn endpoint_port(addr: SocketAddr) -> pavis_core::Port {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pavis_core::{Port, Weight};
+    use pavis_core::{
+        ConnectTimeout, ConnectionLimit, Discovery, HttpVersion, IdleTimeout, LoadBalancer, Pool,
+        Port, TlsPolicy, Upstream, UpstreamBuilder, UpstreamId, UpstreamName, Weight,
+    };
     use std::net::{IpAddr, Ipv4Addr};
     use std::num::NonZeroU16;
+
+    fn build_upstream(discovery: Discovery, endpoints: Vec<Endpoint>) -> Upstream {
+        let mut builder = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(discovery)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .pool(Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit::Unlimited,
+            })
+            .tls(TlsPolicy::Disabled);
+
+        for endpoint in endpoints {
+            builder = builder.add_endpoint(endpoint);
+        }
+
+        builder.build().expect("upstream")
+    }
 
     #[test]
     fn test_endpoint_port() {
@@ -308,27 +332,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_logical_dns_no_dns_endpoints() {
-        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
-        let config = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test".to_string()),
-            discovery: Discovery::Logical,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: pavis_core::IdleTimeout::Disabled,
-                connect: pavis_core::ConnectTimeout::Disabled,
-                max: pavis_core::ConnectionLimit::Unlimited,
-            },
-            tls: pavis_core::TlsPolicy::Disabled,
-            endpoints: vec![Endpoint {
+        let config = build_upstream(
+            Discovery::Logical,
+            vec![Endpoint {
                 address: EndpointAddr::Ip {
                     address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                     port: Port(NonZeroU16::new(8080).unwrap()),
                 },
                 weight: Weight(NonZeroU16::new(1).unwrap()),
             }],
-        };
+        );
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
@@ -348,21 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_strict_dns_empty_endpoints() {
-        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
-        let config = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test".to_string()),
-            discovery: Discovery::Strict { ttl: 30 },
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: pavis_core::IdleTimeout::Disabled,
-                connect: pavis_core::ConnectTimeout::Disabled,
-                max: pavis_core::ConnectionLimit::Unlimited,
-            },
-            tls: pavis_core::TlsPolicy::Disabled,
-            endpoints: vec![],
-        };
+        let config = build_upstream(Discovery::Strict { ttl: 30 }, vec![]);
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
@@ -382,21 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_upstream_static() {
-        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
-        let config = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test".to_string()),
-            discovery: Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: pavis_core::IdleTimeout::Disabled,
-                connect: pavis_core::ConnectTimeout::Disabled,
-                max: pavis_core::ConnectionLimit::Unlimited,
-            },
-            tls: pavis_core::TlsPolicy::Disabled,
-            endpoints: vec![],
-        };
+        let config = build_upstream(Discovery::Static, vec![]);
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
@@ -420,28 +405,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_once_triggers_updates() {
-        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
         // Use an IP that won't actually resolve but triggers the loop branches
-        let config = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("logical".to_string()),
-            discovery: Discovery::Logical,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: pavis_core::IdleTimeout::Disabled,
-                connect: pavis_core::ConnectTimeout::Disabled,
-                max: pavis_core::ConnectionLimit::Unlimited,
-            },
-            tls: pavis_core::TlsPolicy::Disabled,
-            endpoints: vec![Endpoint {
+        let mut config = build_upstream(
+            Discovery::Logical,
+            vec![Endpoint {
                 address: EndpointAddr::Dns {
                     host: pavis_core::Hostname("localhost".to_string()),
                     port: Port(NonZeroU16::new(8080).unwrap()),
                 },
                 weight: Weight(NonZeroU16::new(1).unwrap()),
             }],
-        };
+        );
+        config.name = UpstreamName("logical".to_string());
 
         let manager = crate::upstream::Manager::new(&[config]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
@@ -522,38 +497,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_upstream_logical_multiple_dns_warns() {
-        use pavis_core::{
-            Discovery, Hostname, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName,
-        };
-        let config = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test".to_string()),
-            discovery: Discovery::Logical,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: pavis_core::IdleTimeout::Disabled,
-                connect: pavis_core::ConnectTimeout::Disabled,
-                max: pavis_core::ConnectionLimit::Unlimited,
-            },
-            tls: pavis_core::TlsPolicy::Disabled,
-            endpoints: vec![
+        let config = build_upstream(
+            Discovery::Logical,
+            vec![
                 Endpoint {
                     address: EndpointAddr::Dns {
-                        host: Hostname("localhost".to_string()),
+                        host: pavis_core::Hostname("localhost".to_string()),
                         port: Port(NonZeroU16::new(8080).unwrap()),
                     },
                     weight: Weight(NonZeroU16::new(1).unwrap()),
                 },
                 Endpoint {
                     address: EndpointAddr::Dns {
-                        host: Hostname("localhost".to_string()),
+                        host: pavis_core::Hostname("localhost".to_string()),
                         port: Port(NonZeroU16::new(8081).unwrap()),
                     },
                     weight: Weight(NonZeroU16::new(1).unwrap()),
                 },
             ],
-        };
+        );
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
@@ -571,21 +533,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_upstream_invalid_discovery() {
-        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
-        let config = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test".to_string()),
-            discovery: Discovery::Static, // Static should return None
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: pavis_core::IdleTimeout::Disabled,
-                connect: pavis_core::ConnectTimeout::Disabled,
-                max: pavis_core::ConnectionLimit::Unlimited,
-            },
-            tls: pavis_core::TlsPolicy::Disabled,
-            endpoints: vec![],
-        };
+        let config = build_upstream(Discovery::Static, vec![]); // Static should return None
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
@@ -608,21 +556,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_once_skips_static() {
-        use pavis_core::{Discovery, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName};
-        let config = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("static".to_string()),
-            discovery: Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: pavis_core::IdleTimeout::Disabled,
-                connect: pavis_core::ConnectTimeout::Disabled,
-                max: pavis_core::ConnectionLimit::Unlimited,
-            },
-            tls: pavis_core::TlsPolicy::Disabled,
-            endpoints: vec![],
-        };
+        let mut config = build_upstream(Discovery::Static, vec![]);
+        config.name = UpstreamName("static".to_string());
 
         let manager = crate::upstream::Manager::new(&[config]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
@@ -639,29 +574,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_strict_dns_success() {
-        use pavis_core::{
-            Discovery, Hostname, HttpVersion, LoadBalancer, Pool, UpstreamId, UpstreamName,
-        };
-        let config = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test".to_string()),
-            discovery: Discovery::Strict { ttl: 30 },
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: pavis_core::IdleTimeout::Disabled,
-                connect: pavis_core::ConnectTimeout::Disabled,
-                max: pavis_core::ConnectionLimit::Unlimited,
-            },
-            tls: pavis_core::TlsPolicy::Disabled,
-            endpoints: vec![Endpoint {
+        let config = build_upstream(
+            Discovery::Strict { ttl: 30 },
+            vec![Endpoint {
                 address: EndpointAddr::Dns {
-                    host: Hostname("localhost".to_string()),
+                    host: pavis_core::Hostname("localhost".to_string()),
                     port: Port(NonZeroU16::new(8080).unwrap()),
                 },
                 weight: Weight(NonZeroU16::new(1).unwrap()),
             }],
-        };
+        );
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(

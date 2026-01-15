@@ -13,11 +13,11 @@ fi
 usage() {
   cat <<'USAGE'
 Usage:
-  bench/scripts/report.sh [--input <csv>] [--output <md>]
+  bench/scripts/report_standalone_github.sh [--input <csv>] [--output <md>]
 
 Environment:
-  INPUT   Path to input CSV (default: bench/output/summary.csv)
-  OUTPUT  Path to output markdown (default: bench/output/report.md)
+  INPUT   Path to input CSV (default: bench/output/standalone/summary.csv)
+  OUTPUT  Path to output markdown (default: bench/output/standalone/report.github.md)
   RUN_ID  Filter to a specific git sha (default: latest by timestamp)
 USAGE
 }
@@ -27,8 +27,8 @@ die() {
   exit 1
 }
 
-input="${INPUT:-bench/output/summary.csv}"
-output="${OUTPUT:-bench/output/report.md}"
+input="${INPUT:-bench/output/standalone/summary.csv}"
+output="${OUTPUT:-bench/output/standalone/report.github.md}"
 run_id_env="${RUN_ID:-}"
 
 while [ "$#" -gt 0 ]; do
@@ -77,6 +77,10 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
   function fmt3(x) {
     if (!is_num(x)) return render(x)
     return sprintf("%.3f", x+0)
+  }
+  function with_suffix(val, suffix) {
+    if (val == "—" || suffix == "") return val
+    return val " " suffix
   }
   function loop_type(t) {
     if (t ~ /^wrk/ || t ~ /wrk-multi/) return "closed"
@@ -132,6 +136,9 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
   {
     profile=$(col["bench_profile"])
     if (profile != "github") next
+    mode=$(col["bench_mode"])
+    if (mode != "standalone") next
+    row_count++
 
     rid=$(col["git_sha"])
     ts=$(col["timestamp"])
@@ -144,6 +151,10 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
     }
   }
   END {
+    if (row_count == 0) {
+      print "error: no standalone/github rows found in input" > "/dev/stderr"
+      exit 4
+    }
     if (run_id_env=="" && max_run=="") {
       print "error: unable to determine run_id from input" > "/dev/stderr"
       exit 3
@@ -152,6 +163,8 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
   NR>1 {
     profile=$(col["bench_profile"])
     if (profile != "github") next
+    mode=$(col["bench_mode"])
+    if (mode != "standalone") next
     rid=$(col["git_sha"])
     if (run_id_env!="" && rid != run_id_env) next
     if (run_id_env=="" && rid != max_run) next
@@ -242,6 +255,7 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
     order[5]="churn_short_1x"
 
     overall="PASS"
+    best_achieved=""; best_p50=""; best_p90=""; best_p99=""; best_errors=""; best_dropped=""; best_rps_iqr=""; best_p99_iqr=""; best_cpu=""; best_mem="";
 
     for (i=1; i<=5; i++) {
       c=order[i]
@@ -252,21 +266,32 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
       if (v == "FAIL") overall="FAIL"
       else if (v == "WARN" && overall != "FAIL") overall="WARN"
 
+      if (is_num(data[c,"achieved_rps"])) { if (best_achieved=="" || data[c,"achieved_rps"]+0 > best_achieved+0) best_achieved=data[c,"achieved_rps"] }
+      if (is_num(data[c,"p50_ms"])) { if (best_p50=="" || data[c,"p50_ms"]+0 < best_p50+0) best_p50=data[c,"p50_ms"] }
+      if (is_num(data[c,"p90_ms"])) { if (best_p90=="" || data[c,"p90_ms"]+0 < best_p90+0) best_p90=data[c,"p90_ms"] }
+      if (is_num(data[c,"p99_ms"])) { if (best_p99=="" || data[c,"p99_ms"]+0 < best_p99+0) best_p99=data[c,"p99_ms"] }
+      if (is_num(data[c,"errors"])) { if (best_errors=="" || data[c,"errors"]+0 < best_errors+0) best_errors=data[c,"errors"] }
+      if (is_num(data[c,"dropped"])) { if (best_dropped=="" || data[c,"dropped"]+0 < best_dropped+0) best_dropped=data[c,"dropped"] }
+      if (is_num(data[c,"rps_iqr"])) { if (best_rps_iqr=="" || data[c,"rps_iqr"]+0 < best_rps_iqr+0) best_rps_iqr=data[c,"rps_iqr"] }
+      if (is_num(data[c,"p99_iqr"])) { if (best_p99_iqr=="" || data[c,"p99_iqr"]+0 < best_p99_iqr+0) best_p99_iqr=data[c,"p99_iqr"] }
+      if (is_num(data[c,"proxy_cpu_avg"])) { if (best_cpu=="" || data[c,"proxy_cpu_avg"]+0 < best_cpu+0) best_cpu=data[c,"proxy_cpu_avg"] }
+      if (is_num(data[c,"proxy_mem_peak_mib"])) { if (best_mem=="" || data[c,"proxy_mem_peak_mib"]+0 < best_mem+0) best_mem=data[c,"proxy_mem_peak_mib"] }
+
       printf "| %-20s | %-14s | %-7s | %-4s | %-13s | %-15s | %-6s | %-6s | %-8s | %-8s | %-10s | %-7s | %-13s | %-18s |\n",
         data[c,"case"],
         render(data[c,"tool"]),
         render(data[c,"loop"]),
         render(data[c,"runs"]),
         render(data[c,"target_rps"]),
-        fmt2(data[c,"achieved_rps"]),
-        fmt3(data[c,"p50_ms"]),
-        fmt3(data[c,"p90_ms"]),
-        fmt3(data[c,"p99_ms"]),
-        render(data[c,"errors"]),
-        render(data[c,"dropped"]),
-        fmt2(data[c,"rps_iqr"]),
-        fmt2(data[c,"proxy_cpu_avg"]),
-        fmt2(data[c,"proxy_mem_peak_mib"])
+        (is_num(data[c,"achieved_rps"]) && best_achieved!="" && data[c,"achieved_rps"]+0 < best_achieved+0) ? with_suffix(fmt2(data[c,"achieved_rps"]), "↓") : fmt2(data[c,"achieved_rps"]),
+        (is_num(data[c,"p50_ms"]) && best_p50!="" && data[c,"p50_ms"]+0 > best_p50+0) ? with_suffix(fmt3(data[c,"p50_ms"]), "↑") : fmt3(data[c,"p50_ms"]),
+        (is_num(data[c,"p90_ms"]) && best_p90!="" && data[c,"p90_ms"]+0 > best_p90+0) ? with_suffix(fmt3(data[c,"p90_ms"]), "↑") : fmt3(data[c,"p90_ms"]),
+        (is_num(data[c,"p99_ms"]) && best_p99!="" && data[c,"p99_ms"]+0 > best_p99+0) ? with_suffix(fmt3(data[c,"p99_ms"]), "↑") : fmt3(data[c,"p99_ms"]),
+        (is_num(data[c,"errors"]) && best_errors!="" && data[c,"errors"]+0 > best_errors+0) ? with_suffix(render(data[c,"errors"]), "↑") : render(data[c,"errors"]),
+        (is_num(data[c,"dropped"]) && best_dropped!="" && data[c,"dropped"]+0 > best_dropped+0) ? with_suffix(render(data[c,"dropped"]), "↑") : render(data[c,"dropped"]),
+        (is_num(data[c,"rps_iqr"]) && best_rps_iqr!="" && data[c,"rps_iqr"]+0 > best_rps_iqr+0) ? with_suffix(fmt2(data[c,"rps_iqr"]), "↑") : fmt2(data[c,"rps_iqr"]),
+        (is_num(data[c,"proxy_cpu_avg"]) && best_cpu!="" && data[c,"proxy_cpu_avg"]+0 > best_cpu+0) ? with_suffix(fmt2(data[c,"proxy_cpu_avg"]), "↑") : fmt2(data[c,"proxy_cpu_avg"]),
+        (is_num(data[c,"proxy_mem_peak_mib"]) && best_mem!="" && data[c,"proxy_mem_peak_mib"]+0 >= best_mem+0*1.5) ? with_suffix(fmt2(data[c,"proxy_mem_peak_mib"]), "⚠︎") : (is_num(data[c,"proxy_mem_peak_mib"]) && best_mem!="" && data[c,"proxy_mem_peak_mib"]+0 > best_mem+0) ? with_suffix(fmt2(data[c,"proxy_mem_peak_mib"]), "↑") : fmt2(data[c,"proxy_mem_peak_mib"])
     }
 
     print ""

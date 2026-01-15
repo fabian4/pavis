@@ -8,10 +8,11 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use pavis_core::{
     AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery,
-    Duration as RuntimeDuration, Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout, Listener,
-    ListenerName, LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, RouteAction, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy,
-    Upstream, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
+    Duration as RuntimeDuration, Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout,
+    ListenerBuilder, ListenerName, LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy,
+    Rewrite, RewriteHost, RewritePath, RouteAction, RuntimeConfigBuilder, ServiceName, Telemetry,
+    Timeout, TlsConfig, TlsPolicy, UpstreamBuilder, UpstreamId, UpstreamName, VirtualHost, Weight,
+    WorkerCount,
 };
 use pavis_pvs::PAVIS_VERSION_HEADER;
 use pingora::services::Service;
@@ -23,42 +24,51 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
-    pavis_core::RuntimeConfig {
-        listeners: vec![Listener {
-            name: ListenerName("default".to_string()),
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
-            workers: WorkerCount::Auto,
-            tls: TlsConfig::Disabled,
-        }],
-        telemetry: Telemetry {
+    let listener = ListenerBuilder::new()
+        .name(ListenerName("default".to_string()))
+        .address(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            8080,
+        ))
+        .workers(WorkerCount::Auto)
+        .tls(TlsConfig::Disabled)
+        .build()
+        .expect("listener");
+
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("backend".to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::RoundRobin)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
+            idle: IdleTimeout::Enabled(RuntimeDuration(NonZeroU32::new(60_000).unwrap())),
+            connect: ConnectTimeout::Enabled(RuntimeDuration(NonZeroU32::new(5_000).unwrap())),
+            max: ConnectionLimit::Unlimited,
+        })
+        .tls(TlsPolicy::Disabled)
+        .add_endpoint(Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(8080).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        })
+        .build()
+        .expect("upstream");
+
+    RuntimeConfigBuilder::new()
+        .telemetry(Telemetry {
             level: pavis_core::LogLevel::Info,
             pingora: pavis_core::LogLevel::Info,
             service_name: ServiceName(name.to_string()),
             metrics: Metrics::Disabled,
             access_log: AccessLogPolicy::Stdout,
             tracing: pavis_core::TracingPolicy::Disabled,
-        },
-        upstreams: vec![Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("backend".to_string()),
-            discovery: Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: IdleTimeout::Enabled(RuntimeDuration(NonZeroU32::new(60_000).unwrap())),
-                connect: ConnectTimeout::Enabled(RuntimeDuration(NonZeroU32::new(5_000).unwrap())),
-                max: ConnectionLimit::Unlimited,
-            },
-            tls: TlsPolicy::Disabled,
-            endpoints: vec![Endpoint {
-                address: EndpointAddr::Ip {
-                    address: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    port: Port(NonZeroU16::new(8080).unwrap()),
-                },
-                weight: Weight(NonZeroU16::new(1).unwrap()),
-            }],
-        }],
-        routes: vec![VirtualHost {
+        })
+        .add_listener(listener)
+        .add_upstream(upstream)
+        .add_route(VirtualHost {
             host: Host("*".to_string()),
             paths: vec![pavis_core::Route {
                 matcher: PathMatch::Prefix {
@@ -78,8 +88,9 @@ fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
                     weight: Weight(NonZeroU16::new(1).unwrap()),
                 }]),
             }],
-        }],
-    }
+        })
+        .build()
+        .expect("config")
 }
 
 fn config_with_upstream(service_name: &str, upstream_name: &str) -> pavis_core::RuntimeConfig {
@@ -135,7 +146,8 @@ fn worker_name_is_stable() {
     let dir = std::env::temp_dir().join("pavis_worker_name");
     let lkg = dir.join("config.pvs");
     let config = minimal_config("v1");
-    let validated = crate::load::assume_validated(config);
+    // SAFETY: tests use configs that are assumed valid for runtime state construction.
+    let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
     let state = RuntimeState::from_config(&validated).expect("state");
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let agent = make_agent("http://127.0.0.1:1".to_string(), lkg, state_handle);
@@ -236,7 +248,8 @@ async fn apply_update_warns_on_version_write_failure() {
     write_pvs(&lkg, "v1");
 
     let config = minimal_config("v2");
-    let validated = crate::load::assume_validated(config);
+    // SAFETY: tests use configs that are assumed valid for runtime state construction.
+    let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
     let state = RuntimeState::from_config(&validated).expect("state");
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
 

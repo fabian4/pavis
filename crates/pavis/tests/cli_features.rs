@@ -1,4 +1,4 @@
-use pavis_core::RuntimeConfig;
+use pavis_core::{ListenerBuilder, RuntimeConfigBuilder};
 use pavis_pvs as pvs;
 use std::io::BufRead;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -204,24 +204,26 @@ fn test_cli_lifecycle_sigint() {
     let binary = get_binary_path();
 
     // Create a valid config programmatically
-    let config = RuntimeConfig {
-        listeners: vec![pavis_core::Listener {
-            name: pavis_core::ListenerName("default".to_string()),
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-            workers: pavis_core::WorkerCount::Auto,
-            tls: pavis_core::TlsConfig::Disabled,
-        }],
-        telemetry: pavis_core::Telemetry {
+    let listener = ListenerBuilder::new()
+        .name(pavis_core::ListenerName("default".to_string()))
+        .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0))
+        .workers(pavis_core::WorkerCount::Auto)
+        .tls(pavis_core::TlsConfig::Disabled)
+        .build()
+        .expect("listener");
+
+    let config = RuntimeConfigBuilder::new()
+        .telemetry(pavis_core::Telemetry {
             level: pavis_core::LogLevel::Info,
             pingora: pavis_core::LogLevel::Info,
             service_name: pavis_core::ServiceName("pavis".to_string()),
             metrics: pavis_core::Metrics::Disabled,
             access_log: pavis_core::AccessLogPolicy::Disabled,
             tracing: pavis_core::TracingPolicy::Disabled,
-        },
-        upstreams: vec![],
-        routes: vec![],
-    };
+        })
+        .add_listener(listener)
+        .build()
+        .expect("config");
 
     let config_path = temp_path("pavis_lifecycle_test", "pvs");
     pvs::write(&config_path, &config).expect("Failed to write config");

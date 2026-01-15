@@ -88,7 +88,7 @@ make_config() {
     cat <<-EOF >> "$yaml"
 upstreams:
   - name: "backend"
-    endpoints: [{ ip: "127.0.0.1", port: 8081 }]
+    endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V1} }]
 routes:
   - host: "*"
     paths:

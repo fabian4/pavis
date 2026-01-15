@@ -234,8 +234,8 @@ mod tests {
     use super::Manager;
     use pavis_core::{
         ClientCertChain, ConnectTimeout, ConnectionLimit, Endpoint, EndpointAddr, HttpVersion,
-        IdleTimeout, LoadBalancer, Pool, Port, TlsPolicy, TlsVerify, Upstream, UpstreamCa,
-        UpstreamId, UpstreamName, Weight,
+        IdleTimeout, LoadBalancer, Pool, Port, TlsPolicy, TlsVerify, Upstream, UpstreamBuilder,
+        UpstreamCa, UpstreamId, UpstreamName, Weight,
     };
     use std::net::{IpAddr, Ipv4Addr};
     use std::num::NonZeroU16;
@@ -243,26 +243,29 @@ mod tests {
 
     #[test]
     fn manager_returns_configured_cluster() {
-        let upstreams = vec![Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("backend".to_string()),
-            discovery: pavis_core::Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: IdleTimeout::Disabled,
-                connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
-            },
-            tls: TlsPolicy::Disabled,
-            endpoints: vec![Endpoint {
-                address: EndpointAddr::Ip {
-                    address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                    port: Port(NonZeroU16::new(8080).unwrap()),
-                },
-                weight: Weight(NonZeroU16::new(1).unwrap()),
-            }],
-        }];
+        let upstreams = vec![
+            UpstreamBuilder::new()
+                .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+                .name(UpstreamName("backend".to_string()))
+                .discovery(pavis_core::Discovery::Static)
+                .balancer(LoadBalancer::RoundRobin)
+                .protocol(HttpVersion::H1)
+                .pool(Pool {
+                    idle: IdleTimeout::Disabled,
+                    connect: ConnectTimeout::Disabled,
+                    max: ConnectionLimit::Unlimited,
+                })
+                .tls(TlsPolicy::Disabled)
+                .add_endpoint(Endpoint {
+                    address: EndpointAddr::Ip {
+                        address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                        port: Port(NonZeroU16::new(8080).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
+                })
+                .build()
+                .expect("upstream"),
+        ];
 
         let manager = Manager::new(&upstreams).expect("manager");
         let cluster = manager.get("backend");
@@ -302,18 +305,18 @@ mod tests {
         key_path: PathBuf,
         chain: ClientCertChain,
     ) -> Upstream {
-        Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("mtls".to_string()),
-            discovery: pavis_core::Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
+        UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("mtls".to_string()))
+            .discovery(pavis_core::Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
                 max: ConnectionLimit::Unlimited,
-            },
-            tls: TlsPolicy::Enabled {
+            })
+            .tls(TlsPolicy::Enabled {
                 verify: TlsVerify::Disabled,
                 sni: pavis_core::SniName::Auto,
                 cert: pavis_core::ClientCert::Enabled {
@@ -322,15 +325,16 @@ mod tests {
                     chain,
                 },
                 ca: UpstreamCa::System,
-            },
-            endpoints: vec![Endpoint {
+            })
+            .add_endpoint(Endpoint {
                 address: EndpointAddr::Ip {
                     address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                     port: Port(NonZeroU16::new(8080).unwrap()),
                 },
                 weight: Weight(NonZeroU16::new(1).unwrap()),
-            }],
-        }
+            })
+            .build()
+            .expect("upstream")
     }
 
     #[test]
@@ -501,33 +505,36 @@ mod tests {
         let (_ca_key_pem, ca_cert_pem) = build_self_signed_cert();
         write_pem(&ca_path, ca_cert_pem.as_bytes());
 
-        let upstreams = vec![Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("ca".to_string()),
-            discovery: pavis_core::Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: IdleTimeout::Disabled,
-                connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
-            },
-            tls: TlsPolicy::Enabled {
-                verify: TlsVerify::Full,
-                sni: pavis_core::SniName::Name(pavis_core::Hostname("example.com".to_string())),
-                cert: pavis_core::ClientCert::Disabled,
-                ca: UpstreamCa::File {
-                    path: pavis_core::Path(ca_path.to_string_lossy().to_string()),
-                },
-            },
-            endpoints: vec![Endpoint {
-                address: EndpointAddr::Ip {
-                    address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                    port: Port(NonZeroU16::new(8080).unwrap()),
-                },
-                weight: Weight(NonZeroU16::new(1).unwrap()),
-            }],
-        }];
+        let upstreams = vec![
+            UpstreamBuilder::new()
+                .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+                .name(UpstreamName("ca".to_string()))
+                .discovery(pavis_core::Discovery::Static)
+                .balancer(LoadBalancer::RoundRobin)
+                .protocol(HttpVersion::H1)
+                .pool(Pool {
+                    idle: IdleTimeout::Disabled,
+                    connect: ConnectTimeout::Disabled,
+                    max: ConnectionLimit::Unlimited,
+                })
+                .tls(TlsPolicy::Enabled {
+                    verify: TlsVerify::Full,
+                    sni: pavis_core::SniName::Name(pavis_core::Hostname("example.com".to_string())),
+                    cert: pavis_core::ClientCert::Disabled,
+                    ca: UpstreamCa::File {
+                        path: pavis_core::Path(ca_path.to_string_lossy().to_string()),
+                    },
+                })
+                .add_endpoint(Endpoint {
+                    address: EndpointAddr::Ip {
+                        address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                        port: Port(NonZeroU16::new(8080).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
+                })
+                .build()
+                .expect("upstream"),
+        ];
 
         let manager = Manager::new(&upstreams).expect("manager");
         let cluster = manager.get("ca").expect("cluster");

@@ -11,6 +11,7 @@ data:
 
     dynamic_resources:
       lds_config:
+        resource_api_version: V3
         api_config_source:
           api_type: GRPC
           transport_api_version: V3
@@ -18,6 +19,7 @@ data:
           - envoy_grpc:
               cluster_name: xds_cluster
       cds_config:
+        resource_api_version: V3
         api_config_source:
           api_type: GRPC
           transport_api_version: V3
@@ -37,7 +39,7 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: envoy-xds.bench-system.svc.cluster.local
+                    address: envoy-xds
                     port_value: 18000
         typed_extension_protocol_options:
           envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
@@ -78,8 +80,8 @@ spec:
           containerPort: 8081
           protocol: TCP
         env:
-        - name: BENCH_UPSTREAM_BIND
-          value: "127.0.0.1:8081"
+        - name: PORT
+          value: "8081"
         - name: RUST_LOG
           value: "info"
         resources:

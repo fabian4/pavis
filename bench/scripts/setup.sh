@@ -365,7 +365,7 @@ setup_environment_standalone() {
   persist_env_var "BENCH_LOADGEN_CPUSET" "${BENCH_LOADGEN_CPUSET:-}"
   persist_env_var "BENCH_PVS_GENERATED" "${BENCH_PVS_GENERATED:-false}"
 
-  local host_info="${BENCH_OUTPUT_DIR}/.host_info"
+  local host_info="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/.host_info"
   collect_system_info > "$host_info"
   export BENCH_HOST_INFO="$host_info"
   persist_env_var "BENCH_HOST_INFO" "$host_info"

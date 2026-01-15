@@ -36,7 +36,7 @@ cat <<-EOF > "$TEST_TMP/config.yaml"
 	  - name: "backend"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8081
+	        port: ${UPSTREAM_HTTP_PORT_V1}
 	routes:
 	  - host: "*"
 	    paths:

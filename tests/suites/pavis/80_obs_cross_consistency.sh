@@ -20,7 +20,7 @@ trap cleanup_trap EXIT
 PORT_PAVIS=$(get_free_port)
 PORT_METRICS=$(get_free_port)
 ACCESS_LOG_PATH="$TEST_TMP/access.log"
-UPSTREAM_PORT=8081
+UPSTREAM_PORT=${UPSTREAM_HTTP_PORT_V1}
 
 # 1. Config with all signals
 cat <<EOF > "$TEST_TMP/config.yaml"

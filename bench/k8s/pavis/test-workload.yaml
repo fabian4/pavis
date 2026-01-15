@@ -23,13 +23,13 @@ spec:
         args:
           - |
             echo "Waiting for pavis-relay to be ready..."
-            until curl -sf http://pavis-relay.bench-system.svc.cluster.local:8090/health; do
+            until curl -sf http://pavis-relay:8090/health; do
               echo "Relay not ready, sleeping..."
               sleep 2
             done
             echo "Fetching initial config from relay..."
             curl -sf -H "X-Pavis-Version: 0" \
-              http://pavis-relay.bench-system.svc.cluster.local:8090/v1/config \
+              http://pavis-relay:8090/v1/config \
               -o /config/bootstrap.pvs || echo "Failed to fetch config, continuing..."
         volumeMounts:
           - name: config-storage
@@ -44,8 +44,8 @@ spec:
           containerPort: 8081
           protocol: TCP
         env:
-        - name: BENCH_UPSTREAM_BIND
-          value: "127.0.0.1:8081"
+        - name: PORT
+          value: "8081"
         - name: RUST_LOG
           value: "info"
         resources:
@@ -65,14 +65,14 @@ spec:
           - "--config"
           - "/config/bootstrap.pvs"
           - "--relay-url"
-          - "http://pavis-relay.bench-system.svc.cluster.local:8090/v1/config"
+          - "http://pavis-relay:8090/v1/config"
         ports:
         - name: proxy
           containerPort: 8080
           protocol: TCP
         env:
         - name: PAVIS_RELAY_URL
-          value: "http://pavis-relay.bench-system.svc.cluster.local:8090/v1/config"
+          value: "http://pavis-relay:8090/v1/config"
         - name: PAVIS_UPSTREAM
           value: "127.0.0.1:8081"
         - name: PAVIS_BIND

@@ -7,11 +7,18 @@ export BENCH_SCRIPTS_DIR="${BENCH_ROOT}/bench/scripts"
 export BENCH_STATE_DIR="${BENCH_ROOT}/bench/.bench_state"
 mkdir -p "$BENCH_STATE_DIR"
 
-# Early detection of --background flag from command line arguments
+# Early detection of --background flag and mode from command line arguments
+mode_arg=""
 for arg in "$@"; do
   if [[ "$arg" == "--background" ]]; then
     export BENCH_BACKGROUND=1
     break
+  fi
+done
+for ((i=1; i<=$#; i++)); do
+  if [[ "${!i}" == "--mode" ]]; then
+    next_index=$((i+1))
+    mode_arg="${!next_index:-}"
   fi
 done
 
@@ -21,7 +28,8 @@ if [[ "${BENCH_BACKGROUND:-0}" == "1" && "${BENCH_BACKGROUND_ACTIVE:-0}" != "1" 
   source "$BENCH_SCRIPTS_DIR/utils.sh"
 
   # Ensure output directory exists
-  output_dir="${BENCH_OUTPUT_DIR:-${BENCH_ROOT}/bench/output}"
+  mode_default="${BENCH_MODE:-${MODE:-${mode_arg:-standalone}}}"
+  output_dir="${BENCH_OUTPUT_DIR:-${BENCH_ROOT}/bench/output/${mode_default}}"
   mkdir -p "$output_dir"
 
   # Generate timestamped log file
@@ -77,6 +85,21 @@ main() {
   if [[ "$BENCH_DRY_RUN" == "1" || "$BENCH_DRY_RUN" == "true" ]]; then
     log_info "Dry-run completed; report generation skipped"
     return
+  fi
+
+  if [[ "${BENCH_MODE:-standalone}" == "standalone" ]]; then
+    "${BENCH_SCRIPTS_DIR}/summarize.sh"
+    case "${BENCH_PROFILE:-}" in
+      workstation)
+        "${BENCH_SCRIPTS_DIR}/report_standalone_workstation.sh"
+        ;;
+      github)
+        "${BENCH_SCRIPTS_DIR}/report_standalone_github.sh"
+        ;;
+      *)
+        log_warn "Skipping report generation for unknown BENCH_PROFILE=${BENCH_PROFILE:-}"
+        ;;
+    esac
   fi
 }
 

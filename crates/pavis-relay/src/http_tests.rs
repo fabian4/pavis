@@ -8,28 +8,30 @@ use tower::util::ServiceExt;
 
 fn build_pvs_bytes(label: &str) -> Vec<u8> {
     use pavis_core::{
-        AccessLogPolicy, Listener, ListenerName, Metrics, RuntimeConfig, ServiceName, Telemetry,
+        AccessLogPolicy, ListenerName, Metrics, RuntimeConfigBuilder, ServiceName, Telemetry,
         TlsConfig, TracingPolicy, WorkerCount,
     };
 
-    let config = RuntimeConfig {
-        listeners: vec![Listener {
-            name: ListenerName("default".to_string()),
-            address: "127.0.0.1:8080".parse().expect("addr"),
-            workers: WorkerCount::Auto,
-            tls: TlsConfig::Disabled,
-        }],
-        telemetry: Telemetry {
+    let listener = pavis_core::ListenerBuilder::new()
+        .name(ListenerName("default".to_string()))
+        .address("127.0.0.1:8080".parse().expect("addr"))
+        .workers(WorkerCount::Auto)
+        .tls(TlsConfig::Disabled)
+        .build()
+        .expect("listener");
+
+    let config = RuntimeConfigBuilder::new()
+        .telemetry(Telemetry {
             level: pavis_core::LogLevel::Info,
             pingora: pavis_core::LogLevel::Info,
             service_name: ServiceName(label.to_string()),
             metrics: Metrics::Disabled,
             access_log: AccessLogPolicy::Stdout,
             tracing: TracingPolicy::Disabled,
-        },
-        upstreams: Vec::new(),
-        routes: Vec::new(),
-    };
+        })
+        .add_listener(listener)
+        .build()
+        .expect("config");
 
     let dir = std::env::temp_dir();
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

@@ -1,10 +1,13 @@
 use clap::Parser;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct UpstreamArgs {
+    #[arg(long, env = "UPSTREAM_BIND_ADDR", default_value = "0.0.0.0")]
+    pub bind_addr: IpAddr,
+
     #[arg(long, env = "HTTP_PORT", default_value = "8080")]
     pub http_port: u16,
 

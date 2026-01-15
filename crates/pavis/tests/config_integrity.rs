@@ -1,4 +1,7 @@
-use pavis_core::{AccessLogPolicy, Metrics, RuntimeConfig, ServiceName, Telemetry, WorkerCount};
+use pavis_core::{
+    AccessLogPolicy, ListenerBuilder, ListenerName, Metrics, RuntimeConfig, RuntimeConfigBuilder,
+    ServiceName, Telemetry, WorkerCount,
+};
 use pavis_pvs as pvs;
 use std::io::BufRead;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -9,24 +12,26 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 fn minimal_config() -> RuntimeConfig {
-    RuntimeConfig {
-        listeners: vec![pavis_core::Listener {
-            name: pavis_core::ListenerName("default".to_string()),
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-            workers: WorkerCount::Auto,
-            tls: pavis_core::TlsConfig::Disabled,
-        }],
-        telemetry: Telemetry {
+    let listener = ListenerBuilder::new()
+        .name(ListenerName("default".to_string()))
+        .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0))
+        .workers(WorkerCount::Auto)
+        .tls(pavis_core::TlsConfig::Disabled)
+        .build()
+        .expect("listener");
+
+    RuntimeConfigBuilder::new()
+        .telemetry(Telemetry {
             level: pavis_core::LogLevel::Info,
             pingora: pavis_core::LogLevel::Info,
             service_name: ServiceName("pavis".to_string()),
             metrics: Metrics::Disabled,
             access_log: AccessLogPolicy::Disabled,
             tracing: pavis_core::TracingPolicy::Disabled,
-        },
-        upstreams: vec![],
-        routes: vec![],
-    }
+        })
+        .add_listener(listener)
+        .build()
+        .expect("config")
 }
 
 fn get_binary_path() -> PathBuf {

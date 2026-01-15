@@ -36,7 +36,7 @@ cat <<-EOF > "$TEST_TMP/config.yaml"
 	  - name: "backend"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8081
+	        port: ${UPSTREAM_HTTP_PORT_V1}
 	routes:
 	  - host: "*"
 	    paths:
@@ -83,7 +83,7 @@ cat <<-EOF > "$TEST_TMP/config_v3.yaml"
 
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
 
-	upstreams: [{ name: "backend-v3", endpoints: [{ ip: "127.0.0.1", port: 8082 }] }]
+	upstreams: [{ name: "backend-v3", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }] }]
 
 	routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: "backend-v3", weight: 1 }] }] }]
 

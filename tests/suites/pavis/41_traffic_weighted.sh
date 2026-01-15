@@ -29,11 +29,11 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	  - name: "v1"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8081
+	        port: ${UPSTREAM_HTTP_PORT_V1}
 	  - name: "v2"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8082
+	        port: ${UPSTREAM_HTTP_PORT_V2}
 	routes:
 	  - host: "*"
 	    paths:
@@ -77,11 +77,11 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 
 	  - name: "v1"
 
-	    endpoints: [{ ip: "127.0.0.1", port: 8081 }]
+	    endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V1} }]
 
 	  - name: "v2"
 
-	    endpoints: [{ ip: "127.0.0.1", port: 8082 }]
+	    endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }]
 
 	routes:
 
@@ -173,7 +173,7 @@ cat <<-EOF > "$TEST_TMP/config_v3.yaml"
 
 
 
-	    endpoints: [{ ip: "127.0.0.1", port: 8081 }]
+	    endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V1} }]
 
 
 
@@ -181,7 +181,7 @@ cat <<-EOF > "$TEST_TMP/config_v3.yaml"
 
 
 
-	    endpoints: [{ ip: "127.0.0.1", port: 8082 }]
+	    endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }]
 
 
 

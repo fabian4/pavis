@@ -10,6 +10,7 @@ use std::num::NonZeroU32;
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub struct Upstream {
     pub id: UpstreamId,
     pub name: UpstreamName,

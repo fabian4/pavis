@@ -5,33 +5,34 @@ use pavis::router::Router;
 use pavis_core::{
     ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint, EndpointAddr, Host,
     HttpVersion, IdleTimeout, LoadBalancer, Path, PathMatch, Pool, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, RouteAction, Timeout, Upstream, UpstreamId, UpstreamName,
-    VirtualHost, Weight,
+    RewriteHost, RewritePath, RouteAction, Timeout, Upstream, UpstreamBuilder, UpstreamId,
+    UpstreamName, VirtualHost, Weight,
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU16, NonZeroU32};
 
 fn upstream(name: &str, id: u16, port: u16) -> Upstream {
-    Upstream {
-        id: UpstreamId(NonZeroU16::new(id).unwrap()),
-        name: UpstreamName(name.to_string()),
-        discovery: pavis_core::Discovery::Static,
-        balancer: LoadBalancer::Random,
-        protocol: HttpVersion::H1,
-        pool: Pool {
+    UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(id).unwrap()))
+        .name(UpstreamName(name.to_string()))
+        .discovery(pavis_core::Discovery::Static)
+        .balancer(LoadBalancer::Random)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
             max: ConnectionLimit::Unlimited,
-        },
-        tls: pavis_core::TlsPolicy::Disabled,
-        endpoints: vec![Endpoint {
+        })
+        .tls(pavis_core::TlsPolicy::Disabled)
+        .add_endpoint(Endpoint {
             address: EndpointAddr::Ip {
                 address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 port: pavis_core::Port(NonZeroU16::new(port).unwrap()),
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
-        }],
-    }
+        })
+        .build()
+        .expect("upstream")
 }
 
 #[test]

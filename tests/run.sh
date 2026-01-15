@@ -90,9 +90,26 @@ run_suite() {
     suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
     
     echo "▶️ SUITE: $suite_upper"
+    if ! can_bind_port; then
+        local case_count
+        case_count=$(ls "$SCRIPT_DIR/suites/$suite"/*.sh 2>/dev/null | wc -l | tr -d ' ')
+        TOTAL_CASES=$((TOTAL_CASES + case_count))
+        SKIPPED_CASES=$((SKIPPED_CASES + case_count))
+        echo "⏭️ SKIP  suite $suite (bind not permitted)"
+        return 0
+    fi
 
     if [[ "$suite" == "pavis" || "$suite" == "integrated" ]]; then
-        if ! start_upstreams "$suite"; then
+        local upstream_status=0
+        start_upstreams "$suite" || upstream_status=$?
+        if [ "$upstream_status" -eq 77 ]; then
+            local case_count
+            case_count=$(ls "$SCRIPT_DIR/suites/$suite"/*.sh 2>/dev/null | wc -l | tr -d ' ')
+            TOTAL_CASES=$((TOTAL_CASES + case_count))
+            SKIPPED_CASES=$((SKIPPED_CASES + case_count))
+            echo "⏭️ SKIP  suite $suite (upstreams unavailable)"
+            return 0
+        elif [ "$upstream_status" -ne 0 ]; then
             echo "❌ Critical: Failed to start upstreams for suite $suite"
             return 1
         fi

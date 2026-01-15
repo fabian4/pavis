@@ -8,6 +8,7 @@ use std::num::NonZeroU16;
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub struct Listener {
     pub name: ListenerName,
     pub address: SocketAddr,

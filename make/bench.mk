@@ -78,7 +78,7 @@ bench-system-all:
 
 # Cleanup system mode environment (delete kind cluster)
 bench-system-down:
-	@bash bench/scripts/cleanup.sh || true
+	@BENCH_CLEANUP_FORCE=true bash bench/scripts/cleanup.sh || true
 	@kind delete cluster --name pavis-bench 2>/dev/null || true
 
 # ============================================================================

@@ -23,7 +23,7 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
 # V1: Has a custom response header
 cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
-	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: 8081 }] }]
+	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V1} }] }]
 	routes:
 	  - host: "*"
 	    paths:
@@ -47,7 +47,7 @@ fi
 # V2: Removed the header policy entirely
 cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
-	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: 8081 }] }]
+	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V1} }] }]
 	routes:
 	  - host: "*"
 	    paths:

@@ -24,8 +24,10 @@ validate_inputs() {
   local bench_tls="${BENCH_TLS:-false}"
   local bench_metrics="${BENCH_METRICS:-false}"
   local output_dir="${BENCH_OUTPUT_DIR:-${BENCH_ROOT}/bench/output}"
-  local summary_path="${BENCH_SUMMARY_CSV:-$output_dir/summary.csv}"
-  local report_path="${BENCH_REPORT_MD:-$output_dir/report.md}"
+  local summary_path="${BENCH_SUMMARY_CSV:-}"
+  local report_path="${BENCH_REPORT_MD:-}"
+  local summary_path_set=0
+  local report_path_set=0
   local input_file=""
   local loadgen_warn="${LOADGEN_WARN:-0}"
   local background="${BENCH_BACKGROUND:-0}"
@@ -75,10 +77,12 @@ validate_inputs() {
         ;;
       --summary)
         summary_path="${args[$((i+1))]}"
+        summary_path_set=1
         i=$((i+2))
         ;;
       --report)
         report_path="${args[$((i+1))]}"
+        report_path_set=1
         i=$((i+2))
         ;;
       --input)
@@ -131,7 +135,12 @@ USAGE
     esac
   done
 
-  ensure_dir "$output_dir"
+  if [[ -n "${BENCH_SUMMARY_CSV:-}" ]]; then
+    summary_path_set=1
+  fi
+  if [[ -n "${BENCH_REPORT_MD:-}" ]]; then
+    report_path_set=1
+  fi
 
   if [[ -z "$profile" ]]; then
     case "${IS_CI:-}" in
@@ -169,6 +178,21 @@ USAGE
   if [[ "$mode" != "standalone" && "$mode" != "system" && "$mode" != "both" ]]; then
     exit_with_error "Invalid MODE: $mode (expected standalone, system, or unset for both)"
   fi
+
+  local mode_for_paths="$mode"
+  if [[ "$mode" == "both" ]]; then
+    mode_for_paths="standalone"
+  fi
+
+  if [[ "$summary_path_set" -eq 0 ]]; then
+    summary_path="${output_dir}/${mode_for_paths}/summary.csv"
+  fi
+  if [[ "$report_path_set" -eq 0 ]]; then
+    report_path="${output_dir}/${mode_for_paths}/report.md"
+  fi
+
+  ensure_dir "$output_dir"
+  ensure_dir "${output_dir}/${mode_for_paths}"
 
   # System mode constraints
   if [[ "$mode" == "system" || "$mode" == "both" ]]; then

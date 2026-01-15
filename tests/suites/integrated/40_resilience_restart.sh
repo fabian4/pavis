@@ -46,7 +46,7 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 # Publish V1
 cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
-	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: 8081 }] }]
+	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V1} }] }]
 	routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: "backend", weight: 1 }] }] }]
 EOF
 gen_pvs "$TEST_TMP/config_v1.yaml" "$TEST_TMP/config_v1.pvs"
@@ -77,7 +77,7 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 # 5. Publish V2
 cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
-	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: 8082 }] }]
+	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }] }]
 	routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: "backend", weight: 1 }] }] }]
 EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"

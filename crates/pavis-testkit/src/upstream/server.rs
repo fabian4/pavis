@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 
 use anyhow::Result;
 use axum::Router;
@@ -12,8 +12,8 @@ use crate::upstream::tls::{self, TlsConfigPaths};
 pub async fn run(args: UpstreamArgs) -> Result<()> {
     let shared_state = SharedState::new(args.instance_id.clone());
 
-    let http_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), args.http_port);
-    let https_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), args.https_port);
+    let http_addr = SocketAddr::new(args.bind_addr, args.http_port);
+    let https_addr = SocketAddr::new(args.bind_addr, args.https_port);
 
     let tls_config = if let (Some(cert), Some(key)) = (args.cert_path, args.key_path) {
         let paths = TlsConfigPaths {

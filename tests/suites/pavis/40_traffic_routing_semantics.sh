@@ -26,9 +26,9 @@ listeners:
     address: "127.0.0.1:$PORT_PAVIS"
 upstreams:
   - name: "backend-v1"
-    endpoints: [{ ip: "127.0.0.1", port: 8081 }]
+    endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V1} }]
   - name: "backend-v2"
-    endpoints: [{ ip: "127.0.0.1", port: 8082 }]
+    endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }]
 routes:
   - host: "*"
     paths:

@@ -2,17 +2,22 @@
 set -euo pipefail
 
 # Summarize benchmark results from raw outputs
-# Scans bench/output/{proxy}/{case}/ directories and aggregates into summary.csv
+# Scans bench/output/{mode}/{proxy}/{case}/ directories and aggregates into summary.csv
 #
 # Usage:
 #   bash bench/scripts/summarize.sh [output_dir]
 #
 # Environment:
-#   OUTPUT_DIR: Override default bench/output directory
+#   OUTPUT_DIR: Override default bench/output/standalone directory
+#   PROFILE_FILTER: Optional bench_profile filter (e.g. github or workstation)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUTPUT_DIR="${1:-${OUTPUT_DIR:-${ROOT_DIR}/output}}"
+OUTPUT_DIR="${1:-${OUTPUT_DIR:-${ROOT_DIR}/output/standalone}}"
 SUMMARY_CSV="${OUTPUT_DIR}/summary.csv"
+MODE_FILTER="standalone"
+PROFILE_FILTER="${PROFILE_FILTER:-}"
+PROFILE_DETECTED=""
+PROFILE_MIXED=0
 
 # Helper functions
 parse_wrk_rps() {
@@ -50,6 +55,30 @@ parse_wrk_errors() {
     return
   fi
   echo "$line" | sed 's/,//g' | awk '{sum=0; for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) sum+=$i; print sum}'
+}
+
+is_number() {
+  local value="$1"
+  [[ "$value" =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]
+}
+
+csv_escape() {
+  local value="$1"
+  value=${value//\"/\"\"}
+  printf '"%s"' "$value"
+}
+
+csv_field() {
+  local value="$1"
+  if [ -z "$value" ]; then
+    echo ""
+    return
+  fi
+  if is_number "$value"; then
+    echo "$value"
+    return
+  fi
+  csv_escape "$value"
 }
 
 median_value() {
@@ -174,7 +203,7 @@ emit_row() {
   local bench_proxy_cpu_limit="${35}"
   local bench_proxy_mem_limit="${36}"
 
-  echo "${git_sha},${iteration},${aggregate},${phase},${proxy},${case_name},${case_type},${runs},${achieved_rps},${p50_ms},${p90_ms},${p99_ms},${errors},${dropped},${rps_iqr},${p99_iqr},${backend_cpu},${proxy_cpu},${peak_mem},${target_rps},${timestamp},${cpu_model},${kernel},${bench_profile},${bench_mode},${bench_payload_size},${bench_tls},${bench_metrics},${backend_cpuset},${proxy_cpuset},${bench_docker_compose},${bench_host_cores},${bench_host_cpuset_effective},${bench_host_mem_total},${bench_proxy_cpu_limit},${bench_proxy_mem_limit}"
+  echo "$(csv_field "$git_sha"),$(csv_field "$iteration"),$(csv_field "$aggregate"),$(csv_field "$phase"),$(csv_field "$proxy"),$(csv_field "$case_name"),$(csv_field "$case_type"),$(csv_field "$runs"),$(csv_field "$achieved_rps"),$(csv_field "$p50_ms"),$(csv_field "$p90_ms"),$(csv_field "$p99_ms"),$(csv_field "$errors"),$(csv_field "$dropped"),$(csv_field "$rps_iqr"),$(csv_field "$p99_iqr"),$(csv_field "$backend_cpu"),$(csv_field "$proxy_cpu"),$(csv_field "$peak_mem"),$(csv_field "$target_rps"),$(csv_field "$timestamp"),$(csv_field "$cpu_model"),$(csv_field "$kernel"),$(csv_field "$bench_profile"),$(csv_field "$bench_mode"),$(csv_field "$bench_payload_size"),$(csv_field "$bench_tls"),$(csv_field "$bench_metrics"),$(csv_field "$backend_cpuset"),$(csv_field "$proxy_cpuset"),$(csv_field "$bench_docker_compose"),$(csv_field "$bench_host_cores"),$(csv_field "$bench_host_cpuset_effective"),$(csv_field "$bench_host_mem_total"),$(csv_field "$bench_proxy_cpu_limit"),$(csv_field "$bench_proxy_mem_limit")"
 }
 
 # Parse single test case
@@ -240,6 +269,21 @@ parse_case() {
     bench_proxy_mem_limit=$(jq -r '.bench_proxy_mem_limit // empty' "${case_dir}/meta.json")
     backend_container=$(jq -r '.backend_container // empty' "${case_dir}/meta.json")
     proxy_container=$(jq -r '.proxy_container // empty' "${case_dir}/meta.json")
+  else
+    echo "error: missing meta.json in ${case_dir} (required for profile/mode filtering)" >&2
+    return 1
+  fi
+
+  if [ "$bench_mode" != "$MODE_FILTER" ]; then
+    return 0
+  fi
+  if [ -z "$PROFILE_DETECTED" ]; then
+    PROFILE_DETECTED="$bench_profile"
+  elif [ "$bench_profile" != "$PROFILE_DETECTED" ]; then
+    PROFILE_MIXED=1
+  fi
+  if [ -n "$PROFILE_FILTER" ] && [ "$bench_profile" != "$PROFILE_FILTER" ]; then
+    return 0
   fi
 
   # Determine test type by checking which files exist
@@ -420,7 +464,12 @@ parse_case() {
 main() {
   if [ ! -d "$OUTPUT_DIR" ]; then
     echo "error: output directory not found: $OUTPUT_DIR" >&2
-    echo "Run benchmarks first: make bench" >&2
+    echo "Run benchmarks first: MODE=standalone BENCH_PROFILE=github make bench" >&2
+    exit 1
+  fi
+
+  if [ -d "${OUTPUT_DIR}/standalone" ] || [ -d "${OUTPUT_DIR}/system" ]; then
+    echo "error: output directory should be a mode root like bench/output/standalone" >&2
     exit 1
   fi
 
@@ -455,7 +504,17 @@ main() {
 
   if [ "$found_results" = "0" ]; then
     echo "warn: no benchmark results found in $OUTPUT_DIR" >&2
-    echo "Run benchmarks first: make bench" >&2
+    echo "Run benchmarks first: MODE=standalone BENCH_PROFILE=github make bench" >&2
+    exit 1
+  fi
+
+  if [ "$PROFILE_MIXED" = "1" ]; then
+    echo "error: mixed bench_profile values detected in $OUTPUT_DIR" >&2
+    exit 1
+  fi
+
+  if [ "$(wc -l < "$SUMMARY_CSV")" -le 1 ]; then
+    echo "error: no standalone rows found in $OUTPUT_DIR" >&2
     exit 1
   fi
 

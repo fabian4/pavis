@@ -482,24 +482,26 @@ routes: []
         };
         let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
 
-        let config = pavis_core::RuntimeConfig {
-            listeners: vec![pavis_core::Listener {
-                name: pavis_core::ListenerName("default".to_string()),
-                address: "0.0.0.0:8080".parse().unwrap(),
-                workers: pavis_core::WorkerCount::Auto,
-                tls: pavis_core::TlsConfig::Disabled,
-            }],
-            telemetry: pavis_core::Telemetry {
+        let listener = pavis_core::ListenerBuilder::new()
+            .name(pavis_core::ListenerName("default".to_string()))
+            .address("0.0.0.0:8080".parse().unwrap())
+            .workers(pavis_core::WorkerCount::Auto)
+            .tls(pavis_core::TlsConfig::Disabled)
+            .build()
+            .expect("listener");
+
+        let config = pavis_core::RuntimeConfigBuilder::new()
+            .telemetry(pavis_core::Telemetry {
                 level: pavis_core::LogLevel::Info,
                 pingora: pavis_core::LogLevel::Info,
                 service_name: pavis_core::ServiceName("pavis".to_string()),
                 metrics: pavis_core::Metrics::Disabled,
                 access_log: pavis_core::AccessLogPolicy::Disabled,
                 tracing: pavis_core::TracingPolicy::Disabled,
-            },
-            upstreams: vec![],
-            routes: vec![],
-        };
+            })
+            .add_listener(listener)
+            .build()
+            .expect("config");
 
         // This config will exceed 10 bytes when serialized
         let policy = RetryPolicy {

@@ -337,23 +337,25 @@ mod tests {
 
     #[test]
     fn test_max_threads_logic() {
-        use pavis_core::{Listener, ListenerName, TlsConfig, WorkerCount};
+        use pavis_core::{ListenerBuilder, ListenerName, TlsConfig, WorkerCount};
         use std::net::{IpAddr, Ipv4Addr, SocketAddr};
         use std::num::NonZeroU16;
 
-        let listener_auto = Listener {
-            name: ListenerName("auto".to_string()),
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
-            workers: WorkerCount::Auto,
-            tls: TlsConfig::Disabled,
-        };
+        let listener_auto = ListenerBuilder::new()
+            .name(ListenerName("auto".to_string()))
+            .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080))
+            .workers(WorkerCount::Auto)
+            .tls(TlsConfig::Disabled)
+            .build()
+            .expect("listener auto");
 
-        let listener_count = Listener {
-            name: ListenerName("count".to_string()),
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081),
-            workers: WorkerCount::Count(NonZeroU16::new(4).unwrap()),
-            tls: TlsConfig::Disabled,
-        };
+        let listener_count = ListenerBuilder::new()
+            .name(ListenerName("count".to_string()))
+            .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081))
+            .workers(WorkerCount::Count(NonZeroU16::new(4).unwrap()))
+            .tls(TlsConfig::Disabled)
+            .build()
+            .expect("listener count");
 
         let listeners = [listener_auto, listener_count];
         let max_threads = listeners

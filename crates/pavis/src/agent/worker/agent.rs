@@ -180,7 +180,8 @@ impl ConfigAgent {
                 return Err(err.into());
             }
         };
-        let validated = crate::load::assume_validated(config);
+        // SAFETY: agent receives `.pvs` artifacts which are canonically validated.
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
         let state = RuntimeState::from_config(&validated)?;
 
         tokio::fs::rename(&tmp_path, &self.lkg_path).await?;

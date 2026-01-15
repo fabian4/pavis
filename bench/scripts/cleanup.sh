@@ -20,6 +20,13 @@ cleanup_system_mode() {
 
 cleanup_environment() {
   load_persisted_env
+
+  # Skip cleanup on failure if BENCH_CLEANUP_ON_FAILURE=false (for CI debugging)
+  if [[ "${BENCH_CLEANUP_ON_FAILURE:-true}" == "false" && "${BENCH_CLEANUP_FORCE:-false}" != "true" ]]; then
+    log_info "Skipping cleanup (BENCH_CLEANUP_ON_FAILURE=false). Run 'make bench-system-down' to cleanup manually."
+    return 0
+  fi
+
   log_info "Cleaning up benchmark artifacts"
 
   # System mode cleanup

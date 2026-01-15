@@ -53,6 +53,54 @@ type xdsServer struct {
 	mu      sync.Mutex
 }
 
+// Callbacks implements the go-control-plane callbacks interface
+type callbacks struct{}
+
+func (cb *callbacks) OnStreamOpen(ctx context.Context, id int64, typ string) error {
+	log.Printf("Stream opened: id=%d type=%s", id, typ)
+	return nil
+}
+
+func (cb *callbacks) OnStreamClosed(id int64, node *core.Node) {
+	log.Printf("Stream closed: id=%d", id)
+}
+
+func (cb *callbacks) OnStreamRequest(id int64, req *discoverygrpc.DiscoveryRequest) error {
+	log.Printf("Stream request: id=%d node=%s type=%s version=%s", id, req.Node.Id, req.TypeUrl, req.VersionInfo)
+	return nil
+}
+
+func (cb *callbacks) OnStreamResponse(ctx context.Context, id int64, req *discoverygrpc.DiscoveryRequest, resp *discoverygrpc.DiscoveryResponse) {
+	log.Printf("Stream response: id=%d type=%s version=%s", id, resp.TypeUrl, resp.VersionInfo)
+}
+
+func (cb *callbacks) OnFetchRequest(ctx context.Context, req *discoverygrpc.DiscoveryRequest) error {
+	log.Printf("Fetch request: node=%s type=%s version=%s", req.Node.Id, req.TypeUrl, req.VersionInfo)
+	return nil
+}
+
+func (cb *callbacks) OnFetchResponse(req *discoverygrpc.DiscoveryRequest, resp *discoverygrpc.DiscoveryResponse) {
+	log.Printf("Fetch response: type=%s version=%s", resp.TypeUrl, resp.VersionInfo)
+}
+
+func (cb *callbacks) OnDeltaStreamOpen(ctx context.Context, id int64, typ string) error {
+	log.Printf("Delta stream opened: id=%d type=%s", id, typ)
+	return nil
+}
+
+func (cb *callbacks) OnDeltaStreamClosed(id int64, node *core.Node) {
+	log.Printf("Delta stream closed: id=%d", id)
+}
+
+func (cb *callbacks) OnStreamDeltaRequest(id int64, req *discoverygrpc.DeltaDiscoveryRequest) error {
+	log.Printf("Delta stream request: id=%d node=%s type=%s", id, req.Node.Id, req.TypeUrl)
+	return nil
+}
+
+func (cb *callbacks) OnStreamDeltaResponse(id int64, req *discoverygrpc.DeltaDiscoveryRequest, resp *discoverygrpc.DeltaDiscoveryResponse) {
+	log.Printf("Delta stream response: id=%d type=%s", id, resp.TypeUrl)
+}
+
 func newXDSServer() *xdsServer {
 	return &xdsServer{
 		cache:   cache.NewSnapshotCache(false, cache.IDHash{}, nil),
@@ -114,13 +162,21 @@ func (s *xdsServer) makeSnapshot() (*cache.Snapshot, error) {
 		}},
 	}
 
-	// Create HTTP connection manager
+	// Create HTTP connection manager with RDS reference
 	routerConfig, _ := anypb.New(&router.Router{})
 	manager := &hcm.HttpConnectionManager{
 		CodecType:  hcm.HttpConnectionManager_AUTO,
 		StatPrefix: "ingress_http",
-		RouteSpecifier: &hcm.HttpConnectionManager_RouteConfig{
-			RouteConfig: routeConfig,
+		RouteSpecifier: &hcm.HttpConnectionManager_Rds{
+			Rds: &hcm.Rds{
+				ConfigSource: &core.ConfigSource{
+					ResourceApiVersion: core.ApiVersion_V3,
+					ConfigSourceSpecifier: &core.ConfigSource_Ads{
+						Ads: &core.AggregatedConfigSource{},
+					},
+				},
+				RouteConfigName: routeConfigName,
+			},
 		},
 		HttpFilters: []*hcm.HttpFilter{{
 			Name: wellknown.Router,
@@ -163,10 +219,20 @@ func (s *xdsServer) makeSnapshot() (*cache.Snapshot, error) {
 			resource.ClusterType:  {upstreamCluster},
 			resource.RouteType:    {routeConfig},
 			resource.ListenerType: {listenerConfig},
+			resource.EndpointType: {},
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
 
-	return snapshot, err
+	// Validate snapshot consistency
+	if err := snapshot.Consistent(); err != nil {
+		log.Printf("Snapshot inconsistency: %v", err)
+		return nil, fmt.Errorf("snapshot inconsistent: %w", err)
+	}
+
+	return snapshot, nil
 }
 
 func (s *xdsServer) updateSnapshot() error {
@@ -176,10 +242,13 @@ func (s *xdsServer) updateSnapshot() error {
 	s.version++
 	snapshot, err := s.makeSnapshot()
 	if err != nil {
+		log.Printf("Failed to create snapshot: %v", err)
 		return fmt.Errorf("failed to create snapshot: %w", err)
 	}
 
+	log.Printf("Setting snapshot for node %s with version %d", nodeID, s.version)
 	if err := s.cache.SetSnapshot(context.Background(), nodeID, snapshot); err != nil {
+		log.Printf("Failed to set snapshot: %v", err)
 		return fmt.Errorf("failed to set snapshot: %w", err)
 	}
 
@@ -227,9 +296,10 @@ func main() {
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
-	// Register xDS services
+	// Register xDS services with callbacks
 	// The server.NewServer returns an implementation of all xDS services
-	srv := server.NewServer(ctx, xds.cache, nil)
+	cb := &callbacks{}
+	srv := server.NewServer(ctx, xds.cache, cb)
 	discoverygrpc.RegisterAggregatedDiscoveryServiceServer(grpcServer, srv)
 	endpointservice.RegisterEndpointDiscoveryServiceServer(grpcServer, srv)
 	clusterservice.RegisterClusterDiscoveryServiceServer(grpcServer, srv)

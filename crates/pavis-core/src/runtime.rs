@@ -1,3 +1,4 @@
+mod builder;
 mod headers;
 mod routing;
 mod server;
@@ -5,6 +6,7 @@ mod telemetry;
 mod types;
 mod upstream;
 
+pub use builder::{BuilderError, ListenerBuilder, RuntimeConfigBuilder, UpstreamBuilder};
 pub use headers::{Headers, HeadersPolicy};
 pub use routing::{
     Destination, PathMatch, Principal, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED,
@@ -33,6 +35,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+#[non_exhaustive]
 pub struct RuntimeConfig {
     pub listeners: Vec<Listener>,
     pub telemetry: Telemetry,

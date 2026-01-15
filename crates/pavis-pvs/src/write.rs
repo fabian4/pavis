@@ -48,29 +48,31 @@ mod tests {
     use super::write;
     use crate::header::{HEADER_SIZE, PAVIS_MAGIC};
     use pavis_core::{
-        AccessLogPolicy, Listener, ListenerName, Metrics, RuntimeConfig, ServiceName, Telemetry,
-        WorkerCount,
+        AccessLogPolicy, ListenerName, Metrics, RuntimeConfig, RuntimeConfigBuilder, ServiceName,
+        Telemetry, TlsConfig, WorkerCount,
     };
 
     fn minimal_config() -> RuntimeConfig {
-        RuntimeConfig {
-            listeners: vec![Listener {
-                name: ListenerName("default".to_string()),
-                address: "127.0.0.1:8080".parse().expect("addr"),
-                workers: WorkerCount::Auto,
-                tls: pavis_core::TlsConfig::Disabled,
-            }],
-            telemetry: Telemetry {
+        let listener = pavis_core::ListenerBuilder::new()
+            .name(ListenerName("default".to_string()))
+            .address("127.0.0.1:8080".parse().expect("addr"))
+            .workers(WorkerCount::Auto)
+            .tls(TlsConfig::Disabled)
+            .build()
+            .expect("listener");
+
+        RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
                 level: pavis_core::LogLevel::Info,
                 pingora: pavis_core::LogLevel::Info,
                 service_name: ServiceName("pavis".to_string()),
                 metrics: Metrics::Disabled,
                 access_log: AccessLogPolicy::Stdout,
                 tracing: pavis_core::TracingPolicy::Disabled,
-            },
-            upstreams: Vec::new(),
-            routes: Vec::new(),
-        }
+            })
+            .add_listener(listener)
+            .build()
+            .expect("config")
     }
 
     #[test]

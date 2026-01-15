@@ -84,7 +84,9 @@ bench_print_case_header "$CASE_NAME" "$PROXY"
 PROXY_URL="http://localhost:${PROXY_PORT}${REQUEST_PATH}"
 BACKEND_URL="http://localhost:${BACKEND_PORT}/healthz"
 
-RESULTS_ROOT="${ROOT_DIR}/bench/output/${PROXY}/${CASE_NAME}${BENCH_CASE_SUFFIX:+__${BENCH_CASE_SUFFIX}}"
+OUTPUT_ROOT="${BENCH_OUTPUT_DIR:-${ROOT_DIR}/bench/output}"
+BENCH_MODE="${BENCH_MODE:-standalone}"
+RESULTS_ROOT="${OUTPUT_ROOT}/${BENCH_MODE}/${PROXY}/${CASE_NAME}${BENCH_CASE_SUFFIX:+__${BENCH_CASE_SUFFIX}}"
 # TIMESTAMP removed - using simple path
 BASE_DIR="${RESULTS_ROOT}"
 

@@ -196,24 +196,26 @@ mod tests {
 
         let lkg = dir.join("config.pvs");
 
-        let runtime_config = pavis_core::RuntimeConfig {
-            listeners: vec![pavis_core::Listener {
-                name: pavis_core::ListenerName("default".to_string()),
-                address: "127.0.0.1:8080".parse().unwrap(),
-                workers: pavis_core::WorkerCount::Auto,
-                tls: pavis_core::TlsConfig::Disabled,
-            }],
-            telemetry: pavis_core::Telemetry {
+        let listener = pavis_core::ListenerBuilder::new()
+            .name(pavis_core::ListenerName("default".to_string()))
+            .address("127.0.0.1:8080".parse().unwrap())
+            .workers(pavis_core::WorkerCount::Auto)
+            .tls(pavis_core::TlsConfig::Disabled)
+            .build()
+            .expect("listener");
+
+        let runtime_config = pavis_core::RuntimeConfigBuilder::new()
+            .telemetry(pavis_core::Telemetry {
                 level: pavis_core::LogLevel::Info,
                 pingora: pavis_core::LogLevel::Info,
                 service_name: pavis_core::ServiceName("pavis".to_string()),
                 metrics: pavis_core::Metrics::Disabled,
                 access_log: pavis_core::AccessLogPolicy::Disabled,
                 tracing: pavis_core::TracingPolicy::Disabled,
-            },
-            upstreams: vec![],
-            routes: vec![],
-        };
+            })
+            .add_listener(listener)
+            .build()
+            .expect("runtime config");
 
         let validated = pavis_core::validate_runtime(runtime_config).expect("validate");
         pavis_pvs::write(&lkg, validated.as_ref()).unwrap();

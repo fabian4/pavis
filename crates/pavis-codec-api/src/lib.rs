@@ -241,10 +241,10 @@ mod tests {
     use bytes::Bytes;
     use pavis_core::{
         AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration,
-        Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout, Listener, ListenerName,
-        LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost,
-        RewritePath, RouteAction, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, Upstream,
-        UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
+        Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout, ListenerName, LoadBalancer,
+        Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost, RewritePath,
+        RouteAction, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, UpstreamId,
+        UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::{NonZeroU16, NonZeroU32};
@@ -300,42 +300,48 @@ mod tests {
     }
 
     fn valid_config() -> pavis_core::RuntimeConfig {
-        pavis_core::RuntimeConfig {
-            listeners: vec![Listener {
-                name: ListenerName("default".to_string()),
-                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
-                workers: WorkerCount::Auto,
-                tls: TlsConfig::Disabled,
-            }],
-            telemetry: Telemetry {
+        let listener = pavis_core::ListenerBuilder::new()
+            .name(ListenerName("default".to_string()))
+            .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080))
+            .workers(WorkerCount::Auto)
+            .tls(TlsConfig::Disabled)
+            .build()
+            .expect("listener");
+
+        let upstream = pavis_core::UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("upstream1".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .pool(Pool {
+                idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
+                connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
+                max: ConnectionLimit::Unlimited,
+            })
+            .tls(TlsPolicy::Disabled)
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Ip {
+                    address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .expect("upstream");
+
+        pavis_core::RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
                 level: pavis_core::LogLevel::Info,
                 pingora: pavis_core::LogLevel::Info,
                 service_name: ServiceName("pavis".to_string()),
                 metrics: Metrics::Disabled,
                 access_log: AccessLogPolicy::Stdout,
                 tracing: pavis_core::TracingPolicy::Disabled,
-            },
-            upstreams: vec![Upstream {
-                id: UpstreamId(NonZeroU16::new(1).unwrap()),
-                name: UpstreamName("upstream1".to_string()),
-                discovery: Discovery::Static,
-                balancer: LoadBalancer::RoundRobin,
-                protocol: HttpVersion::H1,
-                pool: Pool {
-                    idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
-                    connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-                    max: ConnectionLimit::Unlimited,
-                },
-                tls: TlsPolicy::Disabled,
-                endpoints: vec![Endpoint {
-                    address: EndpointAddr::Ip {
-                        address: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                        port: Port(NonZeroU16::new(8080).unwrap()),
-                    },
-                    weight: Weight(NonZeroU16::new(1).unwrap()),
-                }],
-            }],
-            routes: vec![VirtualHost {
+            })
+            .add_listener(listener)
+            .add_upstream(upstream)
+            .add_route(VirtualHost {
                 host: Host("*".to_string()),
                 paths: vec![pavis_core::Route {
                     matcher: PathMatch::Prefix {
@@ -355,8 +361,9 @@ mod tests {
                         weight: Weight(NonZeroU16::new(1).unwrap()),
                     }]),
                 }],
-            }],
-        }
+            })
+            .build()
+            .expect("config")
     }
 
     fn invalid_config() -> pavis_core::RuntimeConfig {

@@ -22,7 +22,7 @@ run_mock_relay "$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
 
 # 2. Prepare Configs
-# V1: Routes to backend-v1 (8081)
+# V1: Routes to backend-v1 (${UPSTREAM_HTTP_PORT_V1})
 cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	listeners:
 	  - name: "default"
@@ -31,7 +31,7 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	  - name: "backend-v1"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8081
+	        port: ${UPSTREAM_HTTP_PORT_V1}
 	routes:
 	  - host: "*"
 	    paths:
@@ -43,7 +43,7 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 EOF
 gen_pvs "$TEST_TMP/config_v1.yaml" "$TEST_TMP/config_v1.pvs"
 
-# V2: Routes to backend-v2 (8082)
+# V2: Routes to backend-v2 (${UPSTREAM_HTTP_PORT_V2})
 cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	listeners:
 	  - name: "default"
@@ -52,7 +52,7 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	  - name: "backend-v2"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8082
+	        port: ${UPSTREAM_HTTP_PORT_V2}
 	routes:
 	  - host: "*"
 	    paths:

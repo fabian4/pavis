@@ -117,7 +117,7 @@ jobs:
 
       - name: Run System Mode Benchmarks (pavis)
         id: bench
-        run: MODE=system PROXY=pavis BENCH_PROFILE=github make bench-system
+        run: MODE=system PROXY=pavis BENCH_PROFILE=github BENCH_CLEANUP_ON_FAILURE=false make bench-system
         continue-on-error: true
 
       - name: Debug on failure

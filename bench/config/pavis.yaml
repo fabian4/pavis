@@ -21,6 +21,10 @@ upstreams:
 routes:
   - host: "*"
     paths:
+      - matcher: !exact
+          path: "/health"
+        status: 200
+        body: "OK"
       - matcher: !prefix
           path: "/"
         destinations:

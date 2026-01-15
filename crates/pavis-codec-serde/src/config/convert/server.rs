@@ -3,7 +3,8 @@ use std::net::SocketAddr;
 use std::num::NonZeroU16;
 
 use pavis_core::{
-    ClientAuth, Listener as RuntimeListener, ListenerName, Path, TlsConfig, WorkerCount,
+    ClientAuth, Listener as RuntimeListener, ListenerBuilder, ListenerName, Path, TlsConfig,
+    WorkerCount,
 };
 
 use crate::config::types::{ClientAuthConfig, Listener, TlsConfig as SerdeTls};
@@ -49,12 +50,13 @@ pub(super) fn to_runtime(listener: Listener) -> Result<RuntimeListener> {
         }
     };
 
-    Ok(RuntimeListener {
-        name: ListenerName(listener.name),
-        address,
-        workers,
-        tls,
-    })
+    ListenerBuilder::new()
+        .name(ListenerName(listener.name))
+        .address(address)
+        .workers(workers)
+        .tls(tls)
+        .build()
+        .map_err(|err| anyhow::anyhow!(err))
 }
 
 pub(super) fn from_runtime(listener: RuntimeListener) -> Listener {
@@ -106,7 +108,7 @@ pub(super) fn from_runtime(listener: RuntimeListener) -> Listener {
 mod tests {
     use super::*;
     use crate::config::types::{Listener, TlsConfig as SerdeTls};
-    use pavis_core::{ListenerName, Path, TlsConfig, WorkerCount};
+    use pavis_core::{ListenerBuilder, ListenerName, Path, TlsConfig, WorkerCount};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::NonZeroU16;
 
@@ -152,16 +154,17 @@ mod tests {
 
     #[test]
     fn from_runtime_round_trips_workers_and_tls() {
-        let runtime = pavis_core::Listener {
-            name: ListenerName("default".to_string()),
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
-            workers: WorkerCount::Count(NonZeroU16::new(4).unwrap()),
-            tls: TlsConfig::Enabled {
+        let runtime = ListenerBuilder::new()
+            .name(ListenerName("default".to_string()))
+            .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080))
+            .workers(WorkerCount::Count(NonZeroU16::new(4).unwrap()))
+            .tls(TlsConfig::Enabled {
                 cert_path: Path("cert.pem".to_string()),
                 key_path: Path("key.pem".to_string()),
                 client_auth: pavis_core::ClientAuth::Disabled,
-            },
-        };
+            })
+            .build()
+            .expect("listener");
 
         let serde = from_runtime(runtime);
         assert_eq!(serde.workers, Some(4));
@@ -171,12 +174,13 @@ mod tests {
         assert_eq!(tls.key_path.as_deref(), Some("key.pem"));
 
         // Test Auto workers
-        let runtime_auto = pavis_core::Listener {
-            name: ListenerName("auto".to_string()),
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081),
-            workers: WorkerCount::Auto,
-            tls: TlsConfig::Disabled,
-        };
+        let runtime_auto = ListenerBuilder::new()
+            .name(ListenerName("auto".to_string()))
+            .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081))
+            .workers(WorkerCount::Auto)
+            .tls(TlsConfig::Disabled)
+            .build()
+            .expect("listener");
         let serde_auto = from_runtime(runtime_auto);
         assert_eq!(serde_auto.workers, None);
     }

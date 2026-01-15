@@ -29,7 +29,7 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	  - name: "backend-v1"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8081
+	        port: ${UPSTREAM_HTTP_PORT_V1}
 	routes:
 	  - host: "*"
 	    paths:
@@ -73,7 +73,7 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	  - name: "backend-v2"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8082
+	        port: ${UPSTREAM_HTTP_PORT_V2}
 	routes:
 	  - host: "*"
 	    paths:
@@ -98,7 +98,7 @@ cat <<-EOF > "$TEST_TMP/config_v3.yaml"
 	  - name: "backend-v3"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8082
+	        port: ${UPSTREAM_HTTP_PORT_V2}
 	routes:
 	  - host: "*"
 	    paths:

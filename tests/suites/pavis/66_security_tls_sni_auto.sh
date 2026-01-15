@@ -37,7 +37,7 @@ upstreams:
       ca_bundle_path: "$CERTS_DIR/ca.pem"
     endpoints:
       - address: "localhost"
-        port: 8443
+        port: ${UPSTREAM_HTTPS_PORT_V1}
 routes:
   - host: "*"
     paths:
@@ -66,7 +66,7 @@ upstreams:
       sni_mode: auto
     endpoints:
       - address: "127.0.0.1"
-        port: 8443
+        port: ${UPSTREAM_HTTPS_PORT_V1}
 routes:
   - host: "*"
     paths:

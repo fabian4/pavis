@@ -26,7 +26,7 @@ PORT_RELAY=$(get_free_port)
 run_mock_relay "$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
 
-# V1: HTTP (Port 8081)
+# V1: HTTP (Port ${UPSTREAM_HTTP_PORT_V1})
 cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	listeners:
 	  - name: "default"
@@ -35,7 +35,7 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	  - name: "backend"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8081
+	        port: ${UPSTREAM_HTTP_PORT_V1}
 	routes:
 	  - host: "*"
 	    paths:
@@ -63,7 +63,7 @@ if [ "$tls_enabled" == "True" ] || [ "$tls_enabled" == "true" ]; then
     exit 1
 fi
 
-# V2: HTTPS (Port 8443)
+# V2: HTTPS (Port ${UPSTREAM_HTTPS_PORT_V1})
 cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	listeners:
 	  - name: "default"
@@ -78,7 +78,7 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	      ca_bundle: "$TEST_TMP/ca.pem"
 	    endpoints:
 	      - ip: "127.0.0.1"
-	        port: 8443
+	        port: ${UPSTREAM_HTTPS_PORT_V1}
 	routes:
 	  - host: "*"
 	    paths:

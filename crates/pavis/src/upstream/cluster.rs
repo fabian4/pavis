@@ -106,8 +106,8 @@ mod tests {
     use super::Cluster;
     use pavis_core::{
         ConnectTimeout, ConnectionLimit, Discovery, Endpoint, EndpointAddr, HttpVersion,
-        IdleTimeout, LoadBalancer, Pool, Port, TlsPolicy, Upstream, UpstreamId, UpstreamName,
-        Weight,
+        IdleTimeout, LoadBalancer, Pool, Port, TlsPolicy, UpstreamBuilder, UpstreamId,
+        UpstreamName, Weight,
     };
     use std::net::{IpAddr, Ipv4Addr};
     use std::num::NonZeroU16;
@@ -140,23 +140,22 @@ mod tests {
 
     #[test]
     fn test_weighted_round_robin_respects_weights() {
-        let upstream = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test".to_string()),
-            discovery: pavis_core::Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(pavis_core::Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
                 max: ConnectionLimit::Unlimited,
-            },
-            tls: TlsPolicy::Disabled,
-            endpoints: vec![
-                make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 3),
-                make_endpoint(Ipv4Addr::new(127, 0, 0, 2), 8081, 1),
-            ],
-        };
+            })
+            .tls(TlsPolicy::Disabled)
+            .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 3))
+            .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 2), 8081, 1))
+            .build()
+            .expect("upstream");
 
         let cluster = Cluster::new(upstream);
 
@@ -172,24 +171,23 @@ mod tests {
 
     #[test]
     fn test_round_robin_cycles_endpoints_evenly() {
-        let upstream = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test-upstream".to_string()),
-            discovery: pavis_core::Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test-upstream".to_string()))
+            .discovery(pavis_core::Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
                 max: ConnectionLimit::Unlimited,
-            },
-            tls: TlsPolicy::Disabled,
-            endpoints: vec![
-                make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8081, 1),
-                make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8082, 1),
-                make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8083, 1),
-            ],
-        };
+            })
+            .tls(TlsPolicy::Disabled)
+            .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8081, 1))
+            .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8082, 1))
+            .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8083, 1))
+            .build()
+            .expect("upstream");
 
         let cluster = Cluster::new(upstream);
 
@@ -208,23 +206,22 @@ mod tests {
 
     #[test]
     fn test_concurrent_round_robin() {
-        let upstream = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("concurrent-upstream".to_string()),
-            discovery: pavis_core::Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("concurrent-upstream".to_string()))
+            .discovery(pavis_core::Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
                 max: ConnectionLimit::Unlimited,
-            },
-            tls: TlsPolicy::Disabled,
-            endpoints: vec![
-                make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 80, 1),
-                make_endpoint(Ipv4Addr::new(127, 0, 0, 2), 80, 1),
-            ],
-        };
+            })
+            .tls(TlsPolicy::Disabled)
+            .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 80, 1))
+            .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 2), 80, 1))
+            .build()
+            .expect("upstream");
 
         let cluster = Arc::new(Cluster::new(upstream));
 
@@ -248,20 +245,20 @@ mod tests {
 
     #[test]
     fn test_cluster_update_endpoints() {
-        let u = Upstream {
-            id: UpstreamId(NonZeroU16::new(1).unwrap()),
-            name: UpstreamName("test".to_string()),
-            discovery: Discovery::Static,
-            balancer: LoadBalancer::RoundRobin,
-            protocol: HttpVersion::H1,
-            pool: Pool {
+        let u = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
                 max: ConnectionLimit::Unlimited,
-            },
-            tls: TlsPolicy::Disabled,
-            endpoints: vec![],
-        };
+            })
+            .tls(TlsPolicy::Disabled)
+            .build()
+            .expect("upstream");
         let cluster = Cluster::new(u);
         assert!(cluster.current_endpoints().is_empty());
 

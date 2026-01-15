@@ -17,7 +17,7 @@ cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 
 PORT_PAVIS=$(get_free_port)
-UPSTREAM_PORT=8081
+UPSTREAM_PORT=${UPSTREAM_HTTP_PORT_V1}
 ACCESS_LOG_PATH="$TEST_TMP/access.log"
 
 # 1. Config with Access Log
@@ -71,7 +71,7 @@ upstreams:
   - name: "backend-v2"
     endpoints:
       - ip: "127.0.0.1"
-        port: 8082
+        port: ${UPSTREAM_HTTP_PORT_V2}
 routes:
   - host: "*"
     paths:

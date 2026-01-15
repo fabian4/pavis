@@ -4,7 +4,10 @@ use axum::response::IntoResponse;
 use axum::{Router, routing::get};
 use pavis::agent::{Backoff, ConfigAgent, PollOutcome, lkg_version, load_lkg_config};
 use pavis::state::{RuntimeState, RuntimeStateHandle};
-use pavis_core::{AccessLogPolicy, Metrics, RuntimeConfig, ServiceName, Telemetry, WorkerCount};
+use pavis_core::{
+    AccessLogPolicy, ListenerBuilder, ListenerName, Metrics, RuntimeConfig, RuntimeConfigBuilder,
+    ServiceName, Telemetry, WorkerCount,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,24 +40,26 @@ async fn relay_config(State(state): State<RelayStub>, headers: HeaderMap) -> imp
 }
 
 fn minimal_config(label: &str) -> RuntimeConfig {
-    RuntimeConfig {
-        listeners: vec![pavis_core::Listener {
-            name: pavis_core::ListenerName("default".to_string()),
-            address: "127.0.0.1:8080".parse().expect("addr"),
-            workers: WorkerCount::Auto,
-            tls: pavis_core::TlsConfig::Disabled,
-        }],
-        telemetry: Telemetry {
+    let listener = ListenerBuilder::new()
+        .name(ListenerName("default".to_string()))
+        .address("127.0.0.1:8080".parse().expect("addr"))
+        .workers(WorkerCount::Auto)
+        .tls(pavis_core::TlsConfig::Disabled)
+        .build()
+        .expect("listener");
+
+    RuntimeConfigBuilder::new()
+        .telemetry(Telemetry {
             level: pavis_core::LogLevel::Info,
             pingora: pavis_core::LogLevel::Info,
             service_name: ServiceName(label.to_string()),
             metrics: Metrics::Disabled,
             access_log: AccessLogPolicy::Stdout,
             tracing: pavis_core::TracingPolicy::Disabled,
-        },
-        upstreams: Vec::new(),
-        routes: Vec::new(),
-    }
+        })
+        .add_listener(listener)
+        .build()
+        .expect("config")
 }
 
 fn write_pvs(path: &PathBuf, label: &str) -> Vec<u8> {

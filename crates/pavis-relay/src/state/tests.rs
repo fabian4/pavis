@@ -4,24 +4,26 @@ use pavis_core::{AccessLogPolicy, ListenerName, Metrics, ServiceName, Telemetry,
 use std::net::SocketAddr;
 
 fn minimal_config() -> pavis_core::RuntimeConfig {
-    pavis_core::RuntimeConfig {
-        listeners: vec![pavis_core::Listener {
-            name: ListenerName("default".to_string()),
-            address: "127.0.0.1:8080".parse::<SocketAddr>().unwrap(),
-            workers: WorkerCount::Auto,
-            tls: pavis_core::TlsConfig::Disabled,
-        }],
-        telemetry: Telemetry {
+    let listener = pavis_core::ListenerBuilder::new()
+        .name(ListenerName("default".to_string()))
+        .address("127.0.0.1:8080".parse::<SocketAddr>().unwrap())
+        .workers(WorkerCount::Auto)
+        .tls(pavis_core::TlsConfig::Disabled)
+        .build()
+        .expect("listener");
+
+    pavis_core::RuntimeConfigBuilder::new()
+        .telemetry(Telemetry {
             level: pavis_core::LogLevel::Info,
             pingora: pavis_core::LogLevel::Info,
             service_name: ServiceName("pavis".to_string()),
             metrics: Metrics::Disabled,
             access_log: AccessLogPolicy::Disabled,
             tracing: pavis_core::TracingPolicy::Disabled,
-        },
-        upstreams: vec![],
-        routes: vec![],
-    }
+        })
+        .add_listener(listener)
+        .build()
+        .expect("config")
 }
 
 fn validated_config() -> pavis_core::ValidatedRuntimeConfig {

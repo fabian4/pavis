@@ -15,6 +15,18 @@ mkdir -p "$PROJECT_ROOT/tests/temp"
 
 # Assumes env.sh is sourced for generate_certs/cleanup_certs and wait_for_port helper
 
+can_bind_port() {
+    python3 - <<'PY'
+import socket
+try:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.close()
+except PermissionError:
+    raise SystemExit(1)
+PY
+}
+
 start_upstreams() {
     local suite="$1"
     if [ "$TEST_MODE" == "binary" ]; then
@@ -113,16 +125,30 @@ start_upstreams_binary() {
         echo "   Run 'cargo build --release -p pavis-upstream' before executing tests."
         return 1
     fi
+    if ! can_bind_port; then
+        echo "⏭️ Skipping binary upstreams (bind not permitted)."
+        return 77
+    fi
 
     generate_certs
     mkdir -p "$UPSTREAMS_PID_DIR" "$UPSTREAMS_LOG_DIR"
     rm -f "$UPSTREAMS_PID_DIR"/*.pid 2>/dev/null || true
 
+    export UPSTREAM_HTTP_PORT_V1
+    export UPSTREAM_HTTP_PORT_V2
+    export UPSTREAM_HTTPS_PORT_V1
+    export UPSTREAM_HTTPS_PORT_V2
+
+    UPSTREAM_HTTP_PORT_V1=$(get_free_port)
+    UPSTREAM_HTTP_PORT_V2=$(get_free_port)
+    UPSTREAM_HTTPS_PORT_V1=$(get_free_port)
+    UPSTREAM_HTTPS_PORT_V2=$(get_free_port)
+
     local cert_path="$CERTS_DIR/upstream_tls.pem"
     local key_path="$CERTS_DIR/upstream_tls.key"
     local instances=(
-        "backend-v1:8081:8443"
-        "backend-v2:8082:8444"
+        "backend-v1:${UPSTREAM_HTTP_PORT_V1}:${UPSTREAM_HTTPS_PORT_V1}"
+        "backend-v2:${UPSTREAM_HTTP_PORT_V2}:${UPSTREAM_HTTPS_PORT_V2}"
     )
 
     for entry in "${instances[@]}"; do
@@ -150,6 +176,7 @@ launch_upstream_process() {
     # Build env array
     local env_vars=(
         "INSTANCE_ID=$name"
+        "UPSTREAM_BIND_ADDR=${UPSTREAM_BIND_ADDR:-127.0.0.1}"
         "HTTP_PORT=$http_port"
         "TLS_CERT_FILE=$cert_path"
         "TLS_KEY_FILE=$key_path"

@@ -17,7 +17,7 @@ cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 
 PORT_PAVIS=$(get_free_port)
-UPSTREAM_PORT=8081
+UPSTREAM_PORT=${UPSTREAM_HTTP_PORT_V1}
 
 # 1. Config with Tracing Enabled
 cat <<EOF > "$TEST_TMP/config.yaml"

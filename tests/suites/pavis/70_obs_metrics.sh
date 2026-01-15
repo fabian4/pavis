@@ -16,7 +16,7 @@ trap cleanup_trap EXIT
 
 PORT_PAVIS=$(get_free_port)
 PORT_METRICS=$(get_free_port)
-UPSTREAM_PORT=8081
+UPSTREAM_PORT=${UPSTREAM_HTTP_PORT_V1}
 
 # 1. Config with Metrics
 cat <<EOF > "$TEST_TMP/config.yaml"

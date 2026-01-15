@@ -9,8 +9,8 @@ use pavis_core::{
     Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy,
     Host, Hostname, HttpVersion, IdleTimeout, LoadBalancer, Metrics, Path, PathMatch, Pool, Port,
     RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction, ServiceName, SniName,
-    Telemetry as RuntimeTelemetry, Timeout, TlsPolicy, Upstream, UpstreamCa, UpstreamId,
-    UpstreamName, VirtualHost, Weight,
+    Telemetry as RuntimeTelemetry, Timeout, TlsPolicy, Upstream, UpstreamBuilder, UpstreamCa,
+    UpstreamId, UpstreamName, VirtualHost, Weight,
 };
 use pingora::http::ResponseHeader;
 use pingora::prelude::{ProxyHttp, RequestHeader, Session};
@@ -151,26 +151,27 @@ async fn session_for_request(request: &[u8]) -> (Session, tokio::io::DuplexStrea
 }
 
 fn upstream(name: &str, id: u16, port: u16) -> Upstream {
-    Upstream {
-        id: UpstreamId(NonZeroU16::new(id).unwrap()),
-        name: UpstreamName(name.to_string()),
-        discovery: Discovery::Static,
-        balancer: LoadBalancer::Random,
-        protocol: HttpVersion::H1,
-        pool: Pool {
+    UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(id).unwrap()))
+        .name(UpstreamName(name.to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::Random)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
             max: ConnectionLimit::Unlimited,
-        },
-        tls: TlsPolicy::Disabled,
-        endpoints: vec![Endpoint {
+        })
+        .tls(TlsPolicy::Disabled)
+        .add_endpoint(Endpoint {
             address: EndpointAddr::Ip {
                 address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: Port(NonZeroU16::new(port).unwrap()),
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
-        }],
-    }
+        })
+        .build()
+        .expect("upstream")
 }
 
 fn write_pem(path: &std::path::Path, bytes: &[u8]) {
@@ -194,18 +195,36 @@ fn mtls_upstream(
     cert_path: PathBuf,
     key_path: PathBuf,
 ) -> Upstream {
-    let mut upstream = upstream(name, id, port);
-    upstream.tls = TlsPolicy::Enabled {
-        verify: pavis_core::TlsVerify::Disabled,
-        sni: SniName::Auto,
-        cert: ClientCert::Enabled {
-            cert_path: pavis_core::Path(cert_path.to_string_lossy().to_string()),
-            key_path: pavis_core::Path(key_path.to_string_lossy().to_string()),
-            chain: ClientCertChain::None,
-        },
-        ca: UpstreamCa::System,
-    };
-    upstream
+    UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(id).unwrap()))
+        .name(UpstreamName(name.to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::Random)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
+            idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
+            connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
+            max: ConnectionLimit::Unlimited,
+        })
+        .tls(TlsPolicy::Enabled {
+            verify: pavis_core::TlsVerify::Disabled,
+            sni: SniName::Auto,
+            cert: ClientCert::Enabled {
+                cert_path: pavis_core::Path(cert_path.to_string_lossy().to_string()),
+                key_path: pavis_core::Path(key_path.to_string_lossy().to_string()),
+                chain: ClientCertChain::None,
+            },
+            ca: UpstreamCa::System,
+        })
+        .add_endpoint(Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(port).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        })
+        .build()
+        .expect("upstream")
 }
 
 #[tokio::test]
@@ -411,32 +430,33 @@ async fn request_filter_skips_selection_when_no_destinations() {
 
 #[tokio::test]
 async fn upstream_peer_defaults_sni() {
-    let manager = Manager::new(&[Upstream {
-        id: UpstreamId(NonZeroU16::new(1).unwrap()),
-        name: UpstreamName("secure".to_string()),
-        discovery: Discovery::Static,
-        balancer: LoadBalancer::RoundRobin,
-        protocol: HttpVersion::H1,
-        pool: Pool {
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("secure".to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::RoundRobin)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
             max: ConnectionLimit::Unlimited,
-        },
-        tls: TlsPolicy::Enabled {
+        })
+        .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Full,
             sni: pavis_core::SniName::Name(Hostname("example.com".to_string())),
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
-        },
-        endpoints: vec![Endpoint {
+        })
+        .add_endpoint(Endpoint {
             address: EndpointAddr::Ip {
                 address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: Port(NonZeroU16::new(8443).unwrap()),
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
-        }],
-    }])
-    .expect("manager");
+        })
+        .build()
+        .expect("upstream");
+    let manager = Manager::new(&[upstream]).expect("manager");
     let state = RuntimeState {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
@@ -464,32 +484,33 @@ async fn upstream_peer_defaults_sni() {
 
 #[tokio::test]
 async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
-    let manager = Manager::new(&[Upstream {
-        id: UpstreamId(NonZeroU16::new(1).unwrap()),
-        name: UpstreamName("dns".to_string()),
-        discovery: Discovery::Logical,
-        balancer: LoadBalancer::RoundRobin,
-        protocol: HttpVersion::H1,
-        pool: Pool {
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("dns".to_string()))
+        .discovery(Discovery::Logical)
+        .balancer(LoadBalancer::RoundRobin)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
             max: ConnectionLimit::Unlimited,
-        },
-        tls: TlsPolicy::Enabled {
+        })
+        .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Full,
             sni: pavis_core::SniName::Auto,
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
-        },
-        endpoints: vec![Endpoint {
+        })
+        .add_endpoint(Endpoint {
             address: EndpointAddr::Dns {
                 host: Hostname("localhost".to_string()),
                 port: Port(NonZeroU16::new(8443).unwrap()),
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
-        }],
-    }])
-    .expect("manager");
+        })
+        .build()
+        .expect("upstream");
+    let manager = Manager::new(&[upstream]).expect("manager");
     let state = RuntimeState {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
@@ -756,21 +777,21 @@ async fn upstream_peer_fails_when_upstream_not_found() {
 
 #[tokio::test]
 async fn upstream_peer_fails_when_no_endpoints() {
-    let manager = Manager::new(&[Upstream {
-        id: UpstreamId(NonZeroU16::new(1).unwrap()),
-        name: UpstreamName("empty".to_string()),
-        discovery: Discovery::Static,
-        balancer: LoadBalancer::Random,
-        protocol: HttpVersion::H1,
-        pool: Pool {
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("empty".to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::Random)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
             max: ConnectionLimit::Unlimited,
-        },
-        tls: TlsPolicy::Disabled,
-        endpoints: vec![],
-    }])
-    .expect("manager");
+        })
+        .tls(TlsPolicy::Disabled)
+        .build()
+        .expect("upstream");
+    let manager = Manager::new(&[upstream]).expect("manager");
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             config: RuntimeState::default().config,
@@ -1322,27 +1343,28 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
 
 #[tokio::test]
 async fn upstream_peer_dns_supported() {
-    let manager = Manager::new(&[Upstream {
-        id: UpstreamId(NonZeroU16::new(1).unwrap()),
-        name: UpstreamName("dns-upstream".to_string()),
-        discovery: Discovery::Logical,
-        balancer: LoadBalancer::RoundRobin,
-        protocol: HttpVersion::H1,
-        pool: Pool {
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("dns-upstream".to_string()))
+        .discovery(Discovery::Logical)
+        .balancer(LoadBalancer::RoundRobin)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
             max: ConnectionLimit::Unlimited,
-        },
-        tls: TlsPolicy::Disabled,
-        endpoints: vec![Endpoint {
+        })
+        .tls(TlsPolicy::Disabled)
+        .add_endpoint(Endpoint {
             address: EndpointAddr::Dns {
                 host: Hostname("example.com".to_string()),
                 port: Port(NonZeroU16::new(80).unwrap()),
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
-        }],
-    }])
-    .expect("manager");
+        })
+        .build()
+        .expect("upstream");
+    let manager = Manager::new(&[upstream]).expect("manager");
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
             config: RuntimeState::default().config,
@@ -1401,32 +1423,33 @@ async fn upstream_peer_tls_and_pool_variants() {
 #[tokio::test]
 async fn upstream_peer_sni_fallback_warning() {
     // Configures TLS upstream with Auto SNI, but request has no Host header
-    let manager = Manager::new(&[Upstream {
-        id: UpstreamId(NonZeroU16::new(1).unwrap()),
-        name: UpstreamName("tls-no-sni".to_string()),
-        discovery: Discovery::Static,
-        balancer: LoadBalancer::RoundRobin,
-        protocol: HttpVersion::H1,
-        pool: Pool {
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("tls-no-sni".to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::RoundRobin)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
             max: ConnectionLimit::Unlimited,
-        },
-        tls: TlsPolicy::Enabled {
+        })
+        .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
             sni: pavis_core::SniName::Auto,
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
-        },
-        endpoints: vec![Endpoint {
+        })
+        .add_endpoint(Endpoint {
             address: EndpointAddr::Ip {
                 address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: Port(NonZeroU16::new(8443).unwrap()),
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
-        }],
-    }])
-    .expect("manager");
+        })
+        .build()
+        .expect("upstream");
+    let manager = Manager::new(&[upstream]).expect("manager");
 
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
@@ -1450,32 +1473,33 @@ async fn upstream_peer_sni_fallback_warning() {
 
 #[tokio::test]
 async fn upstream_peer_sni_override_prevents_fallback() {
-    let manager = Manager::new(&[Upstream {
-        id: UpstreamId(NonZeroU16::new(1).unwrap()),
-        name: UpstreamName("tls-auto".to_string()),
-        discovery: Discovery::Static,
-        balancer: LoadBalancer::RoundRobin,
-        protocol: HttpVersion::H1,
-        pool: Pool {
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("tls-auto".to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::RoundRobin)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
             max: ConnectionLimit::Unlimited,
-        },
-        tls: TlsPolicy::Enabled {
+        })
+        .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
             sni: pavis_core::SniName::Auto,
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
-        },
-        endpoints: vec![Endpoint {
+        })
+        .add_endpoint(Endpoint {
             address: EndpointAddr::Ip {
                 address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: Port(NonZeroU16::new(8443).unwrap()),
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
-        }],
-    }])
-    .expect("manager");
+        })
+        .build()
+        .expect("upstream");
+    let manager = Manager::new(&[upstream]).expect("manager");
 
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {
@@ -1501,32 +1525,33 @@ async fn upstream_peer_sni_override_prevents_fallback() {
 
 #[tokio::test]
 async fn upstream_peer_explicit_sni_prevents_fallback() {
-    let manager = Manager::new(&[Upstream {
-        id: UpstreamId(NonZeroU16::new(1).unwrap()),
-        name: UpstreamName("tls-explicit".to_string()),
-        discovery: Discovery::Static,
-        balancer: LoadBalancer::RoundRobin,
-        protocol: HttpVersion::H1,
-        pool: Pool {
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("tls-explicit".to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::RoundRobin)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
             max: ConnectionLimit::Unlimited,
-        },
-        tls: TlsPolicy::Enabled {
+        })
+        .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
             sni: pavis_core::SniName::Name(Hostname("explicit.com".to_string())),
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
-        },
-        endpoints: vec![Endpoint {
+        })
+        .add_endpoint(Endpoint {
             address: EndpointAddr::Ip {
                 address: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: Port(NonZeroU16::new(8443).unwrap()),
             },
             weight: Weight(NonZeroU16::new(1).unwrap()),
-        }],
-    }])
-    .expect("manager");
+        })
+        .build()
+        .expect("upstream");
+    let manager = Manager::new(&[upstream]).expect("manager");
 
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(RuntimeState {

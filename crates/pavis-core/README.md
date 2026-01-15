@@ -46,10 +46,14 @@ The logic layer responsible for enforcing system invariants.
 
 ### `RuntimeConfig`
 The root structure representing the complete desired state of a Pavis instance.
+Builders are available to construct configs without relying on struct literals:
+- `RuntimeConfigBuilder`
+- `ListenerBuilder`
+- `UpstreamBuilder`
 
 ### `ValidatedRuntimeConfig`
 A wrapper type that guarantees the inner `RuntimeConfig` has passed all semantic checks.
-- `assume_validated(config)`: Wraps a config without re-checking.
+- `unsafe fn from_trusted(config)`: Wraps a config without re-checking; caller must uphold validation.
 - `into_inner()`: Unwraps back to the raw config.
 
 ### `validate_runtime`

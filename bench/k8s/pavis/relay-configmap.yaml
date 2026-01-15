@@ -72,12 +72,16 @@ data:
         balancer: "round-robin"
         protocol: "h1"
         endpoints:
-          - address: "backend"
-            port: 80
+          - address: "127.0.0.1"
+            port: 8081
 
     routes:
       - host: "*"
         paths:
+          - matcher: !exact
+              path: "/health"
+            status: 200
+            body: "OK"
           - matcher: !prefix
               path: "/"
             destinations:
