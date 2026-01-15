@@ -97,11 +97,13 @@ jobs:
           sudo apt-get install -y jq bc
 
           # Install kubectl
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          K8S_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt | tr -d '[:space:]')
+          curl -LO "https://dl.k8s.io/release/${K8S_VERSION}/bin/linux/amd64/kubectl"
           sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
           # Install kind
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+          KIND_VERSION="v0.20.0"
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 
@@ -114,21 +116,34 @@ jobs:
         run: make bench-system-build MODE=ci
 
       - name: Run System Mode Benchmarks (pavis)
-        run: MODE=system PROXY=pavis BENCH_PROFILE=workstation make bench-system
+        id: bench
+        run: MODE=system PROXY=pavis BENCH_PROFILE=github make bench-system
         continue-on-error: true
 
       - name: Debug on failure
-        if: failure()
+        if: always() && steps.bench.outcome == 'failure'
         run: |
           echo "=== Kind Cluster Info ==="
           kind get clusters || true
           kubectl get nodes -o wide || true
           kubectl get pods -n bench-system -o wide || true
 
+          echo "=== Pod Descriptions ==="
+          kubectl describe pods -n bench-system || true
+
+          echo "=== ConfigMaps ==="
+          kubectl get configmap -n bench-system pavis-relay-config -o yaml || true
+
           echo "=== Pod Logs ==="
-          kubectl logs -n bench-system -l app=pavis-relay --tail=100 || true
-          kubectl logs -n bench-system -l app=test-backend -c pavis-sidecar --tail=100 || true
+          echo "--- pavis-relay logs ---"
+          kubectl logs -n bench-system -l app=pavis-relay --tail=200 || true
+          echo "--- test-backend pavis-sidecar logs ---"
+          kubectl logs -n bench-system -l app=test-backend -c pavis-sidecar --tail=200 || true
+          echo "--- test-backend upstream logs ---"
           kubectl logs -n bench-system -l app=test-backend -c upstream --tail=100 || true
+
+          echo "=== Events ==="
+          kubectl get events -n bench-system --sort-by='.lastTimestamp' || true
 
       - name: Cleanup System Mode
         if: always()

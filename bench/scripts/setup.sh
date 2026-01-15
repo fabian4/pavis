@@ -14,6 +14,38 @@ NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 # System Mode (Kubernetes) Functions
 # ============================================================================
 
+resolve_docker_build_mode() {
+  if [[ -n "${BENCH_DOCKER_BUILD_MODE:-}" ]]; then
+    echo "$BENCH_DOCKER_BUILD_MODE"
+    return
+  fi
+
+  case "${BENCH_PROFILE:-}" in
+    github)
+      echo "ci"
+      return
+      ;;
+  esac
+
+  case "${IS_CI:-${CI:-}}" in
+    1|true|TRUE|yes|YES)
+      echo "ci"
+      return
+      ;;
+  esac
+
+  echo "local"
+}
+
+should_quiet_build() {
+  case "${BENCH_VERBOSE:-0}" in
+    1|true|TRUE|yes|YES)
+      return 1
+      ;;
+  esac
+  return 0
+}
+
 check_kind_requirements() {
   log_info "Checking system mode requirements"
 
@@ -72,18 +104,32 @@ create_kind_cluster() {
 
 build_docker_images() {
   log_info "Building Docker images for system mode"
+  local build_mode
+  build_mode="$(resolve_docker_build_mode)"
 
   # Build pavis runtime image
   log_info "Building pavis:local image"
-  make -C "${BENCH_ROOT}" docker-build IMAGE=pavis MODE=local > /dev/null 2>&1
+  if should_quiet_build; then
+    make -C "${BENCH_ROOT}" docker-build IMAGE=pavis MODE="${build_mode}" > /dev/null 2>&1
+  else
+    make -C "${BENCH_ROOT}" docker-build IMAGE=pavis MODE="${build_mode}"
+  fi
 
   # Build pavis-relay image
   log_info "Building pavis-relay:local image"
-  make -C "${BENCH_ROOT}" docker-build IMAGE=relay MODE=local > /dev/null 2>&1
+  if should_quiet_build; then
+    make -C "${BENCH_ROOT}" docker-build IMAGE=relay MODE="${build_mode}" > /dev/null 2>&1
+  else
+    make -C "${BENCH_ROOT}" docker-build IMAGE=relay MODE="${build_mode}"
+  fi
 
   # Build bench-upstream image
   log_info "Building pavis-bench-upstream:local image"
-  make -C "${BENCH_ROOT}" docker-build IMAGE=bench-upstream MODE=local > /dev/null 2>&1
+  if should_quiet_build; then
+    make -C "${BENCH_ROOT}" docker-build IMAGE=bench-upstream MODE="${build_mode}" > /dev/null 2>&1
+  else
+    make -C "${BENCH_ROOT}" docker-build IMAGE=bench-upstream MODE="${build_mode}"
+  fi
 
   log_info "Docker images built successfully"
 }
@@ -120,11 +166,11 @@ deploy_pavis_infrastructure() {
 
   # Wait for relay to be ready
   log_info "Waiting for pavis-relay to be ready"
-  kubectl wait --for=condition=ready pod -l app=pavis-relay -n "$NAMESPACE" --timeout=120s
+  kubectl wait --for=condition=ready pod -l app=pavis-relay -n "$NAMESPACE" --timeout=300s
 
   # Wait for test workload to be ready
   log_info "Waiting for test-backend to be ready"
-  kubectl wait --for=condition=ready pod -l app=test-backend -n "$NAMESPACE" --timeout=120s
+  kubectl wait --for=condition=ready pod -l app=test-backend -n "$NAMESPACE" --timeout=300s
 
   log_info "Pavis infrastructure deployed successfully"
 }
@@ -140,7 +186,13 @@ deploy_envoy_infrastructure() {
 
   # Build and load xDS server image
   log_info "Building envoy-xds-server:local image"
-  make -C "${BENCH_ROOT}" docker-build IMAGE=envoy-xds-server MODE=local > /dev/null 2>&1
+  local build_mode
+  build_mode="$(resolve_docker_build_mode)"
+  if should_quiet_build; then
+    make -C "${BENCH_ROOT}" docker-build IMAGE=envoy-xds-server MODE="${build_mode}" > /dev/null 2>&1
+  else
+    make -C "${BENCH_ROOT}" docker-build IMAGE=envoy-xds-server MODE="${build_mode}"
+  fi
 
   log_info "Loading envoy-xds-server image into kind cluster"
   kind load docker-image envoy-xds-server:local --name "$CLUSTER_NAME"

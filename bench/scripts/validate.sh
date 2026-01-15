@@ -173,7 +173,7 @@ USAGE
   # System mode constraints
   if [[ "$mode" == "system" || "$mode" == "both" ]]; then
     if [[ "$profile" == "github" ]]; then
-      exit_with_error "MODE=system requires BENCH_PROFILE=workstation (not supported in GitHub CI)"
+      log_warn "BENCH_PROFILE=github in system mode is CI-only and non-authoritative"
     fi
   fi
 

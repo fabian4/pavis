@@ -15,6 +15,25 @@ spec:
       labels:
         app: test-backend
     spec:
+      initContainers:
+      # Init container to wait for relay and fetch initial config
+      - name: fetch-config
+        image: curlimages/curl:latest
+        command: ['sh', '-c']
+        args:
+          - |
+            echo "Waiting for pavis-relay to be ready..."
+            until curl -sf http://pavis-relay.bench-system.svc.cluster.local:8090/health; do
+              echo "Relay not ready, sleeping..."
+              sleep 2
+            done
+            echo "Fetching initial config from relay..."
+            curl -sf -H "X-Pavis-Version: 0" \
+              http://pavis-relay.bench-system.svc.cluster.local:8090/v1/config \
+              -o /config/bootstrap.pvs || echo "Failed to fetch config, continuing..."
+        volumeMounts:
+          - name: config-storage
+            mountPath: /config
       containers:
       # Upstream backend container
       - name: upstream
@@ -41,6 +60,12 @@ spec:
       - name: pavis-sidecar
         image: pavis:local
         imagePullPolicy: Never
+        command: ["pavis"]
+        args:
+          - "--config"
+          - "/config/bootstrap.pvs"
+          - "--relay-url"
+          - "http://pavis-relay.bench-system.svc.cluster.local:8090/v1/config"
         ports:
         - name: proxy
           containerPort: 8080
@@ -73,6 +98,12 @@ spec:
             port: proxy
           initialDelaySeconds: 3
           periodSeconds: 5
+        volumeMounts:
+          - name: config-storage
+            mountPath: /config
+      volumes:
+        - name: config-storage
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

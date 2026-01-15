@@ -1,0 +1,108 @@
+# Full Surface Area Example
+# This file includes every field implemented in the Pavis configuration.
+
+# Global Observability
+telemetry:
+  level: "debug" # error, warn, info, debug, trace
+  pingora: "info"
+  service_name: "pavis-full-example"
+  metrics: "0.0.0.0:9090" # Alias: prometheus_addr
+  access_log: "stdout" # stdout, disabled, or file path
+  tracing:
+    provider: "otlp" # otlp, jaeger, zipkin
+    sampling: 100 # 0-100
+    endpoint: "http://localhost:4317"
+
+# Inbound entry points
+listeners:
+  - name: "http"
+    address: "0.0.0.0:80"
+    workers: 8 # Optional, defaults to CPU cores
+  - name: "https"
+    address: "0.0.0.0:443"
+    tls:
+      cert_path: "/etc/pavis/server.crt"
+      key_path: "/etc/pavis/server.key"
+      client_auth:
+        required: # required, optional, or disabled
+          ca_path: "/etc/pavis/ca.crt"
+
+# Backend clusters
+upstreams:
+  - name: "backend-cluster-1"
+    id: 100 # Optional
+    discovery: "static" # static, logical, or strict
+    balancer: "round-robin" # round-robin, random, least-request
+    protocol: "h2" # h1, h2, h2h1
+    pool:
+      idle: "1m" # humantime format
+      connect: "10s"
+      max: 500 # 0 for unlimited
+    tls:
+      enabled: true
+      verify_cert: true
+      verify_hostname: true
+      sni_mode: "auto" # auto, name, disabled
+      # ca_bundle_path: "/etc/ca.crt" # Ignored by Rustls backend
+      cert:
+        cert_path: "/etc/client.crt"
+        key_path: "/etc/client.key"
+        chain_mode: "file" # none, embedded, file
+        chain_path: "/etc/client-chain.crt"
+    endpoints:
+      - address: "10.0.0.1"
+        port: 8080
+        weight: 10
+      - ip: "10.0.0.2" # Alias: address
+        port: 8080
+        weight: 20
+    
+    # These fields are parsed but currently ignored by the runtime logic:
+    circuit_breaker:
+      max_connections: 1000
+      max_pending_requests: 1000
+      max_retries: 3
+    health_check:
+      path: "/health"
+      interval: "10s"
+      timeout: "2s"
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+
+# Virtual hosts and routing
+routes:
+  - host: "app.example.com"
+    paths:
+      - matcher: !prefix
+          path: "/api"
+        timeout: "30s"
+        retry:
+          attempts: 3
+          retry_on: ["5xx", "connect_failure"] # 5xx, connect_failure, reset, refused
+          per_try_timeout: "5s"
+        request_headers:
+          set_headers: [["X-Internal", "true"]]
+          remove_headers: ["Authorization"]
+        response_headers:
+          add_headers: [["X-Pavis", "true"]]
+        rewrite:
+          path: "/v2/api"
+          host: "internal.v2.local"
+        principal:
+          authenticated:
+            spiffe: "spiffe://example.org/ns/foo/sa/bar"
+        destinations:
+          - upstream: "backend-cluster-1"
+            weight: 1
+      
+      - matcher: !exact
+          path: "/ping"
+        status: 200
+        body: "pong"
+
+  - host: "legacy.example.com"
+    paths:
+      - matcher: !prefix
+          path: "/"
+        status: 301
+        location: "https://app.example.com"

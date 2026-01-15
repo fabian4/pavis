@@ -1,285 +1,288 @@
-# Reference
+# Pavis Runtime Configuration Reference & Usage Manual
 
-> **Role:** Canonical Developer Reference for APIs and Configuration.
-
-## 1. Runtime Configuration
-
-This document describes the `pavis_core::RuntimeConfig` structure consumed by the Pavis runtime. YAML is a codec-level representation emitted or accepted by source-specific codecs and is not the canonical model.
-
-### 1.1 Configuration Translation and Defaults
-
-This section defines the configuration translation pipeline and defaulting boundaries for Pavis. It applies to YAML, xDS, and CRD sources.
-
-#### Configuration Translation Pipeline
-
-Pavis configuration MUST pass through the following stages in order:
-- SourceArtifact → CheckedArtifact (codec `check`)
-- CheckedArtifact → RuntimeConfig (codec `compile`)
-- RuntimeConfig → core semantic validation (codec `materialize`)
-
-Source configurations are expected to be sparse. Sparse input is allowed and encouraged; it is not an error at the source layer.
-
-Pipeline responsibility mapping (mandatory):
-- SourceArtifact → CheckedArtifact: Implemented by codec `check`. Ingest layers MUST NOT apply defaults or semantics.
-- CheckedArtifact → RuntimeConfig: Implemented by codec `compile`, including parsing, normalization, structural completion, and source-specific semantic defaults.
-- RuntimeConfig → core semantic validation: Implemented by codec `materialize` via `pavis-core`; runtime and relay MUST NOT compensate for missing intent.
-
-#### Codec-Internal DTOs (Optional)
-
-**Source DTO (codec-internal)**
-- Represents the source format directly.
-- MAY be sparse and incomplete.
-- MUST preserve source-specific fields and semantics.
-- MUST NOT include runtime-specific assumptions.
-
-**Structurally Complete DTO (codec-internal)**
-- Represents a complete shape with all required containers and fields present.
-- MUST eliminate structural absence via empty containers and explicit disabled states.
-- MUST NOT introduce semantic defaults beyond structural completion.
-- Exists to provide a stable, codec-local boundary for conversion.
-
-**RuntimeConfig**
-- Represents the fully materialized runtime configuration.
-- MUST be fully specified with all semantic defaults applied.
-- MUST be suitable for core semantic validation without additional inference.
-- Is semantically final and immutable in meaning; no later layer may infer, compensate, or repair intent.
-
-#### Defaults: Structural vs Semantic
-
-**Structural Completion**
-Structural completion is about shape only:
-- Options are resolved to explicit empty or disabled states.
-- Containers are normalized to consistent presence.
-- Shape consistency is guaranteed across all fields.
-
-Structural completion occurs inside concrete codecs (typically during `compile`). It MUST NOT introduce or imply runtime semantics.
-
-**Semantic Defaults**
-Semantic defaults include, but are not limited to:
-- Timeouts
-- Retry policies
-- Protocol choices
-- Policy defaults
-
-Semantic defaults MUST be applied only by source-specific codecs. Runtime, relay, and core layers MUST NOT apply semantic defaults.
-
-#### Codec API Responsibilities
-
-codec-api MAY:
-- Define the check/compile/materialize ordering.
-- Provide the `CheckedArtifact` carrier and `CompactionLevel`.
-- Enforce that core validation runs exactly once in `materialize`.
-
-codec-api MUST NOT:
-- Define default values for semantic fields.
-- Embed source-specific semantics.
-- Override or replace concrete codec behavior.
-- Perform semantic inference of any kind.
-- Apply “obvious” or “universal” defaults.
-- Provide or require structural completion utilities.
-- Require or enforce codec-internal DTO stages.
-
-#### Concrete Codec Responsibilities
-
-Concrete codecs MUST:
-- Apply source-specific semantic defaults.
-- Perform structural completion before building `RuntimeConfig`.
-- Derive any runtime-ready fields required to produce RuntimeConfig.
-
-Concrete codecs MUST NOT:
-- Share defaults across codecs.
-- Delegate semantic defaulting to runtime, relay, or core.
-
-#### Non-Goals and Forbidden Patterns
-
-The following are forbidden:
-- Shared default tables across codecs.
-- Semantic defaulting in runtime, relay, or core.
-- Semantic decisions in codec-api or other API layers.
-- Semantic or policy-based compensation in relay.
-- “Safety defaults” or fallback behavior in relay.
-
-#### Invariants
-
-The following rules are mandatory for code review:
-- Source configs MUST be accepted as sparse inputs.
-- `compile` MUST parse, normalize, structurally complete, and apply semantic defaults.
-- RuntimeConfig MUST be fully specified before core validation.
-- Core validation MUST treat RuntimeConfig as semantically complete.
-- codec-api MUST NOT define or apply semantic defaults.
-- Concrete codecs MUST apply semantic defaults that are scoped to their source.
-
-### 1.2 Normative Semantics
-- `HeadersPolicy::Disabled` means no header mutations are applied.
-- Regex compilation happens at runtime load/swap and is not stored in the schema.
-- **Durations**: YAML durations (`idle`, `connect`, `timeout`, `per_try`) accept human-friendly strings and are materialized into milliseconds in `RuntimeConfig`.
-- **Weights**: Endpoint weights and destination weights are `NonZeroU16` in the runtime config.
-- **Upstream TLS**:
-  - `TlsVerify::Full` requires SNI `Auto` or `Name`; `Disabled` is invalid.
-  - `SniName::Auto` resolves to a host rewrite override when present, else a DNS endpoint hostname; IP endpoints resolve to Disabled.
-  - If Auto resolves to Disabled with `verify=Full`, the config is rejected.
-  - `tls.cert.chain_mode` controls client certificate chain handling: `none|embedded|file`. `chain_path` is only valid for `file`.
-  - **Rustls Backend Limitation**: `ca_bundle_path` and client cert configurations (`cert`, `key`, `chain_mode`) are parsed but ignored by Pingora's rustls connector. Custom CA verification and client certificate presentation require the OpenSSL/BoringSSL backend.
-
-### 1.3 RuntimeConfig (Rust)
-
-The canonical Rust schema lives in these files:
-- `crates/pavis-core/src/runtime/mod.rs`
-- `crates/pavis-core/src/runtime/types.rs`
-- `crates/pavis-core/src/runtime/server.rs`
-- `crates/pavis-core/src/runtime/telemetry.rs`
-- `crates/pavis-core/src/runtime/upstream.rs`
-- `crates/pavis-core/src/runtime/routing.rs`
-- `crates/pavis-core/src/runtime/headers.rs`
-
-### 1.4 Observability Configuration
-
-Pavis provides comprehensive observability through Prometheus metrics, structured access logging, and distributed tracing (OpenTelemetry).
-
-#### Metrics
-
-**Configuration**: `telemetry.metrics`
-
-Prometheus metrics are exposed on a dedicated HTTP endpoint for scraping.
-
-**Fields**:
-- `addr` (required): Socket address for the metrics HTTP server (e.g., `"127.0.0.1:9090"`)
-
-**Metrics Exported**:
-- `pavis_http_requests_total` - Total HTTP requests (labels: method, route_pattern, status, upstream)
-- `pavis_http_request_duration_seconds` - Request duration histogram (labels: method, route_pattern, status, upstream)
-- `pavis_http_inflight_requests` - Active requests gauge
-- `pavis_connections_total` - Total connections counter
-- `pavis_upstream_requests_total` - Upstream requests (labels: upstream, status)
-- `pavis_upstream_request_duration_seconds` - Upstream duration histogram (labels: upstream, status)
-
-**Cardinality Controls**: All metrics use bounded labels (route_pattern, not raw paths) to prevent cardinality explosion.
-
-#### Access Logs
-
-**Configuration**: `telemetry.access_log`
-
-Structured access logs emitted per request with timing and routing metadata.
-
-**Modes**:
-- `Disabled` - No access logging
-- `Stdout` - Emit to stdout
-- `File { path }` - Write to file path
-
-**Log Fields**:
-- `timestamp` - Request timestamp (RFC3339)
-- `method` - HTTP method
-- `path` - Request path
-- `status` - HTTP status code
-- `duration_ms` - Total request duration
-- `upstream` - Selected upstream name (if forwarded)
-- `upstream_latency_ms` - Upstream-specific latency
-- `req_id` - Unique request ID (format: `req-{unix_nanos}-{random_u32}`)
-- `rbac_denied` - Boolean indicating RBAC denial
-
-#### Distributed Tracing
-
-**Configuration**: `telemetry.tracing`
-
-OpenTelemetry distributed tracing with OTLP export.
-
-**Fields**:
-- `provider` - Always `Otlp` for OpenTelemetry Protocol
-- `sampling` - Sampling rate percentage (0-100)
-- `endpoint` - OTLP collector endpoint (e.g., `"http://localhost:4317"`)
-
-**Span Attributes**:
-- HTTP semantic conventions: `http.method`, `http.target`, `http.host`, `http.status_code`
-- Routing: `route.pattern`, `upstream`
-- Observability: `http.request_id`
-- RBAC: `rbac.denied` (when applicable)
-
-**Span Status**:
-- 2xx-3xx responses: `Ok`
-- 4xx responses: `Error` ("Client error")
-- 5xx responses: `Error` ("Server error")
+This manual provides a detailed reference for the Pavis data plane configuration. It is derived directly from the codebase implementation.
 
 ---
 
-## 2. Relay HTTP API Reference
+## Top-Level Structure
 
-The canonical definition of the Pavis Relay HTTP API.
+The configuration is typically provided in YAML or JSON format and maps to the `SerdeConfig` structure.
 
-### 2.1 Endpoints
-
-#### `GET /v1/config`
-
-Fetches the latest configuration artifact. Supports Long-Polling.
-
-**Request Headers:**
-
-| Header | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `X-Pavis-Artifact-Version` | `u64` | Yes | The version currently held by the client. |
-
-**Query Parameters:**
-
-| Parameter | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `wait_ms` | `u64` | `1000` | Max time to hold connection if up-to-date (Max 10s). |
-
-**Responses:**
-
-| Status | Description |
-| :--- | :--- |
-| `200 OK` | New configuration available. Body is `.pvs` binary. |
-| `204 No Content` | Timeout reached, no new config. Client should retry. |
-| `400 Bad Request` | Missing or invalid headers/params. |
-
-**Response Headers (Lineage & Traceability):**
-
-| Header | Type | Description |
-| :--- | :--- | :--- |
-| `X-Pavis-Artifact-Version` | `u64` | The version of the returned artifact. |
-| `X-Pavis-Generated-At` | `String` | RFC3339 timestamp of when the artifact was generated. |
-
-#### `GET /v1/status`
-
-Operational status and health. Returns internal state (name, active version, checksum, uptime).
-
-### 2.2 Protocol Details
-
-The Relay ensures configuration propagation via HTTP Long-Polling. See `docs/SPECIFICATIONS.md` for the server-side state machine and long-polling logic.
+- **listeners** (list of object, optional): Definition of entry points for the proxy.
+- **telemetry** (object, optional): Global observability and telemetry settings.
+- **upstreams** (list of object, optional): Backend clusters and endpoint definitions.
+- **routes** (list of object, optional): Virtual host and routing rules.
 
 ---
 
-## 3. TLS Backend Capabilities
+## 1. Listeners
 
-Pavis supports TLS functionality through Pingora, which offers both rustls and OpenSSL/BoringSSL backends.
+Defines how Pavis listens for incoming connections.
 
-### 3.1 Rustls Backend (Default)
+### Field Tree: `listeners`
 
-The current default build uses the rustls backend, which has the following limitations due to upstream Pingora implementation:
+- **name** (string, required): Unique identifier for the listener.
+- **address** (string, required): Socket address to bind to (e.g., `"0.0.0.0:8080"`).
+- **workers** (integer, optional): Number of worker threads.
+    - **Allowed values**: `1` to `65535`.
+    - **Default**: `auto` (detected based on CPU cores).
+    - **Validation**: Must be greater than 0.
+- **tls** (object, optional): TLS configuration for the listener.
+    - **cert_path** (string, required if `tls` is set): Path to the PEM-encoded certificate file.
+    - **key_path** (string, required if `tls` is set): Path to the PEM-encoded private key file.
+    - **client_auth** (object, optional): mTLS configuration.
+        - **Allowed variants**:
+            - `disabled`: (Default) No client authentication.
+            - `optional`: Client certificate is requested but not required.
+                - **ca_path** (string, required): Path to CA bundle for verifying client certs.
+            - `required`: Valid client certificate is mandatory.
+                - **ca_path** (string, required): Path to CA bundle for verifying client certs.
 
-**Limitations:**
-- **Inbound Client Certificate Authentication (mTLS)**: Not supported. Pingora's rustls `TlsSettings` does not expose an API to inject a `rustls::server::ClientCertVerifier`. Configuration fields like `listeners.tls.client_auth` are validated but have no effect at runtime.
-- **Per-Peer CA Verification**: Not supported. The `upstreams.tls.ca_bundle_path` field is parsed but ignored by the connector. All upstream TLS verification uses the system CA bundle only.
-- **Client Certificate Presentation**: Not supported. Upstream client cert configurations (`upstreams.tls.cert.*`) are validated but ignored.
+#### Validation & Backend Constraints
+- Duplicate listener names are not allowed.
+- **Backend**: Peer certificate extraction for Rustls mode is currently noted as a TODO in the codebase.
 
-**Available Features:**
-- Server-side TLS termination (single cert per listener)
-- Upstream TLS origination with hostname verification (system CA bundle)
-- SNI configuration for outbound connections
+#### Example
+```yaml
+listeners:
+  - name: "http-gateway"
+    address: "0.0.0.0:8080"
+    workers: 4
+  - name: "https-gateway"
+    address: "0.0.0.0:8443"
+    tls:
+      cert_path: "/etc/pavis/certs/server.crt"
+      key_path: "/etc/pavis/certs/server.key"
+      client_auth:
+        required:
+          ca_path: "/etc/pavis/certs/client-ca.crt"
+```
 
-### 3.2 OpenSSL/BoringSSL Backend
+---
 
-When built with the OpenSSL/BoringSSL backend (via build-time feature flags), the following additional capabilities are available:
+## 2. Telemetry
 
-- Inbound client certificate authentication (mTLS) with configurable CA bundles
-- Per-peer CA verification for upstream connections via `ca_bundle_path`
-- Client certificate presentation to upstream services
-- Full SPIFFE ID extraction from client certificates
+Global observability settings.
 
-### 3.3 Backend Selection
+### Field Tree: `telemetry`
 
-The TLS backend is selected at build time. Pavis currently defaults to rustls. To use OpenSSL/BoringSSL features:
+- **level** (string, optional): Global logging level.
+    - **Allowed values**: `error`, `warn`, `info`, `debug`, `trace`.
+    - **Default**: `info`.
+- **pingora** (string, optional): Logging level for the underlying Pingora framework.
+    - **Allowed values**: `error`, `warn`, `info`, `debug`, `trace`.
+    - **Default**: `info`.
+- **service_name** (string, optional): Name of the service for logs and traces.
+    - **Default**: `"pavis"`.
+- **metrics** (string, optional): Socket address for the Prometheus metrics exporter (e.g., `"0.0.0.0:9090"`).
+    - **Alias**: `prometheus_addr`.
+    - **Default**: Disabled.
+- **access_log** (string, optional): Access logging policy.
+    - **Allowed values**: `disabled`, `stdout`, or a file path (e.g., `"/var/log/pavis/access.log"`).
+    - **Default**: `stdout`.
+- **tracing** (object, optional): Distributed tracing configuration.
+    - **provider** (string, optional): Tracing provider.
+        - **Allowed values**: `otlp`, `jaeger`, `zipkin`.
+        - **Default**: `otlp`.
+    - **sampling** (integer, optional): Sampling rate in percentage.
+        - **Allowed values**: `0` to `100`.
+        - **Default**: `100`.
+    - **endpoint** (string, optional): Collector endpoint URL.
+        - **Default**: `"http://localhost:4317"`.
 
-1. Build with OpenSSL feature flags (see build documentation)
-2. Ensure OpenSSL libraries are available in the deployment environment
+#### Example
+```yaml
+telemetry:
+  level: "debug"
+  service_name: "pavis-prod"
+  metrics: "0.0.0.0:9091"
+  access_log: "/var/log/pavis/access.log"
+  tracing:
+    provider: "otlp"
+    sampling: 50
+    endpoint: "http://otel-collector:4317"
+```
 
-**Note**: Pavis does not implement workarounds for rustls limitations. The project is waiting for upstream Pingora to add rustls support for these features.
+---
+
+## 3. Upstreams
+
+Defines backend clusters.
+
+### Field Tree: `upstreams`
+
+- **name** (string, required): Unique identifier for the upstream.
+- **id** (integer, optional): Numeric ID for the upstream.
+    - **Default**: Auto-assigned starting from 1.
+- **discovery** (string, optional): Endpoint discovery mechanism.
+    - **Alias**: `discovery_type`.
+    - **Allowed values**:
+        - `static`: (Default) Endpoints are fixed IP addresses.
+        - `logical`: DNS-based discovery with connection-time resolution.
+        - `strict`: DNS-based discovery with periodic background resolution.
+            - **ttl** (integer, required for `strict`): DNS cache TTL in seconds.
+- **balancer** (string, optional): Load balancing algorithm.
+    - **Aliases**: `load_balancer`, `lb`.
+    - **Allowed values**: `round-robin`, `random`, `least-request`.
+    - **Default**: `random`.
+- **protocol** (string, optional): Protocol for upstream connections.
+    - **Aliases**: `http_version`, `http`.
+    - **Allowed values**: `h1`, `h2`, `h2h1`.
+    - **Default**: `h1`.
+- **pool** (object, optional): Connection pool settings.
+    - **Alias**: `connection_pool`.
+    - **idle** (duration, optional): Idle timeout for pooled connections (e.g., `"60s"`, `"1m"`).
+        - **Default**: `"60s"`.
+    - **connect** (duration, optional): Connection establishment timeout.
+        - **Default**: `"5s"`.
+    - **max** (integer, optional): Maximum number of concurrent connections.
+        - **Default**: `0` (unlimited).
+- **tls** (object, optional): TLS configuration for backend connections.
+    - **enabled** (boolean, optional): Enable TLS for upstream.
+        - **Default**: `true` if the `tls` object is present.
+    - **verify_cert** (boolean, optional): Verify backend certificate chain.
+        - **Default**: `true`.
+    - **verify_hostname** (boolean, optional): Verify backend certificate hostname.
+        - **Default**: `true`.
+    - **sni** (string, optional): Explicit SNI hostname to send.
+    - **sni_mode** (string, optional): SNI selection logic.
+        - **Allowed values**:
+            - `auto`: (Default) Use endpoint hostname or request host.
+            - `name`: Use explicit value in `sni` field.
+            - `disabled`: Do not send SNI.
+    - **ca_bundle_path** (string, optional): Path to CA bundle for verifying backend certs.
+        - **Alias**: `ca_bundle`.
+        - **Constraint**: **NOT CURRENTLY USED** by the Pingora Rustls connector.
+    - **cert** (object, optional): Client certificate for mTLS to backend.
+        - **cert_path** (string, required): Path to PEM certificate.
+        - **key_path** (string, required): Path to PEM private key.
+        - **chain_path** (string, optional): Path to additional certificate chain.
+        - **chain_mode** (string, optional): How to handle the certificate chain.
+            - **Allowed values**: `none`, `embedded`, `file`.
+            - **Default**: `none`.
+- **endpoints** (list of object, required): List of backend endpoints.
+    - **address** (string, required): IP address or hostname.
+        - **Aliases**: `addr`, `ip`.
+    - **port** (integer, required): Destination port.
+    - **weight** (integer, optional): Load balancing weight (1-65535).
+        - **Default**: `1`.
+- **circuit_breaker** (object, optional): **PARSED BUT IGNORED**.
+- **health_check** (object, optional): **PARSED BUT IGNORED**.
+
+#### Validation & Backend Constraints
+- **Validation**: If `verify_cert` and `verify_hostname` are both true (`verify=full`), `sni_mode` cannot be `disabled`.
+- **Validation**: `sni_mode: auto` with `verify=full` requires either DNS-based endpoints or a route-level host rewrite to provide a valid hostname for verification.
+- **Backend**: `ca_bundle_path` is currently ignored due to Pingora Rustls connector limitations.
+
+#### Example
+```yaml
+upstreams:
+  - name: "api-backend"
+    discovery: "logical"
+    balancer: "round-robin"
+    protocol: "h2"
+    pool:
+      idle: "30s"
+      max: 100
+    tls:
+      sni_mode: "auto"
+    endpoints:
+      - address: "api.internal.local"
+        port: 443
+        weight: 10
+```
+
+---
+
+## 4. Routes
+
+Defines how requests are routed to upstreams.
+
+### Field Tree: `routes`
+
+- **host** (string, required): Virtual host domain (e.g., `"example.com"`, `"*"`).
+- **paths** (list of object, required): Routing rules for this host.
+    - **matcher** (object, optional): Path matching logic.
+        - **Default**: Prefix match on `"/"`.
+        - **Allowed variants**:
+            - `!prefix`: Matches paths starting with the value.
+                - **path** (string, required): Path prefix.
+            - `!exact`: Matches the path exactly.
+                - **path** (string, required): Exact path.
+            - `!regex`: Matches the path against a regular expression.
+                - **path** (string, required): Regex pattern.
+    - **timeout** (duration, optional): Request timeout (e.g., `"30s"`).
+        - **Default**: Disabled (inherits upstream or system defaults).
+    - **retry** (object, optional): Retry policy.
+        - **attempts** (integer, required): Number of retry attempts.
+        - **retry_on** (list of string, required): Conditions to trigger retry.
+            - **Allowed values**: `5xx`, `connect_failure`, `reset`, `refused`.
+        - **per_try_timeout** (duration, required): Timeout for each individual attempt.
+    - **request_headers** / **response_headers** (object, optional): Header manipulations.
+        - **set_headers** (list of `[name, value]`, optional): Set or overwrite headers.
+        - **append_headers** (list of `[name, value]`, optional): Append to existing header values.
+        - **add_headers** (list of `[name, value]`, optional): Add headers (may create duplicates).
+        - **remove_headers** (list of string, optional): Remove specified headers.
+    - **rewrite** (object, optional): Path or Host rewrites.
+        - **path** (string, optional): New path prefix to replace the matched prefix.
+        - **host** (string, optional): New Host header value.
+    - **principal** (object, optional): Authorization requirements.
+        - **Allowed variants**:
+            - `any`: (Default) No specific principal required.
+            - `authenticated`: Requires a specific SPIFFE ID.
+                - **spiffe** (string, required): SPIFFE ID.
+            - `prefix`: Requires a SPIFFE ID with a specific prefix.
+                - **prefix** (string, required): SPIFFE ID prefix.
+    - **Action** (one of the following, required):
+        - **forward** (object): Forward to an upstream.
+            - **destinations** (list of object, required):
+                - **upstream** (string, required): Name of the upstream.
+                - **weight** (integer, required): Relative weight for this destination.
+        - **redirect** (object): Respond with a redirect.
+            - **status** (integer, required): HTTP status code (e.g., `301`, `302`).
+            - **location** (string, required): Redirect target URL.
+        - **direct** (object): Respond directly with a body.
+            - **status** (integer, required): HTTP status code.
+            - **body** (string, required): Response body content.
+
+#### Validation & Backend Constraints
+- **Validation**: Rewrite is **not supported** with `!regex` matchers and will cause a validation error.
+- **Validation**: Forward actions must have at least one destination.
+- **Validation**: Paths must be normalized (start with `/`, no trailing slashes unless it is `/`).
+- **Validation**: Regex patterns are limited to 2048 characters.
+
+#### Example
+```yaml
+routes:
+  - host: "app.example.com"
+    paths:
+      - matcher: !prefix
+          path: "/api/v1"
+        rewrite:
+          path: "/v1"
+        forward:
+          destinations:
+            - upstream: "api-backend"
+              weight: 100
+      - matcher: !exact
+          path: "/health"
+        direct:
+          status: 200
+          body: "OK"
+      - matcher: !prefix
+          path: "/legacy"
+        redirect:
+          status: 301
+          location: "https://new-app.example.com/legacy"
+```
+
+---
+
+## Validation & Backend Constraints Summary
+
+1. **Duration Fields**: Use humantime format (e.g., `"500ms"`, `"1s"`, `"2m"`, `"1h"`).
+2. **Duplicate Detection**: Unique names are strictly enforced for listeners, upstreams, and virtual host domains.
+3. **mTLS**: Upstream `ca_bundle_path` is currently ignored by the runtime's Rustls implementation.
+4. **Header Names**: Must be valid HTTP header names (no spaces or control characters).
+5. **Regex Limits**: Regular expressions are validated at configuration load time; complex or overly long regexes will be rejected.
+6. **Normalization**: All path matchers (except regex) must be normalized.

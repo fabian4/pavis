@@ -1,0 +1,24 @@
+upstreams:
+  - name: "secure-backend"
+    discovery: "logical"
+    tls:
+      enabled: true
+      verify_cert: true
+      verify_hostname: true
+      sni_mode: "auto"
+      # ca_bundle_path: "/etc/pavis/ca.crt" # NOTE: Currently ignored by Rustls backend
+      cert:
+        cert_path: "/etc/pavis/client.crt"
+        key_path: "/etc/pavis/client.key"
+        chain_mode: "none"
+    endpoints:
+      - address: "backend.secure.local"
+        port: 443
+
+  - name: "custom-sni-backend"
+    tls:
+      sni_mode: "name"
+      sni: "legacy.service.local"
+    endpoints:
+      - address: "10.0.0.10"
+        port: 443

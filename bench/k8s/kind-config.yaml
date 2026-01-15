@@ -15,4 +15,4 @@ nodes:
   # Mount for container runtime stats access
   - hostPath: /var/lib/kubelet
     containerPath: /var/lib/kubelet
-    readOnly: true
+    readOnly: false

@@ -1,0 +1,16 @@
+listeners:
+  - name: "minimal-gateway"
+    address: "0.0.0.0:8080"
+
+upstreams:
+  - name: "local-service"
+    endpoints:
+      - address: "127.0.0.1"
+        port: 8081
+
+routes:
+  - host: "*"
+    paths:
+      - destinations:
+          - upstream: "local-service"
+            weight: 1

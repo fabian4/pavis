@@ -1,0 +1,23 @@
+telemetry:
+  level: "info"
+  pingora: "warn"
+  service_name: "pavis-gateway"
+  metrics: "0.0.0.0:9090"
+  access_log: "/var/log/pavis/access.log"
+  tracing:
+    provider: "otlp"
+    sampling: 10
+    endpoint: "http://otel-collector:4317"
+
+upstreams:
+  - name: "dummy"
+    endpoints:
+      - address: "127.0.0.1"
+        port: 8080
+
+routes:
+  - host: "*"
+    paths:
+      - destinations:
+          - upstream: "dummy"
+            weight: 1

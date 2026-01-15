@@ -12,6 +12,33 @@ source "$SCRIPT_DIR/k8s_helpers.sh"
 
 RELAY_NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 
+PAVIS_VERSION_HEADER="x-pavis-version"
+
+resolve_pavctl_bin() {
+  if [[ -n "${BENCH_PAVCTL_BIN:-}" && -x "${BENCH_PAVCTL_BIN}" ]]; then
+    echo "${BENCH_PAVCTL_BIN}"
+    return 0
+  fi
+
+  local pavctl="${BENCH_ROOT}/target/release/pavctl"
+  if [[ -x "$pavctl" ]]; then
+    echo "$pavctl"
+    return 0
+  fi
+
+  log_info "Building pavctl"
+  cargo build -p pavctl --release
+  echo "$pavctl"
+}
+
+build_pvs_from_config() {
+  local config_file="$1"
+  local output_file="$2"
+  local pavctl
+  pavctl="$(resolve_pavctl_bin)"
+  "$pavctl" gen "$config_file" "$output_file"
+}
+
 # Publish config to pavis-relay
 # Usage: publish_to_pavis_relay <config_file> <version>
 publish_to_pavis_relay() {
@@ -33,20 +60,29 @@ publish_to_pavis_relay() {
     relay_url="http://localhost:8090/v1/publish"
   fi
 
-  # Publish config with version
-  local response
-  response=$(curl -s -X POST "$relay_url" \
-    -H "Content-Type: application/json" \
-    -d "{\"version\": $version, \"config\": $(cat "$config_file" | jq -Rs .)}" \
-    2>&1)
+  local temp_pvs
+  temp_pvs=$(mktemp)
+  build_pvs_from_config "$config_file" "$temp_pvs"
 
-  if echo "$response" | jq -e '.status == "ok"' > /dev/null 2>&1; then
+  local temp_response
+  temp_response=$(mktemp)
+  local http_code
+  http_code=$(curl -s -o "$temp_response" -w "%{http_code}" -X POST "$relay_url" \
+    -H "Content-Type: application/octet-stream" \
+    -H "${PAVIS_VERSION_HEADER}: ${version}" \
+    --data-binary "@${temp_pvs}")
+
+  rm -f "$temp_pvs"
+
+  if [[ "$http_code" == "200" ]]; then
     log_info "Published config version $version to pavis-relay"
+    rm -f "$temp_response"
     return 0
-  else
-    log_error "Failed to publish config: $response"
-    return 1
   fi
+
+  log_error "Failed to publish config (status ${http_code}): $(cat "$temp_response")"
+  rm -f "$temp_response"
+  return 1
 }
 
 # Publish snapshot to envoy xDS server
@@ -82,24 +118,11 @@ generate_pavis_config() {
   local output_file="$2"
   local drop_rate="${3:-0.0}"
 
-  cat > "$output_file" <<EOF
-{
-  "version": $version,
-  "routes": [
-    {
-      "match": {
-        "path_prefix": "/"
-      },
-      "action": {
-        "upstream": "127.0.0.1:8081",
-        "drop_rate": $drop_rate
-      }
-    }
-  ]
-}
-EOF
-
-  log_info "Generated pavis config version $version (drop_rate=$drop_rate)"
+  cp "${BENCH_ROOT}/bench/config/pavis.yaml" "$output_file"
+  if [[ "$drop_rate" != "0.0" && "$drop_rate" != "0" ]]; then
+    log_warn "drop_rate=$drop_rate ignored for current pavis config schema"
+  fi
+  log_info "Generated pavis config version $version"
 }
 
 # Deploy baseline config (version 1, no drops)

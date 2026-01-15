@@ -68,7 +68,7 @@ bench-system-build:
 #   PROXY=linkerd make bench-system                      # Test linkerd
 #   PROXY=envoy CASE="stress_recovery" make bench-system # Single system test
 bench-system:
-	@MODE=system PROXY=$${PROXY:-pavis} BENCH_PROFILE=workstation CASE="$${CASE:-}" bash bench/run.sh
+	@MODE=system PROXY=$${PROXY:-pavis} BENCH_PROFILE=$${BENCH_PROFILE:-workstation} CASE="$${CASE:-}" bash bench/run.sh
 
 # Run system mode benchmarks for all supported proxies
 bench-system-all:

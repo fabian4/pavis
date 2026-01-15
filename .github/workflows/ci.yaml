@@ -57,7 +57,7 @@ jobs:
       - name: Build Relay Docker Image
         run: make docker-build IMAGE=relay MODE=ci
 
-      - name: Build Mock Relay Relay Docker Image
+      - name: Build Mock Relay Docker Image
         run: make docker-build IMAGE=mock-relay MODE=ci
 
       - name: Build Mock Upstream Docker Image

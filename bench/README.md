@@ -63,7 +63,8 @@ The Pavis project maintains a strict boundary between automated regression testi
 
 #### System Mode (Kubernetes)
 *   `MODE=system` enables system/Kubernetes mode (kind cluster).
-*   `BENCH_PROFILE=workstation` is **required** for system mode (github profile not supported).
+*   `BENCH_PROFILE=github` is supported in GitHub CI for system mode (CI-only gating, Pavis-only).
+*   `BENCH_PROFILE=workstation` enables authoritative runs on dedicated hardware.
 *   `PROXY=pavis|envoy|linkerd` selects the proxy to test (default: pavis).
 *   System mode tests are located in `bench/cases/system/`.
 *   **No MODE set**: Runs both standalone and system modes sequentially.

@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pavis-relay-config
+  namespace: bench-system
+data:
+  relay.yaml: |
+    identity:
+      name: pavis-relay
+
+    http:
+      bind: "0.0.0.0:8090"
+      admin_bind: "0.0.0.0:9090"
+
+    storage:
+      root_dir: "/var/lib/pavis"
+
+    artifact:
+      # Last-known-good artifact path (used at startup and for crash recovery)
+      lkg_path: "/var/lib/pavis/lkg/config.pvs"
+
+    pipeline:
+      ingest:
+        source:
+          kind: file
+          path: "/etc/pavis/input.yaml"
+        mode:
+          kind: watch
+          debounce: 200
+      codec:
+        kind: serde
+        mode:
+          compaction: off
+      runtime:
+        max_in_flight: 8
+        restart_backoff:
+          min: 500
+          max: 30000
+        publish_retry:
+          max: 5
+          backoff:
+            min: 250
+            max: 5000
+
+    distribution:
+      long_poll:
+        enabled: true
+
+    persistence:
+      enabled: true
+      flush_interval: 1000
+      retry:
+        max: 5
+        backoff:
+          min: 250
+          max: 5000
+  input.yaml: |
+    listeners:
+      - name: "benchmark"
+        address: "0.0.0.0:8080"
+        workers: 2
+
+    telemetry:
+      level: "warn"
+      pingora: "error"
+      service_name: "pavis-benchmark"
+      access_log: false
+
+    upstreams:
+      - name: "backend"
+        discovery: "logical"
+        balancer: "round-robin"
+        protocol: "h1"
+        endpoints:
+          - address: "backend"
+            port: 80
+
+    routes:
+      - host: "*"
+        paths:
+          - matcher: !prefix
+              path: "/"
+            destinations:
+              - upstream: "backend"
+                weight: 100
