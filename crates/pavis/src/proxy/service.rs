@@ -19,6 +19,7 @@ use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -43,11 +44,25 @@ impl opentelemetry::propagation::Injector for HeaderInjector<'_> {
     }
 }
 
+static CLOCK_UNDERFLOW_WARNED: AtomicBool = AtomicBool::new(false);
+
+fn request_id_timestamp(now: std::time::SystemTime) -> u128 {
+    match now.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos(),
+        Err(err) => {
+            if !CLOCK_UNDERFLOW_WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    error = %err,
+                    "System clock is before UNIX_EPOCH; using 0 for request id timestamp"
+                );
+            }
+            0
+        }
+    }
+}
+
 fn generate_request_id() -> RequestId {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let now = request_id_timestamp(std::time::SystemTime::now());
     let random_val: u32 = rand::rng().random();
     RequestId::from_parts(now, random_val)
 }
@@ -272,13 +287,18 @@ impl ProxyHttp for Proxy {
             None => return Error::e_explain(InternalError, "No upstream selected"),
         };
 
-        // O(1) lookup using Manager
-        // Use PINNED state when available, otherwise fall back to latest snapshot (e.g., tests)
+        // O(1) lookup using Manager; runtime state must be pinned by request_filter.
         let state = match ctx.runtime_state.clone() {
             Some(state) => state,
             None => {
-                tracing::debug!("Runtime state missing from context; using latest snapshot");
-                self.state.load()
+                let route = ctx.route_pattern.as_label();
+                return Error::e_explain(
+                    InternalError,
+                    format!(
+                        "missing runtime snapshot: request_id={} route={} upstream={}",
+                        ctx.req_id, route, upstream_name.0
+                    ),
+                );
             }
         };
         let cluster = match state.upstream_manager.get(upstream_name.0.as_str()) {
@@ -720,6 +740,21 @@ impl ProxyHttp for Proxy {
                 span.record("error.type", "client_error");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_id_timestamp_handles_underflow() {
+        let before_epoch = std::time::UNIX_EPOCH - std::time::Duration::from_secs(1);
+        let timestamp = request_id_timestamp(before_epoch);
+        assert_eq!(timestamp, 0);
+
+        let id = RequestId::from_parts(timestamp, 1);
+        assert!(id.as_str().starts_with("req-0-"));
     }
 }
 

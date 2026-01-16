@@ -158,7 +158,7 @@ fn assert_converted_matches_canonical(
     config: &SerdeConfig,
 ) -> Result<()> {
     let runtime = config.clone().build()?;
-    let canonical: SerdeConfig = runtime.into();
+    let canonical = SerdeConfig::try_from(runtime).expect("serde config");
 
     match format {
         SerdeFormat::Yaml => {

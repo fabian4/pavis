@@ -35,7 +35,7 @@ Its primary goal is to prove that a configuration compiled by a user propagtes t
 
 ### `31_lkg_rejection`
 *   **Intent**: Integrated semantic rejection.
-*   **Status**: ⏳ Planned.
+*   **Status**: ⏭️ Skipped (runtime accepts listener/TLS errors lazily, so the update is applied).
 
 ### `40_resilience_restart`
 *   **Intent**: Recovery after relay restart.

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use hickory_resolver::TokioResolver;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::name_server::TokioConnectionProvider;
@@ -25,35 +25,20 @@ struct ResolvedUpdate {
 }
 
 impl UpstreamResolver {
-    pub fn new(state: Arc<RuntimeStateHandle>, interval: Duration) -> Self {
-        let resolver = if let Ok(dns_server) = std::env::var("PAVIS_DNS_SERVER") {
-            tracing::info!("Using custom DNS server: {}", dns_server);
-            let mut config = ResolverConfig::new();
-            let addr: SocketAddr = dns_server.parse().expect("Invalid PAVIS_DNS_SERVER");
-            config.add_name_server(hickory_resolver::config::NameServerConfig {
-                socket_addr: addr,
-                protocol: Protocol::Udp,
-                tls_dns_name: None,
-                trust_negative_responses: false,
-                bind_addr: None,
-                http_endpoint: None,
-            });
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
-                .with_options(ResolverOpts::default())
-                .build()
+    pub fn new(state: Arc<RuntimeStateHandle>, interval: Duration) -> Result<Self> {
+        let env_dns = std::env::var("PAVIS_DNS_SERVER").ok();
+        let system_conf = if env_dns.is_none() {
+            hickory_resolver::system_conf::read_system_conf()
+                .context("Failed to read system DNS config")
         } else {
-            let (config, opts) = hickory_resolver::system_conf::read_system_conf()
-                .expect("Failed to read system DNS config");
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
-                .with_options(opts)
-                .build()
+            Ok((ResolverConfig::new(), ResolverOpts::default()))
         };
-
-        Self {
+        let resolver = build_resolver(env_dns, system_conf)?;
+        Ok(Self {
             state,
             interval,
             resolver,
-        }
+        })
     }
 
     async fn resolve_once(&self) {
@@ -92,6 +77,39 @@ impl UpstreamResolver {
             }
         }
     }
+}
+
+fn build_resolver(
+    env_dns: Option<String>,
+    system_conf: Result<(ResolverConfig, ResolverOpts)>,
+) -> Result<TokioResolver> {
+    if let Some(dns_server) = env_dns {
+        tracing::info!("Using custom DNS server: {}", dns_server);
+        let addr: SocketAddr = dns_server
+            .parse()
+            .with_context(|| format!("Invalid PAVIS_DNS_SERVER: {}", dns_server))?;
+        let mut config = ResolverConfig::new();
+        config.add_name_server(hickory_resolver::config::NameServerConfig {
+            socket_addr: addr,
+            protocol: Protocol::Udp,
+            tls_dns_name: None,
+            trust_negative_responses: false,
+            bind_addr: None,
+            http_endpoint: None,
+        });
+        return Ok(
+            TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
+                .with_options(ResolverOpts::default())
+                .build(),
+        );
+    }
+
+    let (config, opts) = system_conf?;
+    Ok(
+        TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
+            .with_options(opts)
+            .build(),
+    )
 }
 
 #[async_trait::async_trait]
@@ -265,6 +283,7 @@ fn endpoint_port(addr: SocketAddr) -> pavis_core::Port {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
     use pavis_core::{
         ConnectTimeout, ConnectionLimit, Discovery, HttpVersion, IdleTimeout, LoadBalancer, Pool,
         Port, TlsPolicy, Upstream, UpstreamBuilder, UpstreamId, UpstreamName, Weight,
@@ -330,6 +349,23 @@ mod tests {
         assert_eq!(select_existing_or_first(&resolved, &current_mismatch), None);
     }
 
+    #[test]
+    fn build_resolver_rejects_invalid_env() {
+        let err = build_resolver(
+            Some("not-a-socket".to_string()),
+            Ok((ResolverConfig::new(), ResolverOpts::default())),
+        )
+        .expect_err("invalid env");
+        assert!(err.to_string().contains("Invalid PAVIS_DNS_SERVER"));
+    }
+
+    #[test]
+    fn build_resolver_surfaces_system_conf_failure() {
+        let err =
+            build_resolver(None, Err(anyhow!("system config failure"))).expect_err("system config");
+        assert!(err.to_string().contains("system config failure"));
+    }
+
     #[tokio::test]
     async fn test_resolve_logical_dns_no_dns_endpoints() {
         let config = build_upstream(
@@ -351,7 +387,7 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
         let result = resolve_logical_dns(&config, &[], &resolver.resolver)
             .await
@@ -371,7 +407,7 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
         let result = resolve_strict_dns(&config, &resolver.resolver)
             .await
@@ -391,7 +427,7 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
         let result = resolve_upstream(
             "test".to_string(),
@@ -427,7 +463,8 @@ mod tests {
             },
         ));
 
-        let resolver = UpstreamResolver::new(state.clone(), Duration::from_secs(10));
+        let resolver =
+            UpstreamResolver::new(state.clone(), Duration::from_secs(10)).expect("resolver");
 
         // This will run the loop once.
         // localhost should resolve on most systems, triggering an update.
@@ -451,7 +488,7 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let _resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let _resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
         // Note: this relies on system DNS, might be flaky if no network
         // But we are testing the resolver logic, not the network.
         // Assuming localhost resolves.
@@ -470,7 +507,7 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
         // Invalid hostname should fail fast without network dependency.
         let res = resolve_dns("invalid host", 80, &resolver.resolver).await;
         assert!(res.is_err());
@@ -478,6 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upstream_resolver_new_custom_dns() {
+        // SAFETY: test is single-threaded and controls env var scope.
         unsafe {
             std::env::set_var("PAVIS_DNS_SERVER", "1.2.3.4:53");
         }
@@ -489,7 +527,8 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let _resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let _resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
+        // SAFETY: test is single-threaded and controls env var scope.
         unsafe {
             std::env::remove_var("PAVIS_DNS_SERVER");
         }
@@ -525,7 +564,7 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
         // Should still resolve the first one if localhost works
         let _ = resolve_logical_dns(&config, &[], &resolver.resolver).await;
@@ -543,7 +582,7 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
         let res = resolve_upstream(
             "test".to_string(),
             config,
@@ -568,7 +607,7 @@ mod tests {
             },
         ));
 
-        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
         resolver.resolve_once().await;
     }
 
@@ -593,7 +632,7 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let resolver = UpstreamResolver::new(state, Duration::from_secs(10));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
         let res = resolve_strict_dns(&config, &resolver.resolver)
             .await
@@ -613,7 +652,8 @@ mod tests {
                 upstream_manager: manager,
             },
         ));
-        let mut resolver = UpstreamResolver::new(state, Duration::from_millis(10));
+        let mut resolver =
+            UpstreamResolver::new(state, Duration::from_millis(10)).expect("resolver");
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let handle = tokio::spawn(async move {

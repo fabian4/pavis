@@ -1,5 +1,5 @@
 #!/bin/bash
-# REASON: Skipping due to inconsistent access log verification in binary mode (flush timing or sync issues).
+# REASON: Skipping because access log verification is inconsistent in binary mode (flush/sync timing).
 exit 77
 set -e
 

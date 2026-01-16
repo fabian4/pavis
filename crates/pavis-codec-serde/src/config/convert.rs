@@ -45,19 +45,21 @@ impl TryFrom<StructurallyConfig> for pavis_core::RuntimeConfig {
     }
 }
 
-impl From<pavis_core::RuntimeConfig> for SerdeConfig {
-    fn from(binary: pavis_core::RuntimeConfig) -> Self {
+impl TryFrom<pavis_core::RuntimeConfig> for SerdeConfig {
+    type Error = anyhow::Error;
+
+    fn try_from(binary: pavis_core::RuntimeConfig) -> Result<Self, Self::Error> {
         let listeners = binary
             .listeners
             .into_iter()
             .map(server::from_runtime)
             .collect();
-        SerdeConfig {
+        Ok(SerdeConfig {
             listeners: Some(listeners),
             telemetry: Some(telemetry::from_runtime(binary.telemetry)),
-            upstreams: Some(upstreams::from_runtime(binary.upstreams)),
-            routes: Some(routes::from_runtime(binary.routes)),
-        }
+            upstreams: Some(upstreams::from_runtime(binary.upstreams)?),
+            routes: Some(routes::from_runtime(binary.routes)?),
+        })
     }
 }
 
@@ -258,7 +260,7 @@ routes:
             .build()
             .expect("runtime");
 
-        let config: SerdeConfig = runtime.into();
+        let config = SerdeConfig::try_from(runtime).expect("serde config");
         let listeners = config.listeners.as_ref().expect("listeners");
         let telemetry = config.telemetry.as_ref().expect("telemetry");
         let upstreams = config.upstreams.as_ref().expect("upstreams");

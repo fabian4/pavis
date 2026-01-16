@@ -22,7 +22,7 @@ pub(crate) fn convert_to_config(
         Some(other) => anyhow::bail!("Unsupported output extension: {other}"),
         None => format,
     };
-    let config: SerdeConfig = binary_config.into();
+    let config = SerdeConfig::try_from(binary_config).context("Failed to convert binary config")?;
     let bytes = emit_with_format(format, &config).context("Failed to encode config")?;
 
     match output_path {

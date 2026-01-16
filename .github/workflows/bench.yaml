@@ -18,7 +18,6 @@ env:
 jobs:
   bench-standalone:
     runs-on: ubuntu-latest
-    if: false
 
     steps:
       - name: Checkout repository

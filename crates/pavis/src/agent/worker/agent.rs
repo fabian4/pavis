@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use pingora::services::Service;
 use reqwest::Client;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -15,6 +15,8 @@ use pavis_core::RuntimeConfig;
 use pavis_pvs::PAVIS_VERSION_HEADER;
 
 type UpdateCallback = Box<dyn Fn(&RuntimeConfig) + Send + Sync>;
+
+static CALLBACK_LOCK_POISONED: AtomicBool = AtomicBool::new(false);
 
 pub struct ConfigAgent {
     relay_base: String,
@@ -95,7 +97,16 @@ impl ConfigAgent {
     where
         F: Fn(&RuntimeConfig) + Send + Sync + 'static,
     {
-        *self.on_update_callback.lock().unwrap() = Some(Box::new(callback));
+        let mut guard = match self.on_update_callback.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                if !CALLBACK_LOCK_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("on_update callback lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        *guard = Some(Box::new(callback));
     }
 
     pub fn worker(self: Arc<Self>) -> ConfigAgentWorker {
@@ -192,7 +203,16 @@ impl ConfigAgent {
         self.state.store(state);
         self.current_version.store(version, Ordering::SeqCst);
 
-        if let Some(callback) = self.on_update_callback.lock().unwrap().as_ref() {
+        let callback = match self.on_update_callback.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                if !CALLBACK_LOCK_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("on_update callback lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(callback) = callback.as_ref() {
             callback(&validated);
         }
 

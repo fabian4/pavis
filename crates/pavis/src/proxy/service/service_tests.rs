@@ -118,6 +118,10 @@ fn test_ca_store() -> Arc<ArcSwap<RootCertStore>> {
     Arc::new(ArcSwap::from_pointee(RootCertStore::empty()))
 }
 
+fn pin_runtime_state(ctx: &mut RouterContext, proxy: &Proxy) {
+    ctx.runtime_state = Some(proxy.state.load());
+}
+
 #[test]
 fn new_ctx_defaults_are_empty() {
     let manager = Manager::new(&[]).expect("manager");
@@ -472,6 +476,7 @@ async fn upstream_peer_defaults_sni() {
     let (mut session, _client) =
         session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("secure".to_string()));
 
     let peer = proxy
@@ -526,6 +531,7 @@ async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
     let (mut session, _client) =
         session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("dns".to_string()));
 
     let peer = proxy
@@ -743,6 +749,7 @@ async fn upstream_peer_fails_when_no_upstream_in_ctx() {
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     let res = proxy.upstream_peer(&mut session, &mut ctx).await;
     assert!(res.is_err());
     assert!(
@@ -765,6 +772,7 @@ async fn upstream_peer_fails_when_upstream_not_found() {
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("missing".to_string()));
     let res = proxy.upstream_peer(&mut session, &mut ctx).await;
     assert!(res.is_err());
@@ -803,6 +811,7 @@ async fn upstream_peer_fails_when_no_endpoints() {
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("empty".to_string()));
     let res = proxy.upstream_peer(&mut session, &mut ctx).await;
     assert!(res.is_err());
@@ -811,6 +820,68 @@ async fn upstream_peer_fails_when_no_endpoints() {
             .to_string()
             .contains("Upstream has no endpoints")
     );
+}
+
+#[tokio::test]
+async fn upstream_peer_errors_without_snapshot() {
+    let upstream = upstream("backend", 1, 8080);
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            config: RuntimeState::default().config,
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: Manager::new(&[upstream]).expect("manager"),
+        })),
+        telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
+    };
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.req_id = "req-missing".parse().unwrap();
+    ctx.upstream_name = Some(UpstreamName("backend".to_string()));
+    ctx.route_pattern = crate::proxy::context::RoutePattern::Matched {
+        pattern: Arc::from("/missing"),
+    };
+
+    let err = proxy
+        .upstream_peer(&mut session, &mut ctx)
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("missing runtime snapshot"));
+    assert!(msg.contains("request_id=req-missing"));
+    assert!(msg.contains("route=/missing"));
+    assert!(msg.contains("upstream=backend"));
+}
+
+#[tokio::test]
+async fn upstream_peer_uses_pinned_state_over_latest() {
+    let proxy_state = RuntimeState {
+        config: RuntimeState::default().config,
+        router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+        upstream_manager: Manager::new(&[upstream("new", 1, 8080)]).expect("manager"),
+    };
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(proxy_state)),
+        telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
+    };
+
+    let pinned_state = Arc::new(RuntimeState {
+        config: RuntimeState::default().config,
+        router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+        upstream_manager: Manager::new(&[]).expect("manager"),
+    });
+
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let mut ctx = proxy.new_ctx();
+    ctx.runtime_state = Some(pinned_state);
+    ctx.upstream_name = Some(UpstreamName("new".to_string()));
+
+    let err = proxy
+        .upstream_peer(&mut session, &mut ctx)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Upstream not found in config"));
 }
 
 #[test]
@@ -1185,6 +1256,7 @@ async fn test_upstream_peer_tls_verify_variants() {
 
         let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
         let mut ctx = proxy.new_ctx();
+        pin_runtime_state(&mut ctx, &proxy);
         ctx.upstream_name = Some(UpstreamName("verify".to_string()));
 
         let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
@@ -1223,6 +1295,7 @@ async fn upstream_peer_sets_client_cert_key() {
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("secure".to_string()));
 
     let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
@@ -1376,6 +1449,7 @@ async fn upstream_peer_dns_supported() {
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("dns-upstream".to_string()));
     let res = proxy.upstream_peer(&mut session, &mut ctx).await;
     assert!(res.is_ok());
@@ -1405,6 +1479,7 @@ async fn upstream_peer_tls_and_pool_variants() {
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("variants".to_string()));
 
     let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
@@ -1464,6 +1539,7 @@ async fn upstream_peer_sni_fallback_warning() {
     // Request without Host header
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("tls-no-sni".to_string()));
 
     let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
@@ -1513,6 +1589,7 @@ async fn upstream_peer_sni_override_prevents_fallback() {
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("tls-auto".to_string()));
 
     // Set explicit override (e.g. from Host header rewrite)
@@ -1565,6 +1642,7 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
     ctx.upstream_name = Some(UpstreamName("tls-explicit".to_string()));
 
     let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();

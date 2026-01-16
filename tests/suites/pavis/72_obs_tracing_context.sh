@@ -1,5 +1,5 @@
 #!/bin/bash
-# REASON: Skipping because dynamic tracing sampling updates are not being correctly applied in the current implementation.
+# REASON: Skipping because dynamic tracing sampling updates are not applied reliably yet.
 exit 77
 set -e
 

@@ -55,6 +55,8 @@ pub enum CoreValidationError {
     PathNotNormalized(String),
     #[error("regex for route '{route}' is too complex/long")]
     RegexTooLong { route: String },
+    #[error("regex cache lock poisoned")]
+    RegexCachePoisoned,
 }
 
 pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
@@ -106,9 +108,10 @@ mod tests {
         TracingProvider, TryTimeout, Upstream, UpstreamCa, UpstreamId, UpstreamName, VirtualHost,
         Weight, WorkerCount,
     };
+    use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::NonZeroU16;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     fn base_config() -> RuntimeConfig {
         RuntimeConfig {
@@ -225,6 +228,19 @@ mod tests {
             *sni = SniName::Auto;
         }
         assert!(validate_runtime(cfg).is_ok());
+    }
+
+    #[test]
+    fn regex_cache_poisoned_returns_error() {
+        let cache = Mutex::new(HashMap::new());
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = cache.lock().unwrap();
+            panic!("poison");
+        });
+
+        let err = super::routes::validate_regex_with_cache(&cache, ".*", "*")
+            .expect_err("expected regex cache error");
+        assert!(matches!(err, CoreValidationError::RegexCachePoisoned));
     }
 
     #[test]

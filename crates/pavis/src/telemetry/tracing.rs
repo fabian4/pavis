@@ -3,6 +3,7 @@ use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::{Config, Sampler};
 use pingora::services::Service;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use tracing::{Event, Id, Subscriber};
 use tracing_subscriber::{
@@ -28,6 +29,8 @@ pub struct ReloadableLayer<S> {
     inner: Arc<RwLock<Option<Box<dyn Layer<S> + Send + Sync + 'static>>>>,
 }
 
+static TRACING_LAYER_POISONED: AtomicBool = AtomicBool::new(false);
+
 impl<S> Clone for ReloadableLayer<S> {
     fn clone(&self) -> Self {
         Self {
@@ -50,7 +53,15 @@ impl<S> ReloadableLayer<S> {
     }
 
     pub fn reload(&self, layer: Box<dyn Layer<S> + Send + Sync + 'static>) {
-        let mut inner = self.inner.write().unwrap();
+        let mut inner = match self.inner.write() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
         *inner = Some(layer);
     }
 }
@@ -60,31 +71,76 @@ where
     S: Subscriber,
 {
     fn on_layer(&mut self, subscriber: &mut S) {
-        if let Some(inner) = self.inner.write().unwrap().as_mut() {
+        let mut guard = match self.inner.write() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_mut() {
             inner.on_layer(subscriber);
         }
     }
 
     fn on_new_span(&self, attrs: &tracing::span::Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.on_new_span(attrs, id, ctx);
         }
     }
 
     fn on_record(&self, span: &Id, values: &tracing::span::Record<'_>, ctx: Context<'_, S>) {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.on_record(span, values, ctx);
         }
     }
 
     fn on_follows_from(&self, span: &Id, follows: &Id, ctx: Context<'_, S>) {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.on_follows_from(span, follows, ctx);
         }
     }
 
     fn enabled(&self, metadata: &tracing::Metadata<'_>, ctx: Context<'_, S>) -> bool {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.enabled(metadata, ctx)
         } else {
             true
@@ -92,7 +148,16 @@ where
     }
 
     fn event_enabled(&self, event: &Event<'_>, ctx: Context<'_, S>) -> bool {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.event_enabled(event, ctx)
         } else {
             true
@@ -100,38 +165,92 @@ where
     }
 
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.on_event(event, ctx);
         }
     }
 
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.on_enter(id, ctx);
         }
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.on_exit(id, ctx);
         }
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.on_close(id, ctx);
         }
     }
 
     fn on_id_change(&self, old: &Id, new: &Id, ctx: Context<'_, S>) {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
             inner.on_id_change(old, new, ctx);
         }
     }
 
     unsafe fn downcast_raw(&self, id: std::any::TypeId) -> Option<*const ()> {
-        if let Some(inner) = self.inner.read().unwrap().as_ref() {
-            // Safety: delegating to inner layer
+        let guard = match self.inner.read() {
+            Ok(inner) => inner,
+            Err(poisoned) => {
+                if !TRACING_LAYER_POISONED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("tracing reload lock was poisoned; recovering");
+                }
+                poisoned.into_inner()
+            }
+        };
+        if let Some(inner) = guard.as_ref() {
+            // SAFETY: delegating to inner layer preserves the required TypeId checks.
             unsafe { inner.downcast_raw(id) }
         } else {
             None
@@ -260,5 +379,25 @@ impl Service for TracingService {
 
     fn name(&self) -> &str {
         "tracing"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reloadable_layer_recovers_from_poisoned_lock() {
+        let mut layer = ReloadableLayer::<Registry>::new();
+        let inner = layer.inner.clone();
+
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = inner.write().unwrap();
+            panic!("poison lock");
+        });
+
+        layer.reload(Box::new(tracing_subscriber::fmt::Layer::default()));
+        let mut subscriber = Registry::default();
+        layer.on_layer(&mut subscriber);
     }
 }

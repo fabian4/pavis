@@ -29,15 +29,24 @@ fn init_state(config: &config::RelayConfig) -> Result<(SocketAddr, RelayState)> 
     let listen_addr: SocketAddr = config.http.bind.parse().context("invalid listen address")?;
 
     let lkg_path = resolve_lkg_path(config);
-    let bytes = match std::fs::read(&lkg_path) {
-        Ok(bytes) => bytes,
+    let mut options = build_options(config).context("invalid relay config options")?;
+    let bytes = match std::fs::metadata(&lkg_path) {
+        Ok(meta) => {
+            if options.max_pvs_bytes > 0 && meta.len() > options.max_pvs_bytes {
+                anyhow::bail!(
+                    "LKG {} exceeds max_pvs_bytes {}",
+                    lkg_path.display(),
+                    options.max_pvs_bytes
+                );
+            }
+            std::fs::read(&lkg_path)
+                .with_context(|| format!("failed to read LKG: {}", lkg_path.display()))?
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(err) => {
             return Err(err).with_context(|| format!("failed to read LKG: {}", lkg_path.display()));
         }
     };
-
-    let mut options = build_options(config).context("invalid relay config options")?;
     options.lkg_path = Some(lkg_path);
     let initial_version = if bytes.is_empty() { 0 } else { 1 };
     let state = RelayState::new_with_options(initial_version, Bytes::from(bytes), options)
@@ -288,6 +297,26 @@ mod tests {
         assert!(err.to_string().contains("failed to read LKG"));
 
         // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn init_state_rejects_oversized_lkg() {
+        let dir = std::env::temp_dir().join("relay_lkg_oversize");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let lkg = dir.join("config.pvs");
+        std::fs::write(&lkg, vec![0u8; 32]).unwrap();
+
+        let mut config = minimal_config();
+        config.http.bind = "127.0.0.1:0".to_string();
+        config.artifact.lkg_path = lkg.to_string_lossy().to_string();
+        config.artifact.limits.max_pvs_bytes = 8;
+
+        let err = init_state(&config).err().expect("oversize error");
+        assert!(err.to_string().contains("max_pvs_bytes"));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -224,7 +224,7 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
     Ok(runtime_upstreams)
 }
 
-pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream> {
+pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Result<Vec<Upstream>> {
     let mut serde_upstreams = Vec::new();
 
     for u in upstreams {
@@ -235,7 +235,7 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
                 EndpointAddr::Dns { host, port } => (host.0, port.0.get()),
                 #[allow(unreachable_patterns)]
                 _ => {
-                    panic!("unknown endpoint address variant");
+                    return Err(anyhow::anyhow!("unknown endpoint address variant"));
                 }
             };
             endpoints.push(Endpoint {
@@ -350,7 +350,7 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Vec<Upstream
         });
     }
 
-    serde_upstreams
+    Ok(serde_upstreams)
 }
 
 fn default_pool_config() -> crate::config::types::ConnectionPoolConfig {
@@ -768,7 +768,7 @@ mod tests {
             .build()
             .expect("upstream");
 
-        let config = from_runtime(vec![runtime]);
+        let config = from_runtime(vec![runtime]).expect("from_runtime");
         let u = &config[0];
         assert_eq!(u.name, "test");
         assert!(matches!(u.balancer, Some(LoadBalancer::RoundRobin)));
@@ -855,7 +855,7 @@ mod tests {
         }
 
         // Round trip
-        let serde = from_runtime(runtime);
+        let serde = from_runtime(runtime).expect("from_runtime");
         let u_serde = &serde[0];
         match u_serde.endpoints[0].address.as_str() {
             "example.com" => {}
@@ -901,7 +901,7 @@ mod tests {
             .expect("upstream");
 
         // 1. TlsVerify::Disabled, SniName::Auto
-        let serde = from_runtime(vec![upstream.clone()]);
+        let serde = from_runtime(vec![upstream.clone()]).expect("from_runtime");
         let tls = serde[0].tls.as_ref().unwrap();
         assert!(!tls.verify_cert.unwrap());
         assert!(!tls.verify_hostname.unwrap());
@@ -912,14 +912,14 @@ mod tests {
         if let TlsPolicy::Enabled { verify, .. } = &mut upstream.tls {
             *verify = TlsVerify::CaOnly;
         }
-        let serde = from_runtime(vec![upstream.clone()]);
+        let serde = from_runtime(vec![upstream.clone()]).expect("from_runtime");
         let tls = serde[0].tls.as_ref().unwrap();
         assert!(tls.verify_cert.unwrap());
         assert!(!tls.verify_hostname.unwrap());
 
         // 3. Pool::Limited
         upstream.pool.max = ConnectionLimit::Limited(NonZeroU32::new(100).unwrap());
-        let serde = from_runtime(vec![upstream.clone()]);
+        let serde = from_runtime(vec![upstream.clone()]).expect("from_runtime");
         assert_eq!(serde[0].pool.as_ref().unwrap().max, Some(100));
     }
 }

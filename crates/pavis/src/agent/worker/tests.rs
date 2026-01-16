@@ -147,6 +147,7 @@ fn worker_name_is_stable() {
     let lkg = dir.join("config.pvs");
     let config = minimal_config("v1");
     // SAFETY: tests use configs that are assumed valid for runtime state construction.
+    // SAFETY: test builds a validated config via pavis-pvs.
     let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
     let state = RuntimeState::from_config(&validated).expect("state");
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
@@ -249,6 +250,7 @@ async fn apply_update_warns_on_version_write_failure() {
 
     let config = minimal_config("v2");
     // SAFETY: tests use configs that are assumed valid for runtime state construction.
+    // SAFETY: test builds a validated config via pavis-pvs.
     let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
     let state = RuntimeState::from_config(&validated).expect("state");
     let state_handle = Arc::new(RuntimeStateHandle::new(state));

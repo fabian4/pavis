@@ -71,15 +71,23 @@ pub(super) fn validate_routes(
     Ok(())
 }
 
-fn validate_regex(path: &str, host: &str) -> CoreValidationResult<()> {
-    let cache = REGEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if cache
-        .lock()
-        .expect("regex cache lock poisoned")
-        .contains_key(path)
-    {
+pub(super) fn validate_regex_with_cache(
+    cache: &Mutex<HashMap<String, Regex>>,
+    path: &str,
+    host: &str,
+) -> CoreValidationResult<()> {
+    let guard = match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            drop(poisoned.into_inner());
+            cache.clear_poison();
+            return Err(CoreValidationError::RegexCachePoisoned);
+        }
+    };
+    if guard.contains_key(path) {
         return Ok(());
     }
+    drop(guard);
 
     let compiled = Regex::new(path).map_err(|e| CoreValidationError::InvalidRegex {
         host: host.to_string(),
@@ -87,9 +95,21 @@ fn validate_regex(path: &str, host: &str) -> CoreValidationResult<()> {
         error: e.to_string(),
     })?;
 
-    let mut guard = cache.lock().expect("regex cache lock poisoned");
+    let mut guard = match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            drop(poisoned.into_inner());
+            cache.clear_poison();
+            return Err(CoreValidationError::RegexCachePoisoned);
+        }
+    };
     guard.entry(path.to_string()).or_insert(compiled);
     Ok(())
+}
+
+fn validate_regex(path: &str, host: &str) -> CoreValidationResult<()> {
+    let cache = REGEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    validate_regex_with_cache(cache, path, host)
 }
 
 fn validate_action(

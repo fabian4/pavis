@@ -2,7 +2,7 @@ use crate::common::cli::RelayArgs;
 use crate::relay::state::RelayState;
 use axum::{
     extract::{Query, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
@@ -27,14 +27,7 @@ pub async fn handler(
     if let Some((meta, data)) = state.get_current().await
         && meta.etag != client_etag
     {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::ETAG, meta.etag.parse().unwrap());
-        headers.insert("x-pavis-version", meta.rev.to_string().parse().unwrap());
-        headers.insert(
-            header::CONTENT_TYPE,
-            "application/octet-stream".parse().unwrap(),
-        );
-        return (headers, data).into_response();
+        return response_with_meta(&meta, data);
     }
 
     // Wait
@@ -43,14 +36,7 @@ pub async fn handler(
         Ok(Ok(())) => {
             // Changed!
             if let Some((meta, data)) = state.get_current().await {
-                let mut headers = HeaderMap::new();
-                headers.insert(header::ETAG, meta.etag.parse().unwrap());
-                headers.insert("x-pavis-version", meta.rev.to_string().parse().unwrap());
-                headers.insert(
-                    header::CONTENT_TYPE,
-                    "application/octet-stream".parse().unwrap(),
-                );
-                return (headers, data).into_response();
+                return response_with_meta(&meta, data);
             }
             // Should not happen if changed() returned, unless it was cleared?
             (StatusCode::NOT_MODIFIED, "").into_response()
@@ -60,4 +46,29 @@ pub async fn handler(
             (StatusCode::NOT_MODIFIED, "").into_response()
         }
     }
+}
+
+fn response_with_meta(meta: &crate::relay::types::ArtifactMeta, data: bytes::Bytes) -> Response {
+    let mut headers = HeaderMap::new();
+    let etag = match HeaderValue::from_str(&meta.etag) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!(error = %err, "invalid etag header");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "").into_response();
+        }
+    };
+    let version = match HeaderValue::from_str(&meta.rev.to_string()) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!(error = %err, "invalid version header");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "").into_response();
+        }
+    };
+    headers.insert(header::ETAG, etag);
+    headers.insert("x-pavis-version", version);
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    (headers, data).into_response()
 }

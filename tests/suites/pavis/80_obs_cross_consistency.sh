@@ -1,5 +1,5 @@
 #!/bin/bash
-# REASON: Skipping because Trace ID propagation verification is failing in binary mode.
+# REASON: Skipping because trace ID propagation verification fails in binary mode.
 exit 77
 set -e
 

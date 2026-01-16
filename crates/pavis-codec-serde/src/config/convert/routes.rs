@@ -152,7 +152,7 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
     Ok(runtime_routes)
 }
 
-pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualHost> {
+pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Result<Vec<VirtualHost>> {
     let mut serde_routes = Vec::new();
 
     for v in routes {
@@ -182,7 +182,7 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 }
                 #[allow(unreachable_patterns)]
                 _ => {
-                    panic!("unknown route action variant");
+                    return Err(anyhow::anyhow!("unknown route action variant"));
                 }
             };
 
@@ -245,7 +245,7 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
                 pavis_core::PathMatch::Regex { path } => Matcher::Regex { path: path.0 },
                 #[allow(unreachable_patterns)]
                 _ => {
-                    panic!("unknown path match variant");
+                    return Err(anyhow::anyhow!("unknown path match variant"));
                 }
             };
 
@@ -279,7 +279,7 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Vec<VirtualH
         });
     }
 
-    serde_routes
+    Ok(serde_routes)
 }
 
 fn default_matcher() -> Matcher {
@@ -594,7 +594,7 @@ mod tests {
             }],
         };
 
-        let serde_vhost = from_runtime(vec![runtime_vhost]);
+        let serde_vhost = from_runtime(vec![runtime_vhost]).expect("from_runtime");
         let route = &serde_vhost[0].paths[0];
         assert_eq!(route.timeout, Some(std::time::Duration::from_secs(5)));
         assert_eq!(route.retry.as_ref().unwrap().attempts, 3);
@@ -711,7 +711,7 @@ mod tests {
         }
 
         // Round trip back
-        let serde_back = from_runtime(runtime);
+        let serde_back = from_runtime(runtime).expect("from_runtime");
         let paths_back = &serde_back[0].paths;
 
         match &paths_back[0].action {

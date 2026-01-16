@@ -35,6 +35,7 @@ impl RequestId {
 
     pub fn as_str(&self) -> &str {
         let len = self.len as usize;
+        // SAFETY: RequestId only stores ASCII bytes (digits and separators). Length is bounded.
         unsafe { std::str::from_utf8_unchecked(&self.buf[..len]) }
     }
 
@@ -309,5 +310,12 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         let duration = ctx.request_duration();
         assert!(duration >= std::time::Duration::from_millis(10));
+    }
+
+    #[test]
+    fn request_id_is_utf8() {
+        let id = RequestId::from_parts(0, 42);
+        assert!(std::str::from_utf8(id.as_str().as_bytes()).is_ok());
+        assert!(id.as_str().starts_with("req-"));
     }
 }

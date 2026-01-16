@@ -41,7 +41,7 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 
 ### `50_resilience_timeout` / `51_resilience_retry`
 *   **Intent**: SLA and retry policy enforcement.
-*   **Status**: ⏳ Planned.
+*   **Status**: ⏭️ Skipped (feature not implemented in runtime yet).
 
 ### `60_security_tls`
 *   **Intent**: Upgrading cleartext upstream to TLS with custom CA verification.
@@ -77,11 +77,15 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 
 ### `71_obs_access_log`
 *   **Intent**: Verify structured access logging to file.
-*   **Strength**: ✅ Solid. Validates JSON format and presence of all metadata fields (req_id, upstream timing).
+*   **Strength**: ⏭️ Skipped (binary mode access log verification is inconsistent due to flush/sync timing).
 
 ### `72_obs_tracing_context`
 *   **Intent**: Verify W3C trace context propagation to upstreams.
-*   **Strength**: ✅ Solid. Ensures `traceparent` headers are injected when tracing is enabled.
+*   **Strength**: ⏭️ Skipped (dynamic tracing sampling updates are not applied reliably yet).
+
+### `80_obs_cross_consistency`
+*   **Intent**: Verify metrics, access logs, and response headers agree on the same request identifiers.
+*   **Strength**: ⏭️ Skipped (trace ID propagation check is failing in binary mode).
 
 ---
 

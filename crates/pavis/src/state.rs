@@ -47,7 +47,7 @@ impl Default for RuntimeState {
             .add_listener(listener)
             .build()
             .expect("config");
-        // Safety: Default RuntimeConfig is empty and valid
+        // SAFETY: Default RuntimeConfig is empty and valid.
         let config = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(empty_config) };
         Self {
             config,

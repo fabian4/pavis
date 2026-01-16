@@ -243,7 +243,9 @@ fn main() -> Result<()> {
     let (telemetry, access_log_worker, metrics_worker, tracing_service) =
         Telemetry::new(&config.telemetry, Some(reload_handle));
     let telemetry = Arc::new(telemetry);
-    let resolver = UpstreamResolver::new(state_handle.clone(), Duration::from_secs(10));
+    let resolver = UpstreamResolver::new(state_handle.clone(), Duration::from_secs(10)).context(
+        "failed to initialize upstream resolver (check DNS settings and PAVIS_DNS_SERVER)",
+    )?;
 
     for listener in &config.listeners {
         let proxy_app = Proxy {

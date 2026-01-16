@@ -61,16 +61,40 @@ pub(crate) fn validate_bytes(path: &Path, bytes: &[u8]) -> Result<(), IngestErro
     Ok(())
 }
 
+fn validate_size(path: &Path, size: u64, max_bytes: u64) -> Result<(), IngestError> {
+    if max_bytes > 0 && size > max_bytes {
+        return Err(IngestError::Io(anyhow::anyhow!(
+            "File size {} exceeds max_bytes {} for path: {:?}",
+            size,
+            max_bytes,
+            path
+        )));
+    }
+    Ok(())
+}
+
+const DEFAULT_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
 pub struct FileIngest {
     path: PathBuf,
     debounce_duration: Duration,
+    max_bytes: u64,
 }
 
 impl FileIngest {
     pub fn new(path: impl Into<PathBuf>, debounce_duration: Duration) -> Self {
+        Self::new_with_max_bytes(path, debounce_duration, DEFAULT_MAX_BYTES)
+    }
+
+    pub fn new_with_max_bytes(
+        path: impl Into<PathBuf>,
+        debounce_duration: Duration,
+        max_bytes: u64,
+    ) -> Self {
         Self {
             path: path.into(),
             debounce_duration,
+            max_bytes,
         }
     }
 
@@ -78,10 +102,17 @@ impl FileIngest {
         let format = infer_format(&self.path);
         validate_format(&self.path, format)?;
 
+        let size = tokio::fs::metadata(&self.path)
+            .await
+            .map_err(|e| IngestError::Io(anyhow::anyhow!(e)))?
+            .len();
+        validate_size(&self.path, size, self.max_bytes)?;
+
         let bytes = tokio::fs::read(&self.path)
             .await
             .map_err(|e| IngestError::Io(anyhow::anyhow!(e)))?;
 
+        validate_size(&self.path, bytes.len() as u64, self.max_bytes)?;
         validate_bytes(&self.path, &bytes)?;
 
         let source = SourceInfo::new(self.path.to_string_lossy());
@@ -119,7 +150,13 @@ impl Ingest for FileIngest {
             }
         }
 
-        let watcher = watch::spawn_watcher(self.path.clone(), self.debounce_duration, tx).await?;
+        let watcher = watch::spawn_watcher(
+            self.path.clone(),
+            self.debounce_duration,
+            self.max_bytes,
+            tx,
+        )
+        .await?;
 
         Ok(FileIngestStream {
             receiver: rx,
@@ -171,6 +208,29 @@ mod tests {
             assert_eq!(artifact.source.name, yaml_path.to_string_lossy());
         } else {
             panic!("Expected artifact");
+        }
+
+        std::fs::remove_file(yaml_path)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_file_ingest_rejects_large_files() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        let oversized = vec![b'a'; 32];
+        file.as_file_mut().write_all(&oversized)?;
+        let path = file.path().to_path_buf();
+        let yaml_path = path.with_extension("yaml");
+        std::fs::rename(&path, &yaml_path)?;
+
+        let mut ingest =
+            FileIngest::new_with_max_bytes(yaml_path.clone(), Duration::from_millis(10), 8);
+        let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+
+        if let Some(Err(err)) = stream.next().await {
+            assert!(err.to_string().contains("max_bytes"));
+        } else {
+            panic!("Expected size error");
         }
 
         std::fs::remove_file(yaml_path)?;
@@ -488,6 +548,7 @@ mod tests {
         let res = watch::spawn_watcher(
             PathBuf::from("/non/existent/path/for/test"),
             Duration::from_millis(10),
+            DEFAULT_MAX_BYTES,
             tx,
         )
         .await;
@@ -574,8 +635,13 @@ mod tests {
         std::fs::rename(file.path(), &yaml_path)?;
 
         let (tx, rx) = mpsc::channel(1);
-        let _watcher =
-            watch::spawn_watcher(yaml_path.clone(), Duration::from_millis(10), tx).await?;
+        let _watcher = watch::spawn_watcher(
+            yaml_path.clone(),
+            Duration::from_millis(10),
+            DEFAULT_MAX_BYTES,
+            tx,
+        )
+        .await?;
 
         // Drop the receiver so that when timer fires, send fails.
         drop(rx);

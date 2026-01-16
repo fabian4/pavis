@@ -3,13 +3,15 @@ use crate::handlers::{
 };
 use crate::state::{RelayError, RelayState};
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 pub(crate) fn router(state: RelayState) -> Router {
+    let max_pvs_bytes = state.options().max_pvs_bytes;
     let shared = Arc::new(state);
-    Router::new()
+    let mut app = Router::new()
         .route("/v1/config", get(get_config))
         .route("/v1/status", get(get_status))
         .route("/v1/publish", post(post_publish))
@@ -17,7 +19,13 @@ pub(crate) fn router(state: RelayState) -> Router {
         .route("/v1/metrics", get(get_metrics))
         .route("/health", get(get_health))
         .route("/ready", get(get_ready))
-        .with_state(shared)
+        .with_state(shared);
+
+    if max_pvs_bytes > 0 {
+        app = app.layer(DefaultBodyLimit::max(max_pvs_bytes as usize));
+    }
+
+    app
 }
 
 pub(crate) async fn serve(listen_addr: SocketAddr, state: RelayState) -> Result<(), RelayError> {

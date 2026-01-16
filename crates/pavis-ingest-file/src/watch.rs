@@ -13,6 +13,7 @@ use crate::{infer_format, validate_bytes, validate_format};
 pub async fn spawn_watcher(
     path: PathBuf,
     debounce: Duration,
+    max_bytes: u64,
     tx: mpsc::Sender<Result<Artifact, IngestError>>,
 ) -> Result<RecommendedWatcher, IngestError> {
     let (event_tx, mut event_rx) = mpsc::channel(100);
@@ -99,8 +100,34 @@ pub async fn spawn_watcher(
                         continue;
                     }
 
+                    let size = tokio::fs::metadata(&ingest_path)
+                        .await
+                        .map(|meta| meta.len())
+                        .map_err(|e| IngestError::Io(anyhow::anyhow!(e)));
+
+                    if let Ok(size) = size
+                        && let Err(err) = crate::validate_size(&ingest_path, size, max_bytes)
+                    {
+                        warn!("Rejected file size: {:?}", ingest_path);
+                        if let Err(send_err) = tx.send(Err(err)).await {
+                            error!("Failed to send error through stream: {}", send_err);
+                            break;
+                        }
+                        continue;
+                    }
+
                     match tokio::fs::read(&ingest_path).await {
                         Ok(bytes) => {
+                            if let Err(err) =
+                                crate::validate_size(&ingest_path, bytes.len() as u64, max_bytes)
+                            {
+                                warn!("Rejected file size: {:?}", ingest_path);
+                                if let Err(send_err) = tx.send(Err(err)).await {
+                                    error!("Failed to send error through stream: {}", send_err);
+                                    break;
+                                }
+                                continue;
+                            }
                             if let Err(err) = validate_bytes(&ingest_path, &bytes) {
                                 warn!("Rejected file payload: {:?}", ingest_path);
                                 if let Err(send_err) = tx.send(Err(err)).await {
