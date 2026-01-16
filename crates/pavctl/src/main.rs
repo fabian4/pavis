@@ -6,7 +6,8 @@ use std::path::PathBuf;
 mod commands;
 
 use commands::{
-    compile_config, convert_to_config, get_default_output, inspect_config, validate_config,
+    compile_config, convert_to_config, get_default_output, inspect_config, publish_to_relay,
+    validate_config,
 };
 
 #[derive(Parser)]
@@ -57,6 +58,16 @@ enum Commands {
         #[arg(long, default_value = "yaml")]
         format: String,
     },
+    /// Publish a Pavis binary file (.pvs) to a relay
+    #[command(name = "publish")]
+    Publish {
+        /// Relay base URL (e.g., http://127.0.0.1:8080)
+        #[arg(long, default_value = "http://127.0.0.1:8080")]
+        relay: String,
+
+        /// Input Pavis file
+        input: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -81,6 +92,7 @@ fn run(cli: Cli) -> Result<()> {
             let format = parse_format_from_args(output.as_ref(), &format)?;
             convert_to_config(input, output, format)
         }
+        Commands::Publish { relay, input } => publish_to_relay(&relay, &input),
     }
 }
 

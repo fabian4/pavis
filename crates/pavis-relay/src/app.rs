@@ -3,15 +3,22 @@ use crate::config::{self, PipelineConfig, PipelineOptions};
 use crate::ingest::{BoxedIngest, boxed_ingest};
 use crate::pipeline::start_pipeline;
 use crate::routes::serve;
-use crate::state::{RelayOptions, RelayState};
+use crate::runtime::{RelayOptions, RelayRuntimeState};
+use crate::state::{RelayState, derive_state_from_lkg, load_state, save_state};
+use crate::storage::history::{find_corrupt_versions, find_orphaned_versions};
+use crate::storage::lkg::{lkg_artifact_path, load_lkg, repair_lkg};
 use anyhow::{Context, Result};
 use axum::body::Bytes;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tracing::warn;
 
-pub async fn serve_from_config(config: &config::RelayConfig) -> Result<()> {
-    let (listen_addr, state) = init_state(config)?;
+pub async fn serve_from_config(
+    config: &config::RelayConfig,
+    data_dir: Option<&Path>,
+) -> Result<()> {
+    let (listen_addr, state) = init_state(config, data_dir)?;
     let label = format!(
         "{:?}-{:?}",
         config.pipeline.ingest.source, config.pipeline.codec
@@ -25,32 +32,74 @@ pub async fn serve_from_config(config: &config::RelayConfig) -> Result<()> {
         .context("relay server failed")
 }
 
-fn init_state(config: &config::RelayConfig) -> Result<(SocketAddr, RelayState)> {
+fn init_state(
+    config: &config::RelayConfig,
+    data_dir: Option<&Path>,
+) -> Result<(SocketAddr, RelayRuntimeState)> {
     let listen_addr: SocketAddr = config.http.bind.parse().context("invalid listen address")?;
 
-    let lkg_path = resolve_lkg_path(config);
+    let base_dir = resolve_data_dir(config, data_dir);
+    ensure_storage_dirs(&base_dir)?;
+
+    repair_lkg(&base_dir).context("failed to repair LKG")?;
+
     let mut options = build_options(config).context("invalid relay config options")?;
-    let bytes = match std::fs::metadata(&lkg_path) {
-        Ok(meta) => {
-            if options.max_pvs_bytes > 0 && meta.len() > options.max_pvs_bytes {
+    options.lkg_path = Some(lkg_artifact_path(&base_dir));
+    options.storage_root = base_dir.clone();
+
+    let (bytes, lkg_meta) = match load_lkg(&base_dir) {
+        Ok(Some((bytes, meta))) => {
+            if options.max_pvs_bytes > 0 && (bytes.len() as u64) > options.max_pvs_bytes {
                 anyhow::bail!(
                     "LKG {} exceeds max_pvs_bytes {}",
-                    lkg_path.display(),
+                    options.lkg_path.as_ref().unwrap().display(),
                     options.max_pvs_bytes
                 );
             }
-            std::fs::read(&lkg_path)
-                .with_context(|| format!("failed to read LKG: {}", lkg_path.display()))?
+            if meta.size != bytes.len() as u64 {
+                warn!(
+                    "LKG metadata size {} does not match artifact size {}",
+                    meta.size,
+                    bytes.len()
+                );
+            }
+            (bytes, Some(meta))
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(err) => {
-            return Err(err).with_context(|| format!("failed to read LKG: {}", lkg_path.display()));
-        }
+        Ok(None) => (Vec::new(), None),
+        Err(err) => return Err(err).context("failed to load LKG"),
     };
-    options.lkg_path = Some(lkg_path);
-    let initial_version = if bytes.is_empty() { 0 } else { 1 };
-    let state = RelayState::new_with_options(initial_version, Bytes::from(bytes), options)
-        .context("failed to initialize relay state")?;
+
+    let derived_state = lkg_meta
+        .as_ref()
+        .map(derive_state_from_lkg)
+        .unwrap_or(RelayState { current_version: 0 });
+    let state_path = base_dir.join("state.json");
+    let cached_state = load_state(&state_path).context("failed to load state.json")?;
+    if cached_state.as_ref() != Some(&derived_state) {
+        save_state(&state_path, &derived_state).context("failed to persist state.json")?;
+    }
+
+    let orphans = find_orphaned_versions(&base_dir, derived_state.current_version)
+        .context("failed to scan history for orphans")?;
+    for version in orphans {
+        warn!("history entry version {} exceeds LKG version", version);
+    }
+
+    let corrupt =
+        find_corrupt_versions(&base_dir).context("failed to scan history for corruption")?;
+    for version in corrupt {
+        warn!(
+            "history entry version {} is missing .pvs or .meta.json",
+            version
+        );
+    }
+
+    let state = RelayRuntimeState::new_with_options(
+        derived_state.current_version,
+        Bytes::from(bytes),
+        options,
+    )
+    .context("failed to initialize relay state")?;
     Ok((listen_addr, state))
 }
 
@@ -91,12 +140,24 @@ fn build_ingest(config: &PipelineConfig) -> Result<BoxedIngest> {
     }
 }
 
-fn resolve_lkg_path(config: &config::RelayConfig) -> PathBuf {
-    let lkg_path = PathBuf::from(&config.artifact.lkg_path);
-    if lkg_path.is_absolute() || config.storage.root_dir.is_empty() {
-        return lkg_path;
+fn resolve_data_dir(config: &config::RelayConfig, data_dir: Option<&Path>) -> PathBuf {
+    if let Some(data_dir) = data_dir
+        && !data_dir.as_os_str().is_empty()
+    {
+        return data_dir.to_path_buf();
     }
-    Path::new(&config.storage.root_dir).join(lkg_path)
+    if !config.storage.root_dir.is_empty() {
+        return PathBuf::from(&config.storage.root_dir);
+    }
+    PathBuf::from("/var/lib/pavis-relay")
+}
+
+fn ensure_storage_dirs(base_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(base_dir.join("lkg"))
+        .with_context(|| format!("failed to create LKG dir under {}", base_dir.display()))?;
+    std::fs::create_dir_all(base_dir.join("history"))
+        .with_context(|| format!("failed to create history dir under {}", base_dir.display()))?;
+    Ok(())
 }
 
 fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
@@ -122,14 +183,19 @@ fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
         long_poll_enabled: config.distribution.long_poll.enabled,
         identity_name: config.identity.name.clone(),
         lkg_path: None,
+        storage_root: PathBuf::new(),
         max_pvs_bytes: config.artifact.limits.max_pvs_bytes,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_options, init_state, resolve_lkg_path};
+    use super::{build_options, init_state, resolve_data_dir};
     use crate::config::RelayConfig;
+    use crate::state::load_state;
+    use crate::storage::lkg::promote_to_lkg;
+    use crate::storage::metadata::ArtifactMetadata;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn minimal_config() -> RelayConfig {
         RelayConfig {
@@ -152,13 +218,38 @@ mod tests {
         }
     }
 
+    fn sample_pvs_bytes() -> Vec<u8> {
+        let listener = pavis_core::ListenerBuilder::new()
+            .name(pavis_core::ListenerName("default".to_string()))
+            .address("127.0.0.1:8080".parse().unwrap())
+            .workers(pavis_core::WorkerCount::Auto)
+            .tls(pavis_core::TlsConfig::Disabled)
+            .build()
+            .expect("listener");
+
+        let runtime_config = pavis_core::RuntimeConfigBuilder::new()
+            .telemetry(pavis_core::Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: pavis_core::ServiceName("pavis".to_string()),
+                metrics: pavis_core::Metrics::Disabled,
+                access_log: pavis_core::AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .expect("runtime config");
+
+        let validated = pavis_core::validate_runtime(runtime_config).expect("validate");
+        pavis_pvs::encode(validated.as_ref()).expect("encode")
+    }
+
     #[test]
-    fn resolve_lkg_path_respects_storage_root() {
+    fn resolve_data_dir_respects_storage_root() {
         let mut config = minimal_config();
         config.storage.root_dir = "/var/lib/pavis".to_string();
-        let path = resolve_lkg_path(&config);
-        assert!(path.ends_with("config.pvs"));
-        assert!(path.to_string_lossy().contains("/var/lib/pavis"));
+        let path = resolve_data_dir(&config, None);
+        assert_eq!(path, std::path::PathBuf::from("/var/lib/pavis"));
     }
 
     #[test]
@@ -189,59 +280,60 @@ mod tests {
     fn init_state_reads_missing_lkg_as_empty() {
         let mut config = minimal_config();
         config.http.bind = "127.0.0.1:0".to_string();
-        let (addr, state) = init_state(&config).expect("state");
+        let dir = std::env::temp_dir().join(format!(
+            "relay_init_empty_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let (addr, state) = init_state(&config, Some(&dir)).expect("state");
         assert_eq!(addr.ip().to_string(), "127.0.0.1");
         assert_eq!(state.options().identity_name, "relay");
+        let state_path = dir.join("state.json");
+        let persisted = load_state(&state_path).expect("load state").expect("state");
+        assert_eq!(persisted.current_version, 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
 
     fn init_state_reads_existing_lkg() {
-        let dir = std::env::temp_dir().join("relay_lkg_test");
+        let dir = std::env::temp_dir().join(format!(
+            "relay_lkg_test_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
 
         let _ = std::fs::remove_dir_all(&dir);
 
         std::fs::create_dir_all(&dir).unwrap();
 
-        let lkg = dir.join("config.pvs");
-
-        let listener = pavis_core::ListenerBuilder::new()
-            .name(pavis_core::ListenerName("default".to_string()))
-            .address("127.0.0.1:8080".parse().unwrap())
-            .workers(pavis_core::WorkerCount::Auto)
-            .tls(pavis_core::TlsConfig::Disabled)
-            .build()
-            .expect("listener");
-
-        let runtime_config = pavis_core::RuntimeConfigBuilder::new()
-            .telemetry(pavis_core::Telemetry {
-                level: pavis_core::LogLevel::Info,
-                pingora: pavis_core::LogLevel::Info,
-                service_name: pavis_core::ServiceName("pavis".to_string()),
-                metrics: pavis_core::Metrics::Disabled,
-                access_log: pavis_core::AccessLogPolicy::Disabled,
-                tracing: pavis_core::TracingPolicy::Disabled,
-            })
-            .add_listener(listener)
-            .build()
-            .expect("runtime config");
-
-        let validated = pavis_core::validate_runtime(runtime_config).expect("validate");
-        pavis_pvs::write(&lkg, validated.as_ref()).unwrap();
+        let pvs_bytes = sample_pvs_bytes();
+        let meta = ArtifactMetadata {
+            version: 1,
+            published_at: SystemTime::UNIX_EPOCH,
+            checksum: crate::storage::metadata::checksum_for_bytes(&pvs_bytes),
+            size: pvs_bytes.len() as u64,
+        };
+        promote_to_lkg(&dir, &pvs_bytes, &meta).unwrap();
 
         let mut config = minimal_config();
 
         config.http.bind = "127.0.0.1:0".to_string();
 
-        config.artifact.lkg_path = lkg.to_string_lossy().to_string();
-
-        let (_addr, state) = init_state(&config).expect("state");
+        let (_addr, state) = init_state(&config, Some(&dir)).expect("state");
 
         let snapshot = tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(state.snapshot());
 
         assert!(!snapshot.pvs_bytes.is_empty());
+        let state_path = dir.join("state.json");
+        let persisted = load_state(&state_path).expect("load state").expect("state");
+        assert_eq!(persisted.current_version, 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -277,24 +369,28 @@ mod tests {
 
     #[test]
     fn init_state_fails_on_lkg_read_error() {
-        let dir = std::env::temp_dir().join("relay_lkg_fail");
+        let dir = std::env::temp_dir().join(format!(
+            "relay_lkg_fail_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // Use a directory as the LKG path to force a read error (EISDIR on Unix, Access Denied on Windows)
-        let lkg = dir.join("config.pvs");
-        std::fs::create_dir(&lkg).unwrap();
+        // Create a corrupt LKG metadata (directory in place of file).
+        let lkg_dir = dir.join("lkg");
+        std::fs::create_dir_all(&lkg_dir).unwrap();
+        let meta_dir = lkg_dir.join("meta.json");
+        std::fs::create_dir(&meta_dir).unwrap();
 
         let mut config = minimal_config();
         config.http.bind = "127.0.0.1:0".to_string();
-        config.artifact.lkg_path = lkg.to_string_lossy().to_string();
 
-        let err = init_state(&config).err().expect("lkg error");
+        let err = init_state(&config, Some(&dir)).err().expect("lkg error");
 
-        // Debug the actual error content
-        dbg!(&err); // Print the actual error
-
-        assert!(err.to_string().contains("failed to read LKG"));
+        assert!(err.to_string().contains("failed to repair LKG"));
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);
@@ -302,20 +398,71 @@ mod tests {
 
     #[test]
     fn init_state_rejects_oversized_lkg() {
-        let dir = std::env::temp_dir().join("relay_lkg_oversize");
+        let dir = std::env::temp_dir().join(format!(
+            "relay_lkg_oversize_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let lkg = dir.join("config.pvs");
-        std::fs::write(&lkg, vec![0u8; 32]).unwrap();
+        let pvs_bytes = vec![0u8; 32];
+        let meta = ArtifactMetadata {
+            version: 1,
+            published_at: SystemTime::UNIX_EPOCH,
+            checksum: crate::storage::metadata::checksum_for_bytes(&pvs_bytes),
+            size: pvs_bytes.len() as u64,
+        };
+        promote_to_lkg(&dir, &pvs_bytes, &meta).unwrap();
 
         let mut config = minimal_config();
         config.http.bind = "127.0.0.1:0".to_string();
-        config.artifact.lkg_path = lkg.to_string_lossy().to_string();
         config.artifact.limits.max_pvs_bytes = 8;
 
-        let err = init_state(&config).err().expect("oversize error");
+        let err = init_state(&config, Some(&dir))
+            .err()
+            .expect("oversize error");
         assert!(err.to_string().contains("max_pvs_bytes"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn init_state_rewrites_state_json_on_mismatch() {
+        let dir = std::env::temp_dir().join(format!(
+            "runtime_mismatch_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let pvs_bytes = sample_pvs_bytes();
+        let meta = ArtifactMetadata {
+            version: 2,
+            published_at: SystemTime::UNIX_EPOCH,
+            checksum: crate::storage::metadata::checksum_for_bytes(&pvs_bytes),
+            size: pvs_bytes.len() as u64,
+        };
+        promote_to_lkg(&dir, &pvs_bytes, &meta).unwrap();
+
+        let state_path = dir.join("state.json");
+        crate::state::save_state(
+            &state_path,
+            &crate::state::RelayState { current_version: 9 },
+        )
+        .unwrap();
+
+        let mut config = minimal_config();
+        config.http.bind = "127.0.0.1:0".to_string();
+        let (_addr, _state) = init_state(&config, Some(&dir)).expect("state");
+
+        let persisted = load_state(&state_path).expect("load state").expect("state");
+        assert_eq!(persisted.current_version, 2);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -324,10 +471,20 @@ mod tests {
     async fn test_serve_from_config_abort() {
         let mut config = minimal_config();
         config.http.bind = "127.0.0.1:0".to_string(); // Random port
+        let dir = std::env::temp_dir().join(format!(
+            "relay_serve_abort_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
 
-        let handle = tokio::spawn(async move { super::serve_from_config(&config).await });
+        let data_dir = dir.clone();
+        let handle =
+            tokio::spawn(async move { super::serve_from_config(&config, Some(&data_dir)).await });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         handle.abort();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

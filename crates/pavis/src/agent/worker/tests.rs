@@ -1,6 +1,5 @@
 use super::ConfigAgent;
 use crate::agent::Backoff;
-use crate::agent::lkg::version_path_for;
 use crate::state::{RuntimeState, RuntimeStateHandle};
 use axum::Router;
 use axum::http::StatusCode;
@@ -14,7 +13,7 @@ use pavis_core::{
     Timeout, TlsConfig, TlsPolicy, UpstreamBuilder, UpstreamId, UpstreamName, VirtualHost, Weight,
     WorkerCount,
 };
-use pavis_pvs::PAVIS_VERSION_HEADER;
+use pavis_pvs::compute_checksum;
 use pingora::services::Service;
 use reqwest::Client;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -116,8 +115,18 @@ fn make_agent(base: String, lkg_path: PathBuf, state: Arc<RuntimeStateHandle>) -
         state,
         client,
         Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 0),
-        0,
     ))
+}
+
+fn checksum_for_bytes(bytes: &[u8]) -> String {
+    let digest = compute_checksum(bytes);
+    let mut out = String::with_capacity(digest.len() * 2 + "sha256:".len());
+    out.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 async fn start_status_stub(status: StatusCode) -> Option<String> {
@@ -157,13 +166,12 @@ fn worker_name_is_stable() {
 }
 
 #[tokio::test]
-async fn apply_update_replaces_state_and_version() {
+async fn apply_update_replaces_state_and_caches_checksum() {
     let dir = std::env::temp_dir().join("pavis_poll_update");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("dir");
     let lkg = dir.join("config.pvs");
     write_pvs(&lkg, "v1");
-    std::fs::write(version_path_for(&lkg), "1").expect("version");
 
     let state =
         RuntimeState::from_config(&crate::load::load_file(lkg.to_str().unwrap()).expect("load"))
@@ -180,7 +188,12 @@ async fn apply_update_replaces_state_and_version() {
         lkg.clone(),
         state_handle.clone(),
     );
-    agent.apply_update_for_tests(bytes, 2).await.expect("apply");
+    let checksum = checksum_for_bytes(&bytes);
+    agent
+        .apply_update_for_tests(bytes, checksum.clone())
+        .await
+        .expect("apply");
+    assert_eq!(agent.last_checksum_for_tests(), Some(checksum));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -210,8 +223,9 @@ async fn apply_update_removes_tmp_on_load_failure() {
     // But load() uses pavis_pvs::load, which uses rkyv.
     // Let's just pass invalid bytes to apply_update, but it calls verify() first.
     let bad_pvs = vec![0u8; 100]; // Should fail verify
+    let checksum = checksum_for_bytes(&bad_pvs);
     let err = agent
-        .apply_update_for_tests(bad_pvs, 1)
+        .apply_update_for_tests(bad_pvs, checksum)
         .await
         .expect_err("verify failure");
     assert!(err.to_string().contains("magic"));
@@ -241,7 +255,7 @@ async fn poll_once_reports_non_success_status() {
 }
 
 #[tokio::test]
-async fn apply_update_warns_on_version_write_failure() {
+async fn apply_update_rejects_checksum_mismatch() {
     let dir = std::env::temp_dir().join("pavis_version_fail");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("dir");
@@ -256,18 +270,19 @@ async fn apply_update_warns_on_version_write_failure() {
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
 
     let client = Client::builder().no_proxy().build().expect("client");
-    let version_dir = dir.join("version_dir");
-    std::fs::create_dir_all(&version_dir).expect("version dir");
     let agent = ConfigAgent::new_for_tests(
         "http://127.0.0.1:1".to_string(),
         lkg.clone(),
         state_handle,
         client,
         Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 0),
-        0,
     );
     let bytes = std::fs::read(&lkg).expect("read");
-    agent.apply_update_for_tests(bytes, 2).await.expect("apply");
+    let err = agent
+        .apply_update_for_tests(bytes, "sha256:bad".to_string())
+        .await
+        .expect_err("checksum mismatch");
+    assert!(err.to_string().contains("checksum mismatch"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -289,11 +304,14 @@ async fn test_apply_update_success() {
     let pvs = pavis_pvs::encode(&config).expect("encode");
 
     agent
-        .apply_update_for_tests(pvs, 1)
+        .apply_update_for_tests(pvs.clone(), checksum_for_bytes(&pvs))
         .await
         .expect("apply update should succeed");
 
-    assert_eq!(agent.current_version_for_tests(), 1);
+    assert_eq!(
+        agent.last_checksum_for_tests(),
+        Some(checksum_for_bytes(&pvs))
+    );
     assert!(lkg.exists());
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -339,7 +357,7 @@ async fn start_header_stub(
 }
 
 #[tokio::test]
-async fn poll_once_missing_version_header() {
+async fn poll_once_missing_checksum_header() {
     let Some(base) = start_header_stub(StatusCode::OK, None).await else {
         return;
     };
@@ -359,7 +377,7 @@ async fn poll_once_missing_version_header() {
     let msg = err.to_string();
     eprintln!("Actual error: {}", msg);
     assert!(
-        msg.contains("missing x-pavis-version response header"),
+        msg.contains("missing x-config-checksum response header"),
         "Error '{}' did not contain expected string",
         msg
     );
@@ -367,8 +385,11 @@ async fn poll_once_missing_version_header() {
 }
 
 #[tokio::test]
-async fn poll_once_stale_version() {
-    let headers = vec![(PAVIS_VERSION_HEADER.to_string(), "1".to_string())];
+async fn poll_once_no_change_on_matching_checksum() {
+    let headers = vec![(
+        "x-config-checksum".to_string(),
+        "sha256:deadbeef".to_string(),
+    )];
     let Some(base) = start_header_stub(StatusCode::OK, Some(headers)).await else {
         return;
     };
@@ -384,10 +405,8 @@ async fn poll_once_stale_version() {
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let agent = make_agent(base, lkg.clone(), state_handle);
 
-    // Set current version to 1
-    agent.set_current_version(1);
+    agent.set_last_checksum_for_tests(Some("sha256:deadbeef".to_string()));
 
-    // Server returns version 1, which is stale (<= current)
     let outcome = agent.poll_once().await.expect("poll");
     assert!(matches!(outcome, super::PollOutcome::NoChange));
     let _ = std::fs::remove_dir_all(&dir);
@@ -397,11 +416,13 @@ async fn poll_once_stale_version() {
 async fn test_poll_once_success() {
     let config = minimal_config("v1");
     let pvs = pavis_pvs::encode(&config).expect("encode");
+    let checksum = checksum_for_bytes(&pvs);
 
     // We need a way to return bytes.
     use axum::response::Response;
 
     let pvs_clone = pvs.clone();
+    let checksum_header = checksum.clone();
     let app = Router::new().route(
         "/v1/config",
         get(move || {
@@ -409,8 +430,8 @@ async fn test_poll_once_success() {
             async move {
                 let mut res = Response::new(axum::body::Body::from(pvs_inner));
                 res.headers_mut().insert(
-                    axum::http::HeaderName::from_static("x-pavis-version"),
-                    axum::http::HeaderValue::from_static("1"),
+                    axum::http::HeaderName::from_static("x-config-checksum"),
+                    axum::http::HeaderValue::from_str(&checksum_header).unwrap(),
                 );
                 res
             }
@@ -438,7 +459,7 @@ async fn test_poll_once_success() {
 
     let outcome = agent.poll_once().await.expect("poll");
     assert!(matches!(outcome, super::PollOutcome::Updated));
-    assert_eq!(agent.current_version_for_tests(), 1);
+    assert_eq!(agent.last_checksum_for_tests(), Some(checksum));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

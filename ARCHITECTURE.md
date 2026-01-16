@@ -198,3 +198,305 @@ The xDS Codec functions as a **Compiler**:
 **Note:** Pavis treats xDS as an input language, not a behavioral contract. It does **NOT** aim for semantic equivalence with Envoy. Where xDS concepts conflict with the Frozen Data Plane (e.g., dynamic scripting), they are rejected or mapped to deterministic equivalents.
 
 The Runtime **never** connects to xDS directly; this would violate the Frozen Data Plane model by introducing runtime complexity and non-determinism.
+
+## 5. Relay Versioning & Distribution
+
+The relay serves as a central distribution point for frozen PVS artifacts. This section describes the relay's versioning model, storage architecture, and crash recovery guarantees.
+
+### 5.1 Versioning Model
+
+**Core Principle:** Relay owns version generation. Clients consume versions, never propose them.
+
+#### Version Semantics
+
+- **Relay-Generated Only**: Versions are assigned by the relay during publish (clients cannot influence)
+- **Monotonic Invariant**: `new_version = current_version + 1` (strict increment, never skip)
+- **Version 0 Sentinel**: Represents "no published configuration" (bootstrap state)
+- **Schema Independence**: Relay version ≠ PVS schema version (independent concerns)
+- **Idempotency**: Publishing identical artifacts creates distinct versions with identical checksums
+
+**Rationale:** Relay-generated versioning eliminates distributed consensus problems. The relay is the single source of truth for "what is the current version?"
+
+#### Version Authority
+
+The file `lkg/meta.json` (LKG metadata) is the **authoritative source** for current version:
+- `state.json` is a cache only (derived from LKG, can be rewritten)
+- On startup: version is loaded from `lkg/meta.json`, not `state.json`
+- On mismatch: `state.json` is discarded and regenerated
+
+### 5.2 Storage Architecture
+
+#### Directory Layout
+
+```
+/var/lib/pavis-relay/
+├── state.json              # Version cache (derived, not authoritative)
+├── lkg/                    # Last Known Good
+│   ├── config.pvs          # Current artifact
+│   └── meta.json           # LKG metadata (AUTHORITATIVE)
+└── history/                # Historical artifacts
+    ├── 0000000001.pvs
+    ├── 0000000001.meta.json
+    ├── 0000000002.pvs
+    ├── 0000000002.meta.json
+    └── ...
+```
+
+#### Storage Invariants
+
+1. **LKG metadata is source of truth**: `lkg/meta.json` defines current version
+2. **state.json is a cache**: Derived from LKG, rewritten on mismatch
+3. **History is append-only**: Manual GC only (no automatic deletion)
+4. **Flat directory layout**: No subdirectory bucketing (deferred until needed)
+
+#### Metadata Format
+
+All metadata files use JSON serialization:
+
+```json
+{
+  "version": 42,
+  "published_at": "2026-01-16T12:00:00Z",
+  "checksum": "sha256:a3f8d7e2c1b9f6e4...",
+  "size": 2048
+}
+```
+
+**Checksum Format:** `sha256:{64 hex chars}` computed over artifact bytes.
+
+### 5.3 Publish Flow Atomicity
+
+#### Ordered Steps
+
+Publish proceeds in strict order to ensure crash safety:
+
+```
+1. Validate PVS artifact           (in-memory, fail-fast)
+2. Compute checksum                (sha256 over bytes)
+3. Create metadata                 (version, timestamp, checksum, size)
+4. Write history/{version}.pvs          (atomic: write-tmp-rename-fsync)
+5. Write history/{version}.meta.json    (atomic: write-tmp-rename-fsync)
+6. Write lkg/config.pvs.tmp → rename    (atomic promotion)
+7. Write lkg/meta.json.tmp → rename     (atomic promotion)
+8. Update state.json                    (best-effort, non-critical)
+9. Wake long-poll waiters               (in-memory notification)
+```
+
+**Success Criterion:** Publish succeeds **if and only if** LKG promotion completes (steps 6-7).
+
+**Failure Handling:**
+- Version increments **only** after successful LKG promotion
+- On failure before step 6: rollback (delete history entry, best-effort)
+- On failure after step 6: partial LKG triggers recovery on next startup
+
+**Concurrency Control:** Publishes are serialized via mutex to prevent races.
+
+### 5.4 Crash Recovery
+
+The relay is designed to survive crashes at any point in the publish flow.
+
+#### Recovery Invariants
+
+1. **LKG Consistency**: `lkg/meta.json` presence implies `lkg/config.pvs` exists
+2. **Metadata Authority**: `lkg/meta.json` version is always authoritative
+3. **Orphan Safety**: History entries with `version > current_version` are safe to ignore
+4. **Checksum Integrity**: LKG artifact checksum must match metadata checksum
+
+#### Automatic Recovery on Startup
+
+On every startup, the relay executes `repair_lkg()`:
+
+```
+1. Check if lkg/meta.json exists
+   - YES: Load version → verify artifact exists → proceed
+   - NO: Check if lkg/config.pvs exists
+     - YES: Attempt recovery from history
+     - NO: Bootstrap (version = 0)
+
+2. If LKG incomplete (artifact OR metadata missing):
+   - Scan history for matching version
+   - Copy history/{version}.{pvs,meta.json} to lkg/
+   - If recovery fails: FATAL ERROR
+
+3. Verify state.json matches lkg/meta.json version
+   - MISMATCH: Rewrite state.json from LKG
+   - MISSING: Create state.json from LKG
+
+4. Scan history/ for issues
+   - Orphans (version > current_version): Log warning, safe to ignore
+   - Corrupt (missing .pvs or .meta.json): Log warning, manual cleanup
+```
+
+#### Recovery Scenarios
+
+| Crash After | State | Recovery |
+|------------|-------|----------|
+| Step 1-3 (validation) | No files written | Version unchanged, safe |
+| Step 4-5 (history) | Orphaned history entry | Ignored on startup, manual cleanup |
+| Step 6 (partial LKG) | Artifact without metadata | Recover from history or delete |
+| Step 7 (complete LKG) | state.json stale | Rewrite state.json from LKG |
+| Step 8-9 (success) | All consistent | Normal startup |
+
+**Key Design Decision:** Orphaned history entries are **not** auto-deleted. Conservative approach allows forensic analysis and manual cleanup.
+
+### 5.5 Client Change Detection
+
+Clients use **checksum-based change detection** rather than version comparison.
+
+#### Why Checksums?
+
+Version-based change detection has a race condition:
+- Client polls with version N
+- Relay publishes N+1 while client is waiting
+- Client receives N+1 but was not waiting when publish occurred
+- Long-poll wake only benefits clients already waiting
+
+**Solution:** Always return checksum in response headers. Clients compare checksums.
+
+#### API Contract
+
+**GET /v1/config** response headers:
+```
+X-Config-Checksum: sha256:abc123...  (use for change detection)
+X-Config-Size: 1234
+X-Config-Version: 42  (observability only)
+```
+
+**Client Responsibilities:**
+1. Extract `X-Config-Checksum` from response headers
+2. Compute `sha256(response_body)` and verify it matches header
+3. Compare header checksum with previous value
+4. Apply config only if checksum differs
+5. **Fail-closed** on checksum mismatch (do not apply corrupted config)
+
+#### Long-Polling
+
+Clients use `GET /v1/config?timeout=30` for efficient polling:
+- If publish occurs while waiting → wake immediately, return LKG
+- If timeout expires → return current LKG (may be unchanged)
+- Checksum comparison determines if update is needed
+
+### 5.6 Performance Optimization: Checksum Caching
+
+The relay caches artifact checksums in-memory to avoid redundant computation.
+
+**Problem:** Computing SHA256 on every GET request (1-2ms per request for 1MB artifact)
+
+**Solution:**
+- Checksum computed **once** during publish
+- Cached in `RelaySnapshot.artifact_checksum`
+- GET /v1/config returns cached value (0.001ms)
+
+**Performance Gain:** 1000x faster checksum retrieval
+
+### 5.7 Sequence Diagrams
+
+#### Publish Flow
+
+```
+Client              Relay                Storage
+  │                   │                     │
+  │─POST /v1/publish─▶│                     │
+  │                   │                     │
+  │                   │──1. Validate PVS────│
+  │                   │──2. Compute checksum│
+  │                   │──3. Create metadata─│
+  │                   │                     │
+  │                   │──4. Write history──▶│
+  │                   │◀──────────────────ack
+  │                   │                     │
+  │                   │──5. Promote to LKG─▶│
+  │                   │◀──────────────────ack
+  │                   │                     │
+  │                   │──6. Update state.json (best-effort)
+  │                   │                     │
+  │                   │──7. Wake waiters────│
+  │                   │                     │
+  │◀───200 OK─────────│                     │
+  │   {version: 42}   │                     │
+```
+
+#### Long-Poll Flow
+
+```
+Client              Relay                Storage
+  │                   │                     │
+  │──GET /v1/config──▶│                     │
+  │   ?timeout=30     │                     │
+  │                   │                     │
+  │         ┌─────────┴─────────┐           │
+  │         │ Wait for publish  │           │
+  │         │  or timeout (30s) │           │
+  │         └─────────┬─────────┘           │
+  │                   │                     │
+  │         ┌─────────┴─────────┐           │
+  │         │ Publish occurs OR │           │
+  │         │ timeout expires   │           │
+  │         └─────────┬─────────┘           │
+  │                   │                     │
+  │                   │──Read LKG──────────▶│
+  │                   │◀───────────(bytes, checksum)
+  │                   │                     │
+  │◀───200 OK─────────│                     │
+  │   Headers:        │                     │
+  │   X-Config-Checksum: sha256:...         │
+  │   Body: PVS bytes │                     │
+  │                   │                     │
+  │──Verify checksum──│                     │
+  │──Compare with prev│                     │
+  │──Apply if changed─│                     │
+```
+
+#### Crash Recovery Flow
+
+```
+Startup             Relay                Storage
+  │                   │                     │
+  │───Start───────────▶│                     │
+  │                   │                     │
+  │                   │──1. Load LKG meta──▶│
+  │                   │◀────(version=42)────│
+  │                   │                     │
+  │                   │──2. Verify artifact▶│
+  │                   │◀─────exists?────────│
+  │                   │                     │
+  │         ┌─────────┴─────────┐           │
+  │         │ If artifact       │           │
+  │         │ missing: recover  │           │
+  │         │ from history      │           │
+  │         └─────────┬─────────┘           │
+  │                   │                     │
+  │                   │──3. Verify state────▶│
+  │                   │◀────(stale)─────────│
+  │                   │                     │
+  │                   │──4. Rewrite state───▶│
+  │                   │◀──────────────────ack
+  │                   │                     │
+  │                   │──5. Scan orphans────▶│
+  │                   │◀──(log warnings)────│
+  │                   │                     │
+  │◀───Ready──────────│                     │
+  │   (version=42)    │                     │
+```
+
+### 5.8 Operational Considerations
+
+**Backup Strategy:**
+- Critical: `lkg/` directory (source of truth)
+- Important: `history/` directory (recovery source)
+- Optional: `state.json` (regenerated on startup)
+
+**History Cleanup:**
+- Manual only (no automatic GC)
+- Keep at least last N versions (recommendation: 10+)
+- Never delete LKG version from history
+
+**Monitoring:**
+- `pavis_relay_version` - Current version (should increment on publish)
+- `pavis_relay_publish_ok_total` - Successful publishes
+- `pavis_relay_publish_fail_total` - Failed publishes (investigate if increasing)
+
+**See Also:**
+- [Relay API Reference](docs/api/relay.md)
+- [Operations Guide](docs/operations/relay.md)
+- [Crash Recovery Guide](docs/operations/crash-recovery.md)

@@ -1,7 +1,7 @@
 use crate::codec::BoxedCodec;
 use crate::config::{BackoffConfig, PipelineCompaction, PipelineOptions, RetryPolicy};
 use crate::ingest::BoxedIngest;
-use crate::state::RelayState;
+use crate::runtime::RelayRuntimeState;
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use pavis_codec_api::{CodecError, CompactionLevel};
@@ -13,7 +13,7 @@ pub async fn start_pipeline(
     label: String,
     ingest: BoxedIngest,
     codec: BoxedCodec,
-    state: RelayState,
+    state: RelayRuntimeState,
     options: PipelineOptions,
 ) -> Result<()> {
     tokio::spawn(async move {
@@ -29,7 +29,7 @@ async fn run_pipeline(
     label: String,
     mut ingest: BoxedIngest,
     codec: BoxedCodec,
-    state: RelayState,
+    state: RelayRuntimeState,
     options: PipelineOptions,
 ) -> Result<()> {
     debug!("Spawning pipeline loop for: {}", label);
@@ -80,7 +80,7 @@ async fn handle_artifact(
     label: &str,
     result: Result<Artifact, IngestError>,
     codec: &BoxedCodec,
-    state: &RelayState,
+    state: &RelayRuntimeState,
     compaction: PipelineCompaction,
     publish_retry: RetryPolicy,
 ) -> Result<()> {
@@ -166,7 +166,7 @@ impl Backoff {
 }
 
 async fn publish_with_retry(
-    state: &RelayState,
+    state: &RelayRuntimeState,
     config: &pavis_core::ValidatedRuntimeConfig,
     policy: RetryPolicy,
     label: &str,
@@ -206,6 +206,25 @@ fn compaction_level(level: PipelineCompaction) -> CompactionLevel {
 mod tests {
     use super::*;
     use crate::config::PipelineConfig;
+    use std::path::PathBuf;
+
+    fn temp_storage_root(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir();
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        dir.join(format!("relay_pipeline_{label}_{pid}_{nanos}"))
+    }
+
+    fn state_with_storage() -> RelayRuntimeState {
+        let options = crate::runtime::RelayOptions {
+            storage_root: temp_storage_root("state"),
+            ..Default::default()
+        };
+        RelayRuntimeState::new_with_options(0, axum::body::Bytes::new(), options).expect("state")
+    }
 
     #[test]
 
@@ -305,7 +324,7 @@ mod tests {
     #[tokio::test]
     async fn handle_artifact_processes_valid_artifact() {
         use axum::body::Bytes;
-        let state = RelayState::new(0, Bytes::new()).expect("state");
+        let state = state_with_storage();
         let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
             format: pavis_codec_serde::SerdeFormat::Yaml,
         });
@@ -347,7 +366,7 @@ routes: []
     #[tokio::test]
     async fn handle_artifact_handles_invalid_artifact() {
         use axum::body::Bytes;
-        let state = RelayState::new(0, Bytes::new()).expect("state");
+        let state = RelayRuntimeState::new(0, Bytes::new()).expect("state");
         let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
             format: pavis_codec_serde::SerdeFormat::Yaml,
         });
@@ -381,7 +400,7 @@ routes: []
     #[tokio::test]
     async fn handle_artifact_handles_codec_errors() {
         use axum::body::Bytes;
-        let state = RelayState::new(0, Bytes::new()).expect("state");
+        let state = RelayRuntimeState::new(0, Bytes::new()).expect("state");
 
         struct FailingCodec(CodecError);
         impl pavis_codec_api::Codec for FailingCodec {
@@ -476,11 +495,12 @@ routes: []
     async fn publish_with_retry_fails_eventually() {
         use axum::body::Bytes;
         // Create state with a very small size limit to force failure
-        let options = crate::state::RelayOptions {
+        let mut options = crate::runtime::RelayOptions {
             max_pvs_bytes: 10, // Very small limit
             ..Default::default()
         };
-        let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
+        options.storage_root = std::env::temp_dir().join("relay_pipeline_retry");
+        let state = RelayRuntimeState::new_with_options(0, Bytes::new(), options).expect("state");
 
         let listener = pavis_core::ListenerBuilder::new()
             .name(pavis_core::ListenerName("default".to_string()))
@@ -560,10 +580,13 @@ routes: []
         };
         config.codec.kind = CodecKind::Serde;
 
-        let options = crate::state::RelayOptions::default();
+        let options = crate::runtime::RelayOptions {
+            storage_root: temp_storage_root("integration"),
+            ..Default::default()
+        };
 
-        let state =
-            RelayState::new_with_options(0, axum::body::Bytes::new(), options).expect("state");
+        let state = RelayRuntimeState::new_with_options(0, axum::body::Bytes::new(), options)
+            .expect("state");
 
         let label = format!("{:?}-{:?}", config.ingest.source, config.codec);
         let options = PipelineOptions::from_config(&config);
@@ -639,7 +662,7 @@ routes: []
         config.runtime.restart_backoff.min = 10;
         config.runtime.restart_backoff.max = 50;
 
-        let state = RelayState::new(0, axum::body::Bytes::new()).expect("state");
+        let state = RelayRuntimeState::new(0, axum::body::Bytes::new()).expect("state");
 
         let label = format!("{:?}-{:?}", config.ingest.source, config.codec);
         let options = PipelineOptions::from_config(&config);
@@ -674,7 +697,7 @@ routes: []
 
     #[tokio::test]
     async fn pipeline_restarts_on_ingest_start_error() {
-        let state = RelayState::new(0, axum::body::Bytes::new()).expect("state");
+        let state = RelayRuntimeState::new(0, axum::body::Bytes::new()).expect("state");
         let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
             format: pavis_codec_serde::SerdeFormat::Yaml,
         });
@@ -705,7 +728,7 @@ routes: []
 
     #[tokio::test]
     async fn test_handle_artifact_ingest_error() {
-        let state = RelayState::new(0, axum::body::Bytes::new()).expect("state");
+        let state = RelayRuntimeState::new(0, axum::body::Bytes::new()).expect("state");
         let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
             format: pavis_codec_serde::SerdeFormat::Yaml,
         });
@@ -735,7 +758,7 @@ routes: []
     #[tokio::test]
     async fn test_run_pipeline_artifact_failure() {
         use futures_util::stream;
-        let state = RelayState::new(0, axum::body::Bytes::new()).expect("state");
+        let state = RelayRuntimeState::new(0, axum::body::Bytes::new()).expect("state");
         let codec: BoxedCodec = Box::new(pavis_codec_serde::SerdeCodec {
             format: pavis_codec_serde::SerdeFormat::Yaml,
         });

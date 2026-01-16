@@ -1,5 +1,5 @@
 use crate::routes::router;
-use crate::state::{RelayOptions, RelayState};
+use crate::runtime::{RelayOptions, RelayRuntimeState};
 use axum::body::{Body, Bytes};
 use axum::http::HeaderName;
 use axum::http::{Request, StatusCode};
@@ -44,16 +44,38 @@ fn build_pvs_bytes(label: &str) -> Vec<u8> {
     bytes
 }
 
-fn test_state() -> RelayState {
-    RelayState::new(7, valid_pvs_bytes("seed")).expect("state")
+fn test_state() -> RelayRuntimeState {
+    let options = RelayOptions {
+        storage_root: temp_storage_root("seed"),
+        ..Default::default()
+    };
+    RelayRuntimeState::new_with_options(7, valid_pvs_bytes("seed"), options).expect("state")
 }
 
-fn test_state_with_options(options: RelayOptions) -> RelayState {
-    RelayState::new_with_options(7, valid_pvs_bytes("seed"), options).expect("state")
+fn test_state_with_options(options: RelayOptions) -> RelayRuntimeState {
+    let options = if options.storage_root.as_os_str().is_empty() {
+        RelayOptions {
+            storage_root: temp_storage_root("seed"),
+            ..options
+        }
+    } else {
+        options
+    };
+    RelayRuntimeState::new_with_options(7, valid_pvs_bytes("seed"), options).expect("state")
 }
 
 fn valid_pvs_bytes(label: &str) -> Bytes {
     Bytes::from(build_pvs_bytes(label))
+}
+
+fn temp_storage_root(label: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    dir.join(format!("relay_storage_{label}_{pid}_{nanos}"))
 }
 
 #[tokio::test]
@@ -77,7 +99,7 @@ async fn health_and_ready_endpoints_ok() {
 
 #[tokio::test]
 async fn ready_returns_unavailable_when_empty() {
-    let state = RelayState::new(0, Bytes::new()).expect("state");
+    let state = RelayRuntimeState::new(0, Bytes::new()).expect("state");
     let app = router(state);
 
     let response = app
@@ -94,8 +116,7 @@ async fn config_and_status_endpoints_ok() {
     let response = app
         .clone()
         .oneshot(
-            Request::get("/v1/config")
-                .header("x-pavis-version", "0")
+            Request::get("/v1/config?timeout=1")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -114,13 +135,22 @@ async fn config_and_status_endpoints_ok() {
         .await
         .expect("status body")
         .to_bytes();
-    let body_str = std::str::from_utf8(&body).expect("status utf8");
-    assert!(body_str.contains("version="));
+    let body_json: serde_json::Value = serde_json::from_slice(&body).expect("status json");
+    assert_eq!(
+        body_json.get("status").and_then(|value| value.as_str()),
+        Some("healthy")
+    );
+    assert_eq!(
+        body_json
+            .get("current_version")
+            .and_then(|value| value.as_u64()),
+        Some(7)
+    );
 }
 
 #[tokio::test]
 async fn status_reports_unknown_for_empty_meta() {
-    let state = RelayState::new(0, Bytes::new()).expect("state");
+    let state = RelayRuntimeState::new(0, Bytes::new()).expect("state");
     let app = router(state);
 
     let response = app
@@ -134,16 +164,21 @@ async fn status_reports_unknown_for_empty_meta() {
         .await
         .expect("status body")
         .to_bytes();
-    let body_str = std::str::from_utf8(&body).expect("status utf8");
-    assert!(body_str.contains("checksum=invalid"));
+    let body_json: serde_json::Value = serde_json::from_slice(&body).expect("status json");
+    assert!(body_json.get("lkg").is_some());
+    assert!(body_json.get("lkg").unwrap().is_null());
 }
 
 #[tokio::test]
-async fn config_rejects_missing_version_header() {
+async fn config_rejects_invalid_timeout() {
     let app = router(test_state());
 
     let response = app
-        .oneshot(Request::get("/v1/config").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/v1/config?timeout=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .expect("config");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -156,8 +191,7 @@ async fn config_returns_latest_with_headers() {
     let response = app
         .clone()
         .oneshot(
-            Request::get("/v1/config")
-                .header("x-pavis-version", "0")
+            Request::get("/v1/config?timeout=1")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -167,19 +201,19 @@ async fn config_returns_latest_with_headers() {
     let headers = response.headers();
     assert_eq!(
         headers
-            .get("x-pavis-version")
+            .get("x-config-version")
             .and_then(|value| value.to_str().ok()),
         Some("7")
     );
     assert!(
         headers
-            .get("x-pavis-checksum")
+            .get("x-config-checksum")
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| !value.is_empty())
     );
     assert!(
         headers
-            .get("x-pavis-checksum-alg")
+            .get("x-config-size")
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| !value.is_empty())
     );
@@ -192,14 +226,13 @@ async fn config_long_poll_times_out() {
     let response = app
         .clone()
         .oneshot(
-            Request::get("/v1/config?wait_ms=1")
-                .header("x-pavis-version", "7")
+            Request::get("/v1/config?timeout=1")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .expect("config");
-    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -211,8 +244,7 @@ async fn config_long_poll_success() {
         let app = app.clone();
         async move {
             app.oneshot(
-                Request::get("/v1/config?wait_ms=5000")
-                    .header("x-pavis-version", "7")
+                Request::get("/v1/config?timeout=5")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -227,7 +259,7 @@ async fn config_long_poll_success() {
 
     let response = waiter.await.unwrap().unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers().get("x-pavis-version").unwrap(), "8");
+    assert_eq!(response.headers().get("x-config-version").unwrap(), "8");
 }
 
 #[tokio::test]
@@ -236,19 +268,14 @@ async fn publish_rejects_empty_body() {
 
     let response = app
         .clone()
-        .oneshot(
-            Request::post("/v1/publish")
-                .header("x-pavis-version", "8")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::post("/v1/publish").body(Body::empty()).unwrap())
         .await
         .expect("publish");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
-async fn publish_requires_version_header() {
+async fn publish_accepts_without_version_header() {
     let app = router(test_state());
 
     let response = app
@@ -260,7 +287,7 @@ async fn publish_requires_version_header() {
         )
         .await
         .expect("publish");
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -271,30 +298,12 @@ async fn publish_rejects_invalid_pvs() {
         .clone()
         .oneshot(
             Request::post("/v1/publish")
-                .header("x-pavis-version", "8")
                 .body(Body::from("bad"))
                 .unwrap(),
         )
         .await
         .expect("publish");
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-}
-
-#[tokio::test]
-async fn publish_rejects_non_monotonic_versions() {
-    let app = router(test_state());
-
-    let response = app
-        .clone()
-        .oneshot(
-            Request::post("/v1/publish")
-                .header("x-pavis-version", "7")
-                .body(Body::from(valid_pvs_bytes("same")))
-                .unwrap(),
-        )
-        .await
-        .expect("publish");
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -305,7 +314,6 @@ async fn publish_persists_and_serves_latest() {
         .clone()
         .oneshot(
             Request::post("/v1/publish")
-                .header("x-pavis-version", "8")
                 .body(Body::from(valid_pvs_bytes("next")))
                 .unwrap(),
         )
@@ -315,8 +323,7 @@ async fn publish_persists_and_serves_latest() {
 
     let response = app
         .oneshot(
-            Request::get("/v1/config")
-                .header("x-pavis-version", "0")
+            Request::get("/v1/config?timeout=1")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -326,7 +333,7 @@ async fn publish_persists_and_serves_latest() {
     let headers = response.headers();
     assert_eq!(
         headers
-            .get("x-pavis-version")
+            .get("x-config-version")
             .and_then(|value| value.to_str().ok()),
         Some("8")
     );
@@ -347,7 +354,7 @@ async fn artifact_endpoint_returns_bytes() {
 #[tokio::test]
 async fn artifact_endpoint_returns_exact_bytes() {
     let bytes = valid_pvs_bytes("opaque");
-    let state = RelayState::new(7, bytes.clone()).expect("state");
+    let state = RelayRuntimeState::new(7, bytes.clone()).expect("state");
     let app = router(state);
 
     let response = app
@@ -394,9 +401,9 @@ async fn status_includes_checksum_headers() {
         .await
         .expect("status body")
         .to_bytes();
-    let body_str = std::str::from_utf8(&body).expect("status utf8");
-    assert!(body_str.contains("checksum="));
-    assert!(body_str.contains("checksum_alg="));
+    let body_json: serde_json::Value = serde_json::from_slice(&body).expect("status json");
+    assert!(body_json.get("current_version").is_some());
+    assert!(body_json.get("history_count").is_some());
 }
 
 #[tokio::test]
@@ -407,7 +414,6 @@ async fn publish_updates_metrics() {
         .clone()
         .oneshot(
             Request::post("/v1/publish")
-                .header("x-pavis-version", "8")
                 .body(Body::from(valid_pvs_bytes("next")))
                 .unwrap(),
         )
@@ -443,14 +449,9 @@ async fn custom_headers_override_defaults() {
     let app = router(test_state_with_options(options));
 
     let response = app
-        .oneshot(
-            Request::get("/v1/config")
-                .header("x-test-version", "0")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/v1/artifacts/7").body(Body::empty()).unwrap())
         .await
-        .expect("config");
+        .expect("artifact");
     assert_eq!(response.status(), StatusCode::OK);
     let headers = response.headers();
     assert!(headers.contains_key("x-test-version"));
@@ -464,8 +465,7 @@ async fn config_includes_generated_at_header() {
 
     let response = app
         .oneshot(
-            Request::get("/v1/config")
-                .header("x-pavis-version", "0")
+            Request::get("/v1/config?timeout=1")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -485,16 +485,23 @@ async fn config_includes_generated_at_header() {
 
 #[tokio::test]
 async fn test_publish_updates_lkg_on_disk() {
-    let dir = std::env::temp_dir().join("relay_publish_lkg");
+    let dir = std::env::temp_dir().join(format!(
+        "relay_publish_lkg_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let lkg_path = dir.join("config.pvs");
+    let lkg_path = crate::storage::lkg::lkg_artifact_path(&dir);
+    std::fs::create_dir_all(lkg_path.parent().unwrap()).unwrap();
 
     let options = RelayOptions {
-        lkg_path: Some(lkg_path.clone()),
+        storage_root: dir.clone(),
         ..Default::default()
     };
-    let state = RelayState::new_with_options(0, Bytes::new(), options).expect("state");
+    let state = RelayRuntimeState::new_with_options(0, Bytes::new(), options).expect("state");
     let app = router(state);
 
     let pvs_bytes = valid_pvs_bytes("v2");
@@ -503,7 +510,6 @@ async fn test_publish_updates_lkg_on_disk() {
             Request::builder()
                 .method("POST")
                 .uri("/v1/publish")
-                .header("x-pavis-version", "1")
                 .body(Body::from(pvs_bytes.clone()))
                 .unwrap(),
         )

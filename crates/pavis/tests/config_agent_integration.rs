@@ -1,8 +1,8 @@
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue};
 use axum::response::IntoResponse;
 use axum::{Router, routing::get};
-use pavis::agent::{Backoff, ConfigAgent, PollOutcome, lkg_version, load_lkg_config};
+use pavis::agent::{Backoff, ConfigAgent, PollOutcome};
 use pavis::state::{RuntimeState, RuntimeStateHandle};
 use pavis_core::{
     AccessLogPolicy, ListenerBuilder, ListenerName, Metrics, RuntimeConfig, RuntimeConfigBuilder,
@@ -10,31 +10,32 @@ use pavis_core::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 #[derive(Clone)]
 struct RelayStub {
-    version: Arc<AtomicU64>,
     bytes: Arc<RwLock<Vec<u8>>>,
 }
 
-async fn relay_config(State(state): State<RelayStub>, headers: HeaderMap) -> impl IntoResponse {
-    let client_version = headers
-        .get("x-pavis-version")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(0);
-    let current = state.version.load(Ordering::SeqCst);
-    if client_version == current {
-        return StatusCode::NOT_MODIFIED.into_response();
+fn checksum_for_bytes(bytes: &[u8]) -> String {
+    let digest = pavis_pvs::compute_checksum(bytes);
+    let mut out = String::with_capacity(digest.len() * 2 + "sha256:".len());
+    out.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
     }
+    out
+}
+
+async fn relay_config(State(state): State<RelayStub>, _headers: HeaderMap) -> impl IntoResponse {
     let body = state.bytes.read().await.clone();
+    let checksum = checksum_for_bytes(&body);
     let mut response = body.into_response();
     let headers = response.headers_mut();
     headers.insert(
-        "x-pavis-version",
-        HeaderValue::from_str(&current.to_string()).unwrap(),
+        "x-config-checksum",
+        HeaderValue::from_str(&checksum).unwrap(),
     );
     response
 }
@@ -69,15 +70,13 @@ fn write_pvs(path: &PathBuf, label: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn poller_updates_lkg_and_version() {
+async fn poller_updates_lkg_on_checksum_change() {
     let dir = std::env::temp_dir().join("pavis_poll_integration");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create dir");
     let lkg_path = dir.join("config.pvs");
 
     let bytes_v1 = write_pvs(&lkg_path, "v1");
-    let version_path = lkg_path.with_extension("pvs.version");
-    std::fs::write(&version_path, "1").expect("write version");
 
     let state =
         RuntimeState::from_config(&pavis::load::load_file(lkg_path.to_str().unwrap()).unwrap())
@@ -85,7 +84,6 @@ async fn poller_updates_lkg_and_version() {
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
 
     let relay_state = RelayStub {
-        version: Arc::new(AtomicU64::new(1)),
         bytes: Arc::new(RwLock::new(bytes_v1)),
     };
 
@@ -119,7 +117,9 @@ async fn poller_updates_lkg_and_version() {
         )
         .unwrap(),
     );
-    agent.set_current_version(lkg_version(&lkg_path).unwrap());
+
+    let outcome = agent.poll_once().await.unwrap();
+    assert!(matches!(outcome, PollOutcome::Updated));
 
     let outcome = agent.poll_once().await.unwrap();
     assert!(matches!(outcome, PollOutcome::NoChange));
@@ -128,17 +128,13 @@ async fn poller_updates_lkg_and_version() {
     let bytes_v2 = write_pvs(&tmp_path, "v2");
     let bytes_v2_expected = bytes_v2.clone();
     *relay_state.bytes.write().await = bytes_v2;
-    relay_state.version.store(2, Ordering::SeqCst);
 
     let outcome = agent.poll_once().await.unwrap();
     assert!(matches!(outcome, PollOutcome::Updated));
 
     let on_disk = std::fs::read(&lkg_path).expect("read lkg");
     assert_eq!(on_disk, bytes_v2_expected);
-    let lkg_version_value = lkg_version(&lkg_path).unwrap();
-    assert_eq!(lkg_version_value, 2);
-    let (validated, version) = load_lkg_config(&lkg_path).unwrap();
-    assert_eq!(version, 2);
+    let (validated, _version) = pavis::agent::load_lkg_config(&lkg_path).unwrap();
     assert_eq!(validated.telemetry.service_name.0.as_str(), "v2");
 
     let _ = std::fs::remove_dir_all(&dir);

@@ -1,6 +1,7 @@
 mod check;
 mod convert;
 mod r#gen;
+mod publish;
 mod view;
 
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 pub(crate) use check::validate_config;
 pub(crate) use convert::convert_to_config;
 pub(crate) use r#gen::compile_config;
+pub(crate) use publish::publish_to_relay;
 pub(crate) use view::inspect_config;
 
 pub(crate) fn get_default_output(input: &Path, new_ext: &str) -> PathBuf {

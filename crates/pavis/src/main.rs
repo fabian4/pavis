@@ -6,13 +6,13 @@ use pingora::proxy::http_proxy_service;
 use pingora::server::configuration::ServerConf;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
 use arc_swap::ArcSwap;
-use pavis::agent::{Backoff, ConfigAgent, lkg_version};
+use pavis::agent::{Backoff, ConfigAgent};
 use pavis::load::{self, RuntimeLoadError};
 use pavis::proxy::Proxy;
 use pavis::state::RuntimeStateHandle;
@@ -218,8 +218,6 @@ fn main() -> Result<()> {
     let runtime_state = pavis::state::RuntimeState::from_config(&config)?;
     let state_handle = Arc::new(RuntimeStateHandle::new(runtime_state));
 
-    let lkg_version = lkg_version(Path::new(&args.config))?;
-
     let config_agent = args.relay_url.as_ref().map(|relay| {
         let backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 200);
         let agent = ConfigAgent::new(
@@ -229,7 +227,6 @@ fn main() -> Result<()> {
             Duration::from_secs(15),
             backoff,
         )?;
-        agent.set_current_version(lkg_version);
 
         let ca_store_clone = ca_store.clone();
         agent.on_update(move |config| {

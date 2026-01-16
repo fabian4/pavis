@@ -38,6 +38,7 @@ pub(crate) async fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()
     Ok(())
 }
 
+#[allow(dead_code)] // Retained for tests and potential version metadata support.
 pub(crate) async fn write_version(path: &Path, version: u64) -> anyhow::Result<()> {
     let tmp = path.with_extension("tmp");
     tokio::fs::write(&tmp, version.to_string()).await?;

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use pingora::services::Service;
 use reqwest::Client;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -10,9 +10,12 @@ use tokio::sync::watch;
 use crate::state::{RuntimeState, RuntimeStateHandle};
 
 use crate::agent::backoff::Backoff;
-use crate::agent::lkg::{tmp_path_for, version_path_for, write_atomic, write_version};
+use crate::agent::lkg::tmp_path_for;
+use crate::agent::lkg::write_atomic;
 use pavis_core::RuntimeConfig;
-use pavis_pvs::PAVIS_VERSION_HEADER;
+use pavis_pvs::compute_checksum;
+
+const CONFIG_CHECKSUM_HEADER: &str = "x-config-checksum";
 
 type UpdateCallback = Box<dyn Fn(&RuntimeConfig) + Send + Sync>;
 
@@ -21,11 +24,10 @@ static CALLBACK_LOCK_POISONED: AtomicBool = AtomicBool::new(false);
 pub struct ConfigAgent {
     relay_base: String,
     lkg_path: PathBuf,
-    version_path: PathBuf,
     client: Client,
     backoff: Backoff,
     state: Arc<RuntimeStateHandle>,
-    current_version: AtomicU64,
+    last_checksum: Arc<Mutex<Option<String>>>,
     on_update_callback: Mutex<Option<UpdateCallback>>,
 }
 
@@ -76,7 +78,6 @@ impl ConfigAgent {
         timeout: Duration,
         backoff: Backoff,
     ) -> anyhow::Result<Self> {
-        let version_path = version_path_for(&lkg_path);
         let client = Client::builder()
             .timeout(timeout)
             .connect_timeout(Duration::from_secs(5))
@@ -84,11 +85,10 @@ impl ConfigAgent {
         Ok(Self {
             relay_base,
             lkg_path,
-            version_path,
             client,
             backoff,
             state,
-            current_version: AtomicU64::new(0),
+            last_checksum: Arc::new(Mutex::new(None)),
             on_update_callback: Mutex::new(None),
         })
     }
@@ -113,10 +113,6 @@ impl ConfigAgent {
         ConfigAgentWorker { agent: self }
     }
 
-    pub fn set_current_version(&self, version: u64) {
-        self.current_version.store(version, Ordering::SeqCst);
-    }
-
     #[cfg(test)]
     pub(crate) fn new_for_tests(
         relay_base: String,
@@ -124,53 +120,43 @@ impl ConfigAgent {
         state: Arc<RuntimeStateHandle>,
         client: Client,
         backoff: Backoff,
-        current_version: u64,
     ) -> Self {
-        let version_path = version_path_for(&lkg_path);
         Self {
             relay_base,
             lkg_path,
-            version_path,
             client,
             backoff,
             state,
-            current_version: AtomicU64::new(current_version),
+            last_checksum: Arc::new(Mutex::new(None)),
             on_update_callback: Mutex::new(None),
         }
     }
 
     pub async fn poll_once(&self) -> anyhow::Result<PollOutcome> {
-        let version = self.current_version.load(Ordering::SeqCst);
-        let url = format!("{}/v1/config", self.relay_base);
-        let response = self
-            .client
-            .get(url)
-            .header(PAVIS_VERSION_HEADER, version.to_string())
-            .send()
-            .await?;
+        let url = format!("{}/v1/config?timeout=30", self.relay_base);
+        let response = self.client.get(url).send().await?;
 
         match response.status().as_u16() {
             200 => {
-                let header_version = response
+                let header_checksum = response
                     .headers()
-                    .get(PAVIS_VERSION_HEADER)
+                    .get(CONFIG_CHECKSUM_HEADER)
                     .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.parse::<u64>().ok())
+                    .map(str::to_string)
                     .ok_or_else(|| {
-                        anyhow::anyhow!("missing {PAVIS_VERSION_HEADER} response header")
+                        anyhow::anyhow!("missing {CONFIG_CHECKSUM_HEADER} response header")
                     })?;
 
-                if header_version <= version {
-                    tracing::warn!(
-                        current = version,
-                        received = header_version,
-                        "received stale config version, ignoring"
+                if self.is_checksum_current(&header_checksum) {
+                    tracing::debug!(
+                        checksum = header_checksum,
+                        "config checksum unchanged, skipping update"
                     );
                     return Ok(PollOutcome::NoChange);
                 }
 
                 let bytes = response.bytes().await?;
-                self.apply_update(bytes.to_vec(), header_version).await?;
+                self.apply_update(bytes.to_vec(), header_checksum).await?;
                 Ok(PollOutcome::Updated)
             }
             204 | 304 => Ok(PollOutcome::NoChange),
@@ -178,7 +164,15 @@ impl ConfigAgent {
         }
     }
 
-    async fn apply_update(&self, bytes: Vec<u8>, version: u64) -> anyhow::Result<()> {
+    async fn apply_update(&self, bytes: Vec<u8>, expected_checksum: String) -> anyhow::Result<()> {
+        let actual_checksum = checksum_for_bytes(&bytes);
+        if actual_checksum != expected_checksum {
+            anyhow::bail!(
+                "checksum mismatch: expected={}, computed={}",
+                expected_checksum,
+                actual_checksum
+            );
+        }
         let _ = pavis_pvs::verify(&bytes)?;
 
         let tmp_path = tmp_path_for(&self.lkg_path);
@@ -196,12 +190,9 @@ impl ConfigAgent {
         let state = RuntimeState::from_config(&validated)?;
 
         tokio::fs::rename(&tmp_path, &self.lkg_path).await?;
-        if let Err(err) = write_version(&self.version_path, version).await {
-            tracing::warn!(error = %err, "failed to persist LKG version metadata");
-        }
 
         self.state.store(state);
-        self.current_version.store(version, Ordering::SeqCst);
+        self.set_last_checksum(actual_checksum);
 
         let callback = match self.on_update_callback.lock() {
             Ok(guard) => guard,
@@ -216,7 +207,7 @@ impl ConfigAgent {
             callback(&validated);
         }
 
-        tracing::info!(version = version, "Applied configuration update");
+        tracing::info!(checksum = expected_checksum, "Applied configuration update");
         Ok(())
     }
 
@@ -224,14 +215,27 @@ impl ConfigAgent {
     pub(crate) async fn apply_update_for_tests(
         &self,
         bytes: Vec<u8>,
-        version: u64,
+        checksum: String,
     ) -> anyhow::Result<()> {
-        self.apply_update(bytes, version).await
+        self.apply_update(bytes, checksum).await
     }
 
     #[cfg(test)]
-    pub(crate) fn current_version_for_tests(&self) -> u64 {
-        self.current_version.load(Ordering::SeqCst)
+    pub(crate) fn last_checksum_for_tests(&self) -> Option<String> {
+        let guard = self
+            .last_checksum
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_last_checksum_for_tests(&self, value: Option<String>) {
+        let mut guard = self
+            .last_checksum
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = value;
     }
 }
 
@@ -239,4 +243,33 @@ impl ConfigAgent {
 pub enum PollOutcome {
     Updated,
     NoChange,
+}
+
+fn checksum_for_bytes(bytes: &[u8]) -> String {
+    let digest = compute_checksum(bytes);
+    let mut out = String::with_capacity(digest.len() * 2 + "sha256:".len());
+    out.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+impl ConfigAgent {
+    fn is_checksum_current(&self, checksum: &str) -> bool {
+        let guard = self
+            .last_checksum
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.as_deref() == Some(checksum)
+    }
+
+    fn set_last_checksum(&self, checksum: String) {
+        let mut guard = self
+            .last_checksum
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(checksum);
+    }
 }

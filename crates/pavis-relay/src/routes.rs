@@ -1,14 +1,14 @@
 use crate::handlers::{
     get_artifact, get_config, get_health, get_metrics, get_ready, get_status, post_publish,
 };
-use crate::state::{RelayError, RelayState};
+use crate::runtime::{RelayError, RelayRuntimeState};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-pub(crate) fn router(state: RelayState) -> Router {
+pub(crate) fn router(state: RelayRuntimeState) -> Router {
     let max_pvs_bytes = state.options().max_pvs_bytes;
     let shared = Arc::new(state);
     let mut app = Router::new()
@@ -28,7 +28,10 @@ pub(crate) fn router(state: RelayState) -> Router {
     app
 }
 
-pub(crate) async fn serve(listen_addr: SocketAddr, state: RelayState) -> Result<(), RelayError> {
+pub(crate) async fn serve(
+    listen_addr: SocketAddr,
+    state: RelayRuntimeState,
+) -> Result<(), RelayError> {
     let app = router(state);
     axum::serve(
         tokio::net::TcpListener::bind(listen_addr)
@@ -43,11 +46,11 @@ pub(crate) async fn serve(listen_addr: SocketAddr, state: RelayState) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::RelayState;
+    use crate::runtime::RelayRuntimeState;
     use axum::body::Bytes;
 
-    fn mock_state() -> RelayState {
-        RelayState::new(0, Bytes::new()).expect("create state")
+    fn mock_state() -> RelayRuntimeState {
+        RelayRuntimeState::new(0, Bytes::new()).expect("create state")
     }
 
     #[tokio::test]

@@ -179,6 +179,38 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ---
 
+# C. Future Hardening (Deferred / Optional)
+
+> **Definition**: Potential reliability improvements that are explicitly **out of scope** for current development phases. These are not required for functional correctness and represent optional hardening work that may be revisited once core persistence semantics and file layout stabilize.
+> **Status**: Deferred indefinitely. Not part of CI or release planning.
+
+## Crash-Consistency Hardening via Failpoints
+
+**Status**: Future / Deferred / Optional Hardening
+
+### Motivation
+Deterministic testing of crash windows during configuration publish and apply operations could validate persistence atomicity guarantees:
+- **Publish crash windows**: Verify Last-Known-Good (LKG) invariants when crashes occur during relay publish operations (write, fsync, rename).
+- **Apply crash windows**: Test runtime startup reconciliation when crashes occur during proxy config application.
+- **Invariant validation**: Ensure history log integrity, startup recovery semantics, and LKG fallback behavior under abnormal termination.
+
+### Why Deferred
+- **Added complexity**: Failpoint infrastructure (conditional panic injection, test orchestration) increases maintenance burden.
+- **Premature optimization**: Requires persistence semantics (fsync ordering, rename atomicity, history log format) and on-disk file layout to be fully stable and frozen.
+- **Coverage overlap**: Current integrated and functional E2E tests already validate primary correctness paths (successful publish, successful apply, graceful reload).
+
+### Scope (If Revisited)
+- **Relay publish crash windows**: Failpoints at each step of the publish pipeline (pre-write, post-write/pre-fsync, post-fsync/pre-rename, post-rename).
+- **Optional runtime apply crash windows**: Failpoints during proxy startup reconciliation and config swap operations.
+- **Test infrastructure**: Deterministic crash injection, post-crash recovery validation, and automated invariant checking.
+
+### Explicit Non-Goals
+- **Not required for functional correctness**: Crash-consistency testing is a hardening measure, not a prerequisite for release or deployment.
+- **Not part of normal CI**: Would run as optional, manually-triggered validation only—not in default builds or PR checks.
+- **Not a replacement for E2E tests**: Existing E2E coverage remains the primary validation mechanism for feature correctness and operational behavior.
+
+---
+
 # Appendix: Explicitly Dropped / Out of Scope
 
 The following features have been evaluated and explicitly rejected to maintain Pavis's lightweight and pragmatic design philosophy.
