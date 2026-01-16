@@ -50,12 +50,28 @@ detect_config_version() {
   local container="$2"
   local namespace="${3:-${BENCH_NAMESPACE:-bench-system}}"
 
-  # Query pavis internal state via admin endpoint or logs
+  if [[ "$container" == "pavis-sidecar" ]]; then
+    local version
+    local exec_status
+    set +e
+    local pod_name
+    pod_name=$(kubectl_get_pod_name "$label" "$namespace")
+    version=$(kubectl exec -n "$namespace" "$pod_name" -c "$container" -- \
+      cat /config/bootstrap.pvs.version 2>/dev/null | tr -d '\r\n')
+    exec_status=$?
+    set -e
+    if (( exec_status == 0 )) && [[ -n "$version" ]]; then
+      echo "$version"
+      return 0
+    fi
+  fi
+
+  # Query sidecar via admin endpoint or logs
   # For now, use a simple HTTP call to a debug endpoint
   local pod_ip
   pod_ip=$(kubectl_get_pod_ip "$label" "$namespace")
 
-  # Assume pavis exposes /admin/config_version endpoint
+  # Assume admin exposes /admin/config_version endpoint
   curl -s "http://${pod_ip}:9090/admin/config_version" 2>/dev/null || echo "unknown"
 }
 

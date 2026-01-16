@@ -24,6 +24,17 @@ STRESS_DURATION_S=60
 RECOVERY_DURATION_S=60
 NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 
+numeric_or_zero() {
+  local raw="$1"
+  local cleaned
+  cleaned=$(echo "$raw" | tr -d '[:space:]' | sed -E 's/[^0-9.]+//g')
+  if [[ -z "$cleaned" ]]; then
+    echo "0"
+  else
+    echo "$cleaned"
+  fi
+}
+
 main() {
   log_info "Starting test: $CASE_NAME for ${BENCH_PROXY}"
 
@@ -66,8 +77,10 @@ main() {
 
   local baseline_p99
   baseline_p99=$(jq -r '.latency_ms.p99' "${output_dir}/baseline.json")
+  local baseline_rss_start_raw
+  baseline_rss_start_raw=$(proxy_get_stats "$pod_label" "$NAMESPACE")
   local baseline_rss_start
-  baseline_rss_start=$(proxy_get_stats "$pod_label" "$NAMESPACE" | tr -d 'Ki')
+  baseline_rss_start=$(numeric_or_zero "$baseline_rss_start_raw")
   log_info "Baseline P99: ${baseline_p99}ms, RSS: ${baseline_rss_start}KB"
 
   # Step 3: Apply 150% saturation load
@@ -91,8 +104,10 @@ main() {
   stress_p99=$(jq -r '.latency_ms.p99' "${output_dir}/stress.json")
   local stress_dropped
   stress_dropped=$(jq -r '.dropped // 0' "${output_dir}/stress.json")
+  local stress_rss_peak_raw
+  stress_rss_peak_raw=$(awk -F',' 'NR>1 {if($2>max)max=$2} END{print max}' "${output_dir}/stress_rss.csv")
   local stress_rss_peak
-  stress_rss_peak=$(awk -F',' 'NR>1 {if($2>max)max=$2} END{print max}' "${output_dir}/stress_rss.csv")
+  stress_rss_peak=$(numeric_or_zero "$stress_rss_peak_raw")
   log_info "Stress P99: ${stress_p99}ms, Dropped: ${stress_dropped}, RSS Peak: ${stress_rss_peak}KB"
 
   # Step 4: Return to baseline load
@@ -114,8 +129,10 @@ main() {
 
   local recovery_p99
   recovery_p99=$(jq -r '.latency_ms.p99' "${output_dir}/recovery.json")
+  local recovery_rss_end_raw
+  recovery_rss_end_raw=$(awk -F',' 'END{print $2}' "${output_dir}/recovery_rss.csv")
   local recovery_rss_end
-  recovery_rss_end=$(awk -F',' 'END{print $2}' "${output_dir}/recovery_rss.csv")
+  recovery_rss_end=$(numeric_or_zero "$recovery_rss_end_raw")
   log_info "Recovery P99: ${recovery_p99}ms, RSS End: ${recovery_rss_end}KB"
 
   # Cleanup port-forward

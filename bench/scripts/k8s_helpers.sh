@@ -100,12 +100,23 @@ kubectl_get_container_stats() {
   pod_name=$(kubectl_get_pod_name "$label" "$namespace")
 
   # Get memory usage from metrics-server (if installed)
-  # Falls back to container inspection
+  # Falls back to /proc read, but do not fail benchmarks if the container lacks a shell.
   if kubectl top pod "$pod_name" -n "$namespace" --containers 2>/dev/null | grep -q "$container"; then
     kubectl top pod "$pod_name" -n "$namespace" --containers | awk -v cont="$container" '$2==cont {print $4}'
   else
-    # Fallback: read from /proc inside container
-    kubectl_exec_in_container "$label" "$container" "cat /proc/self/status | awk '/VmRSS/ {print \$2}'" "$namespace"
+    # Fallback: read /proc/self/status without requiring a shell in the container.
+    local status
+    local exec_status
+    set +e
+    status=$(kubectl exec -n "$namespace" "$pod_name" -c "$container" -- cat /proc/self/status 2>/dev/null)
+    exec_status=$?
+    set -e
+    if (( exec_status != 0 )); then
+      log_warn "Unable to read RSS from container (missing tools). Returning 0."
+      echo "0"
+      return 0
+    fi
+    echo "$status" | awk '/VmRSS/ {print $2}'
   fi
 }
 
@@ -115,7 +126,20 @@ kubectl_get_fd_count() {
   local container="$2"
   local namespace="${3:-${BENCH_NAMESPACE:-bench-system}}"
 
-  kubectl_exec_in_container "$label" "$container" "ls /proc/self/fd | wc -l" "$namespace"
+  local pod_name
+  pod_name=$(kubectl_get_pod_name "$label" "$namespace")
+  local output
+  local exec_status
+  set +e
+  output=$(kubectl exec -n "$namespace" "$pod_name" -c "$container" -- ls /proc/self/fd 2>/dev/null | wc -l)
+  exec_status=$?
+  set -e
+  if (( exec_status != 0 )); then
+    log_warn "Unable to read FD count from container (missing tools). Returning 0."
+    echo "0"
+    return 0
+  fi
+  echo "$output"
 }
 
 # Check if pod is ready

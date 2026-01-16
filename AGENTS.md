@@ -97,7 +97,7 @@ When resolving conflicts or making implementation choices, the following priorit
 3. Use stable Rust only; avoid `#![feature(...)]`.
 4. Respect manual edits—if a file changed since you last read it, preserve the user's updates.
 5. No git commit/push; the user handles version control.
-6. Follow `doc/CODE_REVIEW.md` for priorities and update statuses when tasks complete.
+6. Code review priority file is deprecated; no action required.
 7. Adhere to execution plans in `docs/plan/**` (considered the temporary path for execution plans). Always update the task status in these plan files when a task is achieved.
 8. Backward compatibility is a lower concern (no public release yet) unless the user requests stability explicitly.
 9. Do not create a new crate unless the user explicitly asks.

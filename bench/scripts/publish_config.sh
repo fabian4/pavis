@@ -53,9 +53,18 @@ publish_to_pavis_relay() {
   # Get relay service IP or use port-forward
   local relay_url
   if command -v kubectl > /dev/null 2>&1; then
-    local relay_ip
-    relay_ip=$(kubectl_get_service_ip "pavis-relay" "$RELAY_NAMESPACE")
-    relay_url="http://${relay_ip}:8090/v1/publish"
+    local pf_pid=""
+    local pf_port="${BENCH_RELAY_LOCAL_PORT:-8090}"
+    if kubectl_wait_for_endpoint "pavis-relay" "$RELAY_NAMESPACE" 30; then
+      pf_pid=$(kubectl_port_forward_background "app=pavis-relay" "$pf_port" 8090 "$RELAY_NAMESPACE" || true)
+    fi
+    if [[ -n "$pf_pid" ]]; then
+      relay_url="http://localhost:${pf_port}/v1/publish"
+    else
+      local relay_ip
+      relay_ip=$(kubectl_get_service_ip "pavis-relay" "$RELAY_NAMESPACE")
+      relay_url="http://${relay_ip}:8090/v1/publish"
+    fi
   else
     relay_url="http://localhost:8090/v1/publish"
   fi
@@ -66,22 +75,60 @@ publish_to_pavis_relay() {
 
   local temp_response
   temp_response=$(mktemp --suffix=.txt)
-  local http_code
-  http_code=$(curl -s -o "$temp_response" -w "%{http_code}" -X POST "$relay_url" \
-    -H "Content-Type: application/octet-stream" \
-    -H "${PAVIS_VERSION_HEADER}: ${version}" \
-    --data-binary "@${temp_pvs}")
 
+  local http_code
+  local curl_status
+  local attempt_version="$version"
+  local attempt=0
+
+  while (( attempt < 2 )); do
+    set +e
+    http_code=$(curl -s -o "$temp_response" -w "%{http_code}" -X POST "$relay_url" \
+      -H "Content-Type: application/octet-stream" \
+      -H "${PAVIS_VERSION_HEADER}: ${attempt_version}" \
+      --data-binary "@${temp_pvs}")
+    curl_status=$?
+    set -e
+
+    if (( curl_status != 0 )); then
+      log_error "Failed to publish config (curl exit ${curl_status})"
+      break
+    fi
+
+    if [[ "$http_code" == "200" ]]; then
+      log_info "Published config version ${attempt_version} to pavis-relay"
+      PAVIS_PUBLISHED_VERSION="${attempt_version}"
+      export PAVIS_PUBLISHED_VERSION
+      rm -f "$temp_response"
+      rm -f "$temp_pvs"
+      if [[ -n "${pf_pid:-}" ]]; then
+        kubectl_stop_port_forward "$pf_pid"
+      fi
+      return 0
+    fi
+
+    if [[ "$http_code" == "409" && $attempt -eq 0 ]]; then
+      local current_version
+      current_version=$(grep -oE 'current=[0-9]+' "$temp_response" | head -n1 | cut -d= -f2 || true)
+      if [[ -n "$current_version" ]]; then
+        attempt_version=$((current_version + 1))
+      else
+        attempt_version=$((attempt_version + 1))
+      fi
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    log_error "Failed to publish config (status ${http_code}): $(cat "$temp_response")"
+    break
+  done
+
+  rm -f "$temp_response"
   rm -f "$temp_pvs"
 
-  if [[ "$http_code" == "200" ]]; then
-    log_info "Published config version $version to pavis-relay"
-    rm -f "$temp_response"
-    return 0
+  if [[ -n "${pf_pid:-}" ]]; then
+    kubectl_stop_port_forward "$pf_pid"
   fi
-
-  log_error "Failed to publish config (status ${http_code}): $(cat "$temp_response")"
-  rm -f "$temp_response"
   return 1
 }
 

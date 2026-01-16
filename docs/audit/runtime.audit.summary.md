@@ -1,84 +1,87 @@
-Audit Phase: Runtime Audit
-Target Crate: crates/pavis
-Generation Timestamp: 2026-01-14T12:10:00Z
-AI Model: Gemini
+Pavis Runtime Audit ? Actionable Recommendations (from Final Summary)
 
-# 1. Executive Verdict
+Executive intent
+- Keep Frozen Data Plane boundary as-is (only .pvs, no YAML/JSON parsing).
+- Raise production robustness by eliminating panic-on-input/hot-path panics and by hardening snapshot atomicity.
+- Treat ?unsafe? as acceptable only with explicit safety contracts + guardrail tests.
 
-**Verdict:** Sound
+1) Snapshot atomicity: make pinned snapshot a hard invariant
+- Problem: Proxy::upstream_peer falls back to self.state.load() when ctx.runtime_state is None, allowing potential cross-snapshot mixing (route match on one snapshot, upstream select on another).
+- Recommendation:
+  - Enforce that ctx.runtime_state MUST be set for any request that reaches upstream selection.
+  - If missing, return an InternalError (or explicit error) instead of silently falling back.
+  - Add a focused test: simulate hot reload during a request and assert that route + upstream are resolved from the same snapshot version.
+- Rationale: this is a correctness invariant (Atomic Switch / request handled by exactly one config version). Silent fallback is worse than a visible error.
 
-The `pavis` runtime is a high-performance, frozen data plane implementation that strictly adheres to the architectural constraints. It consumes opaque, pre-validated `.pvs` artifacts, enforcing a clean separation between configuration logic (Core) and execution (Runtime). Concurrency is handled safely via `ArcSwap` for hot reloads and lock-free atomics for load balancing. While there is a minor consistency risk during hot reloads (request phases potentially seeing different config snapshots) and some allocation overhead in the request ID path, the codebase is structurally sound, panic-free in hot paths, and ready for production lock-in.
+2) Eliminate panic in request hot path: request-id time underflow
+- Problem: generate_request_id uses duration_since(UNIX_EPOCH).unwrap(), which can panic under time rollback / misconfigured clock.
+- Recommendation:
+  - Replace unwrap with a safe fallback:
+    - if SystemTime underflows, use 0, or a monotonic counter, or random seed + counter.
+  - Log a warning once (rate-limited) if system clock is invalid.
+- Rationale: this is per-request hot path; a single panic kills the process.
 
-# 2. Top System Risks
+3) Convert ?external input? expect/unwrap to diagnosable errors (startup / service init)
+- Problem: UpstreamResolver::new uses expect on env parsing and system DNS config reads.
+- Recommendation:
+  - Replace expect with Result-returning construction:
+    - invalid PAVIS_DNS_SERVER => return an error with the invalid value and an example format
+    - read_system_conf failure => return an error with guidance (permissions, container environment, etc.)
+  - Choose a clear policy:
+    - Strict mode: fail fast at startup (but as a clean error, not panic)
+    - Lenient mode: disable DNS resolver service and continue, with loud logs/metrics
+- Rationale: production should not ?panic on misconfig?; it should fail predictably and be diagnosable.
 
-1.  **Reload Consistency (Phase 2):**
-    The `Proxy` service re-loads the configuration state (`self.state.load()`) multiple times during a single request lifecycle (once in `request_filter` for routing, and again in `upstream_peer` for backend selection).
-    *   *Risk:* A hot reload occurring mid-request could cause the routing phase to select an upstream from Config A, while the peer selection phase tries to resolve it in Config B. If the upstream was removed or changed in Config B, the request will fail or misroute.
-2.  **Request ID Allocation (Phase 5):**
-    `generate_request_id` allocates a new `String` for every request using `format!`.
-    ```rust
-    // crates/pavis/src/proxy/service.rs
-    format!("req-{}-{}", now, random_val)
-    ```
-    *   *Risk:* Unnecessary heap churn in the ultra-hot path.
-3.  **Regex Construction Safety (Phase 4):**
-    While `Router::new` compiles regexes safely, a malformed regex in a `RuntimeConfig` (if valid PVS but invalid regex syntax, though `pavis-core` should catch this) would cause `Router::new` to fail.
-    *   *Mitigation:* `pavis-core` validation ensures regex validity, so this is a layered defense relying on the trusted producer.
+4) Lock poisoning strategy: remove unwraps on Mutex/RwLock in critical paths
+- Problem: Mutex::lock().unwrap() and RwLock::read/write().unwrap() turn prior panics into repeated crashes or hard failures.
+- Recommendation:
+  - For callback registration/invocation and tracing reload layer:
+    - handle poisoned locks by recovering the inner value (into_inner) or by disabling that optional subsystem (tracing/callback) while keeping proxy serving.
+  - Decide explicitly: ?panic kills process? vs ?best-effort keep serving.? Prefer best-effort for sidecar runtime.
+- Rationale: lock poisoning is a secondary failure; unwrap makes it catastrophic.
 
-# 3. Readiness Assessment
+5) ?Worker started twice? is an internal invariant: keep or soften, but prove it
+- Problem: AccessLogWorker::start_service expects single start and panics if started twice.
+- Recommendation:
+  - Option A (preferred): return Err("worker started twice") and no-op the second start.
+  - Option B: keep expect, but add a wiring-level proof:
+    - unit test or integration test ensuring the service is started exactly once under your server wiring.
+- Rationale: this is less likely than env/time issues, but still avoidable.
 
-| Criteria | Status | Notes |
-| :--- | :--- | :--- |
-| **Boundary Purity?** | **Yes** | Runtime consumes `.pvs` only. No semantic validation or parsing logic exists. |
-| **Runtime Invariants?** | **Mostly** | State is immutable, but request-scoped consistency is not strictly enforced (see Risk #1). |
-| **Diagnosable Errors?** | **Yes** | Tracing spans cover request lifecycle. `anyhow` used for startup errors. |
-| **Concurrency Safety?** | **Yes** | `ArcSwap` handles config swaps. `AtomicUsize` handles LB state. No blocking locks in hot paths. |
-| **Performance Risks?** | **Low** | Main overhead is allocation (Request ID, Rewrites). Routing is efficient (Linear+Map). |
+6) Unsafe usage: require explicit safety contracts + guardrail tests
+- Problem: unsafe blocks rely on external guarantees (pvs verify + layout invariants) and internal invariants (RequestId UTF-8, X509 shim layout).
+- Recommendation:
+  - For each unsafe block, add a ?SAFETY:? comment documenting:
+    - what invariant is assumed
+    - what enforces it (verify step, constructor, fixed layout type, etc.)
+    - what would break it (version mismatch, struct layout change)
+  - Add tests:
+    - version mismatch must reject and never reach from_trusted
+    - corrupted bytes must fail verify/load
+    - RequestId always produces valid UTF-8 (or switch to a representation that doesn?t require unchecked UTF-8)
+- Rationale: unsafe is acceptable when the contract is explicit and regression-protected.
 
-# 4. Recommended Next Steps
+7) Performance follow-ups (after correctness/panic hardening)
+- Priority signals (when enabled):
+  - metrics labels allocate per request (to_string for method/route/status/upstream)
+  - tracing reload layer uses RwLock on every event
+  - access log queue saturation / backpressure behavior
+- Recommendation:
+  - Run the proposed targeted benchmarks, but only after items (1)-(4) to avoid noisy restarts skewing results.
+  - Produce a ?feature toggle cost matrix? (metrics on/off, tracing on/off, access log on/off) with p50/p99 and CPU.
+- Rationale: you need quantified overhead by feature combination, not guesses.
 
-1.  **Pin Config per Request:** Modify `RouterContext` to hold an `Arc<RuntimeState>` captured at the start of the request (`request_filter`). Pass this snapshot to `upstream_peer` to ensure a request is processed entirely within a single configuration version.
-2.  **Optimize Request ID:** Replace `String` allocation with a thread-local formatter or a fixed-size buffer (e.g., `compact_str` or `ulid`) to reduce heap pressure.
-3.  **Validate Regex compilation:** Ensure `pavis-core`'s regex validation is strictly aligned with `runtime`'s regex engine (`regex` crate) to prevent "valid at core, invalid at runtime" scenarios.
+8) Suggested execution order (minimal disruption)
+- Step 1: enforce pinned snapshot invariant (remove fallback; add test)
+- Step 2: remove request-id time unwrap panic (safe fallback; warn once)
+- Step 3: replace DNS/env expects with Result + explicit policy (strict or lenient)
+- Step 4: handle lock poisoning for optional subsystems (tracing/callback) without killing proxy
+- Step 5: document unsafe ?SAFETY:? contracts + add guardrail tests
+- Step 6: run Phase-5 benchmarks and record the toggle cost matrix
 
-# 5. Detailed Analysis
-
-## Phase 0: Inventory & Runtime Surface
--   **Architecture:** `Pingora` based proxy. `Router` for matching. `Manager` for upstream selection. `Telemetry` for observability.
--   **Entry:** `main.rs` loads LKG config, bootstraps server, and starts `ConfigAgent`.
--   **Components:** Clean separation of concerns. `proxy/service.rs` orchestrates, but logic delegates to `router` and `upstream`.
-
-## Phase 1: Boundary & Responsibility Audit
--   **Input:** `load_file` accepts only `.pvs` extension and uses `pavis_pvs::load`.
-    ```rust
-    // crates/pavis/src/load.rs
-    pub fn load_file(path: &str) -> LoadResult<ValidatedRuntimeConfig> { ... }
-    ```
--   **Parsing:** **PASSED.** No YAML/JSON parsing found.
--   **Defaults:** **PASSED.** Runtime fails if config is missing required data (e.g. "Upstream not found"), effectively enforcing that the config provided is complete.
-
-## Phase 2: Runtime Invariants & Correctness
--   **Immutability:** `RuntimeState` is read-only.
--   **Hot Reload:** `ArcSwap` provides atomic pointer swap.
--   **Determinism:** `Router` implementation strictly respects order of routes (Linear zones preserve vector order, Map zones preserve first-insert).
-
-## Phase 3: Error Model & Diagnostics
--   **Startup:** `anyhow` provides good context for bind failures or config load errors.
--   **Runtime:** `tracing` spans provide `request_id`, `route_pattern`, `upstream`.
--   **Panic Policy:** Hot paths in `proxy.rs` use `Result` (via `pingora::Error`). No panic risks observed.
-
-## Phase 4: Safety, Concurrency & Hot Reload
--   **Concurrency:** `AtomicUsize` (Relaxed) used for Round-Robin counter. Safe and fast.
-    ```rust
-    // crates/pavis/src/upstream/load_balance.rs
-    let val = counter.fetch_add(1, Ordering::Relaxed);
-    ```
--   **Memory Safety:** `Arc` usage ensures config data remains alive as long as requests need it. No `unsafe` blocks found in `src/pavis` (delegated to libraries).
-
-## Phase 5: Performance & Latency Signals
--   **Routing:** `Router::match_request` uses a hybrid approach (HashMap for exact paths, Vector for regex/prefix). This optimizes for the common case (Exact) while supporting complex matching.
--   **Allocation:**
-    -   `extract_client_identity` allocates `String`.
-    -   `generate_request_id` allocates `String`.
-    -   `calculate_path_rewrite` allocates `String` / `Cow`.
--   **Locking:** No `Mutex` or `RwLock` in the request path.
+Acceptance criteria (what ?done? looks like)
+- No panic in request hot path on malformed clocks or optional subsystem failures.
+- No panic on external input (env/system conf); failures are structured and diagnosable.
+- Snapshot atomicity is enforced: a request cannot mix config versions across route and upstream selection.
+- Unsafe blocks have explicit safety contracts and regression tests protecting assumptions.
+- Performance impact is measured per feature toggle combination (metrics/tracing/logging).
