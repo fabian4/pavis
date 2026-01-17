@@ -60,6 +60,7 @@ The Runtime is deliberately constrained to be a pure execution mechanism. It per
 *   **Header Manipulation**: Deterministic insert, remove, and overwrite.
 *   **Rewrites**: Prefix path rewriting and Host literal rewriting.
 *   **Hot Reload**: Atomic, hitless reload of the data plane via pointer swapping.
+*   **Relay Config API**: ETag-based `GET /v1/config` with `wait_ms` long-polling.
 *   **TLS Termination**: Server-side TLS with strict file-based certificates (OpenSSL/BoringSSL backend only).
 *   **Upstream TLS Origination**: Client-side TLS with hostname verification (system CA bundle only with current rustls backend).
 *   **Observability**: Prometheus metrics with cardinality controls, structured access logging, and distributed tracing (OTLP).

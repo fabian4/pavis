@@ -88,69 +88,69 @@ Fetches the current Last Known Good (LKG) configuration with long-polling suppor
 
 **Request:**
 ```http
-GET /v1/config?timeout=30 HTTP/1.1
+GET /v1/config?wait_ms=30000 HTTP/1.1
 ```
 
 **Query Parameters:**
-- `timeout` (optional, u64): Long-poll timeout in seconds
-  - Default: `30`
-  - Range: `[1, 60]` (values outside range return 400)
+- `wait_ms` (optional, u64): Long-poll timeout in milliseconds
+  - Default: `0` (no long-poll)
+  - Range: `0..=60000` (values > 60000 return 400)
 
 **Response (200 OK):**
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/octet-stream
-X-Config-Checksum: sha256:abc123...
+ETag: "sha256:abc123..."
 X-Config-Size: 1234
 X-Config-Version: 42
-X-Pavis-Generated-At: 2026-01-16T12:00:00Z
 Cache-Control: no-store
 
 <PVS artifact bytes>
 ```
 
 **Response Headers:**
-- `X-Config-Checksum` (string): SHA256 checksum of the response body (use for change detection)
+- `ETag` (string): Strong ETag validator derived from the response body checksum
 - `X-Config-Size` (u64): Size of the artifact in bytes
 - `X-Config-Version` (u64): Relay version number (**observability only, do NOT use for change detection**)
-- `X-Pavis-Generated-At` (string): ISO 8601 timestamp when config was last updated
 - `Cache-Control`: Always `no-store` (config must be fetched fresh)
 
 **Long-Poll Behavior:**
-- If a publish occurs while request is waiting → wake immediately, return new LKG
-- If timeout expires → return current LKG (may be identical to previous poll)
-- Clients **MUST** use `X-Config-Checksum` for change detection (not version)
+- If `If-None-Match` matches current ETag and `wait_ms > 0`, the request waits for a change
+- If a publish occurs with a different checksum → wake immediately, return 200 OK
+- If timeout expires → return 204 No Content with the current ETag
+- If `If-None-Match` is missing and `wait_ms > 0` → return 200 OK immediately (unconditional GET)
+- Conditional GET without long-poll (`wait_ms=0` or omitted) returns 304 Not Modified when ETag matches
 
 **Client Responsibilities:**
-1. **Extract `X-Config-Checksum` from response headers**
-2. **Compute `sha256(response_body)` and verify it matches header checksum**
+1. **Extract `ETag` from response headers**
+2. **Compute `sha256(response_body)` and verify it matches the ETag checksum**
    - If mismatch: **fail-close** (do not apply; log error; retry)
-3. **Compare checksum with previous value**
+3. **Compare ETag with previous value**
    - If different → apply new config
    - If same → skip update (no change)
-4. **Accept that timeouts may return unchanged config** (idempotent operation)
+4. **Use `If-None-Match` with the quoted ETag to enable long-polling**
 
 **Error Responses:**
 
 | Status | Condition | Body Example |
 |--------|-----------|--------------|
-| 400 Bad Request | Invalid timeout | `"timeout must be within [1, 60]"` |
+| 400 Bad Request | Invalid wait_ms | `"wait_ms must be in range 0..=60000 (milliseconds)"` |
 
 **Example (using curl):**
 ```bash
-curl -i http://127.0.0.1:8080/v1/config?timeout=30 -o config.pvs
+curl -i http://127.0.0.1:8080/v1/config?wait_ms=30000 -o config.pvs
 ```
 
 **Example (checksum verification in bash):**
 ```bash
-# Fetch config and extract checksum
-CHECKSUM=$(curl -si http://127.0.0.1:8080/v1/config | grep -i x-config-checksum | cut -d' ' -f2 | tr -d '\r')
+# Fetch config and extract ETag
+ETAG=$(curl -si http://127.0.0.1:8080/v1/config | grep -i etag | cut -d' ' -f2 | tr -d '\r')
 curl -s http://127.0.0.1:8080/v1/config -o config.pvs
 
 # Verify checksum
-COMPUTED=$(sha256sum config.pvs | awk '{print "sha256:"$1}')
-if [ "$CHECKSUM" = "$COMPUTED" ]; then
-  echo "Checksum verified: $CHECKSUM"
+COMPUTED=$(sha256sum config.pvs | awk '{print "\"sha256:"$1"\""}')
+if [ "$ETAG" = "$COMPUTED" ]; then
+  echo "Checksum verified: $ETAG"
 else
   echo "ERROR: Checksum mismatch!"
   exit 1
@@ -362,27 +362,27 @@ This is **correct behavior** (not a bug).
 
 ---
 
-## Checksum Format
+## ETag Format
 
-All checksums follow the format: `sha256:{64 hex chars}`
+All ETags follow the format: `"sha256:{64 hex chars}"`
 
 **Example:**
 ```
-sha256:a3f8d7e2c1b9f6e4d8c7a5b3f1e9d7c5b4a2f8e6d4c2b1a9f7e5d3c1b9a7f5e3
+"sha256:a3f8d7e2c1b9f6e4d8c7a5b3f1e9d7c5b4a2f8e6d4c2b1a9f7e5d3c1b9a7f5e3"
 ```
 
 **Computation:**
 ```rust
 let digest = sha2::Sha256::digest(bytes);
-let checksum = format!("sha256:{}", hex::encode(digest));
+let etag = format!("\"sha256:{}\"", hex::encode(digest));
 ```
 
 **Verification (clients MUST do this):**
 ```rust
-let header_checksum = response.headers().get("X-Config-Checksum")?;
+let header_etag = response.headers().get("ETag")?.to_str()?;
 let body_bytes = response.bytes().await?;
-let computed = sha256(body_bytes);
-assert_eq!(header_checksum, computed, "Checksum mismatch - fail closed!");
+let computed = format!("\"sha256:{}\"", sha256(body_bytes));
+assert_eq!(header_etag, computed, "Checksum mismatch - fail closed!");
 ```
 
 ---
@@ -393,35 +393,39 @@ assert_eq!(header_checksum, computed, "Checksum mismatch - fail closed!");
 
 ```rust
 loop {
-    let response = client.get("http://relay:8080/v1/config?timeout=30").await?;
-    let header_checksum = response.headers().get("X-Config-Checksum")?.to_str()?;
+    let mut request = client.get("http://relay:8080/v1/config?wait_ms=30000");
+    if let Some(ref etag) = last_etag {
+        request = request.header("If-None-Match", etag);
+    }
 
-    // Check if changed
-    if Some(header_checksum) == last_checksum {
+    let response = request.send().await?;
+    if response.status() == 204 || response.status() == 304 {
         continue; // No change, poll again
     }
 
+    let header_etag = response.headers().get("ETag")?.to_str()?;
+
     // Verify checksum
     let body = response.bytes().await?;
-    let computed = sha256(&body);
-    if computed != header_checksum {
+    let computed = format!("\"sha256:{}\"", sha256(&body));
+    if computed != header_etag {
         eprintln!("Checksum mismatch - corruption detected!");
         continue; // Fail-close, retry
     }
 
     // Apply new config
     apply_config(&body)?;
-    last_checksum = Some(header_checksum.to_string());
+    last_etag = Some(header_etag.to_string());
 }
 ```
 
 ### Server Behavior
 
-1. Client sends `GET /v1/config?timeout=30`
-2. Relay checks if publish event occurs within 30 seconds
-3. If publish → wake immediately, return new LKG
-4. If timeout → return current LKG (may be unchanged)
-5. Client compares checksum to detect changes
+1. Client sends `GET /v1/config?wait_ms=30000` with `If-None-Match`
+2. Relay waits until a publish produces a new ETag or timeout expires
+3. If publish → wake immediately, return 200 OK with new config
+4. If timeout → return 204 No Content with current ETag
+5. Client compares ETag to detect changes
 
 ---
 
@@ -429,7 +433,7 @@ loop {
 
 ### Client-Side
 
-- **400 Bad Request**: Fix request parameters (timeout, etc.)
+- **400 Bad Request**: Fix request parameters (`wait_ms`, etc.)
 - **413 Payload Too Large**: Reduce artifact size or increase `max_pvs_bytes`
 - **500 Internal Server Error**: Retry with exponential backoff
 - **Checksum Mismatch**: **Fail-closed** (do not apply corrupted config)
@@ -484,7 +488,7 @@ On checksum mismatch, clients **MUST**:
 1. **Always verify checksums** before applying config
 2. **Use long-polling** instead of frequent polling (reduces load)
 3. **Monitor metrics** (`/v1/metrics`) for publish failures
-4. **Set appropriate timeouts** (30-60s recommended for long-poll)
+4. **Set appropriate wait_ms values** (30-60s recommended for long-poll)
 5. **Implement exponential backoff** on errors
 6. **Test fail-closed behavior** (simulate checksum mismatches)
 

@@ -21,8 +21,10 @@ cat <<-EOF > "$TEST_TMP/relay.yaml"
 	  bind: "127.0.0.1:$PORT_RELAY"
 	storage:
 	  type: memory
-	source:
-	  type: none
+	pipeline:
+	  ingest:
+	    source:
+	      kind: none
 EOF
 
 run_relay "$TEST_TMP/relay.yaml"
@@ -31,7 +33,6 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 # 1. Publish Empty
 touch "$TEST_TMP/empty"
 pavis_curl_headers "$TEST_TMP/resp" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/empty"
 
 # 2. Assert (Empty body is invalid PVS, so 400 or 422)

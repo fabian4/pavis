@@ -18,7 +18,7 @@ PORT_RELAY=$(get_free_port)
 STORAGE_DIR="$TEST_TMP/storage"
 mkdir -p "$STORAGE_DIR"
 
-cat <<-EOF > "$TEST_TMP/relay.yaml"
+cat <<-EOF_INNER > "$TEST_TMP/relay.yaml"
 	http:
 	  bind: "127.0.0.1:$PORT_RELAY"
 	storage:
@@ -26,33 +26,30 @@ cat <<-EOF > "$TEST_TMP/relay.yaml"
 	  root_dir: "$STORAGE_DIR"
 	artifact:
 	  lkg_path: "lkg.pvs"
-EOF
+EOF_INNER
 
 run_relay "$TEST_TMP/relay.yaml" "relay1"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 
 gen_minimal_pvs "$TEST_TMP/persistent.pvs" "persistent"
 
-# 2. Publish
 pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/persistent.pvs" > /dev/null
 
-# Verify
-pavis_curl_body "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/body"
+fetch_with_headers "http://127.0.0.1:$PORT_RELAY/v1/config" \
+    "$TEST_TMP/headers" "$TEST_TMP/body"
 if ! cmp -s "$TEST_TMP/persistent.pvs" "$TEST_TMP/body"; then
     echo "❌ Failed to serve data initially"
     exit 1
 fi
 
-# 3. Restart
 stop_sut "relay1"
 
 run_relay "$TEST_TMP/relay.yaml" "relay2"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 
-# 4. Verify Persistence
-pavis_curl_body "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/body_restored"
+fetch_with_headers "http://127.0.0.1:$PORT_RELAY/v1/config" \
+    "$TEST_TMP/headers_restored" "$TEST_TMP/body_restored"
 if ! cmp -s "$TEST_TMP/persistent.pvs" "$TEST_TMP/body_restored"; then
     echo "❌ Data lost after restart"
     exit 1

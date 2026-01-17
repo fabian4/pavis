@@ -50,7 +50,7 @@ pub async fn handler(
 
 fn response_with_meta(meta: &crate::relay::types::ArtifactMeta, data: bytes::Bytes) -> Response {
     let mut headers = HeaderMap::new();
-    let etag = match HeaderValue::from_str(&meta.etag) {
+    let etag = match HeaderValue::from_str(&format!("\"{}\"", meta.etag)) {
         Ok(value) => value,
         Err(err) => {
             tracing::warn!(error = %err, "invalid etag header");
@@ -65,10 +65,15 @@ fn response_with_meta(meta: &crate::relay::types::ArtifactMeta, data: bytes::Byt
         }
     };
     headers.insert(header::ETAG, etag);
-    headers.insert("x-pavis-version", version);
+    headers.insert("x-config-version", version);
+    headers.insert(
+        "x-config-size",
+        HeaderValue::from_str(&meta.size.to_string()).unwrap(),
+    );
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/octet-stream"),
     );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     (headers, data).into_response()
 }

@@ -64,7 +64,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 > **Status**: 🚧 In Progress
 
 - [x] **Pipeline**: Source ingestion (File) -> Codec transformation -> Artifact generation.
-- [x] **Distribution API**: Long-polling endpoints (`GET /v1/config`, `POST /v1/publish`).
+- [x] **Distribution API**: ETag-based long-polling endpoints (`GET /v1/config`, `POST /v1/publish`).
 - [x] **Hot Reload**: Atomic `ArcSwap` of frozen runtime state without dropping connections.
 - [x] **Durability**: Last-Known-Good (LKG) persistence to disk (`/etc/pavis/config.pvs`) with fsync.
 - [x] **Recovery**: Boot from LKG if control plane is unreachable.

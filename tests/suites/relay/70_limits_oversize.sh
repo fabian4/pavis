@@ -22,8 +22,10 @@ cat <<-EOF > "$TEST_TMP/relay.yaml"
 	  bind: "127.0.0.1:$PORT_RELAY"
 	storage:
 	  type: memory
-	source:
-	  type: none
+	pipeline:
+	  ingest:
+	    source:
+	      kind: none
 	artifact:
 	  limits:
 	    max_pvs_bytes: 100
@@ -54,7 +56,6 @@ fi
 
 # 3. Attempt Publish
 pavis_curl_headers "$TEST_TMP/resp" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/valid.pvs"
 
 # 4. Assert 413 Payload Too Large

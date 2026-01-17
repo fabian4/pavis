@@ -406,11 +406,11 @@ sudo journalctl -u pavis-relay -f
 
 3. **Manually verify checksum:**
    ```bash
-   curl -i http://relay:8080/v1/config | grep -i x-config-checksum
+   curl -i http://relay:8080/v1/config | grep -i etag
    ```
 
 4. **Check long-poll timeout:**
-   - Clients should use `?timeout=30`
+   - Clients should use `?wait_ms=30000`
    - Too short → may miss publish events
 
 ### Orphaned History Entries

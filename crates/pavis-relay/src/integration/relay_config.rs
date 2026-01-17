@@ -20,7 +20,7 @@ async fn publish(app: &axum::Router, bytes: Bytes) {
 }
 
 #[tokio::test]
-async fn config_serves_lkg_bytes_with_checksum_headers() {
+async fn config_serves_lkg_bytes_with_etag_headers() {
     let bytes = valid_pvs_bytes("config_headers");
     let state = state_with_storage("config_headers", 0, Bytes::new());
     let app = router(state);
@@ -29,7 +29,7 @@ async fn config_serves_lkg_bytes_with_checksum_headers() {
 
     let response = app
         .oneshot(
-            Request::get("/v1/config?timeout=1")
+            Request::get("/v1/config")
                 .body(Body::empty())
                 .expect("config request"),
         )
@@ -47,11 +47,10 @@ async fn config_serves_lkg_bytes_with_checksum_headers() {
 
     let checksum = checksum_for_bytes(&body);
     let size = body.len().to_string();
+    let expected_etag = format!("\"{checksum}\"");
     assert_eq!(
-        headers
-            .get("x-config-checksum")
-            .and_then(|value| value.to_str().ok()),
-        Some(checksum.as_str())
+        headers.get("etag").and_then(|value| value.to_str().ok()),
+        Some(expected_etag.as_str())
     );
     assert_eq!(
         headers
@@ -71,7 +70,7 @@ async fn config_version_header_matches_publish_version() {
 
     let response = app
         .oneshot(
-            Request::get("/v1/config?timeout=1")
+            Request::get("/v1/config")
                 .body(Body::empty())
                 .expect("config request"),
         )

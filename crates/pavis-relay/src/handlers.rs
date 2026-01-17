@@ -1,11 +1,12 @@
 use crate::runtime::RelayRuntimeState;
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_NONE_MATCH, RETRY_AFTER};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use std::sync::Arc;
+use std::time::Duration;
 
-const CONFIG_CHECKSUM_HEADER: &str = "x-config-checksum";
 const CONFIG_SIZE_HEADER: &str = "x-config-size";
 const CONFIG_VERSION_HEADER: &str = "x-config-version";
 
@@ -19,57 +20,179 @@ pub(crate) struct PublishResponse {
 
 #[derive(serde::Deserialize)]
 pub(crate) struct ConfigQuery {
-    pub(crate) timeout: Option<u64>,
+    pub(crate) wait_ms: Option<u64>,
+}
+
+fn parse_if_none_match(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(IF_NONE_MATCH)?;
+    let s = value.to_str().ok()?;
+    let trimmed = s.trim();
+
+    if trimmed == "*" {
+        return None;
+    }
+
+    if trimmed.starts_with("W/") || trimmed.starts_with("w/") {
+        return None;
+    }
+
+    if trimmed.contains(',') {
+        return None;
+    }
+
+    if !trimmed.starts_with('"') || !trimmed.ends_with('"') || trimmed.len() < 2 {
+        return None;
+    }
+
+    let unquoted = &trimmed[1..trimmed.len() - 1];
+    if unquoted.contains('"') {
+        return None;
+    }
+
+    if !unquoted.starts_with("sha256:") {
+        return None;
+    }
+
+    let hex_part = &unquoted[7..];
+    if hex_part.len() != 64 {
+        return None;
+    }
+
+    if !hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    Some(format!("sha256:{}", hex_part.to_lowercase()))
+}
+
+fn etag_from_checksum(checksum: &str) -> String {
+    let normalized = checksum.to_lowercase();
+    if normalized.starts_with("sha256:") {
+        normalized
+    } else {
+        format!("sha256:{normalized}")
+    }
+}
+
+fn quote_etag(etag: &str) -> String {
+    format!("\"{}\"", etag)
+}
+
+fn build_200_response(snapshot: crate::runtime::RelaySnapshotView, etag: &str) -> Response {
+    let quoted_etag = quote_etag(etag);
+    let size = snapshot.pvs_bytes.len();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/octet-stream")
+        .header(ETAG, quoted_etag)
+        .header(CONFIG_SIZE_HEADER, size.to_string())
+        .header(CONFIG_VERSION_HEADER, snapshot.version.to_string())
+        .header(CACHE_CONTROL, "no-store")
+        .body(Body::from(snapshot.pvs_bytes))
+        .unwrap()
+}
+
+fn build_204_response(etag: &str) -> Response {
+    let quoted_etag = quote_etag(etag);
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(ETAG, quoted_etag)
+        .header(CACHE_CONTROL, "no-store")
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn build_304_response(etag: &str) -> Response {
+    let quoted_etag = quote_etag(etag);
+    Response::builder()
+        .status(StatusCode::NOT_MODIFIED)
+        .header(ETAG, quoted_etag)
+        .header(CACHE_CONTROL, "no-store")
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn build_503_response() -> Response {
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .header(RETRY_AFTER, "1")
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn build_400_response(message: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(Body::from(format!("{message}\n")))
+        .unwrap()
 }
 
 pub(crate) async fn get_config(
     State(state): State<Arc<RelayRuntimeState>>,
     Query(query): Query<ConfigQuery>,
+    headers: HeaderMap,
 ) -> Response {
+    if !state.is_ready() {
+        return build_503_response();
+    }
+
     let options = state.options().clone();
-    let timeout = query.timeout.unwrap_or(30);
-    if !(1..=60).contains(&timeout) {
-        return (StatusCode::BAD_REQUEST, "timeout must be within [1, 60]\n").into_response();
+    let wait_ms = query.wait_ms.unwrap_or(0);
+    if wait_ms > 60000 {
+        return build_400_response("wait_ms must be in range 0..=60000 (milliseconds)");
     }
-    if options.long_poll_enabled {
+
+    let client_etag = parse_if_none_match(&headers);
+
+    let mut snapshot = state.snapshot().await;
+    let mut current_etag = etag_from_checksum(&snapshot.artifact_checksum);
+
+    if let Some(ref etag) = client_etag
+        && etag != &current_etag
+    {
+        return build_200_response(snapshot, &current_etag);
+    }
+
+    if client_etag.is_none() && wait_ms > 0 {
+        return build_200_response(snapshot, &current_etag);
+    }
+
+    if wait_ms > 0 && options.long_poll_enabled {
         state.metrics().inc_long_poll_wait();
-        let notified = state.notifier().notified();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(timeout), notified).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(wait_ms);
+
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return build_204_response(&current_etag);
+            }
+
+            let notified = state.notifier().notified();
+            match tokio::time::timeout(remaining, notified).await {
+                Ok(_) => {
+                    snapshot = state.snapshot().await;
+                    let new_etag = etag_from_checksum(&snapshot.artifact_checksum);
+                    if new_etag != current_etag {
+                        return build_200_response(snapshot, &new_etag);
+                    }
+                    current_etag = new_etag;
+                }
+                Err(_) => {
+                    return build_204_response(&current_etag);
+                }
+            }
+        }
     }
 
-    let snapshot = state.snapshot().await;
-    let checksum = snapshot.artifact_checksum;
+    if let Some(ref etag) = client_etag
+        && etag == &current_etag
+    {
+        return build_304_response(&current_etag);
+    }
 
-    let size = snapshot.pvs_bytes.len();
-    let mut response = snapshot.pvs_bytes.into_response();
-    let headers = response.headers_mut();
-    headers.insert(
-        axum::http::header::CONTENT_TYPE,
-        HeaderValue::from_static("application/octet-stream"),
-    );
-    headers.insert(
-        CONFIG_VERSION_HEADER,
-        HeaderValue::from_str(&snapshot.version.to_string())
-            .unwrap_or_else(|_| HeaderValue::from_static("0")),
-    );
-    headers.insert(
-        CONFIG_CHECKSUM_HEADER,
-        HeaderValue::from_str(&checksum).unwrap_or_else(|_| HeaderValue::from_static("")),
-    );
-    headers.insert(
-        CONFIG_SIZE_HEADER,
-        HeaderValue::from_str(&size.to_string()).unwrap_or_else(|_| HeaderValue::from_static("0")),
-    );
-    let generated_at = chrono::DateTime::<chrono::Utc>::from(snapshot.updated_at).to_rfc3339();
-    headers.insert(
-        options.generated_at_header,
-        HeaderValue::from_str(&generated_at).unwrap_or_else(|_| HeaderValue::from_static("")),
-    );
-    headers.insert(
-        axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("no-store"),
-    );
-    response
+    build_200_response(snapshot, &current_etag)
 }
 
 pub(crate) async fn get_status(State(state): State<Arc<RelayRuntimeState>>) -> Response {
@@ -122,8 +245,7 @@ pub(crate) async fn get_health() -> Response {
 }
 
 pub(crate) async fn get_ready(State(state): State<Arc<RelayRuntimeState>>) -> Response {
-    let snapshot = state.snapshot().await;
-    if snapshot.pvs_bytes.is_empty() {
+    if !state.is_ready() {
         return (StatusCode::SERVICE_UNAVAILABLE, "no artifact\n").into_response();
     }
     (StatusCode::OK, "ready\n").into_response()
@@ -234,6 +356,39 @@ mod tests {
     use crate::runtime::RelayOptions;
     use axum::body::Bytes;
 
+    async fn response_bytes(response: Response) -> Bytes {
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body")
+    }
+
+    fn build_valid_pvs_bytes(label: &str) -> Bytes {
+        let listener = pavis_core::ListenerBuilder::new()
+            .name(pavis_core::ListenerName("default".to_string()))
+            .address("127.0.0.1:8080".parse().unwrap())
+            .workers(pavis_core::WorkerCount::Auto)
+            .tls(pavis_core::TlsConfig::Disabled)
+            .build()
+            .expect("listener");
+
+        let config = pavis_core::RuntimeConfigBuilder::new()
+            .telemetry(pavis_core::Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: pavis_core::ServiceName(label.to_string()),
+                metrics: pavis_core::Metrics::Disabled,
+                access_log: pavis_core::AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .expect("config");
+
+        let validated = pavis_core::validate_runtime(config).expect("validate");
+        let pvs_bytes = pavis_pvs::encode(validated.as_ref()).expect("encode");
+        Bytes::from(pvs_bytes)
+    }
+
     #[tokio::test]
     async fn test_post_publish_failures() {
         let dir = std::env::temp_dir().join("relay_handlers_test");
@@ -256,29 +411,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
         // Prepare valid PVS
-        let listener = pavis_core::ListenerBuilder::new()
-            .name(pavis_core::ListenerName("default".to_string()))
-            .address("127.0.0.1:8080".parse().unwrap())
-            .workers(pavis_core::WorkerCount::Auto)
-            .tls(pavis_core::TlsConfig::Disabled)
-            .build()
-            .expect("listener");
-
-        let config = pavis_core::RuntimeConfigBuilder::new()
-            .telemetry(pavis_core::Telemetry {
-                level: pavis_core::LogLevel::Info,
-                pingora: pavis_core::LogLevel::Info,
-                service_name: pavis_core::ServiceName("pavis".to_string()),
-                metrics: pavis_core::Metrics::Disabled,
-                access_log: pavis_core::AccessLogPolicy::Disabled,
-                tracing: pavis_core::TracingPolicy::Disabled,
-            })
-            .add_listener(listener)
-            .build()
-            .expect("config");
-        let validated = pavis_core::validate_runtime(config).expect("validate");
-        let pvs_bytes = pavis_pvs::encode(validated.as_ref()).expect("encode");
-        let valid_body = Bytes::from(pvs_bytes);
+        let valid_body = build_valid_pvs_bytes("pavis");
 
         // 2. Policy Failure (max_pvs_bytes)
         // Create new state with small limit
@@ -305,5 +438,184 @@ mod tests {
         let _ = std::fs::remove_dir_all(&fail_dir);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_503_when_not_ready() {
+        let state = Arc::new(
+            RelayRuntimeState::new_with_options(0, Bytes::new(), RelayOptions::default())
+                .expect("state"),
+        );
+        let response = get_config(
+            State(state),
+            Query(ConfigQuery { wait_ms: None }),
+            HeaderMap::new(),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers().get(RETRY_AFTER).unwrap(), "1");
+        let body = response_bytes(response).await;
+        assert_eq!(body.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_400_for_wait_ms_out_of_range() {
+        let pvs_bytes = build_valid_pvs_bytes("range");
+        let state = Arc::new(
+            RelayRuntimeState::new_with_options(1, pvs_bytes, RelayOptions::default())
+                .expect("state"),
+        );
+        let response = get_config(
+            State(state),
+            Query(ConfigQuery {
+                wait_ms: Some(70000),
+            }),
+            HeaderMap::new(),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response_bytes(response).await;
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(body_str.contains("wait_ms must be in range 0..=60000"));
+    }
+
+    #[tokio::test]
+    async fn test_200_unconditional_get() {
+        let pvs_bytes = build_valid_pvs_bytes("unconditional");
+        let state = Arc::new(
+            RelayRuntimeState::new_with_options(1, pvs_bytes.clone(), RelayOptions::default())
+                .expect("state"),
+        );
+        let response = get_config(
+            State(state),
+            Query(ConfigQuery { wait_ms: None }),
+            HeaderMap::new(),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            "application/octet-stream"
+        );
+        assert!(response.headers().get(ETAG).is_some());
+        assert!(response.headers().get(CONFIG_SIZE_HEADER).is_some());
+        assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+        let body = response_bytes(response).await;
+        assert_eq!(body, pvs_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_304_conditional_get_matching_etag() {
+        let pvs_bytes = build_valid_pvs_bytes("conditional");
+        let state = Arc::new(
+            RelayRuntimeState::new_with_options(1, pvs_bytes, RelayOptions::default())
+                .expect("state"),
+        );
+        let snapshot = state.snapshot().await;
+        let etag = quote_etag(&etag_from_checksum(&snapshot.artifact_checksum));
+        let mut headers = HeaderMap::new();
+        headers.insert(IF_NONE_MATCH, etag.parse().unwrap());
+
+        let response = get_config(
+            State(state),
+            Query(ConfigQuery { wait_ms: Some(0) }),
+            headers,
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-store");
+        let body = response_bytes(response).await;
+        assert_eq!(body.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_reject_weak_etag() {
+        let pvs_bytes = build_valid_pvs_bytes("weak");
+        let state = Arc::new(
+            RelayRuntimeState::new_with_options(1, pvs_bytes, RelayOptions::default())
+                .expect("state"),
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            IF_NONE_MATCH,
+            "W/\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+                .parse()
+                .unwrap(),
+        );
+
+        let response =
+            get_config(State(state), Query(ConfigQuery { wait_ms: None }), headers).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn parse_if_none_match_accepts_valid_etag() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            IF_NONE_MATCH,
+            "\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+                .parse()
+                .unwrap(),
+        );
+        let result = parse_if_none_match(&headers);
+        assert_eq!(
+            result,
+            Some(
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn parse_if_none_match_normalizes_uppercase_hex() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            IF_NONE_MATCH,
+            "\"sha256:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789\""
+                .parse()
+                .unwrap(),
+        );
+        let result = parse_if_none_match(&headers);
+        assert_eq!(
+            result,
+            Some(
+                "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn parse_if_none_match_rejects_missing_quotes() {
+        let mut headers = HeaderMap::new();
+        headers.insert(IF_NONE_MATCH, "sha256:abc".parse().unwrap());
+        assert_eq!(parse_if_none_match(&headers), None);
+    }
+
+    #[test]
+    fn parse_if_none_match_rejects_weak_etag() {
+        let mut headers = HeaderMap::new();
+        headers.insert(IF_NONE_MATCH, "W/\"sha256:abc\"".parse().unwrap());
+        assert_eq!(parse_if_none_match(&headers), None);
+    }
+
+    #[test]
+    fn parse_if_none_match_rejects_multiple() {
+        let mut headers = HeaderMap::new();
+        headers.insert(IF_NONE_MATCH, "\"etag1\", \"etag2\"".parse().unwrap());
+        assert_eq!(parse_if_none_match(&headers), None);
+    }
+
+    #[test]
+    fn parse_if_none_match_rejects_wildcard() {
+        let mut headers = HeaderMap::new();
+        headers.insert(IF_NONE_MATCH, "*".parse().unwrap());
+        assert_eq!(parse_if_none_match(&headers), None);
     }
 }

@@ -199,6 +199,47 @@ The xDS Codec functions as a **Compiler**:
 
 The Runtime **never** connects to xDS directly; this would violate the Frozen Data Plane model by introducing runtime complexity and non-determinism.
 
+### 4.6 Config Serving API
+
+The relay exposes a single endpoint for config retrieval with ETag-based validation and optional long-polling:
+
+**Endpoint:** `GET /v1/config?wait_ms=<milliseconds>`
+
+**Headers:**
+- `If-None-Match: "<etag>"` - Optional conditional request validator
+
+**Responses:**
+
+| Status | Condition | Headers | Body |
+|--------|-----------|---------|------|
+| 200 OK | Config available (changed or unconditional) | `Content-Type`, `ETag`, `x-config-size`, `Cache-Control`, (`x-config-version`) | .pvs artifact bytes |
+| 204 No Content | Long-poll timeout (ETag unchanged) | `ETag`, `Cache-Control` | Empty |
+| 304 Not Modified | Conditional GET, ETag matches (no long-poll) | `Cache-Control`, `ETag` | Empty |
+| 400 Bad Request | Invalid `wait_ms` (>60000) | `Content-Type` | Error message |
+| 503 Service Unavailable | No config published yet | `Retry-After` | Empty |
+
+**ETag Format:**
+- Strong ETags only: `"sha256:<64-hex-chars>"`
+- Derived from artifact checksum (content hash)
+- Server normalizes to lowercase hex; parser accepts case-insensitive hex
+- Quoted in HTTP responses (`"sha256:..."`), unquoted internally (`sha256:...`)
+- Strict parsing: rejects weak ETags (W/), wildcards (*), multiple ETags, malformed quotes
+
+**Long-Poll Semantics:**
+- `wait_ms` parameter controls timeout (valid range: `0..=60000` milliseconds inclusive)
+- `wait_ms=0` or omitted -> no long-poll (immediate response)
+- Only `wait_ms > 60000` returns 400 Bad Request
+- Only wakes on actual ETag change (false wakeup protection at two levels):
+  1. Notification source: `publish_*()` only notifies if checksum changes
+  2. Long-poll loop: defensive re-check after wake, continues waiting if ETag unchanged
+- Missing `If-None-Match` + `wait_ms > 0` -> immediate 200 OK (spec recommendation)
+- Timeout -> 204 No Content
+
+**Transport Integrity:**
+- All 200 responses include `x-config-size` for body verification
+- Clients SHOULD validate response body size matches header
+- `.pvs` artifacts contain internal checksums validated by `pavis-pvs`
+
 ## 5. Relay Versioning & Distribution
 
 The relay serves as a central distribution point for frozen PVS artifacts. This section describes the relay's versioning model, storage architecture, and crash recovery guarantees.

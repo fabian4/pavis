@@ -131,4 +131,56 @@ relay: "string"
         let normalized = normalize_root(value).expect("normalize");
         assert_eq!(normalized, serde_yaml::Value::String("string".to_string()));
     }
+
+    #[test]
+    fn test_load_config_with_ingest_none() {
+        let yaml = r#"
+http:
+  bind: "127.0.0.1:8080"
+storage:
+  type: memory
+pipeline:
+  ingest:
+    source:
+      kind: none
+distribution:
+  long_poll:
+    enabled: true
+"#;
+        let value: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse yaml");
+        eprintln!("Raw YAML value: {:#?}", value);
+        let config = decode_value(value).expect("decode config");
+        eprintln!("Parsed ingest source: {:?}", config.pipeline.ingest.source);
+        assert!(matches!(
+            config.pipeline.ingest.source,
+            super::super::types::IngestSource::None
+        ));
+    }
+
+    #[test]
+    fn test_load_config_with_ingest_none_no_extra_indent() {
+        let yaml = r#"
+http:
+  bind: "127.0.0.1:8080"
+storage:
+  type: memory
+pipeline:
+  ingest:
+    source:
+      kind: none
+distribution:
+  long_poll:
+    enabled: true
+"#;
+        let value: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse yaml");
+        let config = decode_value(value).expect("decode config");
+        eprintln!(
+            "Parsed ingest source (no extra indent): {:?}",
+            config.pipeline.ingest.source
+        );
+        assert!(matches!(
+            config.pipeline.ingest.source,
+            super::super::types::IngestSource::None
+        ));
+    }
 }

@@ -115,11 +115,7 @@ async fn config_and_status_endpoints_ok() {
 
     let response = app
         .clone()
-        .oneshot(
-            Request::get("/v1/config?timeout=1")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/v1/config").body(Body::empty()).unwrap())
         .await
         .expect("config");
     assert_eq!(response.status(), StatusCode::OK);
@@ -175,7 +171,7 @@ async fn config_rejects_invalid_timeout() {
 
     let response = app
         .oneshot(
-            Request::get("/v1/config?timeout=0")
+            Request::get("/v1/config?wait_ms=70000")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -190,11 +186,7 @@ async fn config_returns_latest_with_headers() {
 
     let response = app
         .clone()
-        .oneshot(
-            Request::get("/v1/config?timeout=1")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/v1/config").body(Body::empty()).unwrap())
         .await
         .expect("config");
     assert_eq!(response.status(), StatusCode::OK);
@@ -207,7 +199,7 @@ async fn config_returns_latest_with_headers() {
     );
     assert!(
         headers
-            .get("x-config-checksum")
+            .get("etag")
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| !value.is_empty())
     );
@@ -217,22 +209,40 @@ async fn config_returns_latest_with_headers() {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| !value.is_empty())
     );
+    assert_eq!(
+        headers
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
 }
 
 #[tokio::test]
 async fn config_long_poll_times_out() {
     let app = router(test_state());
 
+    let initial = app
+        .clone()
+        .oneshot(Request::get("/v1/config").body(Body::empty()).unwrap())
+        .await
+        .expect("config");
+    let etag = initial
+        .headers()
+        .get("etag")
+        .and_then(|value| value.to_str().ok())
+        .expect("etag");
+
     let response = app
         .clone()
         .oneshot(
-            Request::get("/v1/config?timeout=1")
+            Request::get("/v1/config?wait_ms=1")
+                .header("if-none-match", etag)
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .expect("config");
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
@@ -240,11 +250,25 @@ async fn config_long_poll_success() {
     let state = test_state();
     let app = router(state.clone());
 
+    let initial = app
+        .clone()
+        .oneshot(Request::get("/v1/config").body(Body::empty()).unwrap())
+        .await
+        .expect("config");
+    let etag = initial
+        .headers()
+        .get("etag")
+        .and_then(|value| value.to_str().ok())
+        .expect("etag")
+        .to_string();
+
     let waiter = tokio::spawn({
         let app = app.clone();
+        let etag = etag.clone();
         async move {
             app.oneshot(
-                Request::get("/v1/config?timeout=5")
+                Request::get("/v1/config?wait_ms=5000")
+                    .header("if-none-match", etag)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -322,11 +346,7 @@ async fn publish_persists_and_serves_latest() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let response = app
-        .oneshot(
-            Request::get("/v1/config?timeout=1")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/v1/config").body(Body::empty()).unwrap())
         .await
         .expect("config");
     assert_eq!(response.status(), StatusCode::OK);
@@ -457,30 +477,6 @@ async fn custom_headers_override_defaults() {
     assert!(headers.contains_key("x-test-version"));
     assert!(headers.contains_key("x-test-checksum"));
     assert!(headers.contains_key("x-test-checksum-alg"));
-}
-
-#[tokio::test]
-async fn config_includes_generated_at_header() {
-    let app = router(test_state());
-
-    let response = app
-        .oneshot(
-            Request::get("/v1/config?timeout=1")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .expect("config");
-    assert_eq!(response.status(), StatusCode::OK);
-    let headers = response.headers();
-    assert!(headers.contains_key("x-pavis-generated-at"));
-    let value = headers
-        .get("x-pavis-generated-at")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    // Verify it's valid RFC3339
-    chrono::DateTime::parse_from_rfc3339(value).expect("valid rfc3339");
 }
 
 #[tokio::test]

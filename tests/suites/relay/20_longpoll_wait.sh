@@ -16,73 +16,60 @@ trap cleanup_trap EXIT
 
 PORT_RELAY=$(get_free_port)
 
-cat <<-EOF > "$TEST_TMP/relay.yaml"
+cat <<-EOF_INNER > "$TEST_TMP/relay.yaml"
 	http:
 	  bind: "127.0.0.1:$PORT_RELAY"
 	storage:
 	  type: memory
+	pipeline:
+	  ingest:
+	    source:
+	      kind: none
 	distribution:
 	  long_poll:
 	    enabled: true
-EOF
+EOF_INNER
 
 run_relay "$TEST_TMP/relay.yaml"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 
-gen_minimal_pvs "$TEST_TMP/v1.pvs" "v1"
-gen_minimal_pvs "$TEST_TMP/v2.pvs" "v2"
+cat <<-EOF_INNER > "$TEST_TMP/config.yaml"
+	version: 1
+	listeners:
+	  - name: listener
+	    address: "127.0.0.1:0"
+	upstreams:
+	  - name: backend
+	    endpoints:
+	      - address: "127.0.0.1"
+	        port: 8080
+	routes: []
+	telemetry:
+	  service_name: "relay-test-longpoll"
+EOF_INNER
 
-# 1. Publish V1 (ver 1)
-pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
-    --data-binary "@$TEST_TMP/v1.pvs" > /dev/null
+"$PAVCTL_BIN" gen "$TEST_TMP/config.yaml" "$TEST_TMP/config.pvs"
+"$PAVCTL_BIN" publish --relay "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config.pvs"
 
-# 2. Start Subscriber (Background)
-(
-    # Request version 1, expect wait.
-    code=$(pavis_curl_body -s -o "$TEST_TMP/sub_body" -w "%{http_code}" -H "x-pavis-version: 1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
-    
-    if [ "$code" != "200" ]; then
-        echo "FAIL: Code $code" > "$TEST_TMP/result"
-    else
-        # Verify body matches V2
-        if cmp -s "$TEST_TMP/v2.pvs" "$TEST_TMP/sub_body"; then
-            echo "PASS" > "$TEST_TMP/result"
-        else
-            echo "FAIL: Body mismatch" > "$TEST_TMP/result"
-        fi
-    fi
-) &
-PID_SUB=$!
+fetch_with_headers "http://127.0.0.1:$PORT_RELAY/v1/config" "$TEST_TMP/headers1.txt" "$TEST_TMP/body1.bin"
+CODE=$(extract_status_code "$TEST_TMP/headers1.txt")
+assert_eq "$CODE" "200" "Initial fetch should return 200"
 
-# 3. Verify blocking (Subscriber should be alive)
-sleep 0.5
-if ! kill -0 $PID_SUB 2>/dev/null; then
-    echo "❌ Subscriber exited prematurely (did not block)"
-    exit 1
-fi
+ETAG1=$(extract_etag "$TEST_TMP/headers1.txt")
+assert_etag_format "$ETAG1"
 
-# 4. Publish V2 (ver 2) to unblock
-pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 2" \
-    --data-binary "@$TEST_TMP/v2.pvs" > /dev/null
+START=$(now_ms)
+CODE=$(assert_no_body "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=500" \
+    "$TEST_TMP/headers2.txt" -H "If-None-Match: $ETAG1")
+ELAPSED=$(($(now_ms) - START))
 
-# 5. Wait for subscriber
-wait $PID_SUB
+assert_eq "$CODE" "204" "Long-poll timeout should return 204"
 
-# 6. Assert
-if [ ! -f "$TEST_TMP/result" ]; then
-    echo "❌ Subscriber did not produce result"
-    exit 1
-fi
-RESULT=$(cat "$TEST_TMP/result")
-if [ "$RESULT" != "PASS" ]; then
-    echo "❌ Subscriber failed: $RESULT"
-    exit 1
-fi
+ETAG2=$(extract_etag "$TEST_TMP/headers2.txt")
+assert_eq "$ETAG2" "$ETAG1" "ETag should be unchanged on 204"
 
-if [ "$DURATION" -gt 4 ]; then
-    echo "❌ Request took too long: $DURATION"
+if [ "$ELAPSED" -lt 400 ] || [ "$ELAPSED" -gt 700 ]; then
+    echo "❌ Long-poll timing incorrect: ${ELAPSED}ms (expected ~500ms)"
     exit 1
 fi
 

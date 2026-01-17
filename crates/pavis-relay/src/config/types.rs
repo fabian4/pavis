@@ -184,6 +184,7 @@ pub struct IngestConfig {
 #[serde(rename_all = "lowercase")]
 pub enum IngestSource {
     File(FileSourceConfig),
+    None,
 }
 
 impl Default for IngestSource {
@@ -505,4 +506,44 @@ pub struct LoggingConfig {
 pub struct MetricsConfig {
     #[serde(default)]
     pub prometheus_bind: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ingest_source_none_deserialization() {
+        let yaml = r#"
+source:
+  kind: none
+"#;
+        let config: IngestConfig = serde_yaml::from_str(yaml).expect("deserialize");
+        assert!(matches!(config.source, IngestSource::None));
+    }
+
+    #[test]
+    fn test_ingest_source_file_deserialization() {
+        let yaml = r#"
+source:
+  kind: file
+  path: "/test/path"
+"#;
+        let config: IngestConfig = serde_yaml::from_str(yaml).expect("deserialize");
+        match config.source {
+            IngestSource::File(file) => assert_eq!(file.path, "/test/path"),
+            _ => panic!("expected File variant"),
+        }
+    }
+
+    #[test]
+    fn test_pipeline_config_with_none_ingest() {
+        let yaml = r#"
+ingest:
+  source:
+    kind: none
+"#;
+        let config: PipelineConfig = serde_yaml::from_str(yaml).expect("deserialize");
+        assert!(matches!(config.ingest.source, IngestSource::None));
+    }
 }

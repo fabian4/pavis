@@ -4,7 +4,7 @@ use pavis_pvs::PvsHeaderView;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::SystemTime;
 use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{debug, warn};
@@ -58,6 +58,7 @@ pub(crate) struct RelaySnapshotView {
     pub pvs_bytes: Bytes,
     #[allow(dead_code)]
     pub meta: RelayMeta,
+    #[allow(dead_code)]
     pub updated_at: SystemTime,
     pub artifact_checksum: String,
 }
@@ -112,6 +113,7 @@ pub(crate) struct RelayRuntimeState {
     metrics: Arc<RelayMetrics>,
     last_error: Arc<RwLock<Option<String>>>,
     started_at: SystemTime,
+    ready: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -160,6 +162,7 @@ impl RelayRuntimeState {
         options: RelayOptions,
     ) -> Result<Self, RelayError> {
         let last_error = Arc::new(RwLock::new(None));
+        let ready = Arc::new(AtomicBool::new(!pvs_bytes.is_empty()));
         let (meta, artifact_checksum) = if pvs_bytes.is_empty() {
             (RelayMeta::empty(), String::new())
         } else {
@@ -193,11 +196,25 @@ impl RelayRuntimeState {
             metrics: Arc::new(RelayMetrics::default()),
             last_error,
             started_at: SystemTime::now(),
+            ready,
         })
+    }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
+    }
+
+    fn mark_ready(&self) {
+        self.ready.store(true, Ordering::Release);
     }
 
     pub(crate) async fn version(&self) -> u64 {
         self.inner.read().await.version
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn current_checksum(&self) -> String {
+        self.inner.read().await.artifact_checksum.clone()
     }
 
     pub(crate) async fn snapshot(&self) -> RelaySnapshotView {
@@ -231,6 +248,8 @@ impl RelayRuntimeState {
         let artifact_checksum = checksum_for_bytes(&bytes);
 
         let mut inner = self.inner.write().await;
+        let previous_checksum = inner.artifact_checksum.clone();
+        let etag_changed = previous_checksum != artifact_checksum;
         let proposed_version = inner.version + 1;
         let now = SystemTime::now();
 
@@ -253,7 +272,10 @@ impl RelayRuntimeState {
         let mut history = self.history.write().await;
         history.insert(proposed_version, artifact);
         drop(history);
-        self.notify.notify_waiters();
+        if etag_changed {
+            self.notify.notify_waiters();
+        }
+        self.mark_ready();
         self.metrics.inc_publish_ok();
 
         Ok(proposed_version)
@@ -268,6 +290,8 @@ impl RelayRuntimeState {
     ) -> Result<(), RelayError> {
         self.enforce_limits(bytes.len())?;
         let mut inner = self.inner.write().await;
+        let previous_checksum = inner.artifact_checksum.clone();
+        let etag_changed = previous_checksum != artifact_checksum;
         execute_plan(inner.version, proposed_version)?;
 
         let now = SystemTime::now();
@@ -285,7 +309,10 @@ impl RelayRuntimeState {
         let mut history = self.history.write().await;
         history.insert(proposed_version, artifact);
         drop(history);
-        self.notify.notify_waiters();
+        if etag_changed {
+            self.notify.notify_waiters();
+        }
+        self.mark_ready();
 
         Ok(())
     }

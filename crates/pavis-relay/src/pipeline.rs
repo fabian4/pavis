@@ -668,6 +668,7 @@ routes: []
         let options = PipelineOptions::from_config(&config);
         let ingest_path = match &config.ingest.source {
             IngestSource::File(file) => file.path.as_str(),
+            IngestSource::None => unreachable!("test uses file ingest"),
         };
         let ingest = boxed_ingest(pavis_ingest_file::FileIngest::new(
             ingest_path,

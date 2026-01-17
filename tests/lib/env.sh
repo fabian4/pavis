@@ -87,6 +87,13 @@ get_free_port() {
     python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()'
 }
 
+now_ms() {
+    python3 - <<'PY'
+import time
+print(int(time.time() * 1000))
+PY
+}
+
 generate_signed_cert() {
     local name="$1"
     local type="$2" # server or client
@@ -416,4 +423,58 @@ pavis_curl_headers() {
     local output_file="$1"
     shift
     curl -s -i -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" -H "X-Pavis-Test-Case: ${CASE_NAME:-unknown}" -o "$output_file" "$@"
+}
+
+extract_etag() {
+    local headers_file="$1"
+    grep -i "^etag:" "$headers_file" | awk '{print $2}' | tr -d '\r'
+}
+
+assert_etag_format() {
+    local etag="$1"
+    if [[ ! "$etag" =~ ^\"sha256:[A-Fa-f0-9]{64}\"$ ]]; then
+        echo "❌ Invalid ETag format: $etag"
+        echo "   Expected: \"sha256:<64 hex chars>\" (case-insensitive)"
+        exit 1
+    fi
+}
+
+extract_config_size() {
+    local headers_file="$1"
+    grep -i "^x-config-size:" "$headers_file" | awk '{print $2}' | tr -d '\r'
+}
+
+fetch_with_headers() {
+    local url="$1"
+    local headers_file="$2"
+    local body_file="$3"
+    shift 3
+
+    curl -sS -D "$headers_file" -o "$body_file" "$@" "$url"
+}
+
+assert_no_body() {
+    local url="$1"
+    local headers_file="$2"
+    shift 2
+
+    local output
+    output=$(curl -sS -D "$headers_file" -o /dev/null -w "%{http_code} %{size_download}" "$@" "$url")
+    local code
+    code=$(echo "$output" | awk '{print $1}')
+    local size
+    size=$(echo "$output" | awk '{print $2}')
+
+    if [ "$size" != "0" ]; then
+        echo "❌ Response should have no body (size_download=$size)"
+        echo "   HTTP $code response body must be empty"
+        exit 1
+    fi
+
+    echo "$code"
+}
+
+extract_status_code() {
+    local headers_file="$1"
+    head -1 "$headers_file" | awk '{print $2}'
 }

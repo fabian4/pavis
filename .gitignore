@@ -23,3 +23,4 @@ bench/output/
 /build_rs_cov.profraw
 /tests/temp/
 /tests/suites/config/certs/
+.DS_Store

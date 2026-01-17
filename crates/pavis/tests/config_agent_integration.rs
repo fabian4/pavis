@@ -34,8 +34,8 @@ async fn relay_config(State(state): State<RelayStub>, _headers: HeaderMap) -> im
     let mut response = body.into_response();
     let headers = response.headers_mut();
     headers.insert(
-        "x-config-checksum",
-        HeaderValue::from_str(&checksum).unwrap(),
+        "etag",
+        HeaderValue::from_str(&format!("\"{checksum}\"")).unwrap(),
     );
     response
 }

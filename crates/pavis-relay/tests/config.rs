@@ -274,7 +274,9 @@ metrics:
     assert_eq!(config.artifact.limits.max_routes, Some(200));
     assert_eq!(config.pipeline.source_id, "file:dev");
 
-    let config::IngestSource::File(file_cfg) = config.pipeline.ingest.source;
+    let config::IngestSource::File(file_cfg) = config.pipeline.ingest.source else {
+        panic!("expected file ingest source");
+    };
     assert_eq!(file_cfg.path, "/etc/pavis/input.yaml");
 
     assert_eq!(config.pipeline.ingest.mode.kind, "watch");

@@ -3,7 +3,7 @@ set -e
 
 # Case: contract_01_opaque_publish_subscribe
 # Category: Contract & Integrity
-# Invariants: R1 (Opaque), R2 (Versioned)
+# Invariants: R1 (Opaque), R2 (ETag)
 
 # shellcheck source=tests/lib/env.sh
 source "$(dirname "$0")/../../lib/env.sh"
@@ -16,42 +16,35 @@ trap cleanup_trap EXIT
 
 PORT_RELAY=$(get_free_port)
 
-# 1. Start Relay (Real)
-cat <<-EOF > "$TEST_TMP/relay.yaml"
+cat <<-EOF_INNER > "$TEST_TMP/relay.yaml"
 	http:
 	  bind: "127.0.0.1:$PORT_RELAY"
 	storage:
 	  type: memory
-EOF
+EOF_INNER
 
 run_relay "$TEST_TMP/relay.yaml"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 
-# 2. Generate Valid PVS
 gen_minimal_pvs "$TEST_TMP/valid.pvs" "test1"
 
-# 3. Publish
 pavis_curl_headers "$TEST_TMP/pub_resp" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/valid.pvs"
 
 assert_status_eq "$TEST_TMP/pub_resp" 200
 
-# 4. Subscribe
-pavis_curl_headers "$TEST_TMP/sub_resp" "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0"
+fetch_with_headers "http://127.0.0.1:$PORT_RELAY/v1/config" \
+    "$TEST_TMP/sub_resp" "$TEST_TMP/body"
 
-# 5. Assertions
 assert_status_eq "$TEST_TMP/sub_resp" 200
 
-# Check Body
-pavis_curl_body "http://127.0.0.1:$PORT_RELAY/v1/config" -H "x-pavis-version: 0" > "$TEST_TMP/body"
+ETAG=$(extract_etag "$TEST_TMP/sub_resp")
+assert_etag_format "$ETAG"
+
 if ! cmp -s "$TEST_TMP/valid.pvs" "$TEST_TMP/body"; then
     echo "❌ Body mismatch"
     ls -l "$TEST_TMP/valid.pvs" "$TEST_TMP/body"
     exit 1
 fi
-
-# Check Version
-assert_header_eq "$TEST_TMP/sub_resp" "x-pavis-version" "1"
 
 echo "✅ contract_01_opaque_publish_subscribe passed"

@@ -357,7 +357,7 @@ async fn start_header_stub(
 }
 
 #[tokio::test]
-async fn poll_once_missing_checksum_header() {
+async fn poll_once_missing_etag_header() {
     let Some(base) = start_header_stub(StatusCode::OK, None).await else {
         return;
     };
@@ -377,7 +377,7 @@ async fn poll_once_missing_checksum_header() {
     let msg = err.to_string();
     eprintln!("Actual error: {}", msg);
     assert!(
-        msg.contains("missing x-config-checksum response header"),
+        msg.contains("missing etag response header"),
         "Error '{}' did not contain expected string",
         msg
     );
@@ -387,8 +387,8 @@ async fn poll_once_missing_checksum_header() {
 #[tokio::test]
 async fn poll_once_no_change_on_matching_checksum() {
     let headers = vec![(
-        "x-config-checksum".to_string(),
-        "sha256:deadbeef".to_string(),
+        "etag".to_string(),
+        "\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"".to_string(),
     )];
     let Some(base) = start_header_stub(StatusCode::OK, Some(headers)).await else {
         return;
@@ -405,7 +405,9 @@ async fn poll_once_no_change_on_matching_checksum() {
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let agent = make_agent(base, lkg.clone(), state_handle);
 
-    agent.set_last_checksum_for_tests(Some("sha256:deadbeef".to_string()));
+    agent.set_last_checksum_for_tests(Some(
+        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+    ));
 
     let outcome = agent.poll_once().await.expect("poll");
     assert!(matches!(outcome, super::PollOutcome::NoChange));
@@ -430,8 +432,8 @@ async fn test_poll_once_success() {
             async move {
                 let mut res = Response::new(axum::body::Body::from(pvs_inner));
                 res.headers_mut().insert(
-                    axum::http::HeaderName::from_static("x-config-checksum"),
-                    axum::http::HeaderValue::from_str(&checksum_header).unwrap(),
+                    axum::http::HeaderName::from_static("etag"),
+                    axum::http::HeaderValue::from_str(&format!("\"{checksum_header}\"")).unwrap(),
                 );
                 res
             }

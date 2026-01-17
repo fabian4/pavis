@@ -137,6 +137,32 @@ fn build_ingest(config: &PipelineConfig) -> Result<BoxedIngest> {
                 anyhow::bail!("ingest-file feature is disabled");
             }
         }
+        config::IngestSource::None => {
+            // For "none" source, create a dummy ingest that never produces artifacts
+            // This is useful for testing scenarios where config is only published via HTTP API
+            use futures_util::stream;
+            use pavis_ingest_api::{Ingest, IngestError};
+
+            struct NoneIngest;
+
+            #[async_trait::async_trait]
+            impl Ingest for NoneIngest {
+                type Stream = std::pin::Pin<
+                    Box<
+                        dyn futures_util::Stream<
+                                Item = Result<pavis_ingest_api::Artifact, IngestError>,
+                            > + Send,
+                    >,
+                >;
+
+                async fn stream(&mut self) -> Result<Self::Stream, IngestError> {
+                    // Return a stream that never produces any items (just hangs forever)
+                    Ok(Box::pin(stream::pending()))
+                }
+            }
+
+            Ok(boxed_ingest(NoneIngest))
+        }
     }
 }
 

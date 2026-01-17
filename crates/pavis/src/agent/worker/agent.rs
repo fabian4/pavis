@@ -15,7 +15,7 @@ use crate::agent::lkg::write_atomic;
 use pavis_core::RuntimeConfig;
 use pavis_pvs::compute_checksum;
 
-const CONFIG_CHECKSUM_HEADER: &str = "x-config-checksum";
+const ETAG_HEADER: &str = "etag";
 
 type UpdateCallback = Box<dyn Fn(&RuntimeConfig) + Send + Sync>;
 
@@ -133,19 +133,29 @@ impl ConfigAgent {
     }
 
     pub async fn poll_once(&self) -> anyhow::Result<PollOutcome> {
-        let url = format!("{}/v1/config?timeout=30", self.relay_base);
-        let response = self.client.get(url).send().await?;
+        let current_checksum = {
+            let guard = self
+                .last_checksum
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.clone()
+        };
+        let wait_ms = if current_checksum.is_some() { 30000 } else { 0 };
+        let url = format!("{}/v1/config?wait_ms={wait_ms}", self.relay_base);
+        let mut request = self.client.get(url);
+        if let Some(checksum) = current_checksum.as_deref() {
+            request = request.header("if-none-match", format!("\"{checksum}\""));
+        }
+        let response = request.send().await?;
 
         match response.status().as_u16() {
             200 => {
-                let header_checksum = response
+                let header_etag = response
                     .headers()
-                    .get(CONFIG_CHECKSUM_HEADER)
+                    .get(ETAG_HEADER)
                     .and_then(|value| value.to_str().ok())
-                    .map(str::to_string)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("missing {CONFIG_CHECKSUM_HEADER} response header")
-                    })?;
+                    .ok_or_else(|| anyhow::anyhow!("missing {ETAG_HEADER} response header"))?;
+                let header_checksum = parse_etag_header(header_etag)?;
 
                 if self.is_checksum_current(&header_checksum) {
                     tracing::debug!(
@@ -254,6 +264,22 @@ fn checksum_for_bytes(bytes: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+fn parse_etag_header(value: &str) -> anyhow::Result<String> {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('"') || !trimmed.ends_with('"') || trimmed.len() < 2 {
+        anyhow::bail!("invalid etag format: {value}");
+    }
+    let unquoted = &trimmed[1..trimmed.len() - 1];
+    if !unquoted.starts_with("sha256:") {
+        anyhow::bail!("invalid etag format: {value}");
+    }
+    let hex = &unquoted["sha256:".len()..];
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!("invalid etag format: {value}");
+    }
+    Ok(format!("sha256:{}", hex.to_lowercase()))
 }
 
 impl ConfigAgent {

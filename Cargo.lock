@@ -2647,6 +2647,7 @@ dependencies = [
  "axum-server",
  "bytes",
  "clap 4.5.53",
+ "pavis-pvs",
  "rustls",
  "serde",
  "serde_json",
