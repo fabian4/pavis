@@ -43,6 +43,18 @@ The Runtime Suite strictly validates the **Frozen Data Plane** contract. Its pri
 *   **Intent**: SLA and retry policy enforcement.
 *   **Status**: ⏭️ Skipped (feature not implemented in runtime yet).
 
+### `52_resilience_outlier_detection`
+*   **Intent**: Passive ejection after consecutive 5xx responses with timed re-admission.
+*   **Strength**: ✅ Solid. Exercises failure counter, ejection window, and recovery.
+
+### `53_resilience_active_health_check`
+*   **Intent**: Active probes mark endpoints unhealthy and recover after config update.
+*   **Strength**: ✅ Solid. Validates probe path semantics and health state transitions.
+
+### `54_resilience_circuit_breaker`
+*   **Intent**: Enforce in-flight and pending limits with 503 on overflow.
+*   **Strength**: ✅ Solid. Uses concurrent long requests to force breaker rejection.
+
 ### `60_security_tls`
 *   **Intent**: Upgrading cleartext upstream to TLS with custom CA verification.
 *   **Strength**: ⏭️ Skipped under rustls backend (upstream limitation: per-peer CA not supported).

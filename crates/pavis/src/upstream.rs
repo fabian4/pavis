@@ -23,10 +23,12 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 use pavis_core::Upstream;
 
 pub mod cluster;
+pub mod health;
 pub mod load_balance;
 pub mod resolver;
 
 pub use cluster::Cluster;
+pub use health::UpstreamHealthMonitor;
 pub use resolver::UpstreamResolver;
 
 pub struct Manager {

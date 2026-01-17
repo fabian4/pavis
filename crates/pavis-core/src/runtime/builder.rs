@@ -1,7 +1,7 @@
 use crate::runtime::{
-    ConnectionLimit, Discovery, Endpoint, HttpVersion, IdleTimeout, Listener, ListenerName,
-    LoadBalancer, Pool, RuntimeConfig, Telemetry, TlsConfig, TlsPolicy, Upstream, UpstreamId,
-    UpstreamName, WorkerCount,
+    ActiveHealthCheck, CircuitBreakerPolicy, ConnectionLimit, Discovery, Endpoint, HttpVersion,
+    IdleTimeout, Listener, ListenerName, LoadBalancer, OutlierDetectionPolicy, Pool, RuntimeConfig,
+    Telemetry, TlsConfig, TlsPolicy, Upstream, UpstreamId, UpstreamName, WorkerCount,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -131,6 +131,9 @@ pub struct UpstreamBuilder {
     balancer: LoadBalancer,
     protocol: HttpVersion,
     pool: Pool,
+    outlier_detection: OutlierDetectionPolicy,
+    circuit_breaker: CircuitBreakerPolicy,
+    health_check: ActiveHealthCheck,
     tls: TlsPolicy,
     endpoints: Vec<Endpoint>,
 }
@@ -148,6 +151,9 @@ impl UpstreamBuilder {
                 connect: crate::runtime::ConnectTimeout::Disabled,
                 max: ConnectionLimit::Unlimited,
             },
+            outlier_detection: OutlierDetectionPolicy::Disabled,
+            circuit_breaker: CircuitBreakerPolicy::Disabled,
+            health_check: ActiveHealthCheck::Disabled,
             tls: TlsPolicy::Disabled,
             endpoints: Vec::new(),
         }
@@ -183,6 +189,21 @@ impl UpstreamBuilder {
         self
     }
 
+    pub fn outlier_detection(mut self, policy: OutlierDetectionPolicy) -> Self {
+        self.outlier_detection = policy;
+        self
+    }
+
+    pub fn circuit_breaker(mut self, policy: CircuitBreakerPolicy) -> Self {
+        self.circuit_breaker = policy;
+        self
+    }
+
+    pub fn health_check(mut self, health_check: ActiveHealthCheck) -> Self {
+        self.health_check = health_check;
+        self
+    }
+
     pub fn tls(mut self, tls: TlsPolicy) -> Self {
         self.tls = tls;
         self
@@ -203,6 +224,9 @@ impl UpstreamBuilder {
             balancer: self.balancer,
             protocol: self.protocol,
             pool: self.pool,
+            outlier_detection: self.outlier_detection,
+            circuit_breaker: self.circuit_breaker,
+            health_check: self.health_check,
             tls: self.tls,
             endpoints: self.endpoints,
         })

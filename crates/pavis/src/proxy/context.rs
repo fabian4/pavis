@@ -1,8 +1,9 @@
 use crate::state::RuntimeState;
-use pavis_core::{HeadersPolicy, Hostname, UpstreamName};
+use pavis_core::{EndpointAddr, HeadersPolicy, Hostname, UpstreamName};
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::OwnedSemaphorePermit;
 
 const REQUEST_ID_MAX_LEN: usize = 48;
 
@@ -117,6 +118,7 @@ impl Serialize for RequestId {
 
 pub struct RouterContext {
     pub upstream_name: Option<UpstreamName>,
+    pub upstream_endpoint: Option<EndpointAddr>,
     pub request_headers: Arc<HeadersPolicy>,
     pub response_headers: Arc<HeadersPolicy>,
     pub sni_override: Option<Hostname>,
@@ -127,6 +129,7 @@ pub struct RouterContext {
     pub route_pattern: RoutePattern,
     pub req_id: RequestId,
     pub span: TracingSpan,
+    pub circuit_breaker_permit: Option<OwnedSemaphorePermit>,
     /// Pinned configuration snapshot for this request.
     /// Captured in `request_filter` to ensure atomicity across routing and upstream selection.
     pub runtime_state: Option<Arc<RuntimeState>>,
@@ -198,6 +201,7 @@ mod tests {
     fn router_context_holds_fields() {
         let ctx = RouterContext {
             upstream_name: Some(UpstreamName("backend".to_string())),
+            upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Enabled {
                 rules: Headers {
                     set_headers: vec![(
@@ -218,6 +222,7 @@ mod tests {
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-123".parse().unwrap(),
             span: TracingSpan::Disabled,
+            circuit_breaker_permit: None,
             runtime_state: None,
         };
 
@@ -245,6 +250,7 @@ mod tests {
     fn upstream_label_returns_dash_when_not_selected() {
         let ctx = RouterContext {
             upstream_name: None,
+            upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Disabled),
             response_headers: Arc::new(HeadersPolicy::Disabled),
             sni_override: None,
@@ -255,6 +261,7 @@ mod tests {
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
+            circuit_breaker_permit: None,
             runtime_state: None,
         };
 
@@ -265,6 +272,7 @@ mod tests {
     fn start_upstream_updates_timing() {
         let mut ctx = RouterContext {
             upstream_name: Some(UpstreamName("backend".to_string())),
+            upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Disabled),
             response_headers: Arc::new(HeadersPolicy::Disabled),
             sni_override: None,
@@ -277,6 +285,7 @@ mod tests {
             },
             req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
+            circuit_breaker_permit: None,
             runtime_state: None,
         };
 
@@ -294,6 +303,7 @@ mod tests {
     fn request_duration_calculates_elapsed_time() {
         let ctx = RouterContext {
             upstream_name: None,
+            upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Disabled),
             response_headers: Arc::new(HeadersPolicy::Disabled),
             sni_override: None,
@@ -304,6 +314,7 @@ mod tests {
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
+            circuit_breaker_permit: None,
             runtime_state: None,
         };
 

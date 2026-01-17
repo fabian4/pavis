@@ -1,5 +1,6 @@
 use crate::runtime::types::{
-    ConnectTimeout, Hostname, IdleTimeout, Path, Port, UpstreamId, UpstreamName, Weight,
+    ConnectTimeout, ConsecutiveErrors, Duration, Hostname, IdleTimeout, MaxConnections,
+    MaxPendingRequests, Path, Port, UpstreamId, UpstreamName, Weight,
 };
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
@@ -19,6 +20,9 @@ pub struct Upstream {
     pub balancer: LoadBalancer,
     pub protocol: HttpVersion,
     pub pool: Pool,
+    pub outlier_detection: OutlierDetectionPolicy,
+    pub circuit_breaker: CircuitBreakerPolicy,
+    pub health_check: ActiveHealthCheck,
     pub tls: TlsPolicy,
     pub endpoints: Vec<Endpoint>,
 }
@@ -72,6 +76,46 @@ pub struct Pool {
     pub idle: IdleTimeout,
     pub connect: ConnectTimeout,
     pub max: ConnectionLimit,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+#[non_exhaustive]
+/// Passive outlier detection policy for upstream endpoints.
+pub enum OutlierDetectionPolicy {
+    Disabled,
+    Enabled {
+        consecutive_errors: ConsecutiveErrors,
+        eject_duration: Duration,
+    },
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+#[non_exhaustive]
+/// Circuit breaker policy for upstream request limits.
+pub enum CircuitBreakerPolicy {
+    Disabled,
+    Enabled {
+        max_connections: MaxConnections,
+        max_pending_requests: MaxPendingRequests,
+    },
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+#[non_exhaustive]
+/// Active health check policy for upstream endpoints.
+pub enum ActiveHealthCheck {
+    Disabled,
+    Enabled {
+        path: Path,
+        interval: Duration,
+        timeout: Duration,
+    },
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]

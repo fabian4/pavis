@@ -166,8 +166,19 @@ Defines backend clusters.
     - **port** (integer, required): Destination port.
     - **weight** (integer, optional): Load balancing weight (1-65535).
         - **Default**: `1`.
-- **circuit_breaker** (object, optional): **PARSED BUT IGNORED**.
-- **health_check** (object, optional): **PARSED BUT IGNORED**.
+- **circuit_breaker** (object, optional): Per-upstream circuit breaker.
+    - **max_connections** (integer, required): Max in-flight upstream requests.
+    - **max_pending_requests** (integer, required): Max queued requests waiting for capacity.
+- **outlier_detection** (object, optional): Passive ejection on consecutive failures.
+    - **consecutive_errors** (integer, required): Consecutive failures before ejection.
+    - **eject_duration** (duration, required): How long to eject the endpoint.
+- **health_check** (object, optional): Active health checks.
+    - **path** (string, required): Probe path (must start with `/`).
+    - **interval** (duration, required): Probe interval.
+    - **timeout** (duration, optional): Probe timeout.
+        - **Default**: Equal to `interval`.
+    - **healthy_threshold** (integer, optional): Must be `1` (other values are rejected).
+    - **unhealthy_threshold** (integer, optional): Must be `1` (other values are rejected).
 
 #### Validation & Backend Constraints
 - **Validation**: If `verify_cert` and `verify_hostname` are both true (`verify=full`), `sni_mode` cannot be `disabled`.

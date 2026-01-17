@@ -1,3 +1,27 @@
+//! Relay HTTP handlers for config serving and publishing.
+//!
+//! This module implements the Relay Config API v1.0 specification with:
+//! - ETag-based conditional GET (RFC 9110)
+//! - Long-polling with false wakeup protection
+//! - Transport integrity headers (`x-config-size`)
+//!
+//! ## Key Design Decisions
+//!
+//! ### Two-Level False Wakeup Protection
+//! 1. **Source-level**: `publish_*()` methods only notify waiters when ETag/checksum changes
+//! 2. **Loop-level**: Long-poll loop re-checks ETag after wake, continues if unchanged
+//!
+//! This prevents wake storms when identical artifacts are republished frequently.
+//!
+//! ### Strict ETag Validation
+//! - Rejects weak ETags (W/), wildcards (*), multiple ETags
+//! - Explicit quote validation (no `trim_matches`)
+//! - Normalizes hex to lowercase for comparison
+//!
+//! ### Response Builder Pattern
+//! All responses use `Response::builder()` for explicit body construction.
+//! This ensures 204/304/503 responses have truly empty bodies.
+
 use crate::runtime::RelayRuntimeState;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};

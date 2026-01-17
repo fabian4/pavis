@@ -268,12 +268,29 @@ Defines how the proxy accepts inbound traffic.
 ### `upstreams[].circuit_breaker`
 - **Type**: `object`
 - **Required**: Optional
-- **Runtime Effect**: **IGNORED** (parsed into DTO but not implemented in core).
+- **Runtime Effect**: Enforced (503 on overflow).
+- **Fields**:
+  - `max_connections` (integer, required)
+  - `max_pending_requests` (integer, required)
+
+### `upstreams[].outlier_detection`
+- **Type**: `object`
+- **Required**: Optional
+- **Runtime Effect**: Enforced (ejects endpoints after consecutive failures).
+- **Fields**:
+  - `consecutive_errors` (integer, required)
+  - `eject_duration` (duration, required)
 
 ### `upstreams[].health_check`
 - **Type**: `object`
 - **Required**: Optional
-- **Runtime Effect**: **IGNORED** (parsed into DTO but not implemented in core).
+- **Runtime Effect**: Enforced (periodic probes mark endpoints healthy/unhealthy).
+- **Fields**:
+  - `path` (string, required)
+  - `interval` (duration, required)
+  - `timeout` (duration, optional; defaults to `interval`)
+  - `healthy_threshold` (integer, optional; must be `1`)
+  - `unhealthy_threshold` (integer, optional; must be `1`)
 
 ---
 
@@ -399,5 +416,4 @@ Inferred if `status` and `body` fields are present.
   - `upstreams[].tls.ca_bundle_path`: Parsed but ignored by the connector.
   - `listeners[].tls.client_auth`: Peer certificate extraction is currently a TODO.
 - **Core Proxy**:
-  - `upstreams[].circuit_breaker`: Field parsed but logic not implemented.
-  - `upstreams[].health_check`: Field parsed but logic not implemented.
+  - `routes[].retry`: Parsed but not enforced yet.

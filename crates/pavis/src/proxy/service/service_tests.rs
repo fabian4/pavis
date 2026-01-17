@@ -67,6 +67,7 @@ fn apply_route_headers_populates_router_context() {
     };
     let mut ctx = RouterContext {
         upstream_name: None,
+        upstream_endpoint: None,
         request_headers: HeadersPolicy::Disabled.into(),
         response_headers: HeadersPolicy::Disabled.into(),
         sni_override: None,
@@ -78,6 +79,7 @@ fn apply_route_headers_populates_router_context() {
         route_pattern: crate::proxy::context::RoutePattern::NotMatched,
         req_id: "test-req".parse().unwrap(),
         span: crate::proxy::context::TracingSpan::Disabled,
+        circuit_breaker_permit: None,
         runtime_state: None,
     };
 

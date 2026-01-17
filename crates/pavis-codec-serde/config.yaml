@@ -39,16 +39,18 @@ upstreams:
     #   #   key_path: "/etc/pavis/certs/client.key"
     #   #   chain_mode: "none" # none | embedded | file
     #   #   chain_path: "/etc/pavis/certs/client-chain.pem"
-    # circuit_breaker: # Not supported yet
+    # circuit_breaker:
     #   max_connections: 1024
     #   max_pending_requests: 500
-    #   max_retries: 3
-    # health_check: # Not supported yet
+    # outlier_detection:
+    #   consecutive_errors: 5
+    #   eject_duration: "30s"
+    # health_check:
     #   path: "/healthz"
     #   interval: "5s"
     #   timeout: "1s"
-    #   unhealthy_threshold: 3
     #   healthy_threshold: 1
+    #   unhealthy_threshold: 1
     endpoints:
       - ip: "127.0.0.1"
         port: 8081

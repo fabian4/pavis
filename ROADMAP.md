@@ -1,8 +1,8 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 38/67
-- **Core Features**: 33/46
+- **Total**: 41/67
+- **Core Features**: 36/46
 - **Technical Debt**: 5/21
 
 > **Status**: Active
@@ -16,8 +16,8 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 ### P0 – Safety & Correctness
 - [ ] **Header/Method Routing Gap**: Router currently matches path-only despite documentation promising method/header selectors. _Exit criteria_: Router matcher accepts method/header predicates, unit tests cover combos, and E2E proves a method-scoped route is honored.
 - [ ] **Route Retries/Timeouts Ignored**: `Route.retry` / `Route.timeout` are parsed but unused. _Exit criteria_: Runtime wires values into Pingora deadlines/retry logic and regression tests exercise success/failure cases.
-- [ ] **Upstream `health_check` Dropped**: Codec accepts the field but discards it. _Exit criteria_: Configs either compile to runtime health probes or are rejected with a clear validation error; E2E proves active probe behavior.
-- [ ] **Circuit Breaking / `pool.max` Ignored**: Connection limits compile but are unenforced. _Exit criteria_: Runtime enforces `pool.max` and integration tests show capped concurrency.
+- [x] **Upstream `health_check` Dropped**: Codec accepts the field but discards it. _Exit criteria_: Configs either compile to runtime health probes or are rejected with a clear validation error; E2E proves active probe behavior.
+- [ ] **Upstream `pool.max` Ignored**: Connection limits compile but are unenforced. _Exit criteria_: Runtime enforces `pool.max` and integration tests show capped concurrency.
 - [ ] **Inbound mTLS (rustls) Blocked**: Pingora rustls lacks client-cert verifier hooks. _Exit criteria_: Mark config as invalid or gated when rustls backend is selected, plus tests covering rejection. _Blocked on Pingora rustls inbound verifier wiring._
 - [ ] **Outbound Custom CA (rustls) Blocked**: Pingora rustls ignores per-peer CA bundles. _Exit criteria_: Either enforce backing logic or reject configs when rustls is active, with tests proving behavior. _Blocked on Pingora rustls per-peer CA support._
 
@@ -28,7 +28,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 ### P2 – Feature Candidates
 - [ ] **Header/Method Routing Enhancements**: Extend matcher expressiveness for host+path+method+header logic. _Exit criteria_: Feature flag or GA release with router + codec support plus E2E proving behavior.
 - [ ] **Route Retries/Timeouts Implementation**: Full wiring of policy (including per-try budgets). _Exit criteria_: Integration tests demonstrating retry backoff and timeout enforcement.
-- [ ] **Active Health / Circuit / Outlier Stack**: Implement probes, breaker enforcement, and passive ejection. _Exit criteria_: Resilience suite covering healthy/unhealthy transitions and breaker trips.
+- [x] **Active Health / Circuit / Outlier Stack**: Implement probes, breaker enforcement, and passive ejection. _Exit criteria_: Resilience suite covering healthy/unhealthy transitions and breaker trips.
 
 **Architectural Constraint: Frozen Data Plane**
 This roadmap is strictly bounded by the Frozen Data Plane architecture. Features that require runtime code generation, interpretation, or non-deterministic policy evaluation (e.g., WASM, Lua, global rate limiting) are **structurally excluded**. All capabilities must be resolvable at compile-time (Codec stage).
@@ -106,12 +106,12 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 6: Resilience & Discovery
 > **Goal**: Bounded dynamic behavior for reliability.
-> **Status**: ⏳ Planned
+> **Status**: 🚧 In Progress
 
-- [ ] **Outlier Detection**: Passive health checks (eject 5xx pods).
-- [ ] **Circuit Breaking**: Connection limits and max pending requests.
+- [x] **Outlier Detection**: Passive health checks (eject 5xx pods).
+- [x] **Circuit Breaking**: Connection limits and max pending requests.
 - [x] **DNS Discovery**: `StrictDns` (TTL-based) and `LogicalDns` (Lazy) support.
-- [ ] **Active Health Checks**: Proactive `/healthz` pings.
+- [x] **Active Health Checks**: Proactive `/healthz` pings.
 
 ## Phase 7: Operational Lifecycle
 > **Goal**: Production readiness and ease of operation.

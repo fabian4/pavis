@@ -52,9 +52,9 @@ This document outlines the current and planned feature set, explicitly calling o
 
 | Feature | Status | Note / Alternative |
 | :--- | :---: | :--- |
-| **Active Health Check** | ⏳ | Planned. Ping `/healthz`. |
-| **Outlier Detection** (Passive) | ⏳ | **Critical Gap**. Eject 5xx pods. Key for SLA. |
-| **Circuit Breaking** | ⏳ | Planned. Connection limits. |
+| **Active Health Check** | ✅ | Periodic GET probes; 2xx = healthy. |
+| **Outlier Detection** (Passive) | ✅ | Ejects endpoints after consecutive 5xx/transport errors. |
+| **Circuit Breaking** | ✅ | Per-upstream caps on in-flight and pending requests (503 on overflow). |
 | **Fault Injection** | ⚠️ | Deferred. For chaos engineering only. |
 
 ## 4. Observability

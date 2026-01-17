@@ -11,7 +11,7 @@ pub use server::{ClientAuthConfig, Listener, TlsConfig};
 pub use telemetry::{TelemetryConfig, TracingConfig};
 pub use upstreams::{
     CircuitBreaker, ClientCertChainMode, ClientCertConfig, ConnectionPoolConfig, Endpoint,
-    HealthCheck, SniMode, Upstream, UpstreamTlsConfig,
+    HealthCheck, OutlierDetection, SniMode, Upstream, UpstreamTlsConfig,
 };
 
 use anyhow::Result as AnyResult;

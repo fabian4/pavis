@@ -64,6 +64,7 @@ The Runtime is deliberately constrained to be a pure execution mechanism. It per
 *   **TLS Termination**: Server-side TLS with strict file-based certificates (OpenSSL/BoringSSL backend only).
 *   **Upstream TLS Origination**: Client-side TLS with hostname verification (system CA bundle only with current rustls backend).
 *   **Observability**: Prometheus metrics with cardinality controls, structured access logging, and distributed tracing (OTLP).
+*   **Resilience**: Active health checks, passive outlier ejection, and circuit breaker caps.
 
 ### TLS Backend Limitations (Rustls)
 
@@ -79,7 +80,7 @@ These are upstream limitations in Pingora. Pavis does not implement local workar
 
 The following items represent the planned architectural direction and are not guaranteed for immediate release. See [ROADMAP.md](./ROADMAP.md) for active tracking.
 
-*   **Resilience**: Retries, per-try timeouts, and circuit breaking.
+*   **Resilience**: Retries and per-try timeouts.
 *   **Identity**: mTLS with SPIFFE ID extraction.
 *   **Security**: RBAC with deny-by-default policies.
 *   **xDS**: Compiling Envoy xDS resources into frozen `.pvs` artifacts.

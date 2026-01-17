@@ -345,6 +345,7 @@ mod tests {
 
         let ctx = RouterContext {
             upstream_name: Some(UpstreamName("upstream-a".to_string())),
+            upstream_endpoint: None,
             request_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
             response_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
             sni_override: None,
@@ -357,6 +358,7 @@ mod tests {
             },
             req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
+            circuit_breaker_permit: None,
             runtime_state: None,
         };
 

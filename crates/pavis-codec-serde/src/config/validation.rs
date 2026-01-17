@@ -63,6 +63,7 @@ pub fn validate(config: &mut SerdeConfig) -> Result<()> {
     }
 
     validate_upstream_sni_auto_requires_dns_or_override(config)?;
+    validate_phase6_policies(config)?;
 
     Ok(())
 }
@@ -148,6 +149,88 @@ fn validate_upstream_sni_auto_requires_dns_or_override(config: &SerdeConfig) -> 
                 "upstream '{}' verify=full with sni=auto requires DNS endpoints or route host rewrite",
                 name
             ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_phase6_policies(config: &SerdeConfig) -> Result<()> {
+    let upstreams = match config.upstreams.as_ref() {
+        Some(upstreams) => upstreams,
+        None => return Ok(()),
+    };
+
+    for upstream in upstreams {
+        if let Some(circuit_breaker) = &upstream.circuit_breaker {
+            if circuit_breaker.max_retries.is_some() {
+                return Err(anyhow::anyhow!(
+                    "upstream '{}' sets circuit_breaker.max_retries (unsupported)",
+                    upstream.name
+                ));
+            }
+            if circuit_breaker.max_connections == 0 || circuit_breaker.max_pending_requests == 0 {
+                return Err(anyhow::anyhow!(
+                    "upstream '{}' circuit_breaker limits must be > 0",
+                    upstream.name
+                ));
+            }
+        }
+
+        if let Some(outlier) = &upstream.outlier_detection {
+            if outlier.consecutive_errors == 0 {
+                return Err(anyhow::anyhow!(
+                    "upstream '{}' outlier_detection.consecutive_errors must be > 0",
+                    upstream.name
+                ));
+            }
+            if outlier.eject_duration.as_millis() == 0 {
+                return Err(anyhow::anyhow!(
+                    "upstream '{}' outlier_detection.eject_duration must be > 0",
+                    upstream.name
+                ));
+            }
+        }
+
+        if let Some(health_check) = &upstream.health_check {
+            if health_check.healthy_threshold != 1 || health_check.unhealthy_threshold != 1 {
+                return Err(anyhow::anyhow!(
+                    "upstream '{}' health_check thresholds must be 1",
+                    upstream.name
+                ));
+            }
+            if health_check.path.trim().is_empty() {
+                return Err(anyhow::anyhow!(
+                    "upstream '{}' health_check.path cannot be empty",
+                    upstream.name
+                ));
+            }
+            if !health_check.path.starts_with('/') || health_check.path.contains(' ') {
+                return Err(anyhow::anyhow!(
+                    "upstream '{}' health_check.path must start with '/' and contain no spaces",
+                    upstream.name
+                ));
+            }
+            if health_check.interval.as_millis() == 0 {
+                return Err(anyhow::anyhow!(
+                    "upstream '{}' health_check.interval must be > 0",
+                    upstream.name
+                ));
+            }
+            if let Some(timeout) = health_check.timeout {
+                if timeout.as_millis() == 0 {
+                    return Err(anyhow::anyhow!(
+                        "upstream '{}' health_check.timeout must be > 0",
+                        upstream.name
+                    ));
+                }
+                if timeout > health_check.interval {
+                    return Err(anyhow::anyhow!(
+                        "upstream '{}' health_check.timeout must be <= health_check.interval",
+                        upstream.name
+                    ));
+                }
+            }
         }
     }
 
@@ -253,6 +336,7 @@ mod tests {
                     cert: None,
                 }),
                 circuit_breaker: None,
+                outlier_detection: None,
                 health_check: None,
                 endpoints: vec![Endpoint {
                     address: "127.0.0.1".to_string(),
@@ -310,6 +394,7 @@ mod tests {
                     cert: None,
                 }),
                 circuit_breaker: None,
+                outlier_detection: None,
                 health_check: None,
                 endpoints: vec![Endpoint {
                     address: "127.0.0.1".to_string(),

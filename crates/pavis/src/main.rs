@@ -17,7 +17,7 @@ use pavis::load::{self, RuntimeLoadError};
 use pavis::proxy::Proxy;
 use pavis::state::RuntimeStateHandle;
 use pavis::telemetry::Telemetry;
-use pavis::upstream::UpstreamResolver;
+use pavis::upstream::{UpstreamHealthMonitor, UpstreamResolver};
 use pavis_core::{AccessLogPolicy, LogLevel, RuntimeConfig, WorkerCount};
 use rustls::RootCertStore;
 use rustls::crypto::{CryptoProvider, ring};
@@ -243,6 +243,7 @@ fn main() -> Result<()> {
     let resolver = UpstreamResolver::new(state_handle.clone(), Duration::from_secs(10)).context(
         "failed to initialize upstream resolver (check DNS settings and PAVIS_DNS_SERVER)",
     )?;
+    let health_monitor = UpstreamHealthMonitor::new(state_handle.clone());
 
     for listener in &config.listeners {
         let proxy_app = Proxy {
@@ -310,6 +311,7 @@ fn main() -> Result<()> {
 
     server.add_service(access_log_worker);
     server.add_service(resolver);
+    server.add_service(health_monitor);
     server.add_service(tracing_service);
 
     if let Some(metrics_worker) = metrics_worker {

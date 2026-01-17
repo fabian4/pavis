@@ -57,17 +57,18 @@ upstreams:
         port: 8080
         weight: 20
     
-    # These fields are parsed but currently ignored by the runtime logic:
     circuit_breaker:
       max_connections: 1000
       max_pending_requests: 1000
-      max_retries: 3
+    outlier_detection:
+      consecutive_errors: 5
+      eject_duration: "30s"
     health_check:
       path: "/health"
       interval: "10s"
       timeout: "2s"
-      healthy_threshold: 2
-      unhealthy_threshold: 3
+      healthy_threshold: 1
+      unhealthy_threshold: 1
 
 # Virtual hosts and routing
 routes:

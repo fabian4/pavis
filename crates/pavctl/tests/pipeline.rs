@@ -122,6 +122,7 @@ fn sample_config() -> SerdeConfig {
             pool: None,
             tls: None,
             circuit_breaker: None,
+            outlier_detection: None,
             health_check: None,
             endpoints: vec![pavis_codec_serde::config::Endpoint {
                 address: "127.0.0.1".to_string(),

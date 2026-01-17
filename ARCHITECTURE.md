@@ -181,13 +181,31 @@ Pavis delegates TLS functionality to Pingora, which abstracts over rustls and Op
 
 The Runtime does not abstract over backend differences. Feature availability is determined entirely by the build-time backend selection. Configuration validation in `pavis-core` accepts all TLS fields regardless of backend; runtime enforcement depends on Pingora's capabilities.
 
-### 4.4 Routing Algorithm (Hot Path)
+### 4.4 Resilience Policies (Phase 6)
+
+Pavis implements bounded, frozen resilience policies that are fully materialized in `RuntimeConfig` and enforced at runtime. All state is ephemeral and is reset on hot reload.
+
+*   **Outlier Detection (Passive)**:
+    *   Trigger: consecutive upstream failures (transport errors or HTTP 5xx responses).
+    *   Action: eject the endpoint for a fixed `eject_duration`; no half-open probing.
+    *   Scope: per-endpoint counters, per-upstream policy.
+*   **Circuit Breaking**:
+    *   Scope: per-upstream caps on in-flight requests and queued (pending) requests.
+    *   Behavior: when limits are exceeded, the request is rejected immediately with HTTP 503.
+    *   Accounting: limits are request-scoped (H2 multiplexing counts per request, not per TCP connection).
+*   **Active Health Checks**:
+    *   Probe: periodic `GET` to the configured `path`, no body.
+    *   Success: HTTP 2xx. Failures include non-2xx or timeout.
+    *   Initial State: fail-open (endpoints start healthy until proven unhealthy).
+    *   TLS: honors upstream TLS policy (verify mode + CA bundle). Host header is derived from SNI or DNS endpoint host when available. Health checks do not override SNI for IP endpoints; TLS verification may fail if the endpoint address does not match certificate SANs.
+
+### 4.5 Routing Algorithm (Hot Path)
 
 Routing uses static, optimized structures built during the artifact compilation phase (or mapped directly).
 *   Regexes are compiled once during the "Swap" phase.
 *   No runtime script evaluation (Lua/WASM) occurs during routing.
 
-### 4.5 xDS Codec Architecture
+### 4.6 xDS Codec Architecture
 
 The xDS Codec functions as a **Compiler**:
 1.  **Decode**: Unmarshal Envoy Protobuf.

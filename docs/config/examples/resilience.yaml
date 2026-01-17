@@ -1,0 +1,60 @@
+## Example A: Circuit breaking only (expected 503 on overflow)
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+upstreams:
+  - name: "backend"
+    circuit_breaker:
+      max_connections: 50
+      max_pending_requests: 100
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+routes:
+  - host: "*"
+    paths:
+      - matcher: !prefix { path: "/" }
+        destinations: [{ upstream: "backend", weight: 1 }]
+
+---
+
+## Example B: Active health check only (endpoint health transitions)
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+upstreams:
+  - name: "backend"
+    health_check:
+      path: "/healthz"
+      interval: "2s"
+      timeout: "1s"
+      healthy_threshold: 1
+      unhealthy_threshold: 1
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+routes:
+  - host: "*"
+    paths:
+      - matcher: !prefix { path: "/" }
+        destinations: [{ upstream: "backend", weight: 1 }]
+
+---
+
+## Example C: Outlier detection only (ejection + re-admission)
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+upstreams:
+  - name: "backend"
+    outlier_detection:
+      consecutive_errors: 5
+      eject_duration: "30s"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: 8081
+routes:
+  - host: "*"
+    paths:
+      - matcher: !prefix { path: "/" }
+        destinations: [{ upstream: "backend", weight: 1 }]

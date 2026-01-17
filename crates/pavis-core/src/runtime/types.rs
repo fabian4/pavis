@@ -11,6 +11,24 @@ pub struct Duration(pub NonZeroU32);
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
+/// Consecutive error threshold for outlier detection.
+pub struct ConsecutiveErrors(pub NonZeroU32);
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+/// Max in-flight requests allowed for an upstream.
+pub struct MaxConnections(pub NonZeroU32);
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+/// Max pending requests allowed for an upstream.
+pub struct MaxPendingRequests(pub NonZeroU32);
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
 #[non_exhaustive]
 pub enum Timeout {
     Disabled,

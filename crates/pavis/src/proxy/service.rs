@@ -2,6 +2,7 @@ use crate::proxy::context::{RequestId, RouterContext, TracingSpan};
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
 use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
+use crate::upstream::cluster::{CircuitBreakerRejection, UpstreamOutcome};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use http::Uri;
@@ -9,6 +10,7 @@ use pavis_core::{
     ConnectTimeout, Discovery, EndpointAddr, HeadersPolicy, Hostname, HttpVersion, PathMatch,
     Principal, RouteAction,
 };
+use pingora::ErrorType;
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
@@ -256,6 +258,7 @@ impl ProxyHttp for Proxy {
     fn new_ctx(&self) -> Self::CTX {
         RouterContext {
             upstream_name: None,
+            upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Disabled),
             response_headers: Arc::new(HeadersPolicy::Disabled),
             sni_override: None,
@@ -266,6 +269,7 @@ impl ProxyHttp for Proxy {
             route_pattern: crate::proxy::context::RoutePattern::NotMatched,
             req_id: generate_request_id(),
             span: crate::proxy::context::TracingSpan::Disabled,
+            circuit_breaker_permit: None,
             runtime_state: None,
         }
     }
@@ -306,10 +310,29 @@ impl ProxyHttp for Proxy {
             None => return Error::e_explain(InternalError, "Upstream not found in config"),
         };
 
+        let permit = match cluster.acquire_breaker_permit().await {
+            Ok(permit) => permit,
+            Err(CircuitBreakerRejection::PendingLimit | CircuitBreakerRejection::Closed) => {
+                tracing::info!(
+                    upstream = %upstream_name.0,
+                    "Circuit breaker rejected request"
+                );
+                return Error::e_explain(
+                    ErrorType::HTTPStatus(503),
+                    "circuit breaker rejected request",
+                );
+            }
+        };
+        ctx.circuit_breaker_permit = permit;
+
         let endpoint = match cluster.select_endpoint() {
             Some(e) => e,
-            None => return Error::e_explain(InternalError, "Upstream has no endpoints"),
+            None => {
+                ctx.circuit_breaker_permit = None;
+                return Error::e_explain(InternalError, "Upstream has no endpoints");
+            }
         };
+        ctx.upstream_endpoint = Some(endpoint.address.clone());
 
         let upstream = &cluster.config;
 
@@ -725,6 +748,28 @@ impl ProxyHttp for Proxy {
 
             metrics.decrement_active_connections();
         }
+
+        if let (Some(state), Some(upstream_name), Some(endpoint)) = (
+            ctx.runtime_state.as_ref(),
+            ctx.upstream_name.as_ref(),
+            ctx.upstream_endpoint.as_ref(),
+        ) && let Some(cluster) = state.upstream_manager.get(upstream_name.0.as_str())
+        {
+            let status = session
+                .response_written()
+                .map(|r| r.status.as_u16())
+                .unwrap_or(0);
+            let outcome = if _e.is_some() || status >= 500 {
+                UpstreamOutcome::Failure
+            } else if status > 0 {
+                UpstreamOutcome::Success
+            } else {
+                UpstreamOutcome::Failure
+            };
+            cluster.record_outcome(endpoint, outcome);
+        }
+
+        ctx.circuit_breaker_permit.take();
 
         if let TracingSpan::Active(ref span) = ctx.span
             && let Some(response) = session.response_written()

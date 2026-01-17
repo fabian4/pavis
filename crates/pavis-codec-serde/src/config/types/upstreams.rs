@@ -34,6 +34,8 @@ pub struct Upstream {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub circuit_breaker: Option<CircuitBreaker>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub outlier_detection: Option<OutlierDetection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub health_check: Option<HealthCheck>,
     pub endpoints: Vec<Endpoint>,
 }
@@ -94,7 +96,15 @@ pub struct ConnectionPoolConfig {
 pub struct CircuitBreaker {
     pub max_connections: usize,
     pub max_pending_requests: usize,
-    pub max_retries: usize,
+    #[serde(default)]
+    pub max_retries: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct OutlierDetection {
+    pub consecutive_errors: usize,
+    #[serde(with = "humantime_serde")]
+    pub eject_duration: Duration,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -104,7 +114,9 @@ pub struct HealthCheck {
     pub interval: Duration,
     #[serde(default, with = "humantime_serde")]
     pub timeout: Option<Duration>,
+    #[serde(default = "default_health_threshold")]
     pub healthy_threshold: usize,
+    #[serde(default = "default_health_threshold")]
     pub unhealthy_threshold: usize,
 }
 
@@ -114,4 +126,8 @@ pub struct Endpoint {
     pub address: String,
     pub port: u16,
     pub weight: Option<u32>,
+}
+
+fn default_health_threshold() -> usize {
+    1
 }

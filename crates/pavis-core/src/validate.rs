@@ -27,6 +27,10 @@ pub enum CoreValidationError {
     UpstreamTlsSniDisabled(String),
     #[error("upstream '{0}' has verify=full with sni=auto but no DNS endpoints")]
     UpstreamTlsAutoSniRequiresDns(String),
+    #[error("upstream '{0}' has invalid health check path")]
+    InvalidHealthCheckPath(String),
+    #[error("upstream '{0}' health check timeout exceeds interval")]
+    HealthCheckTimeoutExceedsInterval(String),
     #[error("invalid regex for route '{route}' (host '{host}'): {error}")]
     InvalidRegex {
         host: String,
@@ -99,19 +103,23 @@ pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<Validated
 mod tests {
     use super::*;
     use crate::runtime::{
-        AccessLogPolicy, ClientAuth, ClientCert, ConnectTimeout, ConnectionLimit, Destination,
-        Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers,
-        HeadersPolicy, Host, Hostname, HttpVersion, IdleTimeout, Listener, ListenerName,
-        LoadBalancer, LogLevel, Metrics, Path, PathMatch, Pool, Port, Principal, RETRY_FIVE_XX,
-        RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction, SampleRate,
-        ServiceName, SniName, Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy,
-        TracingProvider, TryTimeout, Upstream, UpstreamCa, UpstreamId, UpstreamName, VirtualHost,
-        Weight, WorkerCount,
+        AccessLogPolicy, ActiveHealthCheck, CircuitBreakerPolicy, ClientAuth, ClientCert,
+        ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint, EndpointAddr,
+        HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname, HttpVersion, IdleTimeout,
+        Listener, ListenerName, LoadBalancer, LogLevel, Metrics, OutlierDetectionPolicy, Path,
+        PathMatch, Pool, Port, Principal, RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite,
+        RewriteHost, RewritePath, Route, RouteAction, SampleRate, ServiceName, SniName, Telemetry,
+        Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, TryTimeout,
+        Upstream, UpstreamCa, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::NonZeroU16;
     use std::sync::{Arc, Mutex};
+
+    fn duration_ms(ms: u32) -> Duration {
+        Duration(std::num::NonZeroU32::new(ms).unwrap())
+    }
 
     fn base_config() -> RuntimeConfig {
         RuntimeConfig {
@@ -140,14 +148,13 @@ mod tests {
                 balancer: LoadBalancer::RoundRobin,
                 protocol: HttpVersion::H1,
                 pool: Pool {
-                    idle: IdleTimeout::Enabled(Duration(unsafe {
-                        std::num::NonZeroU32::new_unchecked(60_000)
-                    })),
-                    connect: ConnectTimeout::Enabled(Duration(unsafe {
-                        std::num::NonZeroU32::new_unchecked(5_000)
-                    })),
+                    idle: IdleTimeout::Enabled(duration_ms(60_000)),
+                    connect: ConnectTimeout::Enabled(duration_ms(5_000)),
                     max: ConnectionLimit::Unlimited,
                 },
+                outlier_detection: OutlierDetectionPolicy::Disabled,
+                circuit_breaker: CircuitBreakerPolicy::Disabled,
+                health_check: ActiveHealthCheck::Disabled,
                 tls: TlsPolicy::Enabled {
                     verify: TlsVerify::Full,
                     sni: SniName::Name(Hostname("example.com".to_string())),
@@ -200,6 +207,36 @@ mod tests {
                 }],
             }],
         }
+    }
+
+    #[test]
+    fn validate_rejects_health_check_path_without_slash() {
+        let mut config = base_config();
+        config.upstreams[0].health_check = ActiveHealthCheck::Enabled {
+            path: Path("healthz".to_string()),
+            interval: duration_ms(1000),
+            timeout: duration_ms(1000),
+        };
+        let err = validate_runtime(config).expect_err("expected validation error");
+        assert_eq!(
+            err,
+            CoreValidationError::InvalidHealthCheckPath("test".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_rejects_health_check_timeout_exceeds_interval() {
+        let mut config = base_config();
+        config.upstreams[0].health_check = ActiveHealthCheck::Enabled {
+            path: Path("/healthz".to_string()),
+            interval: duration_ms(1000),
+            timeout: duration_ms(2000),
+        };
+        let err = validate_runtime(config).expect_err("expected validation error");
+        assert_eq!(
+            err,
+            CoreValidationError::HealthCheckTimeoutExceedsInterval("test".to_string())
+        );
     }
 
     #[test]

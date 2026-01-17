@@ -18,12 +18,14 @@ pub use telemetry::{
     AccessLogPolicy, LogLevel, Metrics, Telemetry, TracingPolicy, TracingProvider,
 };
 pub use types::{
-    ConnectTimeout, Duration, HeaderName, HeaderValue, Host, Hostname, IdleTimeout, ListenerName,
-    Path, Port, SampleRate, ServiceName, Timeout, TryTimeout, UpstreamId, UpstreamName, Weight,
+    ConnectTimeout, ConsecutiveErrors, Duration, HeaderName, HeaderValue, Host, Hostname,
+    IdleTimeout, ListenerName, MaxConnections, MaxPendingRequests, Path, Port, SampleRate,
+    ServiceName, Timeout, TryTimeout, UpstreamId, UpstreamName, Weight,
 };
 pub use upstream::{
-    ClientCert, ClientCertChain, ConnectionLimit, Discovery, Endpoint, EndpointAddr, HttpVersion,
-    LoadBalancer, Pool, SniName, TlsPolicy, TlsVerify, Upstream, UpstreamCa,
+    ActiveHealthCheck, CircuitBreakerPolicy, ClientCert, ClientCertChain, ConnectionLimit,
+    Discovery, Endpoint, EndpointAddr, HttpVersion, LoadBalancer, OutlierDetectionPolicy, Pool,
+    SniName, TlsPolicy, TlsVerify, Upstream, UpstreamCa,
 };
 
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
@@ -115,6 +117,9 @@ mod tests {
                     connect: ConnectTimeout::Disabled,
                     max: ConnectionLimit::Unlimited,
                 },
+                outlier_detection: OutlierDetectionPolicy::Disabled,
+                circuit_breaker: CircuitBreakerPolicy::Disabled,
+                health_check: ActiveHealthCheck::Disabled,
                 tls: TlsPolicy::Disabled,
                 endpoints: vec![Endpoint {
                     address: EndpointAddr::Ip {
