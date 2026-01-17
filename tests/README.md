@@ -186,3 +186,48 @@ Use the `run.sh` script:
 ./tests/run.sh pavis 10_bootstrap_static
 ./tests/run.sh integrated 10_bootstrap_path
 ```
+
+---
+
+## Test Coverage by Phase
+
+### Phase 7: Operational Lifecycle
+
+**Admin API Tests** (`90_operational_admin_api.sh`):
+- **Scope**: Verifies read-only admin API endpoints (`/health`, `/stats`)
+- **Assertions**:
+  - `/health` returns `{"status":"healthy"}` with 200 OK
+  - `/stats` returns JSON with required fields (version, uptime_seconds, listeners, upstreams, routes)
+  - Config counts in `/stats` reflect actual runtime configuration (listeners=1, upstreams=2, routes=2)
+  - Uptime counter increases over time
+  - Unknown paths return 404
+  - Admin API isolated to admin port only (not accessible on traffic port)
+  - Traffic routing unaffected by admin API presence
+- **Configuration**: Admin enabled on separate port, shutdown disabled for test speed
+
+**Graceful Shutdown Tests** (`91_operational_graceful_shutdown.sh`):
+- **Scope**: Verifies SIGTERM triggers graceful drain of in-flight requests
+- **Topology**: Pavis + slow mock upstream (3s response delay)
+- **Assertions**:
+  - In-flight request initiated before SIGTERM completes successfully
+  - Response content is valid and matches expected upstream instance
+  - Request duration matches upstream delay (~3s)
+  - Pavis exits within drain_timeout (5s) + request duration + buffer
+  - Shutdown duration within expected bounds (<10s total)
+- **Configuration**: Graceful shutdown enabled with 5s drain timeout
+- **Test Pattern**: Background request → SIGTERM → verify completion → verify exit
+
+**Key Behaviors Verified**:
+1. **Admin API Security**: Bind-address isolation (admin port ≠ traffic port)
+2. **Admin API Read-Only**: No mutation endpoints, informational data only
+3. **Graceful Drain**: In-flight requests complete during drain phase
+4. **Fail-Closed Shutdown**: New connections rejected after SIGTERM
+5. **Bounded Shutdown**: Process exits within configurable timeout
+
+**Non-Goals** (Explicitly Not Tested):
+- Admin API authentication (Phase 7 has no auth - bind to loopback for security)
+- Shutdown admin endpoint (Phase 7 only supports SIGTERM/SIGINT signals)
+- WebSocket/SSE connection drain (not supported in Phase 7)
+- Config reload during shutdown (undefined behavior, deferred)
+
+---

@@ -279,6 +279,8 @@ mod tests {
                     },
                 }],
             }]),
+            shutdown: None,
+            admin: None,
         };
         assert!(validate(&mut config).is_ok());
     }
@@ -310,6 +312,8 @@ mod tests {
                     },
                 }],
             }]),
+            shutdown: None,
+            admin: None,
         };
         assert!(validate(&mut config).is_err());
     }
@@ -364,6 +368,8 @@ mod tests {
                     },
                 }],
             }]),
+            shutdown: None,
+            admin: None,
         };
         let err = validate(&mut config).expect_err("expected validation error");
         assert!(
@@ -425,6 +431,8 @@ mod tests {
                     },
                 }],
             }]),
+            shutdown: None,
+            admin: None,
         };
         assert!(validate(&mut config).is_ok());
     }

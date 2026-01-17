@@ -1,8 +1,10 @@
+mod admin;
 mod routes;
 mod server;
 mod telemetry;
 mod upstreams;
 
+pub use admin::{AdminConfig, ShutdownConfig};
 pub use routes::{
     HeaderOperations, Matcher, PrincipalConfig, RetryPolicy, RewritePolicy, Route, RouteAction,
     VirtualHost, WeightedDestination,
@@ -32,6 +34,8 @@ pub struct SerdeConfig {
     pub telemetry: Option<TelemetryConfig>,
     pub upstreams: Option<Vec<Upstream>>,
     pub routes: Option<Vec<VirtualHost>>,
+    pub shutdown: Option<ShutdownConfig>,
+    pub admin: Option<AdminConfig>,
 }
 
 /// Shape-complete DTO with containers present and explicit empty/disabled states.
@@ -42,6 +46,8 @@ pub struct StructurallyConfig {
     pub telemetry: TelemetryConfig,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
+    pub shutdown: ShutdownConfig,
+    pub admin: AdminConfig,
 }
 
 impl SerdeConfig {

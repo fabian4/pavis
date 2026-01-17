@@ -1,3 +1,4 @@
+mod admin;
 mod routes;
 mod server;
 mod telemetry;
@@ -15,6 +16,8 @@ pub fn structural(src: SerdeConfig) -> StructurallyConfig {
         telemetry: src.telemetry.unwrap_or_default(),
         upstreams: src.upstreams.unwrap_or_default(),
         routes: src.routes.unwrap_or_default(),
+        shutdown: src.shutdown.unwrap_or_default(),
+        admin: src.admin.unwrap_or_default(),
     }
 }
 
@@ -30,8 +33,13 @@ impl TryFrom<StructurallyConfig> for pavis_core::RuntimeConfig {
         let telemetry = telemetry::to_runtime(src.telemetry)?;
         let upstreams = upstreams::to_runtime(src.upstreams)?;
         let routes = routes::to_runtime(src.routes)?;
+        let shutdown = admin::shutdown_to_runtime(src.shutdown)?;
+        let admin = admin::admin_to_runtime(src.admin)?;
 
-        let mut builder = pavis_core::RuntimeConfigBuilder::new().telemetry(telemetry);
+        let mut builder = pavis_core::RuntimeConfigBuilder::new()
+            .telemetry(telemetry)
+            .shutdown(shutdown)
+            .admin(admin);
         for listener in listeners {
             builder = builder.add_listener(listener);
         }
@@ -59,6 +67,8 @@ impl TryFrom<pavis_core::RuntimeConfig> for SerdeConfig {
             telemetry: Some(telemetry::from_runtime(binary.telemetry)),
             upstreams: Some(upstreams::from_runtime(binary.upstreams)?),
             routes: Some(routes::from_runtime(binary.routes)?),
+            shutdown: Some(admin::shutdown_from_runtime(binary.shutdown)),
+            admin: Some(admin::admin_from_runtime(binary.admin)),
         })
     }
 }
@@ -230,6 +240,8 @@ routes:
                     endpoint: "http://localhost:4317".to_string(),
                 },
             })
+            .shutdown(pavis_core::ShutdownPolicy::Disabled)
+            .admin(pavis_core::AdminConfig::Disabled)
             .add_listener(listener)
             .add_upstream(upstream)
             .add_route(VirtualHost {

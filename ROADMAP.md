@@ -1,12 +1,12 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 41/67
-- **Core Features**: 36/46
+- **Total**: 43/67
+- **Core Features**: 38/46
 - **Technical Debt**: 5/21
 
 > **Status**: Active
-> **Focus**: Phase 6 (Resilience & Discovery)
+> **Focus**: Phase 7 (Operational Lifecycle)
 > **Reference**: [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 This roadmap distinguishes between **Delivery Phases** (user-visible capabilities) and **Technical Debt** (engineering health and optimization).
@@ -115,10 +115,10 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 7: Operational Lifecycle
 > **Goal**: Production readiness and ease of operation.
-> **Status**: ⏳ Planned
+> **Status**: ✅ Complete
 
-- [ ] **Graceful Shutdown**: Connection draining sequences.
-- [ ] **Admin API**: Read-only runtime inspection endpoints (`/admin/health`, `/admin/stats`).
+- [x] **Graceful Shutdown**: Connection draining sequences with configurable timeout.
+- [x] **Admin API**: Read-only runtime inspection endpoints (`/health`, `/stats`).
 
 ## Phase 8: xDS & Service Mesh Integration
 > **Goal**: Compile-time adaptation of external control planes.

@@ -454,6 +454,74 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
+### `90_operational_admin_api`
+
+**Category**: Operational Lifecycle
+**Contracts**: D (Zero-Option)
+**Maturity**: L3
+
+**Scenario**:
+1. Start pavis with admin API enabled on separate port (shutdown disabled for test speed)
+2. Configure 2 upstreams and 2 routes for config count validation
+3. Test `/health` endpoint returns correct JSON
+4. Test `/stats` endpoint returns all required fields (version, uptime_seconds, listeners, upstreams, routes)
+5. Verify config counts in `/stats` match runtime configuration
+6. Verify uptime counter increases over time
+7. Test unknown paths return 404
+8. Verify admin API isolated to admin port only (not accessible on traffic port)
+9. Verify traffic routing unaffected by admin API presence
+
+**Oracle**:
+- HTTP status codes
+- JSON response bodies from `/health` and `/stats`
+- Response headers
+
+**Assertions**:
+- `/health` returns `{"status":"healthy"}` with 200 OK
+- `/stats` contains version, uptime_seconds, listeners, upstreams, routes fields
+- Config counts: listeners=1, upstreams=2, routes=2
+- Uptime increases after 2s delay
+- Unknown path `/unknown` returns 404
+- Admin endpoints not accessible on traffic port
+- Traffic routes correctly to backend while admin API is active
+
+**Assessment**: PASS. Validates read-only admin API endpoints, bind-address isolation, config reflection, and independence from traffic routing.
+
+---
+
+### `91_operational_graceful_shutdown`
+
+**Category**: Operational Lifecycle
+**Contracts**: (graceful drain on SIGTERM)
+**Maturity**: L3
+
+**Scenario**:
+1. Start mock upstream with 3s response delay
+2. Start pavis with graceful shutdown enabled (5s drain timeout)
+3. Initiate long-running request in background (3s delay)
+4. Send SIGTERM to pavis after 0.5s (request in-flight)
+5. Wait for in-flight request to complete
+6. Verify request completed successfully with valid response
+7. Verify request duration matches upstream delay (~3s)
+8. Verify pavis exits within drain_timeout + request_duration + buffer (<10s total)
+
+**Oracle**:
+- HTTP status and response body from in-flight request
+- Request duration timing
+- Process exit timing
+- Process liveness
+
+**Assertions**:
+- In-flight request completes successfully (no connection drop)
+- Response contains valid JSON with expected instance_id
+- Request duration 3-6 seconds (matches 3s upstream delay)
+- Pavis exits gracefully within 10s of SIGTERM
+- Process exits cleanly (no crashes)
+
+**Assessment**: PASS. Validates SIGTERM triggers graceful drain, in-flight requests complete during drain phase, and process exits within bounded timeout.
+
+---
+
 ## Implementation Principles
 
 - **Isolation**: Every request includes `X-Pavis-Test-Run` and `X-Pavis-Test-Case` headers.
@@ -468,22 +536,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ### Summary
 
-| Category                  | Cases | Maturity Distribution |
-|---------------------------|-------|-----------------------|
-| Bootstrap & Initial Load  | 1     | L3: 1                 |
-| Reload Semantics          | 2     | L3: 2                 |
-| Failure & LKG             | 1     | L3: 1                 |
-| Traffic Management        | 2     | L3: 2                 |
-| Resilience (Timeout/Retry)| 2     | SKIPPED               |
-| Resilience (Health/CB/OD) | 3     | L3: 3                 |
-| Security (TLS/mTLS)       | 5     | SKIPPED (rustls)      |
-| Security (RBAC)           | 2     | L3: 2                 |
-| Observability (Metrics)   | 1     | L3: 1                 |
-| Observability (Logs/Trace)| 3     | SKIPPED               |
-
-**Total Cases**: 22
-**Active (L3)**: 12
-**Skipped**: 10 (7 rustls limitations, 3 implementation gaps)
+| Category                  | Cases | Maturity Distribution |\n|---------------------------|-------|-----------------------|\n| Bootstrap & Initial Load  | 1     | L3: 1                 |\n| Reload Semantics          | 2     | L3: 2                 |\n| Failure & LKG             | 1     | L3: 1                 |\n| Traffic Management        | 2     | L3: 2                 |\n| Resilience (Timeout/Retry)| 2     | SKIPPED               |\n| Resilience (Health/CB/OD) | 3     | L3: 3                 |\n| Security (TLS/mTLS)       | 5     | SKIPPED (rustls)      |\n| Security (RBAC)           | 2     | L3: 2                 |\n| Observability (Metrics)   | 1     | L3: 1                 |\n| Observability (Logs/Trace)| 3     | SKIPPED               |\n| Operational Lifecycle     | 2     | L3: 2                 |\n\n**Total Cases**: 24\n**Active (L3)**: 14\n**Skipped**: 10 (7 rustls limitations, 3 implementation gaps)
 
 ### Risk Coverage Mapping
 

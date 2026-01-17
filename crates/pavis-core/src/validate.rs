@@ -1,3 +1,4 @@
+mod admin;
 mod headers;
 mod routes;
 mod server;
@@ -96,6 +97,8 @@ pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<Validated
 
     upstreams::validate_upstreams(&config.upstreams)?;
     routes::validate_routes(&config.routes, &config.upstreams)?;
+    admin::validate_shutdown(&config.shutdown)?;
+    admin::validate_admin(&config.admin)?;
     Ok(ValidatedRuntimeConfig::new(config))
 }
 
@@ -103,14 +106,15 @@ pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<Validated
 mod tests {
     use super::*;
     use crate::runtime::{
-        AccessLogPolicy, ActiveHealthCheck, CircuitBreakerPolicy, ClientAuth, ClientCert,
-        ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint, EndpointAddr,
-        HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname, HttpVersion, IdleTimeout,
-        Listener, ListenerName, LoadBalancer, LogLevel, Metrics, OutlierDetectionPolicy, Path,
-        PathMatch, Pool, Port, Principal, RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite,
-        RewriteHost, RewritePath, Route, RouteAction, SampleRate, ServiceName, SniName, Telemetry,
-        Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, TryTimeout,
-        Upstream, UpstreamCa, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
+        AccessLogPolicy, ActiveHealthCheck, AdminConfig, CircuitBreakerPolicy, ClientAuth,
+        ClientCert, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint,
+        EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname, HttpVersion,
+        IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel, Metrics,
+        OutlierDetectionPolicy, Path, PathMatch, Pool, Port, Principal, RETRY_FIVE_XX, RetryFlags,
+        RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction, SampleRate,
+        ServiceName, ShutdownPolicy, SniName, Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify,
+        TracingPolicy, TracingProvider, TryTimeout, Upstream, UpstreamCa, UpstreamId, UpstreamName,
+        VirtualHost, Weight, WorkerCount,
     };
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -206,6 +210,8 @@ mod tests {
                     }]),
                 }],
             }],
+            shutdown: ShutdownPolicy::Disabled,
+            admin: AdminConfig::Disabled,
         }
     }
 

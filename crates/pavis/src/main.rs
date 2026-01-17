@@ -318,10 +318,16 @@ fn main() -> Result<()> {
         server.add_service(metrics_worker);
     }
 
+    // Add admin API service if enabled
+    let admin_worker = pavis::admin::AdminApiWorker::new(config.admin, state_handle.clone());
+    server.add_service(admin_worker);
+
     if let Some(agent) = config_agent {
         let agent = agent?;
         server.add_service(agent.worker());
     }
+
+    tracing::info!("Pavis initialization complete, starting server");
     server.run_forever();
 }
 

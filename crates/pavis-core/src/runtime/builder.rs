@@ -1,7 +1,8 @@
 use crate::runtime::{
-    ActiveHealthCheck, CircuitBreakerPolicy, ConnectionLimit, Discovery, Endpoint, HttpVersion,
-    IdleTimeout, Listener, ListenerName, LoadBalancer, OutlierDetectionPolicy, Pool, RuntimeConfig,
-    Telemetry, TlsConfig, TlsPolicy, Upstream, UpstreamId, UpstreamName, WorkerCount,
+    ActiveHealthCheck, AdminConfig, CircuitBreakerPolicy, ConnectionLimit, Discovery, Endpoint,
+    HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, OutlierDetectionPolicy, Pool,
+    RuntimeConfig, ShutdownPolicy, Telemetry, TlsConfig, TlsPolicy, Upstream, UpstreamId,
+    UpstreamName, WorkerCount,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -26,6 +27,8 @@ pub struct RuntimeConfigBuilder {
     telemetry: Option<Telemetry>,
     upstreams: Vec<Upstream>,
     routes: Vec<crate::runtime::VirtualHost>,
+    shutdown: Option<ShutdownPolicy>,
+    admin: Option<AdminConfig>,
 }
 
 impl RuntimeConfigBuilder {
@@ -53,16 +56,31 @@ impl RuntimeConfigBuilder {
         self
     }
 
+    pub fn shutdown(mut self, shutdown: ShutdownPolicy) -> Self {
+        self.shutdown = Some(shutdown);
+        self
+    }
+
+    pub fn admin(mut self, admin: AdminConfig) -> Self {
+        self.admin = Some(admin);
+        self
+    }
+
     pub fn build(self) -> Result<RuntimeConfig, BuilderError> {
         if self.listeners.is_empty() {
             return Err(BuilderError::MissingListeners);
         }
         let telemetry = self.telemetry.ok_or(BuilderError::MissingTelemetry)?;
+        // Use sensible defaults if not specified
+        let shutdown = self.shutdown.unwrap_or(ShutdownPolicy::Disabled);
+        let admin = self.admin.unwrap_or(AdminConfig::Disabled);
         Ok(RuntimeConfig {
             listeners: self.listeners,
             telemetry,
             upstreams: self.upstreams,
             routes: self.routes,
+            shutdown,
+            admin,
         })
     }
 }

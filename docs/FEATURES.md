@@ -66,7 +66,15 @@ This document outlines the current and planned feature set, explicitly calling o
 | **Distributed Tracing** (OTLP) | ✅ | OpenTelemetry spans with HTTP semantic conventions. |
 | **Tap / Packet Capture** | ❌ | **Dropped**. Use system tools (`tcpdump` / `eBPF`). |
 
-## 5. Extensibility
+## 5. Operational Lifecycle
+
+| Feature | Status | Note / Alternative |
+| :--- | :---: | :--- |
+| **Graceful Shutdown** | ✅ | Configurable drain timeout for in-flight requests (SIGTERM/SIGINT). |
+| **Admin API** | ✅ | Read-only endpoints for health checks (`/health`) and runtime stats (`/stats`). |
+| **Hot Reload** | ✅ | Atomic configuration swapping via pointer replacement (no connection drops). |
+
+## 6. Extensibility
 
 | Feature | Status | Note / Alternative |
 | :--- | :---: | :--- |

@@ -559,3 +559,136 @@ Startup             Relay                Storage
 - [Relay API Reference](docs/api/relay.md)
 - [Operations Guide](docs/operations/relay.md)
 - [Crash Recovery Guide](docs/operations/crash-recovery.md)
+
+## 6. Operational Lifecycle
+
+### 6.1 Graceful Shutdown
+
+Pavis implements graceful shutdown to ensure in-flight requests complete before the process exits.
+
+#### Shutdown Policy
+
+The `shutdown` configuration controls shutdown behavior:
+
+```yaml
+shutdown:
+  enabled: true           # Default: true (graceful shutdown enabled)
+  drain_timeout_ms: 30000 # Default: 30 seconds
+```
+
+**States:**
+- **Disabled**: Exit immediately on SIGTERM/SIGINT (no drain)
+- **Enabled**: Wait for in-flight requests up to `drain_timeout` before force-close
+
+#### Shutdown Flow
+
+```mermaid
+sequenceDiagram
+    participant Signal as SIGTERM/SIGINT
+    participant Coordinator as ShutdownCoordinator
+    participant Listeners as TCP Listeners
+    participant Requests as In-Flight Requests
+    participant Services as Background Services
+
+    Signal->>Coordinator: Signal received
+    Coordinator->>Listeners: Stop accepting (fail-closed)
+    Coordinator->>Requests: Wait for completion
+    Note over Requests: Up to drain_timeout
+    alt Timeout expires
+        Coordinator->>Requests: Force close
+    end
+    Coordinator->>Services: Broadcast shutdown
+    Services->>Services: Clean up resources
+    Coordinator->>Signal: Exit (code 0)
+```
+
+#### Connection Handling
+
+| Connection Type | Behavior During Drain |
+|----------------|----------------------|
+| **In-flight requests** | Wait for completion (up to timeout) |
+| **Keep-alive idle** | Close immediately |
+| **WebSocket/SSE** | Not supported (Phase 7) |
+
+#### Configuration Recommendations
+
+- **Production**: `drain_timeout_ms: 30000` (30s) - allows graceful completion
+- **Development**: `enabled: false` - fast iteration cycle
+- **High-traffic**: `drain_timeout_ms: 60000` (60s) - longer drain for slow requests
+
+### 6.2 Admin API
+
+The admin API provides **read-only** operational endpoints for health checks and runtime statistics.
+
+#### Configuration
+
+```yaml
+admin:
+  enabled: false              # Default: false (disabled)
+  address: "127.0.0.1:9901"   # Default: loopback only
+```
+
+**Security Note:** The admin API has **no authentication** in Phase 7. Bind to loopback (`127.0.0.1`) or use firewall rules to restrict access.
+
+#### Endpoints
+
+| Endpoint | Method | Description | Response |
+|----------|--------|-------------|----------|
+| `/health` | GET | Health status | `{"status":"healthy"}` (always 200 OK) |
+| `/stats` | GET | Runtime statistics | JSON with version, uptime, config counts |
+
+#### Stats Response Schema
+
+```json
+{
+  "version": "0.0.0",
+  "uptime_seconds": 3600,
+  "listeners": 2,
+  "upstreams": 5,
+  "routes": 10
+}
+```
+
+**Safe Data:** Version strings, counters, timestamps, config counts (listener/upstream/route counts)
+
+**Forbidden Data:** Listener addresses, upstream IPs, TLS paths, route patterns, raw config bytes, secrets
+
+#### Usage Examples
+
+```bash
+# Health check
+curl http://127.0.0.1:9901/health
+# {"status":"healthy"}
+
+# Runtime statistics
+curl http://127.0.0.1:9901/stats
+# {"version":"0.0.0","uptime_seconds":120,"listeners":1,"upstreams":3,"routes":5}
+```
+
+#### Integration with Monitoring
+
+The admin API complements the metrics endpoint (`telemetry.metrics`):
+- **Metrics endpoint** (`/metrics`): Prometheus-formatted time-series data
+- **Admin API** (`/health`, `/stats`): Structured JSON for health checks and basic introspection
+
+**Kubernetes Health Checks:**
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 9901
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+### 6.3 Signal Handling
+
+Pavis responds to the following signals:
+
+| Signal | Behavior |
+|--------|----------|
+| **SIGTERM** | Graceful shutdown (respects `drain_timeout`) |
+| **SIGINT** | Graceful shutdown (respects `drain_timeout`) |
+| **SIGKILL** | Immediate termination (cannot be caught) |
+
+**Best Practice:** Use SIGTERM for graceful termination. Avoid SIGKILL except as last resort.

@@ -1,11 +1,14 @@
+mod admin;
 mod builder;
 mod headers;
 mod routing;
 mod server;
+mod shutdown;
 mod telemetry;
 mod types;
 mod upstream;
 
+pub use admin::AdminConfig;
 pub use builder::{BuilderError, ListenerBuilder, RuntimeConfigBuilder, UpstreamBuilder};
 pub use headers::{Headers, HeadersPolicy};
 pub use routing::{
@@ -14,6 +17,7 @@ pub use routing::{
     RouteAction, VirtualHost,
 };
 pub use server::{ClientAuth, Listener, TlsConfig, WorkerCount};
+pub use shutdown::ShutdownPolicy;
 pub use telemetry::{
     AccessLogPolicy, LogLevel, Metrics, Telemetry, TracingPolicy, TracingProvider,
 };
@@ -43,6 +47,8 @@ pub struct RuntimeConfig {
     pub telemetry: Telemetry,
     pub upstreams: Vec<Upstream>,
     pub routes: Vec<VirtualHost>,
+    pub shutdown: ShutdownPolicy,
+    pub admin: AdminConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -150,6 +156,8 @@ mod tests {
                     }]),
                 }],
             }],
+            shutdown: ShutdownPolicy::Disabled,
+            admin: AdminConfig::Disabled,
         };
 
         assert_eq!(config.upstreams.len(), 1);
@@ -175,6 +183,8 @@ mod tests {
             },
             upstreams: Vec::new(),
             routes: Vec::new(),
+            shutdown: ShutdownPolicy::Disabled,
+            admin: AdminConfig::Disabled,
         };
 
         let validated = ValidatedRuntimeConfig::new(config.clone());
@@ -205,6 +215,8 @@ mod tests {
             },
             upstreams: Vec::new(),
             routes: Vec::new(),
+            shutdown: ShutdownPolicy::Disabled,
+            admin: AdminConfig::Disabled,
         };
 
         let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config.clone()) };

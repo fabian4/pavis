@@ -150,6 +150,8 @@ fn sample_config() -> SerdeConfig {
                 },
             }],
         }]),
+        shutdown: None,
+        admin: None,
     }
 }
 

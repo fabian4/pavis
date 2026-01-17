@@ -33,6 +33,8 @@ mod tests {
             },
             upstreams: Vec::new(),
             routes: Vec::new(),
+            shutdown: super::ShutdownPolicy::Disabled,
+            admin: super::AdminConfig::Disabled,
         };
     }
 }

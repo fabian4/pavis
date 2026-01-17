@@ -65,6 +65,76 @@ The Runtime is deliberately constrained to be a pure execution mechanism. It per
 *   **Upstream TLS Origination**: Client-side TLS with hostname verification (system CA bundle only with current rustls backend).
 *   **Observability**: Prometheus metrics with cardinality controls, structured access logging, and distributed tracing (OTLP).
 *   **Resilience**: Active health checks, passive outlier ejection, and circuit breaker caps.
+*   **Graceful Shutdown**: Configurable drain timeout for in-flight requests on SIGTERM/SIGINT.
+*   **Admin API**: Read-only HTTP endpoints for health checks and runtime statistics.
+
+## 🔧 Operational Features
+
+### Graceful Shutdown
+
+Pavis supports graceful shutdown to ensure in-flight requests complete before the process exits.
+
+**Configuration:**
+
+```yaml
+shutdown:
+  enabled: true           # Default: true
+  drain_timeout_ms: 30000 # Default: 30 seconds
+```
+
+**Behavior:**
+- **SIGTERM/SIGINT**: Triggers graceful shutdown
+- **Drain Phase**: Stops accepting new connections and waits for in-flight requests to complete (up to `drain_timeout_ms`)
+- **Force Close**: After timeout expires, remaining connections are closed immediately
+
+**Recommendations:**
+- **Production**: 30s-60s drain timeout (allows slow requests to complete)
+- **Development**: `enabled: false` for fast iteration
+- **High-traffic**: 60s+ for long-running requests
+
+### Admin API
+
+Pavis provides a **read-only** admin API for health checks and runtime introspection.
+
+**Configuration:**
+
+```yaml
+admin:
+  enabled: false              # Default: false (disabled)
+  address: "127.0.0.1:9901"   # Default: loopback only
+```
+
+**Endpoints:**
+
+| Endpoint | Description | Response |
+|----------|-------------|----------|
+| `GET /health` | Health status | `{"status":"healthy"}` (always 200 OK) |
+| `GET /stats` | Runtime statistics | JSON with version, uptime, config counts |
+
+**Stats Response Example:**
+
+```json
+{
+  "version": "0.0.0",
+  "uptime_seconds": 3600,
+  "listeners": 2,
+  "upstreams": 5,
+  "routes": 10
+}
+```
+
+**Security Note:** The admin API has **no authentication** in the current release. Bind to loopback (`127.0.0.1`) or use firewall rules to restrict access.
+
+**Kubernetes Integration:**
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 9901
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
 
 ### TLS Backend Limitations (Rustls)
 

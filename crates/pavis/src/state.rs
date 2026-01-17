@@ -44,6 +44,8 @@ impl Default for RuntimeState {
                 access_log: AccessLogPolicy::Disabled,
                 tracing: pavis_core::TracingPolicy::Disabled,
             })
+            .shutdown(pavis_core::ShutdownPolicy::Disabled)
+            .admin(pavis_core::AdminConfig::Disabled)
             .add_listener(listener)
             .build()
             .expect("config");
