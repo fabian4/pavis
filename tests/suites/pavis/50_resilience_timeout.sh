@@ -1,7 +1,91 @@
 #!/bin/bash
-# Case: resilience_01_timeout_tightening
-# Category: Traffic Behavior Under Reload
-# REASON: Skipping because timeout_tightening is not implemented in runtime yet.
+set -e
 
-echo "Feature 'timeout_tightening' not yet implemented in runtime."
-exit 77
+# Case: resilience_50_timeout
+# Category: Resilience
+# REASON: Ensure route timeout tightening takes effect after reload.
+
+# shellcheck source=tests/scripts/env.sh
+source "$(dirname "$0")/../../scripts/env.sh"
+# shellcheck source=tests/scripts/assert.sh
+source "$(dirname "$0")/../../scripts/assert.sh"
+
+setup_test "resilience_timeout"
+cleanup_trap() { cleanup_test; }
+trap cleanup_trap EXIT
+
+PORT_PAVIS=$(get_free_port)
+PORT_RELAY=$(get_free_port)
+
+run_mock_relay "$PORT_RELAY"
+wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
+
+# V1: generous timeout, delay should succeed.
+cat <<-EOF > "$TEST_TMP/config_v1.yaml"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:$PORT_PAVIS"
+upstreams:
+  - name: "backend"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: ${UPSTREAM_HTTP_PORT_V1}
+routes:
+  - host: "*"
+    paths:
+      - matcher: !prefix { path: "/" }
+        timeout: "500ms"
+        destinations: [{ upstream: "backend", weight: 1 }]
+EOF
+
+gen_pvs "$TEST_TMP/config_v1.yaml" "$TEST_TMP/config_v1.pvs"
+publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v1.pvs"
+cp "$TEST_TMP/config_v1.pvs" "$TEST_TMP/initial.pvs"
+run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
+wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
+
+assert_status "http://127.0.0.1:$PORT_PAVIS/delay?ms=100" "200"
+
+# V2: tighten timeout; same delay should now fail quickly.
+cat <<-EOF > "$TEST_TMP/config_v2.yaml"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:$PORT_PAVIS"
+upstreams:
+  - name: "backend"
+    endpoints:
+      - ip: "127.0.0.1"
+        port: ${UPSTREAM_HTTP_PORT_V1}
+routes:
+  - host: "*"
+    paths:
+      - matcher: !prefix { path: "/" }
+        timeout: "50ms"
+        destinations: [{ upstream: "backend", weight: 1 }]
+EOF
+
+gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
+publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
+
+MAX_RETRIES=20
+SWITCHED=0
+for _ in $(seq 1 $MAX_RETRIES); do
+    start_ms=$(now_ms)
+    status=$(pavis_curl_body -o /dev/null -w "%{http_code}" --max-time 2 \
+        "http://127.0.0.1:$PORT_PAVIS/delay?ms=200")
+    end_ms=$(now_ms)
+    elapsed_ms=$((end_ms - start_ms))
+
+    if [ "$status" != "200" ] && [ "$elapsed_ms" -lt 500 ]; then
+        SWITCHED=1
+        break
+    fi
+    sleep 0.5
+done
+
+if [ "$SWITCHED" -eq 0 ]; then
+    echo "❌ Expected tightened timeout to fail quickly after reload"
+    exit 1
+fi
+
+echo "✅ resilience_50_timeout passed"

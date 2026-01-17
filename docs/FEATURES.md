@@ -28,7 +28,7 @@ This document outlines the current and planned feature set, explicitly calling o
 | **Header Manipulation** | ✅ | Add/Remove headers supported. |
 | **Redirect & DirectResponse** | ✅ | Supported. For HTTP->HTTPS or security blocking. |
 | **Rewrite** (Host/Path) | ✅ | Prefix & Host literal supported. (No Regex rewrite). |
-| **Retries & Timeouts** | ⏳ | Planned. Critical for network stability. |
+| **Retries & Timeouts** | ✅ | Route-level retries and per-try timeouts are enforced. |
 | **Traffic Mirroring** (Shadowing) | ⚠️ | Deferred. Not critical for MVP. |
 | **Global Rate Limiting** | ❌ | **Dropped**. Too heavy (requires ext Redis/gRPC). Use Ingress. |
 | **Local Rate Limiting** | ⚠️ | Deferred. |

@@ -324,6 +324,7 @@ Defines how the proxy accepts inbound traffic.
 ### `routes[].paths[].retry`
 - **Type**: `object`
 - **Required**: Optional
+- **Runtime Effect**: Enforced during upstream request handling.
 
 ### `routes[].paths[].retry.attempts`
 - **Type**: `integer`
@@ -415,5 +416,3 @@ Inferred if `status` and `body` fields are present.
 - **Rustls (Default TLS)**:
   - `upstreams[].tls.ca_bundle_path`: Parsed but ignored by the connector.
   - `listeners[].tls.client_auth`: Peer certificate extraction is currently a TODO.
-- **Core Proxy**:
-  - `routes[].retry`: Parsed but not enforced yet.

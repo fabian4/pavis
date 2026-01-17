@@ -1,9 +1,9 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 47/81
+- **Total**: 48/82
 - **Core Features**: 37/46
-- **Technical Debt**: 8/24
+- **Technical Debt**: 9/25
 
 > **Status**: Active
 > **Focus**: Phase 7 (Operational Lifecycle)
@@ -147,6 +147,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 - [x] **[Safety] Integration Testing**: Risk of state desync during reloads. (Trigger: Before Phase 4)
 - [x] **[Safety] E2E Testing**: No validation against real network targets/kernels. (Trigger: Before v1.0 Release)
 - [x] **[DX] Context Artifacts for Scripts**: Standardized `context.env` for benchmarks/tests with case-scoped copies. (Trigger: Phase 7)
+- [x] **[DX] Docker E2E Upstream Image Default**: Default docker-mode mock upstream image for standalone upstream tests. (Trigger: Phase 7)
 - [ ] **[Safety] Symlink Verification**: Verify ingest correctly follows symbolic links. (Trigger: Next Release)
 
 ### TD-2: Release Engineering & Safety

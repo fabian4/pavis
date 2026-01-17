@@ -1,4 +1,7 @@
-use super::{Proxy, apply_route_headers, calculate_path_rewrite, route_path};
+use super::{
+    Proxy, apply_route_headers, calculate_path_rewrite, resolve_per_try_timeout,
+    resolve_route_timeout, retry_budget, route_path,
+};
 use crate::proxy::context::RouterContext;
 use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::Telemetry;
@@ -8,9 +11,10 @@ use pavis_core::{
     AccessLogPolicy, ClientCert, ClientCertChain, ConnectTimeout, ConnectionLimit, Destination,
     Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy,
     Host, Hostname, HttpVersion, IdleTimeout, LoadBalancer, Metrics, Path, PathMatch, Pool, Port,
-    RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction, ServiceName, SniName,
-    Telemetry as RuntimeTelemetry, Timeout, TlsPolicy, Upstream, UpstreamBuilder, UpstreamCa,
-    UpstreamId, UpstreamName, VirtualHost, Weight,
+    RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost,
+    RewritePath, RouteAction, ServiceName, SniName, Telemetry as RuntimeTelemetry, Timeout,
+    TlsPolicy, TryTimeout, Upstream, UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName,
+    VirtualHost, Weight,
 };
 use pingora::http::ResponseHeader;
 use pingora::prelude::{ProxyHttp, RequestHeader, Session};
@@ -29,8 +33,12 @@ fn apply_route_headers_populates_router_context() {
         matcher: PathMatch::Exact {
             path: Path("/".to_string()),
         },
-        timeout: Timeout::Disabled,
-        retry: RetryPolicy::Disabled,
+        timeout: Timeout::Enabled(Duration(NonZeroU32::new(500).unwrap())),
+        retry: RetryPolicy::Enabled {
+            attempts: NonZeroU16::new(2).unwrap(),
+            per_try: TryTimeout::Enabled(Duration(NonZeroU32::new(200).unwrap())),
+            on: RetryFlags(RETRY_FIVE_XX),
+        },
         request_headers: HeadersPolicy::Enabled {
             rules: Headers {
                 set_headers: vec![(
@@ -74,6 +82,9 @@ fn apply_route_headers_populates_router_context() {
         start_time: std::time::Instant::now(),
         client_identity: None,
         rbac_denied: false,
+        route_timeout: Timeout::Disabled,
+        retry_policy: RetryPolicy::Disabled,
+        retry_attempts: 0,
         // Observability fields
         upstream_timing: crate::proxy::context::UpstreamTiming::NotStarted,
         route_pattern: crate::proxy::context::RoutePattern::NotMatched,
@@ -93,6 +104,42 @@ fn apply_route_headers_populates_router_context() {
         *ctx.response_headers,
         HeadersPolicy::Enabled { .. }
     ));
+    assert_eq!(ctx.route_timeout, route.timeout);
+    assert!(matches!(ctx.retry_policy, RetryPolicy::Enabled { .. }));
+}
+
+#[test]
+fn resolve_route_timeout_maps_enabled() {
+    let timeout = Timeout::Enabled(Duration(NonZeroU32::new(150).unwrap()));
+    assert_eq!(
+        resolve_route_timeout(timeout),
+        Some(std::time::Duration::from_millis(150))
+    );
+}
+
+#[test]
+fn resolve_per_try_timeout_inherits_route_timeout() {
+    let timeout = Timeout::Enabled(Duration(NonZeroU32::new(500).unwrap()));
+    let retry = RetryPolicy::Enabled {
+        attempts: NonZeroU16::new(2).unwrap(),
+        per_try: TryTimeout::Inherit,
+        on: RetryFlags(RETRY_FIVE_XX),
+    };
+    assert_eq!(
+        resolve_per_try_timeout(timeout, &retry),
+        Some(std::time::Duration::from_millis(500))
+    );
+}
+
+#[test]
+fn retry_budget_requires_flag_match() {
+    let retry = RetryPolicy::Enabled {
+        attempts: NonZeroU16::new(3).unwrap(),
+        per_try: TryTimeout::Disabled,
+        on: RetryFlags(RETRY_FIVE_XX),
+    };
+    assert!(retry_budget(&retry, RETRY_FIVE_XX).is_some());
+    assert!(retry_budget(&retry, RETRY_CONNECT_FAILURE).is_none());
 }
 
 fn test_telemetry() -> Arc<Telemetry> {

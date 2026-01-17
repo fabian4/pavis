@@ -1,3 +1,3 @@
 #!/bin/bash
-echo "✅ security_03_inbound_mtls passed (Skipped RBAC)"
-exit 0
+echo "⏭️ SKIPPED: RBAC functionality not yet implemented"
+exit 77

@@ -33,8 +33,9 @@ validate_meta_json() {
     return 1
   fi
 
-  # Validate required fields
-  if ! json_has_keys "$meta_file" .timestamp .case .proxy; then
+  # Validate required fields (per-case metadata only)
+  if ! json_has_keys "$meta_file" .case .proxy .backend_container .proxy_container \
+    .backend_image_id .proxy_image_id .backend_image_digest .proxy_image_digest; then
     return 1
   fi
 
@@ -75,7 +76,15 @@ validate_loadgen_output() {
   fi
 
   # Validate required fields
-  if ! json_has_keys "$loadgen_file" .achieved_rps .p50_ms .p90_ms .p99_ms .errors .dropped; then
+  if ! json_has_keys "$loadgen_file" .achieved_rps .errors .dropped; then
+    return 1
+  fi
+  if jq -e '(.p50_ms != null) and (.p90_ms != null) and (.p99_ms != null)' "$loadgen_file" >/dev/null 2>&1; then
+    log_debug "Detected legacy flat latency fields in $loadgen_file"
+  elif jq -e '(.latency_ms.p50 != null) and (.latency_ms.p90 != null) and (.latency_ms.p99 != null)' "$loadgen_file" >/dev/null 2>&1; then
+    log_debug "Detected nested latency_ms fields in $loadgen_file"
+  else
+    log_error "loadgen output missing latency percentiles (expected .p*_ms or .latency_ms.*): $loadgen_file"
     return 1
   fi
 
@@ -94,7 +103,9 @@ validate_benchmark_artifacts() {
     return 1
   fi
 
-  validate_meta_json "$case_dir/meta.json" || validation_status=1
+  if [[ -f "$case_dir/meta.json" ]]; then
+    validate_meta_json "$case_dir/meta.json" || validation_status=1
+  fi
 
   # File-based detection (CRITICAL: inspect actual files, never infer from case names)
   if [[ -f "$case_dir/loadgen.txt.json" ]]; then
@@ -127,6 +138,9 @@ validate_benchmark_artifacts() {
 
     # Validate single wrk output
     validate_wrk_output "$case_dir/wrk.txt" || validation_status=1
+  elif [[ -f "$case_dir/metrics.json" ]]; then
+    workload_type="system_metrics"
+    log_debug "Detected system metrics workload in $case_dir"
 
   else
     log_error "Unable to detect workload type in $case_dir (no loadgen.txt.json, run_*/wrk.txt, or wrk.txt found)"

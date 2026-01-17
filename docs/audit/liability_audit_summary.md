@@ -392,22 +392,22 @@
   - Why E2E (why unit/integration is insufficient): validates runtime routing under live reload and traffic.
 - E2E-13
   - File: tests/suites/pavis/50_resilience_timeout.sh
-  - Scenario & invariant under test: Skipped timeout tightening test.
-  - Inputs (config, traffic, env): none (skipped).
-  - Assertions (exact checks): exit 77.
-  - Evidence (assert/curl/log snippet): tests/suites/pavis/50_resilience_timeout.sh:6 exit 77
-  - Determinism risks (timing, ports, retries, env): none (skipped).
+  - Scenario & invariant under test: Timeout tightening after reload; route timeout enforced.
+  - Inputs (config, traffic, env): mock relay; config_v1 timeout 500ms; config_v2 timeout 50ms; `/delay?ms=100` then `/delay?ms=200`.
+  - Assertions (exact checks): v1 delay returns 200; v2 delay fails quickly after reload.
+  - Evidence (assert/curl/log snippet): tests/suites/pavis/50_resilience_timeout.sh:30 "assert_status ... /delay?ms=100 200"
+  - Determinism risks (timing, ports, retries, env): polling loop with MAX_RETRIES=20 and timing threshold.
   - Failure signal quality (clear / ambiguous / noisy): clear
-  - Why E2E (why unit/integration is insufficient): not executed; script exits before setup.
+  - Why E2E (why unit/integration is insufficient): requires live reload + upstream latency to confirm timeout enforcement.
 - E2E-14
   - File: tests/suites/pavis/51_resilience_retry.sh
-  - Scenario & invariant under test: Skipped retry policy test.
-  - Inputs (config, traffic, env): none (skipped).
-  - Assertions (exact checks): exit 77.
-  - Evidence (assert/curl/log snippet): tests/suites/pavis/51_resilience_retry.sh:6 exit 77
-  - Determinism risks (timing, ports, retries, env): none (skipped).
+  - Scenario & invariant under test: Retry policy with connect_failure succeeds via fallback endpoint.
+  - Inputs (config, traffic, env): dead endpoint + healthy endpoint; retry_on connect_failure; `/echo`.
+  - Assertions (exact checks): response instance_id == "backend-v1".
+  - Evidence (assert/curl/log snippet): tests/suites/pavis/51_resilience_retry.sh:44 "Expected retry to reach backend-v1"
+  - Determinism risks (timing, ports, retries, env): one request; depends on retry path hitting healthy endpoint.
   - Failure signal quality (clear / ambiguous / noisy): clear
-  - Why E2E (why unit/integration is insufficient): not executed; script exits before setup.
+  - Why E2E (why unit/integration is insufficient): validates retry behavior across real network connection failures.
 - E2E-15
   - File: tests/suites/pavis/60_security_tls.sh
   - Scenario & invariant under test: Skipped TLS origination toggle test.

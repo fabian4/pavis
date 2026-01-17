@@ -251,10 +251,20 @@ parse_case() {
   local proxy_container=""
 
   # Extract meta information early for iteration rows
-  # Prefer context.env (shell-sourceable, faster), fall back to meta.json
+  # Prefer run-level context.env; legacy case-level context.env is supported.
+  local run_context="${OUTPUT_DIR}/context.env"
   if [ -f "${case_dir}/context.env" ]; then
     # shellcheck source=/dev/null
     source "${case_dir}/context.env"
+  elif [ -f "$run_context" ]; then
+    # shellcheck source=/dev/null
+    source "$run_context"
+  else
+    echo "error: missing run-level context.env in ${case_dir} (required for profile/mode filtering)" >&2
+    return 1
+  fi
+
+  if [ -n "${RUN_TIMESTAMP:-}" ] || [ -n "${GIT_SHA:-}" ]; then
     timestamp="${RUN_TIMESTAMP:-}"
     git_sha="${GIT_SHA:-}"
     cpu_model="${BENCH_HOST_CPU_MODEL:-}"
@@ -272,27 +282,12 @@ parse_case() {
     bench_host_mem_total="${BENCH_HOST_MEM_TOTAL:-}"
     bench_proxy_cpu_limit="${BENCH_PROXY_CPU_LIMIT:-}"
     bench_proxy_mem_limit="${BENCH_PROXY_MEM_LIMIT:-}"
-    # Note: backend_container and proxy_container not in context.env, read from meta.json if needed
-    if [ -f "${case_dir}/meta.json" ]; then
-      backend_container=$(json_get "${case_dir}/meta.json" ".backend_container" "")
-      proxy_container=$(json_get "${case_dir}/meta.json" ".proxy_container" "")
-      target_rps=$(json_get "${case_dir}/meta.json" ".target_rps" "")
-    fi
-  elif [ -f "${case_dir}/meta.json" ]; then
-    # Legacy fallback: parse meta.json using json_get_multiple for efficiency
-    read -r timestamp git_sha target_rps cpu_model kernel bench_profile bench_mode \
-            bench_payload_size bench_tls bench_metrics backend_cpuset proxy_cpuset \
-            bench_docker_compose bench_host_cores bench_host_cpuset_effective \
-            bench_host_mem_total bench_proxy_cpu_limit bench_proxy_mem_limit \
-            backend_container proxy_container <<< \
-      "$(json_get_multiple "${case_dir}/meta.json" timestamp git_sha target_rps cpu_model kernel \
-                           bench_profile bench_mode bench_payload_size bench_tls bench_metrics \
-                           backend_cpuset proxy_cpuset bench_docker_compose bench_host_cores \
-                           bench_host_cpuset_effective bench_host_mem_total bench_proxy_cpu_limit \
-                           bench_proxy_mem_limit backend_container proxy_container)"
-  else
-    echo "error: missing context.env and meta.json in ${case_dir} (required for profile/mode filtering)" >&2
-    return 1
+  fi
+  # Note: backend_container and proxy_container not in context.env, read from meta.json if needed
+  if [ -f "${case_dir}/meta.json" ]; then
+    backend_container=$(jq -r '.backend_container // empty' "${case_dir}/meta.json" 2>/dev/null || true)
+    proxy_container=$(jq -r '.proxy_container // empty' "${case_dir}/meta.json" 2>/dev/null || true)
+    target_rps=$(jq -r '.target_rps // empty' "${case_dir}/meta.json" 2>/dev/null || true)
   fi
 
   if [ "$bench_mode" != "$MODE_FILTER" ]; then
@@ -492,6 +487,16 @@ main() {
   if [ -d "${OUTPUT_DIR}/standalone" ] || [ -d "${OUTPUT_DIR}/system" ]; then
     echo "error: output directory should be a mode root like bench/output/standalone" >&2
     exit 1
+  fi
+
+  local run_context="${OUTPUT_DIR}/context.env"
+  if [ -f "$run_context" ]; then
+    # shellcheck source=/dev/null
+    source "$run_context"
+    if [ "${BENCH_MODE:-}" = "system" ]; then
+      echo "warn: summarize.sh does not support system mode outputs; skipping" >&2
+      exit 0
+    fi
   fi
 
   local phase="measure"

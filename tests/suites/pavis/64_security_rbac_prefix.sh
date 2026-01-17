@@ -1,3 +1,3 @@
 #!/bin/bash
-echo "✅ security_04_rbac_prefix passed (Skipped RBAC)"
-exit 0
+echo "⏭️ SKIPPED: RBAC functionality not yet implemented"
+exit 77

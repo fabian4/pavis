@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use http::Uri;
 use pavis_core::{
     ConnectTimeout, Discovery, EndpointAddr, HeadersPolicy, Hostname, HttpVersion, PathMatch,
-    Principal, RouteAction,
+    Principal, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED, RETRY_RESET, RetryPolicy,
+    RouteAction, Timeout, TryTimeout,
 };
 use pingora::ErrorType;
 use pingora::http::RequestHeader;
@@ -72,6 +73,80 @@ fn generate_request_id() -> RequestId {
 fn apply_route_headers(ctx: &mut RouterContext, route: &pavis_core::Route) {
     ctx.request_headers = route.request_headers.clone();
     ctx.response_headers = route.response_headers.clone();
+    ctx.route_timeout = route.timeout;
+    ctx.retry_policy = route.retry.clone();
+    ctx.retry_attempts = 0;
+}
+
+fn core_duration_to_std(duration: &pavis_core::Duration) -> Duration {
+    Duration::from_millis(duration.0.get() as u64)
+}
+
+fn resolve_route_timeout(timeout: Timeout) -> Option<Duration> {
+    match timeout {
+        Timeout::Enabled(duration) => Some(core_duration_to_std(&duration)),
+        Timeout::Disabled => None,
+        #[allow(unreachable_patterns)]
+        _ => None,
+    }
+}
+
+fn resolve_per_try_timeout(timeout: Timeout, retry: &RetryPolicy) -> Option<Duration> {
+    match retry {
+        RetryPolicy::Enabled { per_try, .. } => match per_try {
+            TryTimeout::Enabled(duration) => Some(core_duration_to_std(duration)),
+            TryTimeout::Inherit => resolve_route_timeout(timeout),
+            TryTimeout::Disabled => None,
+            #[allow(unreachable_patterns)]
+            _ => None,
+        },
+        RetryPolicy::Disabled => resolve_route_timeout(timeout),
+        #[allow(unreachable_patterns)]
+        _ => resolve_route_timeout(timeout),
+    }
+}
+
+fn retry_budget(retry: &RetryPolicy, flag: u8) -> Option<std::num::NonZeroU16> {
+    match retry {
+        RetryPolicy::Enabled { attempts, on, .. } if (on.0 & flag) != 0 => Some(*attempts),
+        _ => None,
+    }
+}
+
+fn try_mark_retry(ctx: &mut RouterContext, attempts: std::num::NonZeroU16) -> bool {
+    if ctx.retry_attempts < attempts.get() {
+        ctx.retry_attempts += 1;
+        true
+    } else {
+        false
+    }
+}
+
+fn is_connect_failure(etype: &ErrorType) -> bool {
+    matches!(
+        etype,
+        ErrorType::ConnectTimedout
+            | ErrorType::ConnectRefused
+            | ErrorType::ConnectNoRoute
+            | ErrorType::TLSHandshakeFailure
+            | ErrorType::TLSHandshakeTimedout
+            | ErrorType::InvalidCert
+            | ErrorType::ConnectError
+            | ErrorType::ConnectProxyFailure
+    )
+}
+
+fn is_reset_error(etype: &ErrorType) -> bool {
+    matches!(
+        etype,
+        ErrorType::ReadError
+            | ErrorType::WriteError
+            | ErrorType::ReadTimedout
+            | ErrorType::WriteTimedout
+            | ErrorType::ConnectionClosed
+            | ErrorType::H1Error
+            | ErrorType::H2Error
+    )
 }
 
 fn calculate_path_rewrite(
@@ -265,6 +340,9 @@ impl ProxyHttp for Proxy {
             start_time: std::time::Instant::now(),
             client_identity: None,
             rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
             upstream_timing: crate::proxy::context::UpstreamTiming::NotStarted,
             route_pattern: crate::proxy::context::RoutePattern::NotMatched,
             req_id: generate_request_id(),
@@ -498,6 +576,9 @@ impl ProxyHttp for Proxy {
             #[allow(unreachable_patterns)]
             _ => None,
         };
+        let per_try_timeout = resolve_per_try_timeout(ctx.route_timeout, &ctx.retry_policy);
+        peer.options.read_timeout = per_try_timeout;
+        peer.options.write_timeout = per_try_timeout;
 
         // Track upstream timing
         ctx.start_upstream();
@@ -677,6 +758,62 @@ impl ProxyHttp for Proxy {
         Ok(true)
     }
 
+    fn fail_to_connect(
+        &self,
+        _session: &mut Session,
+        _peer: &HttpPeer,
+        ctx: &mut Self::CTX,
+        mut e: Box<Error>,
+    ) -> Box<Error> {
+        let mut retried = false;
+        if let Some(attempts) = retry_budget(&ctx.retry_policy, RETRY_CONNECT_FAILURE)
+            && is_connect_failure(e.etype())
+            && try_mark_retry(ctx, attempts)
+        {
+            retried = true;
+        }
+
+        if !retried
+            && let Some(attempts) = retry_budget(&ctx.retry_policy, RETRY_REFUSED)
+            && matches!(e.etype(), ErrorType::ConnectRefused)
+            && try_mark_retry(ctx, attempts)
+        {
+            retried = true;
+        }
+
+        if retried {
+            e.set_retry(true);
+        }
+
+        e
+    }
+
+    fn error_while_proxy(
+        &self,
+        peer: &HttpPeer,
+        session: &mut Session,
+        e: Box<Error>,
+        ctx: &mut Self::CTX,
+        _client_reused: bool,
+    ) -> Box<Error> {
+        let mut e = e.more_context(format!("Peer: {}", peer));
+        e.set_retry(false);
+
+        if let Some(attempts) = retry_budget(&ctx.retry_policy, RETRY_RESET)
+            && is_reset_error(e.etype())
+            && try_mark_retry(ctx, attempts)
+        {
+            e.set_retry(true);
+        }
+
+        // Preserve reuse safety by avoiding retries when the buffer is truncated.
+        if session.as_ref().retry_buffer_truncated() {
+            e.set_retry(false);
+        }
+
+        e
+    }
+
     async fn upstream_request_filter(
         &self,
         _session: &mut Session,
@@ -699,6 +836,29 @@ impl ProxyHttp for Proxy {
         ctx: &mut Self::CTX,
     ) -> Result<()> {
         apply_response_headers(upstream_response, &ctx.response_headers)
+    }
+
+    async fn response_filter(
+        &self,
+        _session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        if ctx.upstream_name.is_some() {
+            let status = upstream_response.status.as_u16();
+            if status >= 500
+                && let Some(attempts) = retry_budget(&ctx.retry_policy, RETRY_FIVE_XX)
+                && try_mark_retry(ctx, attempts)
+            {
+                let mut err = Error::new(ErrorType::HTTPStatus(status));
+                err.as_up();
+                err.set_retry(true);
+                err.set_context("retryable upstream response");
+                return Err(err);
+            }
+        }
+
+        Ok(())
     }
 
     async fn logging(&self, session: &mut Session, _e: Option<&Error>, ctx: &mut Self::CTX) {

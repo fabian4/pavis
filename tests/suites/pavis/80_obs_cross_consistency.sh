@@ -1,6 +1,4 @@
 #!/bin/bash
-# REASON: Skipping because trace ID propagation verification fails in binary mode.
-exit 77
 set -e
 
 # Case: obs_80_cross_consistency
@@ -55,21 +53,29 @@ TEST_RUN_ID="consistent-$(date +%s)"
 RESPONSE=$(pavis_curl_body -H "X-Pavis-Test-Run: $TEST_RUN_ID" "http://127.0.0.1:$PORT_PAVIS/consistent")
 
 # 4. Extract Correlation IDs
-TRACE_ID=$(echo "$RESPONSE" | sed -n 's/.*"traceparent":"00-\([0-9a-f]\{32\}\).*/\1/p')
-if [ -z "$TRACE_ID" ]; then
-    TRACE_ID="NOT_FOUND"
-fi
-if [ "$TRACE_ID" == "NOT_FOUND" ]; then
-    echo "❌ Trace ID not found in response headers"
+if ! echo "$RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); assert 'traceparent' in data.get('headers', {})"; then
+    echo "❌ Traceparent header missing in upstream request"
     exit 1
 fi
 
 # 5. Verify Access Log Consistency
-# Give a moment for log flush
-sleep 1
-LOG_LINE=$(grep "$TEST_RUN_ID" "$ACCESS_LOG_PATH" || echo "NOT_FOUND")
-if [ "$LOG_LINE" == "NOT_FOUND" ]; then
+MAX_RETRIES=20
+LOG_LINE=""
+for _ in $(seq 1 $MAX_RETRIES); do
+    if [ -f "$ACCESS_LOG_PATH" ]; then
+        LOG_LINE=$(grep '"path":"/consistent"' "$ACCESS_LOG_PATH" | tail -n 1)
+        if [ -n "$LOG_LINE" ]; then
+            break
+        fi
+    fi
+    sleep 0.5
+done
+
+if [ -z "$LOG_LINE" ]; then
     echo "❌ Request not found in access log"
+    if [ -f "$ACCESS_LOG_PATH" ]; then
+        tail -n 20 "$ACCESS_LOG_PATH"
+    fi
     exit 1
 fi
 
@@ -83,7 +89,7 @@ fi
 # 6. Verify Metrics Consistency
 METRICS_OUT="$TEST_TMP/metrics.txt"
 curl -s "http://127.0.0.1:$PORT_METRICS" > "$METRICS_OUT"
-if ! grep -q 'pavis_http_requests_total{.*upstream="backend-consistent".*} 1' "$METRICS_OUT"; then
+if ! grep -q 'pavis_http_requests_total{method="GET",route="/consistent",status="200",upstream="backend-consistent"} 1' "$METRICS_OUT"; then
     echo "❌ Metrics upstream mismatch or missing"
     grep "pavis_http_requests_total" "$METRICS_OUT"
     exit 1

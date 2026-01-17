@@ -204,6 +204,7 @@ fn main() -> Result<()> {
         daemon: false,
         ..Default::default()
     };
+    server_conf.max_retries = u16::MAX as usize;
     if let Some(threads) = max_threads {
         server_conf.threads = threads as usize;
     }

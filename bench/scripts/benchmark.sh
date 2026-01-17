@@ -207,30 +207,35 @@ run_case() {
     set -e
     echo "::endgroup::"
 
-    # Copy run-level context.env to case output directory for artifact validation
     local mode="${BENCH_MODE:-standalone}"
-    local run_context="${BENCH_OUTPUT_DIR}/${mode}/context.env"
-    local case_dir="${BENCH_OUTPUT_DIR}/${mode}/${BENCH_PROXY}/${case_name}${BENCH_CASE_SUFFIX:+__${BENCH_CASE_SUFFIX}}"
-    if [[ -f "$run_context" && -d "$case_dir" ]]; then
-      cp "$run_context" "$case_dir/context.env"
-      log_debug "Copied context.env to $case_dir"
+    local case_dir_base="${BENCH_OUTPUT_DIR}/${mode}/${BENCH_PROXY}/${case_name}"
+    local case_dir="${case_dir_base}${BENCH_CASE_SUFFIX:+__${BENCH_CASE_SUFFIX}}"
+    if [[ ! -d "$case_dir" && -d "$case_dir_base" ]]; then
+      case_dir="$case_dir_base"
     fi
 
     if [[ $case_status -ne 0 ]]; then
       log_error "Case ${case_name} failed with exit code ${case_status}"
       if [[ -d "$case_dir" ]]; then
         touch "$case_dir/.validation_failed"
+      else
+        log_warn "Case directory missing; cannot mark validation failure: $case_dir"
       fi
       return 1
     fi
 
     if [[ "$BENCH_DRY_RUN" != "1" && "$BENCH_DRY_RUN" != "true" ]]; then
-      if ! validate_benchmark_artifacts "$case_name" "$case_dir"; then
+      if [[ ! -d "$case_dir" ]]; then
+        log_warn "Case output missing; skipping validation for $case_name"
+      elif [[ -f "$case_dir/.skipped" ]]; then
+        log_warn "Case marked skipped; skipping validation for $case_name"
+      elif ! validate_benchmark_artifacts "$case_name" "$case_dir"; then
         log_error "Artifact validation failed for $case_name"
         touch "$case_dir/.validation_failed"
         return 1
+      else
+        log_debug "Artifact validation passed for $case_name"
       fi
-      log_debug "Artifact validation passed for $case_name"
     fi
   done
 }

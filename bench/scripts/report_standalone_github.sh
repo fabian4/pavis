@@ -63,10 +63,15 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
     gsub(/^[[:space:]]+|[[:space:]]+$/, "", h)
     return tolower(h)
   }
+  function dequote(x) {
+    gsub(/^"|"$/, "", x)
+    return x
+  }
   function is_num(x) {
     return x ~ /^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/
   }
   function render(x) {
+    x = dequote(x)
     if (x == "" || x == "null") return "—"
     return x
   }
@@ -134,14 +139,14 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
     next
   }
   {
-    profile=$(col["bench_profile"])
+    profile=dequote($(col["bench_profile"]))
     if (profile != "github") next
-    mode=$(col["bench_mode"])
+    mode=dequote($(col["bench_mode"]))
     if (mode != "standalone") next
     row_count++
 
-    rid=$(col["git_sha"])
-    ts=$(col["timestamp"])
+    rid=dequote($(col["git_sha"]))
+    ts=dequote($(col["timestamp"]))
     if (rid=="" || ts=="") next
     if (run_id_env=="") {
       if (max_ts=="" || ts>max_ts) {
@@ -161,15 +166,15 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
     }
   }
   NR>1 {
-    profile=$(col["bench_profile"])
+    profile=dequote($(col["bench_profile"]))
     if (profile != "github") next
-    mode=$(col["bench_mode"])
+    mode=dequote($(col["bench_mode"]))
     if (mode != "standalone") next
-    rid=$(col["git_sha"])
+    rid=dequote($(col["git_sha"]))
     if (run_id_env!="" && rid != run_id_env) next
     if (run_id_env=="" && rid != max_run) next
 
-    proxy=$(col["proxy"])
+    proxy=dequote($(col["proxy"]))
     proxies[proxy]=1
 
     if (context_set==0 && $(col["aggregate"])=="1") {
@@ -189,8 +194,8 @@ awk -F, -v run_id_env="$run_id_env" -v gen_at="$gen_at" '
       ctx["cpu_model"]=$(col["cpu_model"])
     }
 
-    case_name=$(col["case"])
-    case_type=$(col["type"])
+    case_name=dequote($(col["case"]))
+    case_type=dequote($(col["type"]))
     aggregate=$(col["aggregate"])
     iteration=$(col["iteration"])
 

@@ -29,6 +29,9 @@ main() {
   # TODO: Test requires drop_rate/fault injection feature in pavis config schema
   # Currently drop_rate parameter is ignored, so "bad" config = "good" config
   log_warn "Test skipped: rollback_performance requires fault injection (drop_rate) feature"
+  local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}"
+  ensure_dir "$output_dir"
+  echo "requires fault injection (drop_rate) feature" > "${output_dir}/.skipped"
   return 0
 
   # Check if proxy supports config versioning

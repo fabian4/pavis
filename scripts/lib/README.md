@@ -86,3 +86,27 @@ log_debug "Debug info (only shown if DEBUG=1)"
 3. **Fail fast** - Use `set -euo pipefail` in all scripts
 4. **Self-contained** - Each module is independently testable
 5. **Minimal dependencies** - Avoid external tools unless necessary
+
+## Critical Design Decisions (Shell Ecosystem)
+
+### Fixed Output Paths
+**No RUN_ID in paths.** Outputs are cleaned before each run and remain at fixed locations:
+- Bench run-scoped: `bench/output/{mode}/context.env`
+- Bench case-scoped: `bench/output/{mode}/{proxy}/{case}/context.env`
+- Tests run-scoped: `tests/temp/context.env`
+- Tests case-scoped: `${TEST_TMP}/context.env`
+
+### Context Generation Pattern
+**Context generation scripts are executable.** They accept output path as `argv[1]`, write shell-sourceable key=value pairs using `printf '%s=%q\n'` for safe quoting, and exit non-zero on failure. Entry points invoke them via `bash path/to/gen_context_env.sh "$outfile"`, not by sourcing.
+
+### File-Based Artifact Detection
+**Artifact validation inspects actual files present, not case names.** `validate_benchmark_artifacts` checks if `loadgen.txt.json` exists (validates as loadgen), else checks for `run_*/wrk.txt` or `wrk.txt` (validates as wrk), and optionally validates `metrics.json` if present. Always validates `meta.json` schema.
+
+### Resilient Execution
+**Benchmark runner continues on failure.** The `run_case` function captures failures, marks failed cases with `.validation_failed`, and continues to next case. At end, exits 1 if any failures occurred.
+
+### Explicit Dependencies
+**Tool dependencies are explicit.** Entry points check for required commands (jq for validation, nc or bash /dev/tcp for port waits) and fail fast with clear messages if missing.
+
+### Safe Configuration Loading
+**Summarize script sources context.env safely.** It only reads RUN_* and BENCH_* variables; local variables use distinct names to avoid clobbering.

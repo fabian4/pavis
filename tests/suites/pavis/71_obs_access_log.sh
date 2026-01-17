@@ -1,6 +1,4 @@
 #!/bin/bash
-# REASON: Skipping because access log verification is inconsistent in binary mode (flush/sync timing).
-exit 77
 set -e
 
 # Case: obs_02_access_log
@@ -19,6 +17,7 @@ trap cleanup_trap EXIT
 PORT_PAVIS=$(get_free_port)
 UPSTREAM_PORT=${UPSTREAM_HTTP_PORT_V1}
 ACCESS_LOG_PATH="$TEST_TMP/access.log"
+PORT_RELAY=$(get_free_port)
 
 # 1. Config with Access Log
 cat <<EOF > "$TEST_TMP/config.yaml"
@@ -43,8 +42,12 @@ routes:
 EOF
 gen_pvs "$TEST_TMP/config.yaml" "$TEST_TMP/config.pvs"
 
+run_mock_relay "$PORT_RELAY"
+wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
+publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config.pvs"
+
 # 2. Start Pavis
-run_pavis "$TEST_TMP/config.pvs" ""
+run_pavis "$TEST_TMP/config.pvs" "http://127.0.0.1:$PORT_RELAY"
 
 # 3. Wait for boot
 wait_for_port "$PORT_PAVIS" 5
@@ -56,10 +59,6 @@ REQ_ID_HDR="X-Req-Unique: obs-log-test-$(date +%s)"
 pavis_curl_body -o /dev/null -H "$REQ_ID_HDR" -H "Connection: close" "http://127.0.0.1:$PORT_PAVIS/echo"
 
 # 5. Hot Reload and Continuous Logging
-PORT_RELAY=$(get_free_port)
-run_mock_relay "$PORT_RELAY"
-wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
-
 # V2: Route to backend-v2
 cat <<EOF > "$TEST_TMP/config_v2.yaml"
 listeners:
@@ -81,24 +80,46 @@ EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
 
-# Generate traffic for V2
-wait_for_url "http://127.0.0.1:$PORT_PAVIS/echo" 5 "backend-v2"
+# Generate traffic for V2 after switch
+MAX_RETRIES=20
+SWITCHED=0
+for _ in $(seq 1 $MAX_RETRIES); do
+    response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
+    instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['instance_id'])")
+    if [ "$instance" == "backend-v2" ]; then
+        SWITCHED=1
+        break
+    fi
+    sleep 0.5
+done
+
+if [ "$SWITCHED" -ne 1 ]; then
+    echo "❌ Traffic did not switch to backend-v2"
+    exit 1
+fi
+
 pavis_curl_body -o /dev/null "http://127.0.0.1:$PORT_PAVIS/echo"
 
 # 6. Assertions (without stopping process)
-if [ ! -f "$ACCESS_LOG_PATH" ]; then
-    echo "❌ Access log file not found at $ACCESS_LOG_PATH"
-    exit 1
-fi
+MAX_RETRIES=20
+LOG_READY=0
+for _ in $(seq 1 $MAX_RETRIES); do
+    if [ -f "$ACCESS_LOG_PATH" ] \
+        && grep -q '"upstream":"backend"' "$ACCESS_LOG_PATH" \
+        && grep -q '"upstream":"backend-v2"' "$ACCESS_LOG_PATH"; then
+        LOG_READY=1
+        break
+    fi
+    sleep 0.5
+done
 
-# Ensure both versions are present in the log
-if ! grep -q '"upstream":"backend"' "$ACCESS_LOG_PATH"; then
-    echo "❌ Log missing V1 traffic"
-    exit 1
-fi
-
-if ! grep -q '"upstream":"backend-v2"' "$ACCESS_LOG_PATH"; then
-    echo "❌ Log missing V2 traffic"
+if [ "$LOG_READY" -ne 1 ]; then
+    echo "❌ Access log missing V1/V2 traffic"
+    if [ -f "$ACCESS_LOG_PATH" ]; then
+        tail -n 20 "$ACCESS_LOG_PATH"
+    else
+        echo "Log file not found at $ACCESS_LOG_PATH"
+    fi
     exit 1
 fi
 

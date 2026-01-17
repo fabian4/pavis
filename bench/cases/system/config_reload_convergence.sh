@@ -28,6 +28,9 @@ main() {
   # TODO: Test requires version file to be written at startup and/or admin endpoint
   # See: https://github.com/fabian/pavis (or relevant issue tracker)
   log_warn "Test skipped: config_reload_convergence requires version detection mechanism"
+  local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}"
+  ensure_dir "$output_dir"
+  echo "requires version detection mechanism" > "${output_dir}/.skipped"
   return 0
 
   # Check if proxy supports config versioning

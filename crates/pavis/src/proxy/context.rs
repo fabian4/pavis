@@ -1,5 +1,5 @@
 use crate::state::RuntimeState;
-use pavis_core::{EndpointAddr, HeadersPolicy, Hostname, UpstreamName};
+use pavis_core::{EndpointAddr, HeadersPolicy, Hostname, RetryPolicy, Timeout, UpstreamName};
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -126,6 +126,9 @@ pub struct RouterContext {
     pub upstream_timing: UpstreamTiming,
     pub client_identity: Option<String>,
     pub rbac_denied: bool,
+    pub route_timeout: Timeout,
+    pub retry_policy: RetryPolicy,
+    pub retry_attempts: u16,
     pub route_pattern: RoutePattern,
     pub req_id: RequestId,
     pub span: TracingSpan,
@@ -218,6 +221,9 @@ mod tests {
             start_time: std::time::Instant::now(),
             client_identity: None,
             rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-123".parse().unwrap(),
@@ -257,6 +263,9 @@ mod tests {
             start_time: Instant::now(),
             client_identity: None,
             rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-1".parse().unwrap(),
@@ -279,6 +288,9 @@ mod tests {
             start_time: Instant::now(),
             client_identity: None,
             rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::Matched {
                 pattern: Arc::from("/api"),
@@ -310,6 +322,9 @@ mod tests {
             start_time: Instant::now(),
             client_identity: None,
             rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-1".parse().unwrap(),

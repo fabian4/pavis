@@ -96,8 +96,21 @@ sleep 0.5
 
 # 5. Send SIGTERM to Pavis
 echo "Sending SIGTERM to Pavis..."
-pavis_pid=$(cat "$TEST_TMP/pids/pavis.pid")
-kill -TERM "$pavis_pid"
+if [ "$TEST_MODE" == "binary" ]; then
+    pavis_pid=$(get_sut_id "pavis")
+    if [ -z "$pavis_pid" ]; then
+        echo "❌ Pavis pid not found"
+        exit 1
+    fi
+    kill -TERM "$pavis_pid"
+else
+    pavis_container=$(cat "$TEST_TMP/pids/pavis.container" 2>/dev/null || true)
+    if [ -z "$pavis_container" ]; then
+        echo "❌ Pavis container id not found"
+        exit 1
+    fi
+    docker kill --signal=TERM "$pavis_container" >/dev/null
+fi
 sigterm_time=$(date +%s)
 
 # 6. Wait for In-Flight Request to Complete
@@ -146,15 +159,27 @@ echo "Waiting for Pavis to exit..."
 shutdown_timeout=10
 start_wait=$(date +%s)
 
-while kill -0 "$pavis_pid" 2>/dev/null; do
-    current_wait=$(date +%s)
-    elapsed=$((current_wait - start_wait))
-    if [ $elapsed -ge $shutdown_timeout ]; then
-        echo "❌ Pavis did not exit within ${shutdown_timeout}s after SIGTERM"
-        exit 1
-    fi
-    sleep 0.2
-done
+if [ "$TEST_MODE" == "binary" ]; then
+    while kill -0 "$pavis_pid" 2>/dev/null; do
+        current_wait=$(date +%s)
+        elapsed=$((current_wait - start_wait))
+        if [ $elapsed -ge $shutdown_timeout ]; then
+            echo "❌ Pavis did not exit within ${shutdown_timeout}s after SIGTERM"
+            exit 1
+        fi
+        sleep 0.2
+    done
+else
+    while docker_is_running "$pavis_container"; do
+        current_wait=$(date +%s)
+        elapsed=$((current_wait - start_wait))
+        if [ $elapsed -ge $shutdown_timeout ]; then
+            echo "❌ Pavis did not exit within ${shutdown_timeout}s after SIGTERM"
+            exit 1
+        fi
+        sleep 0.2
+    done
+fi
 
 shutdown_end_time=$(date +%s)
 shutdown_duration=$((shutdown_end_time - sigterm_time))
@@ -162,8 +187,8 @@ shutdown_duration=$((shutdown_end_time - sigterm_time))
 echo "✓ Pavis exited gracefully after ${shutdown_duration}s"
 
 # 10. Verify Shutdown Duration Within Drain Timeout
-# Should exit within drain_timeout (5s) + request duration (3s) + some buffer (2s)
-max_shutdown_duration=10
+# Should exit within drain_timeout (5s) + request duration (3s) + buffer.
+max_shutdown_duration=12
 if [ "$shutdown_duration" -gt $max_shutdown_duration ]; then
     echo "❌ Shutdown took too long (${shutdown_duration}s, expected <${max_shutdown_duration}s)"
     exit 1

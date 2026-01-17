@@ -329,7 +329,7 @@ mod tests {
     #[tokio::test]
     async fn access_log_emits_entry_for_request() {
         use crate::proxy::context::{RoutePattern, RouterContext, TracingSpan, UpstreamTiming};
-        use pavis_core::{HeadersPolicy, UpstreamName};
+        use pavis_core::{HeadersPolicy, RetryPolicy, Timeout, UpstreamName};
         use std::sync::Arc;
 
         let (access_log, mut worker) = AccessLog::new(&AccessLogPolicy::Stdout);
@@ -352,6 +352,9 @@ mod tests {
             start_time: std::time::Instant::now(),
             client_identity: None,
             rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::Matched {
                 pattern: Arc::from("/api/*"),

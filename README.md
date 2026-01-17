@@ -64,7 +64,7 @@ The Runtime is deliberately constrained to be a pure execution mechanism. It per
 *   **TLS Termination**: Server-side TLS with strict file-based certificates (OpenSSL/BoringSSL backend only).
 *   **Upstream TLS Origination**: Client-side TLS with hostname verification (system CA bundle only with current rustls backend).
 *   **Observability**: Prometheus metrics with cardinality controls, structured access logging, and distributed tracing (OTLP).
-*   **Resilience**: Active health checks, passive outlier ejection, and circuit breaker caps.
+*   **Resilience**: Active health checks, passive outlier ejection, circuit breaker caps, retries, and per-try timeouts.
 *   **Graceful Shutdown**: Configurable drain timeout for in-flight requests on SIGTERM/SIGINT.
 *   **Admin API**: Read-only HTTP endpoints for health checks and runtime statistics.
 
@@ -150,7 +150,6 @@ These are upstream limitations in Pingora. Pavis does not implement local workar
 
 The following items represent the planned architectural direction and are not guaranteed for immediate release. See [ROADMAP.md](./ROADMAP.md) for active tracking.
 
-*   **Resilience**: Retries and per-try timeouts.
 *   **Identity**: mTLS with SPIFFE ID extraction.
 *   **Security**: RBAC with deny-by-default policies.
 *   **xDS**: Compiling Envoy xDS resources into frozen `.pvs` artifacts.
@@ -184,10 +183,12 @@ Preliminary benchmarks show Pavis performs competitively with Nginx and Envoy in
 
 On Linux, the workstation benchmark profile uses `taskset` for CPU pinning and applies memory limits; on non-Linux hosts the runner logs a warning and proceeds without pinning or memory limits.
 Standalone benchmark cases default to `bench/docker-compose.yaml` and source `bench/scripts/pretty.sh` for consistent output formatting.
+Loadgen artifacts record latency percentiles under `latency_ms` in `loadgen.txt.json` (legacy flat `p*_ms` fields are still accepted by validation).
 
 ## 🧪 Testing
 
 Run the E2E suites with `./tests/run.sh` (optionally scoping to a suite or case). The runner writes a run-scoped `tests/temp/context.env` and copies it into each case `TEST_TMP` directory for reproducible debugging context.
+Docker-mode tests default the mock upstream image to `pavis-mock-upstream:local` (override with `UPSTREAM_IMAGE`).
 
 ## ⚠️ Project Status
 

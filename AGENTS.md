@@ -8,17 +8,17 @@
 ├─ Classify: Trivial / Moderate / Complex
 │   │
 │   ├─ Trivial
-│   │   └─→ Execute → Validate (make ci-local) → Update docs (MANDATORY) → Update docs/plan/**
+│   │   └─→ Execute → Validate (make ci-local)
 │   │
 │   └─ Moderate / Complex
 │       └─→ Plan Mode (include doc updates) → Get User Approval → Code Mode →
-│           Validate (make ci-local) → Update docs (MANDATORY) → Update docs/plan/**
+│           Validate (make ci-local)
 │
-├─ Documentation is ALWAYS required after ANY code change:
-│   • ARCHITECTURE.md (protocol/architectural changes)
-│   • README.md (user-facing features/API changes)
-│   • ROADMAP.md (completed milestones, refresh summary)
-│   • docs/FEATURES.md (new features, status updates, dropped features)
+├─ Documentation updates are only required when explicitly requested by the user:
+│   • ARCHITECTURE.md
+│   • README.md
+│   • ROADMAP.md
+│   • docs/FEATURES.md
 │   • Code docs (//!, ///, inline comments)
 │   • Test docs (e2e/bench test rationale when tests change/add/remove)
 │
@@ -105,20 +105,20 @@ Every agent MUST adhere to the "Zero-Option" configuration philosophy when modif
     - A Plan must include: Affected files, logic changes, dependency impacts, verification steps, **and documentation updates required**.
     - Exit Condition: User approval of the proposed strategy. For cases where a single, clearly superior strategy is proposed and the user clearly accepts it, this constitutes approval.
 
-- **Code Mode**: Responsible for implementation, testing, CI validation, **and documentation updates**.
+- **Code Mode**: Responsible for implementation, testing, and CI validation. Documentation updates only when requested by the user.
     - Trigger: Approval of the Plan for Moderate/Complex tasks, or direct identification of a Trivial task.
     - Responsibility: Atomic application of changes and adherence to the Code Change Checklist.
     - **Completion Criteria**: Implementation is NOT complete until:
       1. Code changes are implemented and tested
       2. `make ci-local` passes successfully
-      3. Relevant documentation is updated (ARCHITECTURE.md, README.md, ROADMAP.md, docs/FEATURES.md, code docs, test docs for e2e/bench changes)
-      4. Execution plan status is updated in `docs/plan/**`
+      3. Any user-requested documentation updates are complete
+      4. Any user-requested plan status updates are complete
 
 ## Execution Planning & Task Tracking
 
-- **Location**: All active execution plans MUST reside in `docs/plan/**`.
-- **Adherence**: Agents MUST strictly follow the steps outlined in the execution plan.
-- **Status Updates**: Agents MUST update the task status (e.g., `[ ]` to `[x]`) in the relevant plan file as soon as a task is completed.
+- **Location**: Execution plans in `docs/plan/**` are only used when explicitly requested by the user.
+- **Adherence**: If a user requests a plan, follow the steps outlined in that plan.
+- **Status Updates**: Update plan status only when a user requests use of `docs/plan/**`.
 
 ### Execution Plans vs. TodoWrite Tool
 

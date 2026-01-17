@@ -205,12 +205,21 @@ Tests comprehensive routing semantics in single artifact:
 
 **Category**: Resilience
 **Contracts**: (timeout enforcement)
-**Maturity**: N/A
-**Status**: SKIPPED (feature not implemented in runtime)
+**Maturity**: L3
 
-**Intent**: Validate timeout enforcement per upstream configuration.
+**Scenario**:
+1. Start with route timeout of 500ms; `/delay?ms=100` should succeed.
+2. Publish new config with route timeout tightened to 50ms.
+3. Send `/delay?ms=200` and expect a fast failure after reload.
 
-**Assessment**: N/A. Test design ready; blocked by unimplemented feature.
+**Oracle**:
+- HTTP status code and request latency
+
+**Assertions**:
+- V1: `/delay?ms=100` returns 200
+- V2: `/delay?ms=200` fails quickly after reload
+
+**Assessment**: PASS. Confirms runtime enforces route timeouts and respects tightened reloads.
 
 ---
 
@@ -218,12 +227,20 @@ Tests comprehensive routing semantics in single artifact:
 
 **Category**: Resilience
 **Contracts**: (retry policy execution)
-**Maturity**: N/A
-**Status**: SKIPPED (feature not implemented in runtime)
+**Maturity**: L3
 
-**Intent**: Validate retry policy execution per upstream configuration.
+**Scenario**:
+1. Configure upstream with one dead endpoint and one healthy endpoint.
+2. Enable retry policy with `retry_on: ["connect_failure"]`.
+3. Send `/echo` and expect a successful retry to the healthy backend.
 
-**Assessment**: N/A. Test design ready; blocked by unimplemented feature.
+**Oracle**:
+- JSON `instance_id` from `/echo`
+
+**Assertions**:
+- Request succeeds and returns `instance_id = "backend-v1"`
+
+**Assessment**: PASS. Confirms retry-on-connect-failure behavior.
 
 ---
 
@@ -419,12 +436,21 @@ Tests comprehensive routing semantics in single artifact:
 
 **Category**: Observability
 **Contracts**: (structured access logging)
-**Maturity**: N/A
-**Status**: SKIPPED (binary mode access log verification inconsistent due to flush/sync timing)
+**Maturity**: L3
 
-**Intent**: Verify structured access logging to file.
+**Scenario**:
+1. Start pavis with access log file configured.
+2. Send V1 traffic to backend-v1.
+3. Reload to backend-v2 via mock relay.
+4. Send V2 traffic and wait for access log flush.
 
-**Assessment**: N/A. Implementation issue (not test design gap).
+**Oracle**:
+- Access log file contents
+
+**Assertions**:
+- Access log contains entries for `upstream="backend"` and `upstream="backend-v2"`.
+
+**Assessment**: PASS. Confirms access log persistence across reloads and file flush behavior.
 
 ---
 
@@ -432,12 +458,22 @@ Tests comprehensive routing semantics in single artifact:
 
 **Category**: Observability
 **Contracts**: (W3C trace context propagation)
-**Maturity**: N/A
-**Status**: SKIPPED (dynamic tracing sampling updates not applied reliably)
+**Maturity**: L3
 
-**Intent**: Verify W3C trace context propagation to upstreams.
+**Scenario**:
+1. Start pavis with tracing enabled (sampling 100).
+2. Send request and confirm `traceparent` reaches upstream.
+3. Restart pavis with tracing disabled (sampling 0).
+4. Send request and confirm `traceparent` is not injected.
 
-**Assessment**: N/A. Implementation issue (not test design gap).
+**Oracle**:
+- Upstream echo headers
+
+**Assertions**:
+- Tracing enabled: `traceparent` header present.
+- Tracing disabled: `traceparent` header absent.
+
+**Assessment**: PASS. Confirms trace context injection is gated by tracing policy.
 
 ---
 
@@ -445,12 +481,24 @@ Tests comprehensive routing semantics in single artifact:
 
 **Category**: Observability
 **Contracts**: (cross-signal consistency)
-**Maturity**: N/A
-**Status**: SKIPPED (trace ID propagation check failing in binary mode)
+**Maturity**: L3
 
-**Intent**: Verify metrics, access logs, and response headers agree on request identifiers.
+**Scenario**:
+1. Start pavis with metrics, access log, and tracing enabled.
+2. Send a request to `/consistent` and capture upstream echo.
+3. Wait for access log flush and scrape metrics.
 
-**Assessment**: N/A. Implementation issue (not test design gap).
+**Oracle**:
+- Upstream echo headers
+- Access log entries
+- Prometheus metrics output
+
+**Assertions**:
+- `traceparent` header present in upstream echo.
+- Access log entry recorded for `/consistent` with upstream `backend-consistent`.
+- Metrics include `pavis_http_requests_total{route="/consistent",status="200",upstream="backend-consistent"} 1`.
+
+**Assessment**: PASS. Confirms cross-signal consistency for a single request.
 
 ---
 
@@ -556,8 +604,6 @@ Tests comprehensive routing semantics in single artifact:
 
 **Weak or Partially Covered Areas**:
 - **TLS/mTLS**: Blocked by rustls backend (7 cases skipped)
-- **Timeout/Retry policies**: Feature not implemented (2 cases skipped)
-- **Access logs and tracing**: Implementation timing issues (3 cases skipped)
 
 ---
 
@@ -565,35 +611,22 @@ Tests comprehensive routing semantics in single artifact:
 
 ### Short-Term (Must Address)
 
-1. **Implement timeout/retry policies in runtime**:
-   - Unblock `50_resilience_timeout` and `51_resilience_retry`
-   - Critical for production resilience
-
-2. **Resolve access log flush/sync timing**:
-   - Fix binary mode access log buffering issues
-   - Unblock `71_obs_access_log`
-
-3. **Fix trace ID propagation in binary mode**:
-   - Diagnose and fix trace context propagation failures
-   - Unblock `72_obs_tracing_context` and `80_obs_cross_consistency`
+1. **Stabilize TLS/mTLS coverage**:
+   - Migrate to a TLS backend with per-peer CA and client cert support
+   - Unblock 7 TLS/mTLS test cases
 
 ### Mid-Term (Should Improve)
 
-4. **Migrate to TLS backend supporting per-peer CA**:
-   - Replace rustls or add per-peer CA support
-   - Unblock 7 TLS/mTLS test cases
-   - Critical for production security features
-
-5. **Add negative resilience tests**:
+2. **Add negative resilience tests**:
    - Test outlier detection with partial failures (not just consecutive)
    - Test circuit breaker recovery after backoff
 
 ### Long-Term (Optional Enhancements)
 
-6. **Weighted routing with probabilistic splits**:
+3. **Weighted routing with probabilistic splits**:
    - Add statistical validation for 50/50 or 70/30 splits (not just 100/0)
    - Requires large sample sizes (N > 1000) for statistical confidence
 
-7. **Concurrent reload stress test**:
+4. **Concurrent reload stress test**:
    - Publish V1 → V2 → V3 → ... → V10 rapidly while sending sustained traffic
    - Validate zero-drop across multiple rapid transitions

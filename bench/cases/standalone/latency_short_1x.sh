@@ -233,63 +233,14 @@ write_meta_json() {
   local proxy_image_id
   local backend_digest
   local proxy_digest
-  local kernel
-  local cpu_model
-  local cpu_governor
-  local git_sha
-  local bench_profile
-  local bench_mode
-  local bench_payload_size
-  local bench_tls
-  local bench_metrics
-  local backend_cpuset
-  local proxy_cpuset
-  local bench_docker_compose
-  local bench_host_cores
-  local bench_host_cpuset_effective
-  local bench_host_mem_total
-  local bench_proxy_cpu_limit
-  local bench_proxy_mem_limit
 
   backend_image_id=$(container_image_id "$BACKEND_CONTAINER")
   proxy_image_id=$(container_image_id "$PROXY_CONTAINER")
   backend_digest=$(container_image_digest "$BACKEND_CONTAINER")
   proxy_digest=$(container_image_digest "$PROXY_CONTAINER")
-  kernel=$(uname -r)
-
-  # CPU model - handle both Linux and macOS
-  cpu_model="unknown"
-  if [ -r /proc/cpuinfo ]; then
-    cpu_model=$(awk -F: '/model name/ {print $2; exit}' /proc/cpuinfo | sed 's/^ *//')
-  elif command -v sysctl >/dev/null 2>&1; then
-    cpu_model=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
-  fi
-
-  cpu_governor="unknown"
-  if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
-    cpu_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)
-  fi
-  git_sha=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "unknown")
-  bench_profile="${BENCH_PROFILE:-}"
-  bench_mode="${BENCH_MODE:-}"
-  bench_payload_size="${BENCH_PAYLOAD_SIZE:-}"
-  bench_tls="${BENCH_TLS:-}"
-  bench_metrics="${BENCH_METRICS:-}"
-  backend_cpuset="${BACKEND_CPUSET:-}"
-  proxy_cpuset="${PROXY_CPUSET:-}"
-  bench_docker_compose="${BENCH_DOCKER_COMPOSE:-}"
-  bench_host_cores="${BENCH_HOST_CORES:-}"
-  bench_host_cpuset_effective="${BENCH_HOST_CPUSET_EFFECTIVE:-}"
-  bench_host_mem_total="${BENCH_HOST_MEM_TOTAL:-}"
-  bench_proxy_cpu_limit="${BENCH_PROXY_CPU_LIMIT:-}"
-  bench_proxy_mem_limit="${BENCH_PROXY_MEM_LIMIT:-}"
-
-  local timestamp
-  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
   cat > "$outfile" <<JSON
 {
-  "timestamp": $(json_string "$timestamp"),
   "case": $(json_string "$CASE_NAME"),
   "proxy": $(json_string "$PROXY"),
   "backend_container": $(json_string "$BACKEND_CONTAINER"),
@@ -298,23 +249,6 @@ write_meta_json() {
   "proxy_image_id": $(json_string "$proxy_image_id"),
   "backend_image_digest": $(json_string "$backend_digest"),
   "proxy_image_digest": $(json_string "$proxy_digest"),
-  "kernel": $(json_string "$kernel"),
-  "cpu_model": $(json_string "$cpu_model"),
-  "cpu_governor": $(json_string "$cpu_governor"),
-  "git_sha": $(json_string "$git_sha"),
-  "bench_profile": $(json_string "$bench_profile"),
-  "bench_mode": $(json_string "$bench_mode"),
-  "bench_payload_size": $(json_string "$bench_payload_size"),
-  "bench_tls": $(json_string "$bench_tls"),
-  "bench_metrics": $(json_string "$bench_metrics"),
-  "backend_cpuset": $(json_string "$backend_cpuset"),
-  "proxy_cpuset": $(json_string "$proxy_cpuset"),
-  "bench_docker_compose": $(json_string "$bench_docker_compose"),
-  "bench_host_cores": $(json_string "$bench_host_cores"),
-  "bench_host_cpuset_effective": $(json_string "$bench_host_cpuset_effective"),
-  "bench_host_mem_total": $(json_string "$bench_host_mem_total"),
-  "bench_proxy_cpu_limit": $(json_string "$bench_proxy_cpu_limit"),
-  "bench_proxy_mem_limit": $(json_string "$bench_proxy_mem_limit"),
   "target_rps": $(json_number_or_null "$TARGET_RPS")
 }
 JSON

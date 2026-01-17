@@ -23,6 +23,7 @@ export MOCK_RELAY_BIN=${MOCK_RELAY_BIN:-$PROJECT_ROOT/target/release/pavis-mock-
 export PAVIS_IMAGE=${PAVIS_IMAGE:-pavis:local}
 export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:local}
 export MOCK_RELAY_IMAGE=${MOCK_RELAY_IMAGE:-pavis-mock-relay:local}
+export UPSTREAM_IMAGE=${UPSTREAM_IMAGE:-pavis-mock-upstream:local}
 export UPSTREAM_HTTP_PORT_V1=${UPSTREAM_HTTP_PORT_V1:-8081}
 export UPSTREAM_HTTP_PORT_V2=${UPSTREAM_HTTP_PORT_V2:-8082}
 export UPSTREAM_HTTPS_PORT_V1=${UPSTREAM_HTTPS_PORT_V1:-8443}

@@ -223,8 +223,8 @@ Defines how requests are routed to upstreams.
             - `!regex`: Matches the path against a regular expression.
                 - **path** (string, required): Regex pattern.
     - **timeout** (duration, optional): Request timeout (e.g., `"30s"`).
-        - **Default**: Disabled (inherits upstream or system defaults).
-    - **retry** (object, optional): Retry policy.
+        - **Default**: Disabled (no timeout).
+    - **retry** (object, optional): Retry policy (enforced by the runtime).
         - **attempts** (integer, required): Number of retry attempts.
         - **retry_on** (list of string, required): Conditions to trigger retry.
             - **Allowed values**: `5xx`, `connect_failure`, `reset`, `refused`.
