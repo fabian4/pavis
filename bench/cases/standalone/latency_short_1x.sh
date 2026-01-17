@@ -23,10 +23,12 @@ BACKEND_SERVICE="${BACKEND_SERVICE:-bench-upstream}"
 BACKEND_CONTAINER="${BACKEND_CONTAINER:-bench-upstream}"
 BACKEND_PORT="${BACKEND_PORT:-8001}"
 PRETTY_OUTPUT="${ROOT_DIR}/bench/scripts/pretty.sh"
-if [ -f "$PRETTY_OUTPUT" ]; then
-  # shellcheck disable=SC1090
-  source "$PRETTY_OUTPUT"
+if [ ! -f "$PRETTY_OUTPUT" ]; then
+  echo "error: required file not found: $PRETTY_OUTPUT" >&2
+  exit 1
 fi
+# shellcheck disable=SC1090
+source "$PRETTY_OUTPUT"
 
 PROXY="${PROXY:-pavis}"
 PAVIS_PORT="${PAVIS_PORT:-8080}"
