@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bench/scripts/utils.sh
 source "$SCRIPT_DIR/utils.sh"
+# shellcheck source=scripts/lib/contract.sh
+source "$SCRIPT_DIR/../../scripts/lib/contract.sh"
 
 run_benchmark() {
   load_persisted_env
@@ -12,6 +14,7 @@ run_benchmark() {
   : "${BENCH_OUTPUT_DIR:?}"
   : "${BENCH_PROXY:?}"
   local open_loop_cases="${BENCH_OPEN_LOOP_CASES:-latency_short_1x latency_extended_1x}"
+  local failed_cases=()
 
   # System mode uses different output directory structure
   local mode="${BENCH_MODE:-standalone}"
@@ -24,8 +27,15 @@ run_benchmark() {
   ensure_dir "$output_subdir"
 
   for case_name in $BENCH_CASES; do
-    run_case "$case_name" "$open_loop_cases"
+    if ! run_case "$case_name" "$open_loop_cases"; then
+      failed_cases+=("$case_name")
+    fi
   done
+
+  if [[ ${#failed_cases[@]} -gt 0 ]]; then
+    log_error "The following cases failed validation: ${failed_cases[*]}"
+    return 1
+  fi
 
   if [[ "$BENCH_DRY_RUN" == "1" || "$BENCH_DRY_RUN" == "true" ]]; then
     log_info "Dry-run mode enabled; skipping summary aggregation"
@@ -174,6 +184,8 @@ run_case() {
     fi
 
     echo "::group::${case_name} Case 🚀"
+    local case_status=0
+    set +e
     (
       export PROXY="$BENCH_PROXY"
       export DRY_RUN="$BENCH_DRY_RUN"
@@ -191,7 +203,35 @@ run_case() {
       export BENCH_LOADGEN_CPUSET="${BENCH_LOADGEN_CPUSET:-}"
       "$script_path"
     )
+    case_status=$?
+    set -e
     echo "::endgroup::"
+
+    # Copy run-level context.env to case output directory for artifact validation
+    local mode="${BENCH_MODE:-standalone}"
+    local run_context="${BENCH_OUTPUT_DIR}/${mode}/context.env"
+    local case_dir="${BENCH_OUTPUT_DIR}/${mode}/${BENCH_PROXY}/${case_name}${BENCH_CASE_SUFFIX:+__${BENCH_CASE_SUFFIX}}"
+    if [[ -f "$run_context" && -d "$case_dir" ]]; then
+      cp "$run_context" "$case_dir/context.env"
+      log_debug "Copied context.env to $case_dir"
+    fi
+
+    if [[ $case_status -ne 0 ]]; then
+      log_error "Case ${case_name} failed with exit code ${case_status}"
+      if [[ -d "$case_dir" ]]; then
+        touch "$case_dir/.validation_failed"
+      fi
+      return 1
+    fi
+
+    if [[ "$BENCH_DRY_RUN" != "1" && "$BENCH_DRY_RUN" != "true" ]]; then
+      if ! validate_benchmark_artifacts "$case_name" "$case_dir"; then
+        log_error "Artifact validation failed for $case_name"
+        touch "$case_dir/.validation_failed"
+        return 1
+      fi
+      log_debug "Artifact validation passed for $case_name"
+    fi
   done
 }
 

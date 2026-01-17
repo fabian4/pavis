@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# tests/lib/docker.sh
+# tests/scripts/docker.sh
 # Manages shared upstream infrastructure (either Docker Compose or local binaries).
 
 if [ -z "$PROJECT_ROOT" ]; then

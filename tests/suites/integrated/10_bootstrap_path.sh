@@ -5,10 +5,10 @@ set -e
 # Category: Smoke & Bootstrap
 # Invariants: I1 (End-to-End Publish), I2 (Hot Reload Pipeline)
 
-# shellcheck source=tests/lib/env.sh
-source "$(dirname "$0")/../../lib/env.sh"
-# shellcheck source=tests/lib/assert.sh
-source "$(dirname "$0")/../../lib/assert.sh"
+# shellcheck source=tests/scripts/env.sh
+source "$(dirname "$0")/../../scripts/env.sh"
+# shellcheck source=tests/scripts/assert.sh
+source "$(dirname "$0")/../../scripts/assert.sh"
 
 setup_test "smoke_01"
 cleanup_trap() { cleanup_test; }

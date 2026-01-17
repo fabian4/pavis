@@ -128,8 +128,8 @@ Every case script MUST follow this canonical structure:
 # Scenario: [Brief description of what is being tested]
 
 # 1. Imports
-source "$(dirname "$0")"/../../lib/env.sh"
-source "$(dirname "$0")"/../../lib/assert.sh"
+source "$(dirname "$0")"/../../scripts/env.sh"
+source "$(dirname "$0")"/../../scripts/assert.sh"
 
 # 2. Configuration & Inputs
 # Define variables or write config files relative to the case execution
@@ -186,6 +186,10 @@ Use the `run.sh` script:
 ./tests/run.sh pavis 10_bootstrap_static
 ./tests/run.sh integrated 10_bootstrap_path
 ```
+
+### Context Artifacts
+
+The runner writes a run-scoped `context.env` at `tests/temp/context.env` and copies it into each case's `TEST_TMP` directory. This file is shell-sourceable and captures the runtime context for debugging and audit.
 
 ---
 

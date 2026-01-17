@@ -11,15 +11,15 @@ export PROJECT_ROOT
 RUN_ID=${RUN_ID:-$(date +%s)}
 export RUN_ID
 
-# Source new libraries
-# shellcheck source=tests/lib/log.sh
-source "$SCRIPT_DIR/lib/log.sh"
-# shellcheck source=tests/lib/env.sh
-source "$SCRIPT_DIR/lib/env.sh"
-# shellcheck source=tests/lib/assert.sh
-source "$SCRIPT_DIR/lib/assert.sh"
-# shellcheck source=tests/lib/docker.sh
-source "$SCRIPT_DIR/lib/docker.sh"
+# Source libraries from tests/scripts
+# shellcheck source=tests/scripts/log.sh
+source "$SCRIPT_DIR/scripts/log.sh"
+# shellcheck source=tests/scripts/env.sh
+source "$SCRIPT_DIR/scripts/env.sh"
+# shellcheck source=tests/scripts/assert.sh
+source "$SCRIPT_DIR/scripts/assert.sh"
+# shellcheck source=tests/scripts/docker.sh
+source "$SCRIPT_DIR/scripts/docker.sh"
 
 # Globals for summary
 TOTAL_CASES=0
@@ -150,6 +150,16 @@ run_suite() {
 # Main Execution
 SUITE_TARGET="${1:-all}"
 SPECIFIC_CASE="${2:-}"
+export TEST_SUITE="$SUITE_TARGET"
+
+# Generate run-level context.env for observability and artifact validation
+TEST_OUTPUT_DIR="${SCRIPT_DIR}/temp"
+mkdir -p "$TEST_OUTPUT_DIR"
+if ! bash "${SCRIPT_DIR}/scripts/gen_context_env.sh" "$TEST_OUTPUT_DIR/context.env"; then
+    echo "❌ Failed to generate run-level context.env"
+    exit 1
+fi
+echo "Generated run-level context.env in $TEST_OUTPUT_DIR"
 
 if [ "$TEST_MODE" == "binary" ]; then
     log_group "🛠️ Build Binaries"

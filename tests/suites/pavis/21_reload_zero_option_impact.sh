@@ -6,10 +6,10 @@ set -e
 # Invariants: D (Zero-Option)
 # Description: Verify that fields removed from the config artifact are immediately removed from runtime behavior, proving no hidden defaults or state carry-over.
 
-# shellcheck source=tests/lib/env.sh
-source "$(dirname "$0")/../../lib/env.sh"
-# shellcheck source=tests/lib/assert.sh
-source "$(dirname "$0")/../../lib/assert.sh"
+# shellcheck source=tests/scripts/env.sh
+source "$(dirname "$0")/../../scripts/env.sh"
+# shellcheck source=tests/scripts/assert.sh
+source "$(dirname "$0")/../../scripts/assert.sh"
 
 setup_test "lifecycle_21"
 cleanup_trap() { cleanup_test; }

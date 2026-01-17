@@ -5,10 +5,10 @@ set -e
 # Category: Resilience
 # REASON: Validate passive outlier ejection on consecutive 5xx and re-admission after eject_duration.
 
-# shellcheck source=tests/lib/env.sh
-source "$(dirname "$0")/../../lib/env.sh"
-# shellcheck source=tests/lib/assert.sh
-source "$(dirname "$0")/../../lib/assert.sh"
+# shellcheck source=tests/scripts/env.sh
+source "$(dirname "$0")/../../scripts/env.sh"
+# shellcheck source=tests/scripts/assert.sh
+source "$(dirname "$0")/../../scripts/assert.sh"
 
 setup_test "resilience_outlier"
 cleanup_trap() { cleanup_test; }

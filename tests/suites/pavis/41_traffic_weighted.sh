@@ -5,10 +5,10 @@ set -e
 # Category: Traffic Behavior Under Reload
 # Invariants: A (No-Drop)
 
-# shellcheck source=tests/lib/env.sh
-source "$(dirname "$0")/../../lib/env.sh"
-# shellcheck source=tests/lib/assert.sh
-source "$(dirname "$0")/../../lib/assert.sh"
+# shellcheck source=tests/scripts/env.sh
+source "$(dirname "$0")/../../scripts/env.sh"
+# shellcheck source=tests/scripts/assert.sh
+source "$(dirname "$0")/../../scripts/assert.sh"
 
 setup_test "traffic_02"
 cleanup_trap() { cleanup_test; }

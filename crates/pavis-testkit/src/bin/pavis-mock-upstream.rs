@@ -8,6 +8,6 @@ async fn main() -> anyhow::Result<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
-    let args = UpstreamArgs::parse();
+    let args = UpstreamArgs::parse().resolve()?;
     server::run(args).await
 }

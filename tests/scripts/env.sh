@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# tests/lib/env.sh
+# tests/scripts/env.sh
 # Handles environment preparation, SUT lifecycle, and cleanup.
 
 # Ensure Project Root is set
@@ -8,6 +8,11 @@ if [ -z "$PROJECT_ROOT" ]; then
     PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
     export PROJECT_ROOT
 fi
+
+# Source shared primitives
+SCRIPT_LIB_DIR="$PROJECT_ROOT/scripts/lib"
+source "$SCRIPT_LIB_DIR/process.sh"
+source "$SCRIPT_LIB_DIR/docker.sh"
 
 export TEST_MODE=${TEST_MODE:-binary}
 export PAVIS_BIN=${PAVIS_BIN:-$PROJECT_ROOT/target/release/pavis}
@@ -40,27 +45,38 @@ setup_test() {
     mkdir -p "$TEST_TMP/pids"
     mkdir -p "$TEST_TMP/logs"
     mkdir -p "$TEST_TMP/config"
+
+    local run_context_env="${SCRIPT_DIR:-$PROJECT_ROOT/tests}/temp/context.env"
+    if [[ -f "$run_context_env" ]]; then
+        if ! cp "$run_context_env" "$TEST_TMP/context.env"; then
+            echo "WARN: Failed to copy context.env to $TEST_TMP"
+        elif [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
+            echo "Copied context.env to $TEST_TMP"
+        fi
+    fi
 }
 
 cleanup_test() {
     local exit_code=$?
     
-    # Kill processes
+    # Kill processes using kill_process_safe from scripts/lib/process.sh
     if [ -d "$TEST_TMP/pids" ]; then
         for pid_file in "$TEST_TMP/pids"/*.pid; do
             [ -e "$pid_file" ] || continue
             local pid
-            pid=$(cat "$pid_file")
-            if kill -0 "$pid" 2>/dev/null; then
-                kill -TERM "$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
+            pid=$(read_pid_file "$pid_file" 2>/dev/null)
+            if [[ -n "$pid" ]]; then
+                # Use kill_process_safe with 10s timeout
+                kill_process_safe "$pid" 10 true 2>/dev/null || true
             fi
         done
-        
+
         for container_file in "$TEST_TMP/pids"/*.container; do
             [ -e "$container_file" ] || continue
             local container_id
             container_id=$(cat "$container_file")
-            docker stop "$container_id" >/dev/null 2>&1 || true
+            # Use docker_cleanup_container from scripts/lib/docker.sh
+            docker_cleanup_container "$container_id" 10 2>/dev/null || true
         done
     fi
 
@@ -251,15 +267,13 @@ stop_sut() {
     local container_file="$TEST_TMP/pids/$name.container"
 
     if [ -f "$pid_file" ]; then
-        local pid
-        pid=$(cat "$pid_file")
-        kill -9 "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-        rm -f "$pid_file"
+        # Use kill_process_by_pidfile from scripts/lib/process.sh
+        kill_process_by_pidfile "$pid_file" 5 true 2>/dev/null || true
     elif [ -f "$container_file" ]; then
         local container_id
         container_id=$(cat "$container_file")
-        docker stop "$container_id" >/dev/null 2>&1 || true
+        # Use docker_cleanup_container from scripts/lib/docker.sh
+        docker_cleanup_container "$container_id" 5 2>/dev/null || true
         rm -f "$container_file"
     fi
 }
@@ -270,9 +284,15 @@ check_sut_alive() {
     local container_file="$TEST_TMP/pids/$name.container"
 
     if [ -f "$pid_file" ]; then
-        kill -0 "$(cat "$pid_file")" 2>/dev/null
+        # Use check_process_alive from scripts/lib/process.sh
+        local pid
+        pid=$(read_pid_file "$pid_file" 2>/dev/null) || return 1
+        check_process_alive "$pid"
     elif [ -f "$container_file" ]; then
-        [ "$(docker inspect -f '{{.State.Running}}' "$(cat "$container_file")" 2>/dev/null)" == "true" ]
+        # Use docker_is_running from scripts/lib/docker.sh
+        local container_id
+        container_id=$(cat "$container_file")
+        docker_is_running "$container_id"
     else
         return 1
     fi

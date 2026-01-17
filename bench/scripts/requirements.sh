@@ -27,7 +27,11 @@ check_requirements() {
   fi
 
   if [[ "${BENCH_PROFILE:-}" == "workstation" ]]; then
-    require_cmd taskset
+    if [[ "$(uname -s)" != "Linux" ]]; then
+      log_warn "CPU pinning and memory limits are Linux-only; skipping taskset checks"
+    else
+      require_cmd taskset
+    fi
   fi
 
   log_info "All required tools detected"

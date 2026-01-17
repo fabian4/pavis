@@ -119,6 +119,19 @@ The following rules are absolute consequences of the Frozen Data Plane.
     *   **Backward Compatibility:** Handled exclusively in the Codec. The Runtime is kept simple and does not contain compatibility shims for older artifact versions.
     *   **Immutability:** Once generated, the artifact represents a final, unchangeable state.
 
+## 4. Tooling Contracts (Bench/Test)
+
+Benchmark and test runners emit shell-sourceable `context.env` files to capture runtime context and eliminate silent failures:
+
+- **Bench Run-Scoped**: `bench/output/{mode}/context.env`
+- **Bench Case-Scoped**: `bench/output/{mode}/{proxy}/{case}/context.env`
+- **Test Run-Scoped**: `tests/temp/context.env`
+- **Test Case-Scoped**: `${TEST_TMP}/context.env`
+
+These artifacts are for observability and debugging; they do not affect runtime behavior or configuration semantics.
+On non-Linux hosts, benchmark CPU pinning and memory limits are skipped because `taskset` is unavailable; Linux workstation runs still require `taskset` to enforce pinning.
+Standalone benchmark case scripts default to `bench/docker-compose.yaml` and source `bench/scripts/pretty.sh` for shared formatting.
+
 ### 3.4 Frozen Runtime State
 
 The Runtime consumes a configuration where all policy decisions have been made at **compile time**.

@@ -1,9 +1,9 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 43/67
-- **Core Features**: 38/46
-- **Technical Debt**: 5/21
+- **Total**: 47/81
+- **Core Features**: 37/46
+- **Technical Debt**: 8/24
 
 > **Status**: Active
 > **Focus**: Phase 7 (Operational Lifecycle)
@@ -146,6 +146,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 - [x] **[Safety] Unit Testing Gaps**: Low confidence in edge cases for new features. (Trigger: Before Phase 4)
 - [x] **[Safety] Integration Testing**: Risk of state desync during reloads. (Trigger: Before Phase 4)
 - [x] **[Safety] E2E Testing**: No validation against real network targets/kernels. (Trigger: Before v1.0 Release)
+- [x] **[DX] Context Artifacts for Scripts**: Standardized `context.env` for benchmarks/tests with case-scoped copies. (Trigger: Phase 7)
 - [ ] **[Safety] Symlink Verification**: Verify ingest correctly follows symbolic links. (Trigger: Next Release)
 
 ### TD-2: Release Engineering & Safety
@@ -172,6 +173,8 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 - [ ] **[Arch] Stateful Resource Tracking**: Potential for stale endpoints if EDS/CDS desync. (Trigger: Multi-cluster deployments)
 
 ### TD-7: Bench TODO
+- [x] **[Bench] Non-Linux Pinning/Limit Bypass**: Allow benchmarks to run without `taskset` or memory limits on non-Linux hosts; warn when pinning/limits are skipped.
+- [x] **[Bench] Standalone Case Defaults**: Fix standalone case defaults for `bench/docker-compose.yaml` and `bench/scripts/pretty.sh`.
 - [ ] **[Bench] System / Kubernetes (kind) Mode**: Implement lifecycle-oriented benchmarks (Configuration Reload, Rollback, Recovery) in a full cluster context. (Planned: Post-Standalone stabilization)
 - [ ] **[Bench] Protocol & Payload Coverage**: Add TLS-on/TLS-off variants, HTTP/2/gRPC workloads, and large-payload/streaming cases so production traffic patterns are exercised.
 - [ ] **[Bench] Saturation Profiles**: Implement a combined high-concurrency + open-loop saturation case and the memory-limited resource profile promised in the methodology.

@@ -316,36 +316,40 @@ setup_environment_standalone() {
   fi
 
   if [[ "${BENCH_PROFILE:-}" == "workstation" ]]; then
-    require_cmd taskset
-    if [[ -z "${BACKEND_CPUSET:-}" || -z "${PROXY_CPUSET:-}" || -z "${BENCH_LOADGEN_CPUSET:-}" ]]; then
-      exit_with_error "CPU pinning is required for BENCH_PROFILE=workstation (set BACKEND_CPUSET/PROXY_CPUSET/BENCH_LOADGEN_CPUSET)"
-    fi
-    local backend_cpu_count
-    local proxy_cpu_count
-    local loadgen_cpu_count
-    backend_cpu_count=$(count_cpuset "$BACKEND_CPUSET")
-    proxy_cpu_count=$(count_cpuset "$PROXY_CPUSET")
-    loadgen_cpu_count=$(count_cpuset "$BENCH_LOADGEN_CPUSET")
-    if [[ "$backend_cpu_count" != "1" || "$proxy_cpu_count" != "2" || "$loadgen_cpu_count" != "1" ]]; then
-      exit_with_error "Workstation profile requires 4 dedicated cores (1 loadgen, 1 upstream, 2 proxy)"
-    fi
-    if [[ -z "${CPU_LIMIT:-}" ]]; then
-      proxy_cpu_count=$(count_cpuset "$PROXY_CPUSET")
-      if [[ -n "$proxy_cpu_count" ]]; then
-        export CPU_LIMIT="$proxy_cpu_count"
-        persist_env_var "CPU_LIMIT" "$CPU_LIMIT"
+    if [[ "$(uname -s)" != "Linux" ]]; then
+      log_warn "CPU pinning and memory limits are Linux-only; skipping workstation pinning checks"
+    else
+      require_cmd taskset
+      if [[ -z "${BACKEND_CPUSET:-}" || -z "${PROXY_CPUSET:-}" || -z "${BENCH_LOADGEN_CPUSET:-}" ]]; then
+        exit_with_error "CPU pinning is required for BENCH_PROFILE=workstation (set BACKEND_CPUSET/PROXY_CPUSET/BENCH_LOADGEN_CPUSET)"
       fi
-    fi
-    if [[ -z "${BACKEND_CPU_LIMIT:-}" ]]; then
+      local backend_cpu_count
+      local proxy_cpu_count
+      local loadgen_cpu_count
       backend_cpu_count=$(count_cpuset "$BACKEND_CPUSET")
-      if [[ -n "$backend_cpu_count" ]]; then
-        export BACKEND_CPU_LIMIT="$backend_cpu_count"
-        persist_env_var "BACKEND_CPU_LIMIT" "$BACKEND_CPU_LIMIT"
+      proxy_cpu_count=$(count_cpuset "$PROXY_CPUSET")
+      loadgen_cpu_count=$(count_cpuset "$BENCH_LOADGEN_CPUSET")
+      if [[ "$backend_cpu_count" != "1" || "$proxy_cpu_count" != "2" || "$loadgen_cpu_count" != "1" ]]; then
+        exit_with_error "Workstation profile requires 4 dedicated cores (1 loadgen, 1 upstream, 2 proxy)"
       fi
-    fi
-    if [[ -z "${MEMORY_LIMIT:-}" ]]; then
-      export MEMORY_LIMIT="1G"
-      persist_env_var "MEMORY_LIMIT" "$MEMORY_LIMIT"
+      if [[ -z "${CPU_LIMIT:-}" ]]; then
+        proxy_cpu_count=$(count_cpuset "$PROXY_CPUSET")
+        if [[ -n "$proxy_cpu_count" ]]; then
+          export CPU_LIMIT="$proxy_cpu_count"
+          persist_env_var "CPU_LIMIT" "$CPU_LIMIT"
+        fi
+      fi
+      if [[ -z "${BACKEND_CPU_LIMIT:-}" ]]; then
+        backend_cpu_count=$(count_cpuset "$BACKEND_CPUSET")
+        if [[ -n "$backend_cpu_count" ]]; then
+          export BACKEND_CPU_LIMIT="$backend_cpu_count"
+          persist_env_var "BACKEND_CPU_LIMIT" "$BACKEND_CPU_LIMIT"
+        fi
+      fi
+      if [[ -z "${MEMORY_LIMIT:-}" ]]; then
+        export MEMORY_LIMIT="1G"
+        persist_env_var "MEMORY_LIMIT" "$MEMORY_LIMIT"
+      fi
     fi
   fi
 

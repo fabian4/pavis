@@ -25,17 +25,30 @@ const TEST_CASE_HEADER: &str = "x-pavis-test-case";
 #[derive(Clone)]
 pub struct SharedState {
     instance_id: Arc<String>,
+    global_delay_ms: Option<u64>,
 }
 
 impl SharedState {
     pub fn new(instance_id: String) -> Self {
         Self {
             instance_id: Arc::new(instance_id),
+            global_delay_ms: None,
+        }
+    }
+
+    pub fn with_delay(instance_id: String, delay_ms: Option<u64>) -> Self {
+        Self {
+            instance_id: Arc::new(instance_id),
+            global_delay_ms: delay_ms,
         }
     }
 
     pub fn instance_id(&self) -> &str {
         &self.instance_id
+    }
+
+    pub fn global_delay_ms(&self) -> Option<u64> {
+        self.global_delay_ms
     }
 }
 

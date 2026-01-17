@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/utils.sh"
 # shellcheck source=bench/scripts/k8s_helpers.sh
 source "$SCRIPT_DIR/k8s_helpers.sh"
+# Source shared HTTP primitives
+source "$SCRIPT_DIR/../../scripts/lib/http.sh"
 
 RELAY_NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 
@@ -77,21 +79,21 @@ publish_to_pavis_relay() {
   temp_response=$(mktemp --suffix=.txt)
 
   local http_code
-  local curl_status
   local attempt_version="$version"
   local attempt=0
 
   while (( attempt < 2 )); do
-    set +e
-    http_code=$(curl -s -o "$temp_response" -w "%{http_code}" -X POST "$relay_url" \
+    # Use http_request_full from scripts/lib/http.sh
+    http_code=$(http_request_full "$relay_url" "$temp_response" \
+      -X POST \
       -H "Content-Type: application/octet-stream" \
       -H "${PAVIS_VERSION_HEADER}: ${attempt_version}" \
       --data-binary "@${temp_pvs}")
-    curl_status=$?
-    set -e
 
-    if (( curl_status != 0 )); then
-      log_error "Failed to publish config (curl exit ${curl_status})"
+    local request_status=$?
+
+    if (( request_status != 0 )); then
+      log_error "Failed to publish config (HTTP request failed)"
       break
     fi
 

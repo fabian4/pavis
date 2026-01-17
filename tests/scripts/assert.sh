@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# tests/lib/assert.sh
+# tests/scripts/assert.sh
 # Assertions and Wait helpers.
 
 assert_body() {

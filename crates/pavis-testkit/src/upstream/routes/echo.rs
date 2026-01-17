@@ -16,6 +16,11 @@ pub async fn handler(
     ctx: TestContext,
     request: Request<Body>,
 ) -> Response {
+    // Apply global delay if configured
+    if let Some(delay_ms) = state.shared.global_delay_ms() {
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+    }
+
     let method = request.method().clone();
     let uri = request.uri().clone();
     let version = request.version();

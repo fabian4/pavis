@@ -182,6 +182,13 @@ Preliminary benchmarks show Pavis performs competitively with Nginx and Envoy in
 
 *Formal performance claims will only be published once our methodology is stabilized and variance is fully characterized.*
 
+On Linux, the workstation benchmark profile uses `taskset` for CPU pinning and applies memory limits; on non-Linux hosts the runner logs a warning and proceeds without pinning or memory limits.
+Standalone benchmark cases default to `bench/docker-compose.yaml` and source `bench/scripts/pretty.sh` for consistent output formatting.
+
+## 🧪 Testing
+
+Run the E2E suites with `./tests/run.sh` (optionally scoping to a suite or case). The runner writes a run-scoped `tests/temp/context.env` and copies it into each case `TEST_TMP` directory for reproducible debugging context.
+
 ## ⚠️ Project Status
 
 **Current Status**: ⚠️ **Pre-Alpha**

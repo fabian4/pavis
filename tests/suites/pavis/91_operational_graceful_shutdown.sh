@@ -5,10 +5,10 @@ set -e
 # Category: Operational Lifecycle (Phase 7)
 # Invariants: SIGTERM triggers graceful drain; in-flight requests complete
 
-# shellcheck source=tests/lib/env.sh
-source "$(dirname "$0")/../../lib/env.sh"
-# shellcheck source=tests/lib/assert.sh
-source "$(dirname "$0")/../../lib/assert.sh"
+# shellcheck source=tests/scripts/env.sh
+source "$(dirname "$0")/../../scripts/env.sh"
+# shellcheck source=tests/scripts/assert.sh
+source "$(dirname "$0")/../../scripts/assert.sh"
 
 setup_test "operational_graceful_shutdown"
 cleanup_trap() { cleanup_test; }
@@ -32,14 +32,13 @@ if [ "$TEST_MODE" == "binary" ]; then
         > "$TEST_TMP/logs/upstream_delay.log" 2>&1 &
     record_pid $! "upstream_delay"
 else
-    local docker_args=(
+    docker_args=(
         run -d --rm
         --user "$(id -u):$(id -g)"
         --network host
         -e RUST_LOG=debug
         -v "$TEST_TMP:$TEST_TMP:rw"
     )
-    local container_id
     container_id=$(docker "${docker_args[@]}" "$UPSTREAM_IMAGE" \
         --port "$UPSTREAM_DELAY_PORT" \
         --config "$TEST_TMP/upstream_config.json")

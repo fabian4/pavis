@@ -33,11 +33,11 @@ REQUEST_PATH="/fixed"
 
 # Config (single place to adjust service names/ports)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-COMPOSE_FILE="${COMPOSE_FILE:-${ROOT_DIR}/bench/docker-compose.yaml}"
+COMPOSE_FILE="${COMPOSE_FILE:-${ROOT_DIR}/docker-compose.yaml}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-bench-upstream}"
 BACKEND_CONTAINER="${BACKEND_CONTAINER:-bench-upstream}"
 BACKEND_PORT="${BACKEND_PORT:-8001}"
-PRETTY_OUTPUT="${ROOT_DIR}/bench/scripts/pretty.sh"
+PRETTY_OUTPUT="${ROOT_DIR}/scripts/pretty.sh"
 if [ ! -f "$PRETTY_OUTPUT" ]; then
   echo "error: required file not found: $PRETTY_OUTPUT" >&2
   exit 1

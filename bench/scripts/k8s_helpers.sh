@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bench/scripts/utils.sh
 source "$SCRIPT_DIR/utils.sh"
+# Source shared primitives
+source "$SCRIPT_DIR/../../scripts/lib/process.sh"
 
 # Wait for pod to be ready
 kubectl_wait_ready() {
@@ -58,8 +60,8 @@ kubectl_port_forward_background() {
   # Give port-forward time to establish
   sleep 2
 
-  # Verify it's still running
-  if ! kill -0 "$pf_pid" 2>/dev/null; then
+  # Verify it's still running using check_process_alive
+  if ! check_process_alive "$pf_pid"; then
     log_error "Port forward failed to start"
     return 1
   fi
@@ -71,10 +73,9 @@ kubectl_port_forward_background() {
 kubectl_stop_port_forward() {
   local pid="$1"
 
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-  fi
+  # Use kill_process_safe from scripts/lib/process.sh
+  # Short timeout (5s) since port-forward should stop quickly
+  kill_process_safe "$pid" 5 true 2>/dev/null || true
 }
 
 # Execute command in specific container of a pod

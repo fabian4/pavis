@@ -5,10 +5,10 @@ set -e
 # Category: Operational Lifecycle (Phase 7)
 # Invariants: Admin API endpoints provide read-only introspection
 
-# shellcheck source=tests/lib/env.sh
-source "$(dirname "$0")/../../lib/env.sh"
-# shellcheck source=tests/lib/assert.sh
-source "$(dirname "$0")/../../lib/assert.sh"
+# shellcheck source=tests/scripts/env.sh
+source "$(dirname "$0")/../../scripts/env.sh"
+# shellcheck source=tests/scripts/assert.sh
+source "$(dirname "$0")/../../scripts/assert.sh"
 
 setup_test "operational_admin_api"
 cleanup_trap() { cleanup_test; }

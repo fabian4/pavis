@@ -208,6 +208,30 @@ fn main() -> Result<()> {
         server_conf.threads = threads as usize;
     }
 
+    // Apply shutdown policy
+    match config.shutdown {
+        pavis_core::ShutdownPolicy::Disabled => {
+            // Use Pingora's default behavior (no graceful shutdown)
+            server_conf.grace_period_seconds = Some(0);
+        }
+        pavis_core::ShutdownPolicy::Enabled { drain_timeout } => {
+            // Convert drain_timeout from milliseconds to seconds
+            // drain_timeout.0 is NonZeroU32 in milliseconds
+            let timeout_ms = drain_timeout.0.get();
+            let timeout_secs = (timeout_ms / 1000).max(1); // At least 1 second
+            server_conf.grace_period_seconds = Some(timeout_secs as u64);
+            tracing::debug!(
+                grace_period_seconds = timeout_secs,
+                drain_timeout_ms = timeout_ms,
+                "Configured graceful shutdown with drain timeout"
+            );
+        }
+        #[allow(unreachable_patterns)]
+        _ => {
+            // Unknown shutdown policy, use default
+        }
+    }
+
     let ca_store = Arc::new(ArcSwap::from_pointee(create_root_store(&config)));
 
     let mut server = Server::new_with_opt_and_conf(None, server_conf);

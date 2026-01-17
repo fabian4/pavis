@@ -81,3 +81,11 @@ This document outlines the current and planned feature set, explicitly calling o
 | **Wasm Plugins** | ❌ | **Dropped**. High complexity/overhead. |
 | **Lua Scripting** | ❌ | **Dropped**. Unpredictable latency. |
 | **gRPC Transcoding** | ❌ | **Dropped**. Use a dedicated gateway or generated clients. |
+
+## 7. Tooling & QA
+
+| Feature | Status | Note / Alternative |
+| :--- | :---: | :--- |
+| **Benchmark/Test Context Artifacts** | ✅ | `context.env` contracts for run-scoped + case-scoped metadata. |
+| **Benchmark CPU Pinning & Memory Limits** | ⚠️ | Linux uses `taskset` and memory limits; non-Linux hosts skip both with a warning. |
+| **Benchmark Case Defaults** | ✅ | Standalone cases default to `bench/docker-compose.yaml` and `bench/scripts/pretty.sh`. |

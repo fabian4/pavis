@@ -12,6 +12,9 @@ set -euo pipefail
 #   PROFILE_FILTER: Optional bench_profile filter (e.g. github or workstation)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_LIB_DIR="$ROOT_DIR/../scripts/lib"
+source "$SCRIPT_LIB_DIR/json.sh"
+
 OUTPUT_DIR="${1:-${OUTPUT_DIR:-${ROOT_DIR}/output/standalone}}"
 SUMMARY_CSV="${OUTPUT_DIR}/summary.csv"
 MODE_FILTER="standalone"
@@ -248,29 +251,47 @@ parse_case() {
   local proxy_container=""
 
   # Extract meta information early for iteration rows
-  if [ -f "${case_dir}/meta.json" ]; then
-    timestamp=$(jq -r '.timestamp // empty' "${case_dir}/meta.json")
-    git_sha=$(jq -r '.git_sha // empty' "${case_dir}/meta.json")
-    target_rps=$(jq -r '.target_rps // empty' "${case_dir}/meta.json")
-    cpu_model=$(jq -r '.cpu_model // empty' "${case_dir}/meta.json")
-    kernel=$(jq -r '.kernel // empty' "${case_dir}/meta.json")
-    bench_profile=$(jq -r '.bench_profile // empty' "${case_dir}/meta.json")
-    bench_mode=$(jq -r '.bench_mode // empty' "${case_dir}/meta.json")
-    bench_payload_size=$(jq -r '.bench_payload_size // empty' "${case_dir}/meta.json")
-    bench_tls=$(jq -r '.bench_tls // empty' "${case_dir}/meta.json")
-    bench_metrics=$(jq -r '.bench_metrics // empty' "${case_dir}/meta.json")
-    backend_cpuset=$(jq -r '.backend_cpuset // empty' "${case_dir}/meta.json")
-    proxy_cpuset=$(jq -r '.proxy_cpuset // empty' "${case_dir}/meta.json")
-    bench_docker_compose=$(jq -r '.bench_docker_compose // empty' "${case_dir}/meta.json")
-    bench_host_cores=$(jq -r '.bench_host_cores // empty' "${case_dir}/meta.json")
-    bench_host_cpuset_effective=$(jq -r '.bench_host_cpuset_effective // empty' "${case_dir}/meta.json")
-    bench_host_mem_total=$(jq -r '.bench_host_mem_total // empty' "${case_dir}/meta.json")
-    bench_proxy_cpu_limit=$(jq -r '.bench_proxy_cpu_limit // empty' "${case_dir}/meta.json")
-    bench_proxy_mem_limit=$(jq -r '.bench_proxy_mem_limit // empty' "${case_dir}/meta.json")
-    backend_container=$(jq -r '.backend_container // empty' "${case_dir}/meta.json")
-    proxy_container=$(jq -r '.proxy_container // empty' "${case_dir}/meta.json")
+  # Prefer context.env (shell-sourceable, faster), fall back to meta.json
+  if [ -f "${case_dir}/context.env" ]; then
+    # shellcheck source=/dev/null
+    source "${case_dir}/context.env"
+    timestamp="${RUN_TIMESTAMP:-}"
+    git_sha="${GIT_SHA:-}"
+    cpu_model="${BENCH_HOST_CPU_MODEL:-}"
+    kernel="${BENCH_HOST_KERNEL:-}"
+    bench_profile="${BENCH_PROFILE:-}"
+    bench_mode="${BENCH_MODE:-}"
+    bench_payload_size="${BENCH_PAYLOAD_SIZE:-}"
+    bench_tls="${BENCH_TLS:-}"
+    bench_metrics="${BENCH_METRICS:-}"
+    backend_cpuset="${BACKEND_CPUSET:-}"
+    proxy_cpuset="${PROXY_CPUSET:-}"
+    bench_docker_compose="${BENCH_DOCKER_COMPOSE:-}"
+    bench_host_cores="${BENCH_HOST_CORES:-}"
+    bench_host_cpuset_effective="${BENCH_HOST_CPUSET_EFFECTIVE:-}"
+    bench_host_mem_total="${BENCH_HOST_MEM_TOTAL:-}"
+    bench_proxy_cpu_limit="${BENCH_PROXY_CPU_LIMIT:-}"
+    bench_proxy_mem_limit="${BENCH_PROXY_MEM_LIMIT:-}"
+    # Note: backend_container and proxy_container not in context.env, read from meta.json if needed
+    if [ -f "${case_dir}/meta.json" ]; then
+      backend_container=$(json_get "${case_dir}/meta.json" ".backend_container" "")
+      proxy_container=$(json_get "${case_dir}/meta.json" ".proxy_container" "")
+      target_rps=$(json_get "${case_dir}/meta.json" ".target_rps" "")
+    fi
+  elif [ -f "${case_dir}/meta.json" ]; then
+    # Legacy fallback: parse meta.json using json_get_multiple for efficiency
+    read -r timestamp git_sha target_rps cpu_model kernel bench_profile bench_mode \
+            bench_payload_size bench_tls bench_metrics backend_cpuset proxy_cpuset \
+            bench_docker_compose bench_host_cores bench_host_cpuset_effective \
+            bench_host_mem_total bench_proxy_cpu_limit bench_proxy_mem_limit \
+            backend_container proxy_container <<< \
+      "$(json_get_multiple "${case_dir}/meta.json" timestamp git_sha target_rps cpu_model kernel \
+                           bench_profile bench_mode bench_payload_size bench_tls bench_metrics \
+                           backend_cpuset proxy_cpuset bench_docker_compose bench_host_cores \
+                           bench_host_cpuset_effective bench_host_mem_total bench_proxy_cpu_limit \
+                           bench_proxy_mem_limit backend_container proxy_container)"
   else
-    echo "error: missing meta.json in ${case_dir} (required for profile/mode filtering)" >&2
+    echo "error: missing context.env and meta.json in ${case_dir} (required for profile/mode filtering)" >&2
     return 1
   fi
 

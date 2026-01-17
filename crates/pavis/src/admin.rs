@@ -56,13 +56,21 @@ impl AdminApiWorker {
         let state = self.state.load();
         let uptime_secs = self.start_time.elapsed().as_secs();
 
+        // Count total path routes across all virtual hosts
+        let total_routes: usize = state
+            .config
+            .routes
+            .iter()
+            .map(|vhost| vhost.paths.len())
+            .sum();
+
         let body = format!(
             r#"{{"version":"{}","uptime_seconds":{},"listeners":{},"upstreams":{},"routes":{}}}"#,
             env!("CARGO_PKG_VERSION"),
             uptime_secs,
             state.config.listeners.len(),
             state.config.upstreams.len(),
-            state.config.routes.len()
+            total_routes
         );
 
         format!(
@@ -143,12 +151,14 @@ impl Service for AdminApiWorker {
     async fn start_service(
         &mut self,
         _fds: Option<Arc<tokio::sync::Mutex<pingora::server::Fds>>>,
-        shutdown: watch::Receiver<bool>,
+        mut shutdown: watch::Receiver<bool>,
         _threads: usize,
     ) {
         match self.config {
             AdminConfig::Disabled => {
                 tracing::debug!("Admin API is disabled");
+                // Wait for shutdown signal and exit immediately
+                let _ = shutdown.changed().await;
             }
             AdminConfig::Enabled { addr } => {
                 if let Err(e) = self.run_server(addr, shutdown).await {
@@ -158,6 +168,8 @@ impl Service for AdminApiWorker {
             #[allow(unreachable_patterns)]
             _ => {
                 tracing::warn!("Unknown admin config, not starting admin API");
+                // Wait for shutdown signal and exit immediately
+                let _ = shutdown.changed().await;
             }
         }
     }

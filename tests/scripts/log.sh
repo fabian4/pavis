@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# tests/lib/log.sh
+# tests/scripts/log.sh
 # Handles logging, summary reporting, and GitHub Actions grouping.
 
 # Initialize timing

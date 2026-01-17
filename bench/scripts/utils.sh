@@ -7,32 +7,15 @@
 # shellcheck disable=SC2034
 BENCH_UTILS_LOADED=1
 
+# Source shared logging primitives from scripts/lib
+# Get absolute path to utils.sh directory, then navigate to project root
+UTILS_DIR_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BENCH_SCRIPTS_ROOT="$(cd "$UTILS_DIR_ABS/../.." && pwd)"
+# shellcheck source=scripts/lib/log.sh
+source "$BENCH_SCRIPTS_ROOT/scripts/lib/log.sh"
+
 _timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
-}
-
-_log() {
-  local level="$1"; shift
-  printf '[%s] %s\n' "$level" "$*"
-}
-
-log_info() {
-  _log INFO "$@"
-}
-
-log_warn() {
-  _log WARN "$@"
-}
-
-log_error() {
-  _log ERROR "$@" >&2
-}
-
-exit_with_error() {
-  local msg="$1"; shift || true
-  local code=${1:-1}
-  log_error "$msg"
-  exit "$code"
 }
 
 require_cmd() {

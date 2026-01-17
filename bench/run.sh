@@ -80,6 +80,21 @@ main() {
   validate_inputs "$@"
   bench_print_benchmark_header "$BENCH_PROXY" "$BENCH_CASES"
   setup_environment
+
+  # Generate run-level context.env for observability and artifact validation
+  local mode="${BENCH_MODE:-standalone}"
+  local run_output_dir="${BENCH_OUTPUT_DIR}/${mode}"
+  if [[ -d "$run_output_dir" ]]; then
+    log_info "Cleaning previous output: $run_output_dir"
+    rm -rf "$run_output_dir"
+  fi
+  mkdir -p "$run_output_dir"
+  if ! bash "${BENCH_SCRIPTS_DIR}/gen_context_env.sh" "$run_output_dir/context.env"; then
+    log_error "Failed to generate context.env"
+    exit 1
+  fi
+  log_info "Generated run-level context.env in $run_output_dir"
+
   run_benchmark
 
   if [[ "$BENCH_DRY_RUN" == "1" || "$BENCH_DRY_RUN" == "true" ]]; then

@@ -278,7 +278,7 @@
 ### Inventory
 - Total suites: 3
 - Total cases: 36
-- Runner and shared libraries: tests/run.sh, tests/lib/env.sh, tests/lib/assert.sh, tests/lib/docker.sh, tests/lib/log.sh
+- Runner and shared libraries: tests/run.sh, tests/scripts/env.sh, tests/scripts/assert.sh, tests/scripts/docker.sh, tests/scripts/log.sh
 
 ### Case Ledger
 - E2E-01
