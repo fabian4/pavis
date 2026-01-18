@@ -109,6 +109,34 @@ wait_for_port() {
     done
 }
 
+get_admin_version() {
+    local admin_url="$1"
+    pavis_curl_body "${admin_url}/stats" | python3 -c "import sys, json; print(json.load(sys.stdin).get('version',''))"
+}
+
+wait_for_admin_version() {
+    local admin_url="$1"
+    local expected="$2"
+    local timeout="${3:-10}"
+    local start_time
+    start_time=$(date +%s)
+
+    while true; do
+        local version
+        version=$(get_admin_version "$admin_url")
+        if [ "$version" = "$expected" ]; then
+            return 0
+        fi
+        local current_time
+        current_time=$(date +%s)
+        if [ $((current_time - start_time)) -ge "$timeout" ]; then
+            echo "Timeout waiting for admin version ${expected}"
+            return 1
+        fi
+        sleep 0.5
+    done
+}
+
 assert_eq() {
     local expected="$1"
     local actual="$2"

@@ -195,6 +195,23 @@ impl MetricsHandle {
         counter!("pavis_runtime_reload_count_total").increment(1);
     }
 
+    pub fn record_config_validation(&self, result: &str, reason: &str) {
+        counter!(
+            "pavis_config_validation_total",
+            "result" => result.to_string(),
+            "reason" => reason.to_string(),
+        )
+        .increment(1);
+    }
+
+    pub fn record_config_apply(&self, result: &str) {
+        counter!(
+            "pavis_config_apply_total",
+            "result" => result.to_string(),
+        )
+        .increment(1);
+    }
+
     pub fn record_access_log_dropped(&self) {
         counter!("pavis_telemetry_access_log_dropped_total").increment(1);
     }
@@ -239,6 +256,8 @@ mod tests {
             handle.decrement_active_connections();
             handle.update_config_stats("v1", 1024);
             handle.increment_reload_count();
+            handle.record_config_validation("ok", "none");
+            handle.record_config_apply("ok");
             handle.record_access_log_dropped();
             handle.record_tracing_export_error();
             handle.record_span_created();

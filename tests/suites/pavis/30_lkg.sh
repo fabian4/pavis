@@ -16,6 +16,7 @@ trap cleanup_trap EXIT
 
 PORT_PAVIS=$(get_free_port)
 PORT_RELAY=$(get_free_port)
+PORT_METRICS=$(get_free_port)
 
 run_mock_relay "$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
@@ -25,6 +26,8 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	listeners:
 	  - name: "default"
 	    address: "127.0.0.1:$PORT_PAVIS"
+	telemetry:
+	  metrics: "127.0.0.1:$PORT_METRICS"
 	upstreams:
 	  - name: "backend-v1"
 	    endpoints:
@@ -44,6 +47,51 @@ publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v1.pvs"
 cp "$TEST_TMP/config_v1.pvs" "$TEST_TMP/initial.pvs"
 run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
+wait_for_port "$PORT_METRICS" 5
+
+wait_for_log_match() {
+    local pattern="$1"
+    local retries=8
+    local backoff=0.25
+    for _ in $(seq 1 $retries); do
+        if [ -f "$TEST_TMP/logs/pavis.log" ] && grep -Eq "$pattern" "$TEST_TMP/logs/pavis.log"; then
+            return 0
+        fi
+        sleep "$backoff"
+        backoff=$(python3 - "$backoff" <<'PY'
+import sys
+val = float(sys.argv[1]) * 2
+print(val if val < 2.0 else 2.0)
+PY
+)
+    done
+    return 1
+}
+
+assert_metric_at_least() {
+    local pattern="$1"
+    local min="${2:-1}"
+    local retries=8
+    local backoff=0.25
+    for _ in $(seq 1 $retries); do
+        metrics=$(curl -s "http://127.0.0.1:$PORT_METRICS")
+        line=$(echo "$metrics" | grep -E "$pattern" | head -n 1)
+        if [ -n "$line" ]; then
+            value=$(echo "$line" | awk '{print $2}')
+            if awk -v v="$value" -v min="$min" 'BEGIN {exit !(v >= min)}'; then
+                return 0
+            fi
+        fi
+        sleep "$backoff"
+        backoff=$(python3 - "$backoff" <<'PY'
+import sys
+val = float(sys.argv[1]) * 2
+print(val if val < 2.0 else 2.0)
+PY
+)
+    done
+    return 1
+}
 
 assert_backend() {
     local expected="$1"
@@ -62,6 +110,12 @@ assert_backend "backend-v1"
 echo "THIS_IS_NOT_A_VALID_PVS_FILE_RANDOM_BYTES" > "$TEST_TMP/corrupt.pvs"
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/corrupt.pvs"
 sleep 2
+if ! wait_for_log_match 'event="?config_validation"?.*result="?fail"?.*reason="?parse"?'; then
+    echo "WARN: Missing config_validation parse failure log"
+fi
+if ! assert_metric_at_least 'pavis_config_validation_total\\{[^}]*result="fail"[^}]*reason="parse"[^}]*\\}'; then
+    echo "WARN: Missing config_validation parse failure metric"
+fi
 assert_backend "backend-v1"
 
 # --- Step 2: Incompatible artifact rejected ---
@@ -69,6 +123,8 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	listeners:
 	  - name: "default"
 	    address: "127.0.0.1:$PORT_PAVIS"
+	telemetry:
+	  metrics: "127.0.0.1:$PORT_METRICS"
 	upstreams:
 	  - name: "backend-v2"
 	    endpoints:
@@ -87,13 +143,50 @@ cp "$TEST_TMP/config_v2.pvs" "$TEST_TMP/config_v2_bad.pvs"
 python3 -c "with open('$TEST_TMP/config_v2_bad.pvs','r+b') as f: f.seek(4); f.write(b'\\xff')"
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2_bad.pvs"
 sleep 2
+if ! wait_for_log_match 'event="?config_validation"?.*result="?fail"?.*reason="?version"?'; then
+    echo "WARN: Missing config_validation version failure log"
+fi
+if ! assert_metric_at_least 'pavis_config_validation_total\\{[^}]*result="fail"[^}]*reason="version"[^}]*\\}'; then
+    echo "WARN: Missing config_validation version failure metric"
+fi
 assert_backend "backend-v1"
 
-# --- Step 3: Valid artifact still applies after failures ---
+# --- Step 3: Semantic validation failure rejected ---
+cat <<-EOF > "$TEST_TMP/config_v2_semantic.yaml"
+	listeners:
+	  - name: "default"
+	    address: "127.0.0.1:$PORT_PAVIS"
+	telemetry:
+	  metrics: "127.0.0.1:$PORT_METRICS"
+	upstreams:
+	  - name: "backend-v1"
+	    endpoints:
+	      - ip: "127.0.0.1"
+	        port: ${UPSTREAM_HTTP_PORT_V1}
+	routes:
+	  - host: "*"
+	    paths:
+	      - matcher: !prefix { path: "/" }
+	        destinations:
+	          - upstream: "missing-upstream"
+	            weight: 1
+EOF
+
+if gen_pvs "$TEST_TMP/config_v2_semantic.yaml" "$TEST_TMP/config_v2_semantic.pvs"; then
+    publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2_semantic.pvs"
+    sleep 2
+else
+    echo "INFO: Semantic config rejected at compile stage"
+fi
+assert_backend "backend-v1"
+
+# --- Step 4: Valid artifact still applies after failures ---
 cat <<-EOF > "$TEST_TMP/config_v3.yaml"
 	listeners:
 	  - name: "default"
 	    address: "127.0.0.1:$PORT_PAVIS"
+	telemetry:
+	  metrics: "127.0.0.1:$PORT_METRICS"
 	upstreams:
 	  - name: "backend-v3"
 	    endpoints:

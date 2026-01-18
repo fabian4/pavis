@@ -63,56 +63,110 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 ---
 
-### `20_reload_norestart`
+### `20_reload_contract_core`
 
 **Category**: Reload Semantics
-**Contracts**: A (No-Drop), C (Atomic Switch)
+**Contracts**: A (No-Drop), C (Atomic Switch), D (Zero-Option)
 **Maturity**: L3
 
 **Scenario**:
-1. Start relay and pavis with config V1 (routes to backend-v1)
-2. Validate initial routing
+1. Start relay and pavis with config V1 (backend-v1 + response header set)
+2. Validate initial routing and header presence
 3. Capture SUT process/container ID
-4. Spawn 200 concurrent requests in background
-5. Publish V2 (routes to backend-v2) while traffic flowing
+4. Spawn 200 requests in background
+5. Publish V2 (backend-v2 + header removed) while traffic flowing
 6. Wait for background requests to complete
+7. Confirm switch to V2 and header removal
 
 **Oracle**:
-- HTTP status codes from 200 concurrent requests
+- HTTP status codes from burst requests
 - Instance IDs from response bodies
+- Response headers from burst and post-switch requests
 - SUT process/container ID
 - Process liveness
 
 **Assertions**:
 - Zero failed requests (100% success rate)
 - Atomic switch: once V2 appears, V1 never appears again (sequential monotonicity)
+- Header removal: after switch, `X-Pavis-Version` absent
 - SUT process ID unchanged (no restart)
 - Process still alive after reload
 
-**Assessment**: PASS. Concurrent burst during transition proves zero-drop and atomic switch with sequential ordering validation.
+**Assessment**: PASS. Single reload proves zero-drop, atomic switch, and immediate removal of policy (no hidden defaults).
 
 ---
 
-### `21_reload_zero_option_impact`
+### `22_reload_storm`
 
 **Category**: Reload Semantics
-**Contracts**: D (Zero-Option)
+**Contracts**: A (No-Drop), C (Atomic Switch)
 **Maturity**: L3
 
 **Scenario**:
-1. Start with V1 config containing `response_headers.set_headers: X-Pavis-Version: v1`
-2. Validate header present
-3. Publish V2 with header policy completely removed
-4. Poll for header absence (up to 20 retries)
+1. Start with V1 (header `X-Pavis-Version: v1`, backend-v1)
+2. Run sustained traffic during a rapid publish storm V2..V10
+3. After each publish, wait for version marker to appear, then sample post-switch requests
 
 **Oracle**:
-- HTTP response headers from `/echo`
+- Response headers (`X-Pavis-Version`)
+- Upstream echo (`instance_id`)
+- Request success/failure
 
 **Assertions**:
-- V1: Header `X-Pavis-Version: v1` present
-- V2: Header `X-Pavis-Version` absent
+- Zero request failures during storm
+- Once a higher version is observed, older versions never reappear (monotonicity)
+- Per-request consistency: version marker aligns with upstream instance
 
-**Assessment**: PASS. Proves removed configuration fields are immediately removed from runtime behavior (no state carry-over or hidden defaults).
+**Assessment**: PASS. Stresses reload sequencing under load while preserving atomic, monotonic behavior.
+
+---
+
+### `23_reload_keepalive_atomic`
+
+**Category**: Reload Semantics
+**Contracts**: A (No-Drop), C (Atomic Switch)
+**Maturity**: L3
+
+**Scenario**:
+1. Start with V1 (header `X-Pavis-Version: v1`, backend-v1)
+2. Open a single keep-alive connection and issue one request
+3. Publish V2 (header `X-Pavis-Version: v2`, backend-v2)
+4. On the same connection, issue a series of post-reload requests
+
+**Oracle**:
+- Response headers (`X-Pavis-Version`)
+- Upstream echo (`instance_id`)
+- Connection continuity (no errors)
+
+**Assertions**:
+- First request shows v1 + backend-v1
+- Post-reload requests show only v2 + backend-v2
+- No connection error or forced drop during reload
+
+**Assessment**: PASS. Validates atomic switch behavior over a single keep-alive connection.
+
+---
+
+### `24_atomic_mid_request`
+
+**Category**: Reload Semantics
+**Contracts**: C (Atomic Switch)
+**Maturity**: L3
+
+**Scenario**:
+1. Start with V1 (header `X-Pavis-Version: v1`, backend-v1)
+2. Issue a slow request (`/delay?ms=1500`) and trigger reload to V2 mid-flight
+3. After completion, issue a post-reload request
+
+**Oracle**:
+- Response headers (`X-Pavis-Version`)
+- Delay response body (`delayed_ms`)
+
+**Assertions**:
+- In-flight response retains v1 header and correct delay body
+- Post-reload response returns v2 header
+
+**Assessment**: PASS. Ensures in-flight requests complete under the original config version.
 
 ---
 
@@ -126,7 +180,8 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 1. Start with valid V1 (backend-v1)
 2. **Test 1**: Publish corrupt artifact (random bytes), wait 2s, validate traffic
 3. **Test 2**: Publish incompatible artifact (corrupted PVS version byte), wait 2s, validate traffic
-4. **Test 3**: Publish valid V3 (backend-v3), poll for switch
+4. **Test 3**: Publish semantic-invalid artifact (missing upstream), wait 2s, validate traffic
+5. **Test 4**: Publish valid V3 (backend-v3), poll for switch
 5. Throughout: ensure runtime stays alive
 
 **Oracle**:
@@ -136,10 +191,62 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 **Assertions**:
 - After corrupt artifact: traffic still on backend-v1
 - After incompatible artifact: traffic still on backend-v1
+- After semantic-invalid artifact: traffic still on backend-v1
 - After valid V3: traffic switches to backend-v2 (V3 uses v2 port)
 - Runtime process never crashes
 
-**Assessment**: PASS. Unified LKG enforcement covering corrupt payloads and incompatible protocol versions. Sequential proof: reject → reject → recover.
+**Assessment**: PASS. Unified LKG enforcement covering corrupt payloads, incompatible protocol versions, and semantic-invalid artifacts. Sequential proof: reject → reject → reject → recover.
+
+---
+
+### `32_lkg_relay_unavailable`
+
+**Category**: Failure & LKG
+**Contracts**: B (LKG Preservation)
+**Maturity**: L3
+
+**Scenario**:
+1. Start with V1 (backend-v1) via mock relay
+2. Stop the relay and continue serving traffic
+3. Restart relay, publish V2 (backend-v2), and wait for recovery
+
+**Oracle**:
+- Upstream echo (`instance_id`)
+- Process liveness
+
+**Assertions**:
+- During relay outage, traffic remains on backend-v1
+- After relay restore, traffic switches to backend-v2
+- Runtime stays alive during outage
+
+**Assessment**: PASS. Confirms runtime resilience when control-plane is unavailable and recovery once it returns.
+
+---
+
+### `33_semantic_validation_matrix`
+
+**Category**: Failure & LKG
+**Contracts**: B (LKG Preservation)
+**Maturity**: L3
+
+**Scenario**:
+1. Start with V1 (backend-v1)
+2. Sequentially publish semantic-invalid configs:
+   - Missing upstream reference
+   - Invalid regex matcher
+   - Invalid circuit breaker limits
+   - Invalid outlier detection settings
+   - Invalid health check thresholds
+3. After each attempt, validate LKG traffic remains on backend-v1
+
+**Oracle**:
+- Upstream echo (`instance_id`)
+- Compile/publish outcome (informational)
+
+**Assertions**:
+- Each invalid config is rejected (compile or runtime) and traffic remains on backend-v1
+
+**Assessment**: PASS. Covers a matrix of semantic validation errors while preserving LKG.
 
 ---
 
@@ -403,32 +510,37 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `70_obs_metrics`
+### `70_obs_consistency`
 
 **Category**: Observability
 **Contracts**: D (Zero-Option)
 **Maturity**: L3
 
 **Scenario**:
-1. Start pavis with metrics endpoint on separate port
-2. Generate traffic: 2 requests to `/echo` (matched route)
-3. Scrape metrics, validate counters
-4. **Cardinality protection**: Send 2 requests to unmatched paths
-5. Validate unmatched paths NOT in metrics
-6. **Hot reload test**: Publish new config, send traffic, validate counter persistence
+1. Start pavis with metrics, access log, and tracing enabled via mock relay
+2. Generate traffic: 2 requests to `/echo` and 1 request to `/consistent`
+3. Verify upstream echo contains `traceparent`
+4. Wait for access log entry for `/consistent` and validate upstream + status
+5. Scrape metrics, validate counters for `/echo`, `/consistent`, and upstream total
+6. **Cardinality protection**: Send 2 requests to unmatched paths
+7. Validate unmatched paths NOT in metrics
+8. **Hot reload test**: Publish new config, wait for admin version change, send traffic, validate counter persistence
 
 **Oracle**:
+- Upstream echo headers
+- Access log entries
 - Prometheus metrics text format
-- Metric label values
-- Counter values
 
 **Assertions**:
+- `traceparent` header present in upstream echo
+- Access log entry recorded for `/consistent` with upstream `backend-consistent` and status 200
 - `pavis_http_requests_total{route="/echo", status="200"} 2`
-- `pavis_upstream_requests_total{upstream="backend", status="200"} 2`
+- `pavis_http_requests_total{route="/consistent", status="200"} 1`
+- `pavis_upstream_requests_total{upstream="backend-consistent", status="200"} 3`
 - Unmatched paths not present in metrics (no label explosion)
-- After hot reload: counter value = 3 (persistence)
+- After hot reload: `/echo` counter value = 3 (persistence)
 
-**Assessment**: PASS. Proves Prometheus metrics exposition, label-cardinality protection, and metric persistence across hot reload.
+**Assessment**: PASS. Proves cross-signal consistency, label-cardinality protection, and metric persistence across hot reload.
 
 ---
 
@@ -442,7 +554,8 @@ Tests comprehensive routing semantics in single artifact:
 1. Start pavis with access log file configured.
 2. Send V1 traffic to backend-v1.
 3. Reload to backend-v2 via mock relay.
-4. Send V2 traffic and wait for access log flush.
+4. Send V2 traffic and wait for access log flush with bounded backoff.
+5. On failure, print diagnostics (log tail, SUT id, admin version if available).
 
 **Oracle**:
 - Access log file contents
@@ -474,31 +587,6 @@ Tests comprehensive routing semantics in single artifact:
 - Tracing disabled: `traceparent` header absent.
 
 **Assessment**: PASS. Confirms trace context injection is gated by tracing policy.
-
----
-
-### `80_obs_cross_consistency`
-
-**Category**: Observability
-**Contracts**: (cross-signal consistency)
-**Maturity**: L3
-
-**Scenario**:
-1. Start pavis with metrics, access log, and tracing enabled.
-2. Send a request to `/consistent` and capture upstream echo.
-3. Wait for access log flush and scrape metrics.
-
-**Oracle**:
-- Upstream echo headers
-- Access log entries
-- Prometheus metrics output
-
-**Assertions**:
-- `traceparent` header present in upstream echo.
-- Access log entry recorded for `/consistent` with upstream `backend-consistent`.
-- Metrics include `pavis_http_requests_total{route="/consistent",status="200",upstream="backend-consistent"} 1`.
-
-**Assessment**: PASS. Confirms cross-signal consistency for a single request.
 
 ---
 
@@ -567,6 +655,30 @@ Tests comprehensive routing semantics in single artifact:
 - Process exits cleanly (no crashes)
 
 **Assessment**: PASS. Validates SIGTERM triggers graceful drain, in-flight requests complete during drain phase, and process exits within bounded timeout.
+
+---
+
+### `92_operational_reload_resource_sanity`
+
+**Category**: Operational Lifecycle
+**Contracts**: (resource sanity during reloads)
+**Maturity**: L3
+
+**Scenario**:
+1. Start with V1 (backend-v1)
+2. Publish V2..V7 sequentially (header `X-Pavis-Version: vN`)
+3. After each reload, sample resource indicators (FD count, RSS)
+
+**Oracle**:
+- Process resource indicators (`/proc/<pid>/fd`, `/proc/<pid>/status`)
+- Response headers (`X-Pavis-Version`)
+
+**Assertions**:
+- Reloads apply successfully
+- FD count is not strictly increasing on every reload
+- RSS is not strictly increasing on every reload
+
+**Assessment**: PASS. Coarse leak sentinel for reload cycles with deterministic bounds.
 
 ---
 

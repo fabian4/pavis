@@ -88,6 +88,9 @@ echo "$stats_response" | assert_json_has_key "listeners"
 echo "$stats_response" | assert_json_has_key "upstreams"
 echo "$stats_response" | assert_json_has_key "routes"
 
+admin_version=$(get_admin_version "http://127.0.0.1:$PORT_ADMIN")
+echo "Admin version: $admin_version"
+
 echo "✓ /stats endpoint returns all required fields"
 
 # 6. Verify Config Counts in Stats
@@ -115,10 +118,11 @@ echo "✓ /stats endpoint reflects correct config counts"
 # 7. Verify Uptime Increases
 sleep 2
 stats_response_2=$(pavis_curl_body "http://127.0.0.1:$PORT_ADMIN/stats")
+uptime_1=$(echo "$stats_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['uptime_seconds'])")
 uptime_2=$(echo "$stats_response_2" | python3 -c "import sys, json; print(json.load(sys.stdin)['uptime_seconds'])")
 
-if [ "$uptime_2" -lt 2 ]; then
-    echo "❌ Expected uptime >= 2 seconds, got $uptime_2"
+if [ "$uptime_2" -le "$uptime_1" ]; then
+    echo "❌ Expected uptime to increase, got $uptime_1 -> $uptime_2"
     exit 1
 fi
 

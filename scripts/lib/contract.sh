@@ -115,6 +115,22 @@ validate_benchmark_artifacts() {
     # Validate loadgen artifacts
     validate_loadgen_output "$case_dir/loadgen.txt.json" || validation_status=1
 
+  elif compgen -G "$case_dir/run_*/result.json" >/dev/null; then
+    workload_type="loadgen_multi_run"
+    log_debug "Detected multi-run loadgen workload in $case_dir"
+
+    local found=0
+    for loadgen_file in "$case_dir"/run_*/result.json; do
+      if validate_loadgen_output "$loadgen_file"; then
+        found=1
+        break
+      fi
+    done
+    if [[ $found -eq 0 ]]; then
+      log_error "No valid result.json found in run_* directories"
+      validation_status=1
+    fi
+
   elif compgen -G "$case_dir/run_*/wrk.txt" >/dev/null; then
     workload_type="wrk_multi_run"
     log_debug "Detected legacy multi-run wrk workload in $case_dir"
@@ -143,7 +159,7 @@ validate_benchmark_artifacts() {
     log_debug "Detected system metrics workload in $case_dir"
 
   else
-    log_error "Unable to detect workload type in $case_dir (no loadgen.txt.json, run_*/wrk.txt, or wrk.txt found)"
+    log_error "Unable to detect workload type in $case_dir (no loadgen.txt.json, run_*/result.json, run_*/wrk.txt, or wrk.txt found)"
     return 1
   fi
 

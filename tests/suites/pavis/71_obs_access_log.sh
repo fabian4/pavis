@@ -18,6 +18,7 @@ PORT_PAVIS=$(get_free_port)
 UPSTREAM_PORT=${UPSTREAM_HTTP_PORT_V1}
 ACCESS_LOG_PATH="$TEST_TMP/access.log"
 PORT_RELAY=$(get_free_port)
+PORT_ADMIN=$(get_free_port)
 
 # 1. Config with Access Log
 cat <<EOF > "$TEST_TMP/config.yaml"
@@ -39,6 +40,9 @@ routes:
         destinations:
           - upstream: "backend"
             weight: 1
+admin:
+  enabled: true
+  address: "127.0.0.1:$PORT_ADMIN"
 EOF
 gen_pvs "$TEST_TMP/config.yaml" "$TEST_TMP/config.pvs"
 
@@ -76,6 +80,9 @@ routes:
     paths:
       - matcher: !prefix { path: "/echo" }
         destinations: [{ upstream: "backend-v2", weight: 1 }]
+admin:
+  enabled: true
+  address: "127.0.0.1:$PORT_ADMIN"
 EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
@@ -101,7 +108,8 @@ fi
 pavis_curl_body -o /dev/null "http://127.0.0.1:$PORT_PAVIS/echo"
 
 # 6. Assertions (without stopping process)
-MAX_RETRIES=20
+MAX_RETRIES=8
+BACKOFF=0.25
 LOG_READY=0
 for _ in $(seq 1 $MAX_RETRIES); do
     if [ -f "$ACCESS_LOG_PATH" ] \
@@ -110,15 +118,37 @@ for _ in $(seq 1 $MAX_RETRIES); do
         LOG_READY=1
         break
     fi
-    sleep 0.5
+    sleep "$BACKOFF"
+    BACKOFF=$(python3 - <<PY
+import sys
+val = float(sys.argv[1]) * 2
+print(val if val < 2.0 else 2.0)
+PY
+"$BACKOFF")
 done
 
 if [ "$LOG_READY" -ne 1 ]; then
     echo "❌ Access log missing V1/V2 traffic"
     if [ -f "$ACCESS_LOG_PATH" ]; then
+        echo "--- Access log tail ---"
         tail -n 20 "$ACCESS_LOG_PATH"
     else
         echo "Log file not found at $ACCESS_LOG_PATH"
+    fi
+    echo "--- SUT id ---"
+    echo "$PID"
+    if [ -f "$TEST_TMP/pids/pavis.pid" ] || [ -f "$TEST_TMP/pids/pavis.container" ]; then
+        echo "--- Admin stats version ---"
+        if [ -n "${PORT_ADMIN:-}" ]; then
+            version=$(get_admin_version "http://127.0.0.1:$PORT_ADMIN")
+            if [ -n "$version" ]; then
+                echo "$version"
+            else
+                echo "unavailable"
+            fi
+        else
+            echo "admin not configured"
+        fi
     fi
     exit 1
 fi

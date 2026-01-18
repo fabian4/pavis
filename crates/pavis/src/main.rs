@@ -265,6 +265,9 @@ fn main() -> Result<()> {
     let (telemetry, access_log_worker, metrics_worker, tracing_service) =
         Telemetry::new(&config.telemetry, Some(reload_handle));
     let telemetry = Arc::new(telemetry);
+    if let (Some(Ok(agent)), Some(metrics)) = (config_agent.as_ref(), telemetry.metrics.as_ref()) {
+        agent.set_metrics_handle(metrics.clone());
+    }
     let resolver = UpstreamResolver::new(state_handle.clone(), Duration::from_secs(10)).context(
         "failed to initialize upstream resolver (check DNS settings and PAVIS_DNS_SERVER)",
     )?;

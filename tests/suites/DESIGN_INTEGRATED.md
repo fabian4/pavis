@@ -137,14 +137,87 @@ The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`
 
 **Category**: Failure & LKG
 **Contracts**: I4 (System LKG)
-**Maturity**: N/A
-**Status**: SKIPPED (runtime accepts listener/TLS errors lazily at request time, not artifact load time)
+**Maturity**: L2 (once implemented)
+**Status**: READY (blocked on runtime semantic validation implementation)
 
-**Intent**: Integrated semantic rejection (e.g., invalid listener config, bad TLS certs).
+**Intent**: Validate runtime-side semantic rejection of an artifact that is syntactically valid (passes relay publication) but semantically broken, ensuring strict preservation of LKG semantics.
 
-**Why Skipped**: Current runtime implementation accepts syntactically valid but semantically broken configs and only fails at request time. This breaks "reject bad config upfront" invariant.
+**Semantic Error**: Route references a non-existent upstream cluster.
 
-**Assessment**: N/A. Blocked by runtime lazy validation design (not test design gap).
+**Rationale**: Pure semantic error with no OS/network/timing dependencies. Detectable during config compilation before applying the artifact.
+
+---
+
+#### Test Flow
+
+**Setup (Baseline):**
+1. Publish valid baseline artifact with route `/test` → upstream `backend`
+2. Start runtime, apply baseline (version 1)
+3. Assert: Traffic routes correctly, runtime version = 1
+
+**Publish Invalid Artifact:**
+4. Publish artifact with route `/test` → upstream `nonexistent` (but upstream named `backend` exists)
+5. Wait for runtime long-poll cycle
+
+**Observe Rejection:**
+6. Check logs: `"semantic validation failed: route '/test' references unknown upstream 'nonexistent'"`
+7. Check runtime version: MUST remain at 1 (not advance to 2)
+
+**Assert LKG Behavior:**
+8. Traffic still succeeds using baseline route (version 1 behavior)
+9. Relay version = 2, Runtime version = 1 (proves fetch occurred but rejection happened)
+
+---
+
+#### Key Assertions
+
+**Binary Evidence:**
+- ✓ Runtime fetched artifact v2 from relay (log: `"Fetched artifact version 2"`)
+- ✓ Runtime rejected v2 for semantic reasons (log: `"semantic validation failed"`)
+- ✓ Runtime version remains at 1 (version did NOT advance)
+- ✓ Traffic continues using v1 routes (no disruption)
+
+**Metric Evidence (optional):**
+- `pavis_config_rejections_total{reason="semantic_validation"}` increments
+- `pavis_config_version` remains at `1`
+
+---
+
+#### Why This Design is Stable
+
+**Determinism:**
+- No OS dependencies (route→upstream validation is pure graph traversal)
+- No network dependencies (error detected before upstream connection attempts)
+- No timing races (semantic validation is synchronous during load)
+
+**Alignment with I4:**
+- Fetch occurs (relay version advances, runtime polls)
+- Rejection is explicit (semantic validation phase before apply)
+- LKG preserved (runtime does NOT update config; traffic uninterrupted)
+
+---
+
+#### Implementation Requirement
+
+Runtime MUST implement semantic validation phase:
+```rust
+fn load_and_apply_artifact(artifact: &[u8]) -> Result<()> {
+    let config = verify_binary_format(artifact)?;  // Existing
+    validate_semantics(&config)?;  // NEW: Check route→upstream refs
+    apply_config(config)?;  // Only if both validations pass
+}
+```
+
+**Alternative semantic errors** (if route→upstream is complex):
+1. Duplicate listener port: `address: "0.0.0.0:18080"` appears twice
+2. Listener-admin port conflict: listener port = admin port
+3. Virtual host references non-existent route table
+
+All options are pure semantic errors detectable at load time without external state.
+
+---
+
+**Assessment**: Test design is complete and deterministic. Blocked only on runtime implementing semantic validation phase. Once implemented, enable test and set maturity to L2.
 
 ---
 
@@ -222,7 +295,7 @@ The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`
 
 **Weak or Partially Covered Areas**:
 - **System LKG with explicit version validation** (I4): L2 - `30_lkg_artifact` lacks version header checks
-- **Semantic config rejection** (I4): SKIPPED - blocked by runtime lazy validation
+- **Semantic config rejection** (I4): READY - test redesigned with deterministic error (route→upstream reference); blocked on runtime implementing semantic validation phase
 
 ---
 
@@ -236,15 +309,15 @@ The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`
    - Assert: relay version > runtime version after bad artifact publish
    - Proves: runtime fetched but rejected the bad artifact (not just "didn't poll yet")
 
-2. **`31_lkg_rejection` unblocking**:
-   - Implement strict upfront semantic validation in runtime
-   - Fail artifact loading if listener port conflicts, TLS cert missing, etc.
-   - Once implemented, update test to validate semantic rejection (not just binary corruption)
+2. **`31_lkg_rejection` enabling**:
+   - Implement semantic validation phase in runtime (route→upstream reference validation OR duplicate listener port detection)
+   - Validation MUST occur before `apply_config()` so broken artifacts never become active
+   - Once implemented, enable test and validate semantic rejection with pure, deterministic error
 
 ### Mid-Term (Should Improve)
 
 3. **Concurrent traffic during reload**:
-   - Add burst testing during `20_reload_switch` (similar to pavis suite `20_reload_norestart`)
+   - Add burst testing during `20_reload_switch` (similar to pavis suite `20_reload_contract_core`)
    - Use 200 concurrent requests during V1 → V2 transition
    - Validate I1 (End-to-End Publish) with zero-drop semantics
 

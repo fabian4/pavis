@@ -98,6 +98,8 @@ The admin API complements the telemetry system:
 - Time-series metrics
 - Prometheus format
 - Request/connection/upstream metrics
+- Config validation counters (`pavis_config_validation_total{result,reason}`)
+- Config apply counters (`pavis_config_apply_total{result}`)
 
 **Access Logs:**
 - Per-request structured logs

@@ -8,12 +8,13 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use crate::state::{RuntimeState, RuntimeStateHandle};
+use crate::telemetry::metrics::MetricsHandle;
 
 use crate::agent::backoff::Backoff;
 use crate::agent::lkg::tmp_path_for;
 use crate::agent::lkg::write_atomic;
 use pavis_core::RuntimeConfig;
-use pavis_pvs::compute_checksum;
+use pavis_pvs::{PvsError, compute_checksum};
 
 const ETAG_HEADER: &str = "etag";
 
@@ -29,6 +30,7 @@ pub struct ConfigAgent {
     state: Arc<RuntimeStateHandle>,
     last_checksum: Arc<Mutex<Option<String>>>,
     on_update_callback: Mutex<Option<UpdateCallback>>,
+    metrics: Arc<Mutex<Option<Arc<MetricsHandle>>>>,
 }
 
 pub struct ConfigAgentWorker {
@@ -90,6 +92,7 @@ impl ConfigAgent {
             state,
             last_checksum: Arc::new(Mutex::new(None)),
             on_update_callback: Mutex::new(None),
+            metrics: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -113,6 +116,14 @@ impl ConfigAgent {
         ConfigAgentWorker { agent: self }
     }
 
+    pub fn set_metrics_handle(&self, handle: Arc<MetricsHandle>) {
+        let mut guard = self
+            .metrics
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(handle);
+    }
+
     #[cfg(test)]
     pub(crate) fn new_for_tests(
         relay_base: String,
@@ -129,6 +140,7 @@ impl ConfigAgent {
             state,
             last_checksum: Arc::new(Mutex::new(None)),
             on_update_callback: Mutex::new(None),
+            metrics: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -177,29 +189,43 @@ impl ConfigAgent {
     async fn apply_update(&self, bytes: Vec<u8>, expected_checksum: String) -> anyhow::Result<()> {
         let actual_checksum = checksum_for_bytes(&bytes);
         if actual_checksum != expected_checksum {
-            anyhow::bail!(
+            return Err(self.record_validation_failure(anyhow::anyhow!(
                 "checksum mismatch: expected={}, computed={}",
                 expected_checksum,
                 actual_checksum
-            );
+            )));
         }
-        let _ = pavis_pvs::verify(&bytes)?;
+        pavis_pvs::verify(&bytes).map_err(|err| self.record_validation_failure(err.into()))?;
 
         let tmp_path = tmp_path_for(&self.lkg_path);
-        write_atomic(&tmp_path, &bytes).await?;
+        write_atomic(&tmp_path, &bytes)
+            .await
+            .map_err(|err| self.record_apply_failure(err))?;
 
         let config = match pavis_pvs::load(&tmp_path) {
             Ok(config) => config,
             Err(err) => {
                 let _ = tokio::fs::remove_file(&tmp_path).await;
-                return Err(err.into());
+                return Err(self.record_validation_failure(err.into()));
             }
         };
         // SAFETY: agent receives `.pvs` artifacts which are canonically validated.
         let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
-        let state = RuntimeState::from_config(&validated)?;
+        let state = RuntimeState::from_config(&validated)
+            .map_err(|err| self.record_validation_failure(err))?;
 
-        tokio::fs::rename(&tmp_path, &self.lkg_path).await?;
+        self.record_validation("ok", "none");
+        tracing::info!(
+            target: "pavis.config",
+            event = "config_validation",
+            result = "ok",
+            reason = "none",
+            checksum = expected_checksum
+        );
+
+        tokio::fs::rename(&tmp_path, &self.lkg_path)
+            .await
+            .map_err(|err| self.record_apply_failure(err.into()))?;
 
         self.state.store(state);
         self.set_last_checksum(actual_checksum);
@@ -217,8 +243,64 @@ impl ConfigAgent {
             callback(&validated);
         }
 
-        tracing::info!(checksum = expected_checksum, "Applied configuration update");
+        self.record_apply("ok");
+        tracing::info!(
+            target: "pavis.config",
+            event = "config_apply",
+            result = "ok",
+            checksum = expected_checksum
+        );
         Ok(())
+    }
+
+    fn metrics_handle(&self) -> Option<Arc<MetricsHandle>> {
+        self.metrics
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn record_validation(&self, result: &str, reason: &str) {
+        if let Some(handle) = self.metrics_handle() {
+            handle.record_config_validation(result, reason);
+        }
+    }
+
+    fn record_apply(&self, result: &str) {
+        if let Some(handle) = self.metrics_handle() {
+            handle.record_config_apply(result);
+        }
+    }
+
+    fn record_validation_failure(&self, err: anyhow::Error) -> anyhow::Error {
+        let reason = classify_validation_error(&err);
+        self.record_validation("fail", reason);
+        self.record_apply("fail");
+        tracing::warn!(
+            target: "pavis.config",
+            event = "config_validation",
+            result = "fail",
+            reason,
+            error = %err
+        );
+        tracing::warn!(
+            target: "pavis.config",
+            event = "config_apply",
+            result = "fail",
+            error = %err
+        );
+        err
+    }
+
+    fn record_apply_failure(&self, err: anyhow::Error) -> anyhow::Error {
+        self.record_apply("fail");
+        tracing::warn!(
+            target: "pavis.config",
+            event = "config_apply",
+            result = "fail",
+            error = %err
+        );
+        err
     }
 
     #[cfg(test)]
@@ -253,6 +335,19 @@ impl ConfigAgent {
 pub enum PollOutcome {
     Updated,
     NoChange,
+}
+
+fn classify_validation_error(err: &anyhow::Error) -> &'static str {
+    if let Some(pvs_err) = err.downcast_ref::<PvsError>() {
+        return match pvs_err {
+            PvsError::VersionMismatch { .. } => "version",
+            _ => "parse",
+        };
+    }
+    if err.to_string().contains("checksum mismatch") {
+        return "parse";
+    }
+    "semantic"
 }
 
 fn checksum_for_bytes(bytes: &[u8]) -> String {

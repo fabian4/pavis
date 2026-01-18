@@ -82,7 +82,9 @@ get_instance() {
         python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))"
 }
 
-# Step 1: Prefix vs Exact precedence
+echo "== Phase A: Match precedence + regex fallback =="
+
+# Step A1: Prefix vs Exact precedence
 if [ "$(get_instance "/exact")" != "backend-v2" ]; then
     echo "❌ Exact route did not win over prefix"
     exit 1
@@ -96,7 +98,7 @@ if [ "$(get_instance "/anything")" != "backend-v1" ]; then
     exit 1
 fi
 
-# Step 2: Regex routing
+# Step A2: Regex routing
 if [ "$(get_instance "/regex/123")" != "backend-v2" ]; then
     echo "❌ Regex route did not match digits"
     exit 1
@@ -106,7 +108,9 @@ if [ "$(get_instance "/regex/abc")" != "backend-v1" ]; then
     exit 1
 fi
 
-# Step 3: Header policies
+echo "== Phase B: Headers / actions / rewrites =="
+
+# Step B1: Header policies
 response=$(curl -s -H "X-To-Remove: should-be-gone" -H "X-Request-Append: original" "http://127.0.0.1:$PORT_PAVIS/headers/echo")
 val=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['headers'].get('x-request-set',[''])[0])")
 assert_eq "pavis-set" "$val" "X-Request-Set should be set"
@@ -122,20 +126,20 @@ if ! echo "$resp_headers" | grep -qi "X-Response-Set: pavis-resp-set"; then
     exit 1
 fi
 
-# Step 4: Redirect action
+# Step B2: Redirect action
 redirect_headers=$(curl -sI "http://127.0.0.1:$PORT_PAVIS/redirect-me")
 status=$(echo "$redirect_headers" | head -n 1 | awk '{print $2}')
 assert_eq "301" "$status" "Redirect status"
 location=$(echo "$redirect_headers" | awk '/[Ll]ocation:/ {print $2}' | tr -d '\r')
 assert_eq "http://example.com/new-location" "$location" "Redirect location"
 
-# Step 5: Direct response
+# Step B3: Direct response
 body=$(curl -s "http://127.0.0.1:$PORT_PAVIS/direct-me")
 assert_eq "Custom Static Response" "$body" "Direct response body"
 status=$(curl -sI "http://127.0.0.1:$PORT_PAVIS/direct-me" | head -n1 | awk '{print $2}')
 assert_eq "200" "$status" "Direct response status"
 
-# Step 6: Rewrite path & host
+# Step B4: Rewrite path & host
 rewrite_resp=$(curl -s -H "Host: rewrite.test" "http://127.0.0.1:$PORT_PAVIS/service-a/echo?q=bar")
 rewritten_path=$(echo "$rewrite_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['path'])")
 assert_eq "/echo" "$rewritten_path" "Path should be rewritten"
@@ -144,4 +148,4 @@ assert_eq "q=bar" "$rewritten_query" "Query must be preserved"
 rewritten_host=$(echo "$rewrite_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['headers'].get('host',[''])[0])")
 assert_eq "rewritten.internal" "$rewritten_host" "Host should be rewritten"
 
-echo "✅ traffic_10_routing_semantics passed"
+echo "✅ traffic_40_routing_semantics passed"

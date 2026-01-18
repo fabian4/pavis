@@ -4,6 +4,7 @@ set -e
 # Case: traffic_02_weighted_shift
 # Category: Traffic Behavior Under Reload
 # Invariants: A (No-Drop)
+# Intent: deterministic state carry-over elimination (100/0 flips), not probabilistic weight correctness.
 
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"

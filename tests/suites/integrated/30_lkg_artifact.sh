@@ -75,56 +75,33 @@ sleep 2
 
 assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
 
-
-
 # 5. Recovery Proof: Publish Valid V3
 
 cat <<-EOF > "$TEST_TMP/config_v3.yaml"
-
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
-
 	upstreams: [{ name: "backend-v3", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }] }]
-
 	routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: "backend-v3", weight: 1 }] }] }]
-
 EOF
 
 gen_pvs "$TEST_TMP/config_v3.yaml" "$TEST_TMP/config_v3.pvs"
 
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" -H "x-pavis-version: 3" --data-binary "@$TEST_TMP/config_v3.pvs" > /dev/null
 
-
-
 # 6. Assert Switch to V3
 
 MAX_RETRIES=20
-
 SWITCHED=0
-
 for _ in $(seq 1 $MAX_RETRIES); do
-
     if pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo" | grep -q "backend-v2"; then
-
         SWITCHED=1
-
         break
-
     fi
-
     sleep 0.5
-
 done
 
-
-
 if [ "$SWITCHED" -eq 0 ]; then
-
     echo "❌ Integrated recovery failed"
-
     exit 1
-
 fi
-
-
 
 echo "✅ 30_lkg_artifact passed"
