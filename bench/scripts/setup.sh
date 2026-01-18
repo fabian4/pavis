@@ -165,6 +165,28 @@ create_namespace() {
   log_info "Namespace ready"
 }
 
+install_metrics_server() {
+  if kubectl get apiservices v1beta1.metrics.k8s.io >/dev/null 2>&1; then
+    log_info "metrics-server already available"
+    return 0
+  fi
+
+  local manifest_url
+  manifest_url="${BENCH_METRICS_SERVER_MANIFEST:-https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml}"
+
+  log_info "Installing metrics-server from ${manifest_url}"
+  if kubectl apply -f "$manifest_url" >/dev/null 2>&1; then
+    kubectl -n kube-system patch deployment metrics-server --type='json' \
+      -p='[
+        {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"},
+        {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-preferred-address-types=InternalIP"}
+      ]' >/dev/null 2>&1 || true
+    log_info "metrics-server install requested"
+  else
+    log_warn "metrics-server install failed; RSS metrics may be unavailable"
+  fi
+}
+
 deploy_pavis_infrastructure() {
   log_info "Deploying Pavis control plane and test workloads"
 
@@ -274,6 +296,7 @@ setup_environment_system() {
   check_kind_requirements
   create_kind_cluster
   allow_control_plane_scheduling_if_needed
+  install_metrics_server
   build_docker_images
   load_images_to_kind
   create_namespace

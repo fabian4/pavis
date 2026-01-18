@@ -91,6 +91,9 @@ collect_rss_timeline() {
   while [[ $elapsed -lt $duration_s ]]; do
     local rss_kb
     rss_kb=$(kubectl_get_container_stats "$label" "$container" "$namespace" | tr -d 'Ki' || echo "0")
+    if [[ -z "$rss_kb" ]]; then
+      rss_kb="0"
+    fi
 
     local timestamp
     timestamp=$(date +%s)

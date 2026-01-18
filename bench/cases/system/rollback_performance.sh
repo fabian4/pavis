@@ -15,8 +15,8 @@ source "$SCRIPT_DIR/system_metrics.sh"
 source "$SCRIPT_DIR/publish_config.sh"
 # shellcheck source=bench/scripts/proxy_helpers.sh
 source "$SCRIPT_DIR/proxy_helpers.sh"
-# shellcheck source=bench/config/targets.env
-source "$(cd "$SCRIPT_DIR/.." && pwd)/config/targets.env"
+# shellcheck source=bench/config/config.env
+source "$(cd "$SCRIPT_DIR/.." && pwd)/config/config.env"
 
 CASE_NAME="rollback_performance"
 TARGET_RPS="${SYSTEM_ROLLBACK_PERFORMANCE_TARGET_RPS}"
@@ -161,6 +161,18 @@ main() {
   recovery_p99=$(jq -r '.latency_ms.p99' "${output_dir}/recovery.json")
   local recovery_errors
   recovery_errors=$(jq -r '.errors' "${output_dir}/recovery.json")
+  local baseline_achieved_rps=""
+  local degraded_achieved_rps=""
+  local recovery_achieved_rps=""
+  if [[ -f "${output_dir}/baseline.json" ]]; then
+    baseline_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/baseline.json")
+  fi
+  if [[ -f "${output_dir}/degraded.json" ]]; then
+    degraded_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/degraded.json")
+  fi
+  if [[ -f "${output_dir}/recovery.json" ]]; then
+    recovery_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/recovery.json")
+  fi
 
   # Step 8: Write metrics JSON
   cat > "${output_dir}/metrics.json" <<EOF
@@ -169,6 +181,9 @@ main() {
   "proxy": "${BENCH_PROXY}",
   "baseline_p99_ms": $baseline_p99,
   "degraded_errors": $degraded_errors,
+  "baseline_achieved_rps": $baseline_achieved_rps,
+  "degraded_achieved_rps": $degraded_achieved_rps,
+  "recovery_achieved_rps": $recovery_achieved_rps,
   "rollback_ttbr_ms": $ttbr_ms,
   "recovery_p99_ms": $recovery_p99,
   "recovery_errors": $recovery_errors,

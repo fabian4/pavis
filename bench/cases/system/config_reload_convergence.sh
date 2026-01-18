@@ -15,14 +15,27 @@ source "$SCRIPT_DIR/system_metrics.sh"
 source "$SCRIPT_DIR/publish_config.sh"
 # shellcheck source=bench/scripts/proxy_helpers.sh
 source "$SCRIPT_DIR/proxy_helpers.sh"
-# shellcheck source=bench/config/targets.env
-source "$(cd "$SCRIPT_DIR/.." && pwd)/config/targets.env"
+# shellcheck source=bench/config/config.env
+source "$(cd "$SCRIPT_DIR/.." && pwd)/config/config.env"
 
 CASE_NAME="config_reload_convergence"
 TARGET_RPS="${SYSTEM_CONFIG_RELOAD_CONVERGENCE_TARGET_RPS}"
 DURATION_S="${SYSTEM_CONFIG_RELOAD_CONVERGENCE_DURATION_S}"
 CONVERGENCE_WINDOW_S="${SYSTEM_CONFIG_RELOAD_CONVERGENCE_CONVERGENCE_WINDOW_S}"
 NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
+
+format_float_3() {
+  printf "%.3f" "$1"
+}
+
+format_float_3_or_empty() {
+  local value="$1"
+  if [[ -z "$value" ]]; then
+    echo ""
+    return 0
+  fi
+  printf "%.3f" "$value"
+}
 
 main() {
   log_info "Starting test: $CASE_NAME for ${BENCH_PROXY}"
@@ -139,27 +152,56 @@ main() {
   # Step 9: Calculate metrics
   local p99_delta
   p99_delta=$(echo "$transition_p99 - $baseline_p99" | bc -l)
+  if [[ "$p99_delta" == .* ]]; then
+    p99_delta="0${p99_delta}"
+  fi
 
   # Step 10: Extract final stats from baseline run
   local errors_5xx=0
   if [[ -f "${output_dir}/baseline.json" ]]; then
     errors_5xx=$(jq -r '.errors // 0' "${output_dir}/baseline.json")
   fi
+  local achieved_rps=""
+  if [[ -f "${output_dir}/baseline.json" ]]; then
+    achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/baseline.json")
+  fi
+
+  local baseline_p99_fmt
+  local convergence_time_fmt
+  local transition_p99_fmt
+  local p99_delta_fmt
+  local errors_5xx_fmt
+  local config_version_before_fmt
+  local config_version_after_fmt
+  local target_rps_fmt
+  local achieved_rps_fmt
+  local duration_s_fmt
+  baseline_p99_fmt=$(format_float_3 "$baseline_p99")
+  convergence_time_fmt=$(format_float_3 "$convergence_time")
+  transition_p99_fmt=$(format_float_3 "$transition_p99")
+  p99_delta_fmt=$(format_float_3 "$p99_delta")
+  errors_5xx_fmt=$(format_float_3 "$errors_5xx")
+  config_version_before_fmt=$(format_float_3 "$baseline_version")
+  config_version_after_fmt=$(format_float_3 "$target_version")
+  target_rps_fmt=$(format_float_3 "$TARGET_RPS")
+  achieved_rps_fmt=$(format_float_3_or_empty "$achieved_rps")
+  duration_s_fmt=$(format_float_3 "$DURATION_S")
 
   # Step 11: Write metrics JSON
   cat > "${output_dir}/metrics.json" <<EOF
 {
   "test": "$CASE_NAME",
   "proxy": "${BENCH_PROXY}",
-  "baseline_p99_ms": $baseline_p99,
-  "convergence_time_ms": $convergence_time,
-  "transition_p99_ms": $transition_p99,
-  "p99_delta_ms": $p99_delta,
-  "errors_5xx": $errors_5xx,
-  "config_version_before": $baseline_version,
-  "config_version_after": $target_version,
-  "target_rps": $TARGET_RPS,
-  "duration_s": $DURATION_S
+  "baseline_p99_ms": $baseline_p99_fmt,
+  "convergence_time_ms": $convergence_time_fmt,
+  "transition_p99_ms": $transition_p99_fmt,
+  "p99_delta_ms": $p99_delta_fmt,
+  "errors_5xx": $errors_5xx_fmt,
+  "config_version_before": $config_version_before_fmt,
+  "config_version_after": $config_version_after_fmt,
+  "target_rps": $target_rps_fmt,
+  "achieved_rps": $achieved_rps_fmt,
+  "duration_s": $duration_s_fmt
 }
 EOF
 

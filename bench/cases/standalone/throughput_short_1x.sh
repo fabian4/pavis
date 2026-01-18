@@ -10,8 +10,8 @@ set -euo pipefail
 
 CASE_NAME="throughput_short_1x"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck source=bench/config/targets.env
-source "${ROOT_DIR}/config/targets.env"
+# shellcheck source=bench/config/config.env
+source "${ROOT_DIR}/config/config.env"
 
 DURATION_S="${STANDALONE_THROUGHPUT_SHORT_1X_DURATION_S}"
 WARMUP_S=5
@@ -387,7 +387,7 @@ main() {
   local end_ts
   end_ts=$(date +%s)
   bench_print_duration $((end_ts - start_ts))
-  # Raw outputs kept: run_*/ subdirectories for summarize.sh to aggregate
+  # Raw outputs kept: run_*/ subdirectories for summarize_github.sh to aggregate
 }
 
 trap stop_stats EXIT

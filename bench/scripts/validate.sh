@@ -143,14 +143,7 @@ USAGE
   fi
 
   if [[ -z "$profile" ]]; then
-    case "${IS_CI:-}" in
-      1|true|TRUE|yes|YES)
-        profile="github"
-        ;;
-      *)
-        profile="workstation"
-        ;;
-    esac
+    profile="workstation"
   fi
 
   if [[ "$profile" == "ci" ]]; then

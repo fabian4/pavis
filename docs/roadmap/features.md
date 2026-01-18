@@ -1,10 +1,12 @@
 # Pavis Feature Matrix & Envoy Comparison
 
+> **Authority:** This document is a derived index. All authoritative status and roadmap decisions are defined in `roadmap.md`.
+
 ## Introduction
 
 Pavis is designed as a **Pragmatic & Lightweight Sidecar** for microservices. It is NOT a clone of Envoy and does not aim to support every feature of a general-purpose edge gateway.
 
-This document outlines the current feature set.
+This document provides a feature comparison matrix for reference.
 
 **Legend:**
 *   ✅ **Supported**: Implementation is complete and verified.

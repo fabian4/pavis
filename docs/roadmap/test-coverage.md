@@ -1,3 +1,9 @@
+# Test Coverage Analysis
+
+> **Authority:** This document is a derived view. All roadmap status and gaps are defined in `roadmap.md`.
+
+This document provides a snapshot of test coverage metrics for reference.
+
 | file                                                     | coverage | covered   | missed_lines                                                                    |
 |----------------------------------------------------------|----------|-----------|---------------------------------------------------------------------------------|
 | crates/pavctl/src/commands.rs                            | 100.00%  | 4 / 4     |                                                                                 |

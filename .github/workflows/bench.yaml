@@ -13,7 +13,6 @@ env:
   HAPROXY_TAG: 2.9.6-alpine
   BENCH_VERBOSE: 0
   LOADGEN_WARN: 0
-  BENCH_PROFILE: github
 
 jobs:
   bench:
@@ -43,20 +42,15 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
 
       - name: Build benchmark tools
-        run: |
-          make binary-build CRATE=pavis-benchkit BIN=bench-loadgen
-          make binary-build CRATE=pavctl
+        run: make bench-all-build MODE=ci
 
-      - name: Build Standalone Docker Images
-        run: |
-          make docker-build IMAGE=pavis MODE=ci
-          make docker-build IMAGE=bench-upstream MODE=ci
-
-      - name: Benchmark pavis (standalone mode)
-        run: MODE=standalone PROXY=pavis make bench-standalone
+      - name: Standalone Mode Benchmarks
+        id: bench_standalone
+        run: MODE=standalone PROXY=pavis BENCH_PROFILE=github make bench-standalone
+        continue-on-error: true
 
       - name: Debug standalone failure
-        if: failure()
+        if: always() && steps.bench_standalone.outcome == 'failure'
         working-directory: bench
         run: |
           echo "=== Docker Containers ==="
@@ -76,13 +70,9 @@ jobs:
         working-directory: bench
         run: docker compose down -v
 
-      - name: Build System Mode Docker Images
-        run: make bench-system-build MODE=ci
-
-      - name: Run System Mode Benchmarks (pavis)
+      - name: System Mode Benchmarks
         id: bench_system
-        run: MODE=system PROXY=pavis BENCH_PROFILE=github BENCH_CLEANUP_ON_FAILURE=false make bench-system
-        continue-on-error: true
+        run: MODE=system PROXY=pavis BENCH_PROFILE=github make bench-system
 
       - name: Debug system failure
         if: always() && steps.bench_system.outcome == 'failure'
@@ -113,13 +103,10 @@ jobs:
         if: always()
         run: make bench-system-down
 
-      - name: Generate Summary and Report
-        run: make bench-report || true
-
       - name: Append Job Summary
         run: |
-          cat bench/output/standalone/report.md >> "$GITHUB_STEP_SUMMARY" || true
-          cat bench/output/system/report.md >> "$GITHUB_STEP_SUMMARY" || true
+          make bench-report || true
+          cat bench/output/report.github.md >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Upload Bench Results
         if: always()

@@ -15,8 +15,8 @@ source "$SCRIPT_DIR/system_metrics.sh"
 source "$SCRIPT_DIR/publish_config.sh"
 # shellcheck source=bench/scripts/proxy_helpers.sh
 source "$SCRIPT_DIR/proxy_helpers.sh"
-# shellcheck source=bench/config/targets.env
-source "$(cd "$SCRIPT_DIR/.." && pwd)/config/targets.env"
+# shellcheck source=bench/config/config.env
+source "$(cd "$SCRIPT_DIR/.." && pwd)/config/config.env"
 
 CASE_NAME="stress_recovery"
 BASELINE_RPS="${SYSTEM_STRESS_RECOVERY_BASELINE_RPS}"
@@ -36,6 +36,19 @@ numeric_or_zero() {
   else
     echo "$cleaned"
   fi
+}
+
+format_float_3() {
+  printf "%.3f" "$1"
+}
+
+format_float_3_or_empty() {
+  local value="$1"
+  if [[ -z "$value" ]]; then
+    echo ""
+    return 0
+  fi
+  printf "%.3f" "$value"
 }
 
 main() {
@@ -162,23 +175,70 @@ main() {
   local latency_recovery_pct
   latency_recovery_pct=$(echo "($recovery_p99 - $baseline_p99) * 100.0 / $baseline_p99" | bc -l)
 
+  local baseline_achieved_rps=""
+  local stress_achieved_rps=""
+  local recovery_achieved_rps=""
+  if [[ -f "${output_dir}/baseline.json" ]]; then
+    baseline_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/baseline.json")
+  fi
+  if [[ -f "${output_dir}/stress.json" ]]; then
+    stress_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/stress.json")
+  fi
+  if [[ -f "${output_dir}/recovery.json" ]]; then
+    recovery_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/recovery.json")
+  fi
+
+  local baseline_rps_fmt
+  local stress_rps_fmt
+  local baseline_achieved_rps_fmt
+  local stress_achieved_rps_fmt
+  local recovery_achieved_rps_fmt
+  local baseline_p99_fmt
+  local stress_p99_fmt
+  local recovery_p99_fmt
+  local latency_recovery_pct_fmt
+  local stress_dropped_fmt
+  local baseline_rss_fmt
+  local stress_rss_peak_fmt
+  local recovery_rss_fmt
+  local rss_growth_fmt
+  local rss_growth_pct_fmt
+  baseline_rps_fmt=$(format_float_3 "$BASELINE_RPS")
+  stress_rps_fmt=$(format_float_3 "$STRESS_RPS")
+  baseline_achieved_rps_fmt=$(format_float_3_or_empty "$baseline_achieved_rps")
+  stress_achieved_rps_fmt=$(format_float_3_or_empty "$stress_achieved_rps")
+  recovery_achieved_rps_fmt=$(format_float_3_or_empty "$recovery_achieved_rps")
+  baseline_p99_fmt=$(format_float_3 "$baseline_p99")
+  stress_p99_fmt=$(format_float_3 "$stress_p99")
+  recovery_p99_fmt=$(format_float_3 "$recovery_p99")
+  latency_recovery_pct_fmt=$(format_float_3 "$latency_recovery_pct")
+  stress_dropped_fmt=$(format_float_3 "$stress_dropped")
+  baseline_rss_fmt=$(format_float_3 "$baseline_rss_start")
+  stress_rss_peak_fmt=$(format_float_3 "$stress_rss_peak")
+  recovery_rss_fmt=$(format_float_3 "$recovery_rss_end")
+  rss_growth_fmt=$(format_float_3 "$rss_growth")
+  rss_growth_pct_fmt=$(format_float_3 "$rss_growth_pct")
+
   # Step 6: Write metrics JSON
   cat > "${output_dir}/metrics.json" <<EOF
 {
   "test": "$CASE_NAME",
   "proxy": "${BENCH_PROXY}",
-  "baseline_rps": $BASELINE_RPS,
-  "stress_rps": $STRESS_RPS,
-  "baseline_p99_ms": $baseline_p99,
-  "stress_p99_ms": $stress_p99,
-  "recovery_p99_ms": $recovery_p99,
-  "latency_recovery_pct": $latency_recovery_pct,
-  "stress_dropped": $stress_dropped,
-  "baseline_rss_kb": $baseline_rss_start,
-  "stress_rss_peak_kb": $stress_rss_peak,
-  "recovery_rss_kb": $recovery_rss_end,
-  "rss_growth_mb": $rss_growth,
-  "rss_growth_pct": $rss_growth_pct
+  "baseline_rps": $baseline_rps_fmt,
+  "stress_rps": $stress_rps_fmt,
+  "baseline_achieved_rps": $baseline_achieved_rps_fmt,
+  "stress_achieved_rps": $stress_achieved_rps_fmt,
+  "recovery_achieved_rps": $recovery_achieved_rps_fmt,
+  "baseline_p99_ms": $baseline_p99_fmt,
+  "stress_p99_ms": $stress_p99_fmt,
+  "recovery_p99_ms": $recovery_p99_fmt,
+  "latency_recovery_pct": $latency_recovery_pct_fmt,
+  "stress_dropped": $stress_dropped_fmt,
+  "baseline_rss_kb": $baseline_rss_fmt,
+  "stress_rss_peak_kb": $stress_rss_peak_fmt,
+  "recovery_rss_kb": $recovery_rss_fmt,
+  "rss_growth_mb": $rss_growth_fmt,
+  "rss_growth_pct": $rss_growth_pct_fmt
 }
 EOF
 

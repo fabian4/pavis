@@ -1,4 +1,4 @@
-.PHONY: bench bench-build bench-down bench-all
+.PHONY: bench bench-build bench-down bench-all bench-all-build
 .PHONY: bench-standalone bench-standalone-build bench-standalone-down bench-standalone-all
 .PHONY: bench-system bench-system-build bench-system-down bench-system-all bench-report
 
@@ -8,6 +8,8 @@
 
 # Build images required for standalone mode benchmarking
 bench-standalone-build:
+	$(MAKE) binary-build CRATE=pavctl
+	$(MAKE) binary-build CRATE=pavis-benchkit BIN=bench-loadgen
 	$(MAKE) docker-build IMAGE=pavis MODE=$(MODE)
 	$(MAKE) docker-build IMAGE=bench-upstream MODE=$(MODE)
 
@@ -40,6 +42,18 @@ bench-standalone-down:
 # ============================================================================
 
 bench-build: bench-standalone-build
+bench-all-build:
+	$(MAKE) binary-build CRATE=pavctl
+	$(MAKE) docker-build IMAGE=relay MODE=$(MODE)
+	$(MAKE) docker-build IMAGE=pavis MODE=$(MODE)
+	$(MAKE) docker-build IMAGE=bench-upstream MODE=$(MODE)
+	$(MAKE) binary-build CRATE=pavis-benchkit BIN=bench-loadgen
+	@if [ "$${BENCH_PROFILE:-workstation}" != "github" ]; then \
+		echo "Building envoy xDS server image..."; \
+		$(MAKE) docker-build IMAGE=envoy-xds-server MODE=$(MODE); \
+	else \
+		echo "Skipping envoy xDS server image for BENCH_PROFILE=github"; \
+	fi
 bench: bench-standalone
 bench-all: bench-standalone-all
 bench-down: bench-standalone-down
@@ -51,11 +65,17 @@ bench-down: bench-standalone-down
 # Build images required for system mode benchmarking
 bench-system-build:
 	@echo "Building Docker images for system mode..."
+	$(MAKE) binary-build CRATE=pavctl
 	$(MAKE) docker-build IMAGE=pavis MODE=$(MODE)
 	$(MAKE) docker-build IMAGE=relay MODE=$(MODE)
 	$(MAKE) docker-build IMAGE=bench-upstream MODE=$(MODE)
-	@echo "Building envoy xDS server image..."
-	$(MAKE) docker-build IMAGE=envoy-xds-server MODE=$(MODE)
+	$(MAKE) binary-build CRATE=pavis-benchkit BIN=bench-loadgen
+	@if [ "$${BENCH_PROFILE:-workstation}" != "github" ]; then \
+		echo "Building envoy xDS server image..."; \
+		$(MAKE) docker-build IMAGE=envoy-xds-server MODE=$(MODE); \
+	else \
+		echo "Skipping envoy xDS server image for BENCH_PROFILE=github"; \
+	fi
 
 # Run system mode benchmarks for a single proxy
 # Environment variables:
@@ -87,5 +107,6 @@ bench-system-down:
 
 # Generate summary CSV and markdown report from existing results
 bench-report:
-	@bash bench/scripts/summarize.sh
+	@bash bench/scripts/summarize_github.sh
 	@bash bench/scripts/report.sh
+	@bash bench/scripts/summarize_system.sh

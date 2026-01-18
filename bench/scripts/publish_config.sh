@@ -28,7 +28,7 @@ resolve_pavctl_bin() {
     return 0
   fi
 
-  log_info "Building pavctl"
+  log_info "Building pavctl" >&2
   cargo build -p pavctl --release
   echo "$pavctl"
 }

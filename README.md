@@ -48,7 +48,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the formal architectural invariants
 *   **Resilience**: Active health checks, outlier ejection, circuit breaking, retries.
 *   **Hot Reload**: Atomic, hitless reload of the data plane.
 
-See [docs/project/features.md](./docs/project/features.md) for a complete feature matrix.
+See [docs/roadmap/features.md](./docs/roadmap/features.md) for a complete feature matrix.
 
 ## Operational Model
 
@@ -71,7 +71,7 @@ The project is in active development. APIs and binary formats are subject to bre
 *   RBAC (Deny-by-default)
 *   xDS Compilation
 
-See [docs/project/roadmap.md](./docs/project/roadmap.md) for active tracking.
+See [docs/roadmap/roadmap.md](./docs/roadmap/roadmap.md) for active tracking.
 
 ## Explicitly Dropped Features
 
@@ -81,12 +81,28 @@ These features are excluded to preserve the Frozen Data Plane contract:
 *   **No Inline Secrets**: Certificates must be file-path references.
 *   **No Global Rate Limiting**: Avoids external runtime dependencies.
 
-## Documentation Index
+## Documentation
 
-*   **[ARCHITECTURE.md](./ARCHITECTURE.md)**: Normative system constitution and invariants.
-*   **[docs/operations/runtime.md](./docs/operations/runtime.md)**: Runbooks, configuration guides, and benchmarks.
-*   **[docs/project/features.md](./docs/project/features.md)**: Detailed feature matrix and trade-offs.
-*   **[docs/configuration/reference.md](./docs/configuration/reference.md)**: Configuration reference (Schema).
+**Core Documents:**
+*   **[ARCHITECTURE.md](./ARCHITECTURE.md)** - System invariants and constraints (what must never change)
+*   **[docs/design.md](./docs/design.md)** - Design philosophy and architectural decisions (why & what decisions were made)
+
+**Service Documentation:**
+*   **[crates/pavis-pvs/README.md](./crates/pavis-pvs/README.md)** - PVS service (binary artifact format specification)
+*   **[crates/pavis-relay/README.md](./crates/pavis-relay/README.md)** - Relay service (specifications & operations)
+*   **[crates/pavis/README.md](./crates/pavis/README.md)** - Runtime service (specifications, operations & recovery)
+
+**User Guides:**
+*   **[docs/configuration/guide.md](./docs/configuration/guide.md)** - How to configure Pavis
+*   **[docs/configuration/reference.md](./docs/configuration/reference.md)** - Complete configuration reference
+
+**Project Status:**
+*   **[docs/roadmap/roadmap.md](./docs/roadmap/roadmap.md)** - Development roadmap and milestones
+*   **[docs/roadmap/features.md](./docs/roadmap/features.md)** - Feature status matrix
+*   **[docs/roadmap/test-coverage.md](./docs/roadmap/test-coverage.md)** - Test coverage analysis
+
+**Performance:**
+*   **[docs/benchmarks/methodology.md](./docs/benchmarks/methodology.md)** - How we measure and validate performance
 
 ## Repository Layout
 

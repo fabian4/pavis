@@ -155,7 +155,7 @@ kubectl_get_container_stats() {
     exec_status=$?
     set -e
     if (( exec_status != 0 )); then
-      log_warn "Unable to read RSS from container (missing tools). Returning 0."
+      log_warn "Unable to read RSS from container (metrics-server missing or kubectl exec failed). Returning 0." >&2
       echo "0"
       return 0
     fi
@@ -178,7 +178,7 @@ kubectl_get_fd_count() {
   exec_status=$?
   set -e
   if (( exec_status != 0 )); then
-    log_warn "Unable to read FD count from container (missing tools). Returning 0."
+    log_warn "Unable to read FD count from container (kubectl exec failed). Returning 0." >&2
     echo "0"
     return 0
   fi

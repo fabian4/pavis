@@ -15,8 +15,8 @@ source "$SCRIPT_DIR/system_metrics.sh"
 source "$SCRIPT_DIR/publish_config.sh"
 # shellcheck source=bench/scripts/proxy_helpers.sh
 source "$SCRIPT_DIR/proxy_helpers.sh"
-# shellcheck source=bench/config/targets.env
-source "$(cd "$SCRIPT_DIR/.." && pwd)/config/targets.env"
+# shellcheck source=bench/config/config.env
+source "$(cd "$SCRIPT_DIR/.." && pwd)/config/config.env"
 
 CASE_NAME="multi_hour_soak"
 TARGET_RPS="${SYSTEM_MULTI_HOUR_SOAK_TARGET_RPS}"  # 75% capacity

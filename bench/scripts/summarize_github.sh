@@ -5,7 +5,7 @@ set -euo pipefail
 # Scans bench/output/{mode}/{proxy}/{case}/ directories and aggregates into summary.csv
 #
 # Usage:
-#   bash bench/scripts/summarize.sh [output_dir]
+#   bash bench/scripts/summarize_github.sh [output_dir]
 #
 # Environment:
 #   OUTPUT_DIR: Override default bench/output/standalone directory
@@ -494,7 +494,7 @@ main() {
     # shellcheck source=/dev/null
     source "$run_context"
     if [ "${BENCH_MODE:-}" = "system" ]; then
-      echo "warn: summarize.sh does not support system mode outputs; skipping" >&2
+      echo "warn: summarize_github.sh does not support system mode outputs; skipping" >&2
       exit 0
     fi
   fi

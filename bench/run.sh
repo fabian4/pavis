@@ -103,18 +103,21 @@ main() {
   fi
 
   if [[ "${BENCH_MODE:-standalone}" == "standalone" ]]; then
-    bash "${BENCH_SCRIPTS_DIR}/summarize.sh"
+    bash "${BENCH_SCRIPTS_DIR}/summarize_github.sh"
     case "${BENCH_PROFILE:-}" in
       workstation)
         bash "${BENCH_SCRIPTS_DIR}/report_standalone_workstation.sh"
         ;;
       github)
-        bash "${BENCH_SCRIPTS_DIR}/report_standalone_github.sh"
+        log_info "Skipping standalone CI report; consolidated summary handled separately"
         ;;
       *)
         log_warn "Skipping report generation for unknown BENCH_PROFILE=${BENCH_PROFILE:-}"
         ;;
     esac
+  else
+    bash "${BENCH_SCRIPTS_DIR}/summarize_system.sh"
+    log_info "Skipping system report generation in run.sh"
   fi
 }
 

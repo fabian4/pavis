@@ -10,8 +10,8 @@ set -euo pipefail
 
 CASE_NAME="concurrency_short_1x"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck source=bench/config/targets.env
-source "${ROOT_DIR}/config/targets.env"
+# shellcheck source=bench/config/config.env
+source "${ROOT_DIR}/config/config.env"
 
 DURATION_S="${STANDALONE_CONCURRENCY_SHORT_1X_DURATION_S}"
 WARMUP_S=5
