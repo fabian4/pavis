@@ -2,7 +2,7 @@
 
 ## 1. Introduction
 
-This document operationalizes the evaluation framework defined in [METHODOLOGY.md](./METHODOLOGY.md) for **Standalone Dataplane Mode**. 
+This document operationalizes the evaluation framework defined in [methodology.md](./methodology.md) for **Standalone Dataplane Mode**. 
 
 Standalone mode is designed to measure the **intrinsic performance properties** of the Pavis data plane in isolation. It focuses on the fundamental cost of packet processing, routing, and transport management without interference or assistance from control-plane components.
 

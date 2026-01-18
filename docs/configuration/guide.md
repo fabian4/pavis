@@ -1,6 +1,6 @@
 # Pavis Runtime Configuration Guide
 
-This guide provides scenario-based instructions and recipes for configuring the Pavis data plane. It is based on the [Field-Tree Reference](./runtime-config.reference.md).
+This guide provides scenario-based instructions and recipes for configuring the Pavis data plane. It is based on the [Field-Tree Reference](./reference.md).
 
 ## Overview
 

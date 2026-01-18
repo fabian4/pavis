@@ -47,7 +47,7 @@ services:
       dockerfile: crates/pavis/Dockerfile
     container_name: bench-pavis
     volumes:
-      - ./config/pavis.pvs:/etc/pavis/config.pvs:ro
+      - ./config/standalone/pavis.pvs:/etc/pavis/config.pvs:ro
     ports:
       - "8080:8080"
     depends_on:
@@ -74,7 +74,7 @@ services:
     image: envoyproxy/envoy:${ENVOY_TAG:-v1.32.2}
     container_name: bench-envoy
     volumes:
-      - ./config/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./config/standalone/envoy.yaml:/etc/envoy/envoy.yaml:ro
     ports:
       - "8081:8081"
     depends_on:
@@ -102,7 +102,7 @@ services:
     image: nginx:${NGINX_TAG:-1.26.2-alpine}
     container_name: bench-nginx
     volumes:
-      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/standalone/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
       - "8082:8082"
     depends_on:
@@ -129,7 +129,7 @@ services:
     image: haproxy:${HAPROXY_TAG:-2.9.6-alpine}
     container_name: bench-haproxy
     volumes:
-      - ./config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./config/standalone/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports:
       - "8083:8083"
     depends_on:

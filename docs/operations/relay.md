@@ -677,6 +677,6 @@ jq .checksum /var/lib/pavis-relay/history/0000000002.meta.json
 
 ## See Also
 
-- [API Reference](../api/relay.md)
+- [API Reference](../api/relay-http.md)
 - [Crash Recovery Guide](crash-recovery.md)
 - [Architecture Documentation](../../ARCHITECTURE.md)

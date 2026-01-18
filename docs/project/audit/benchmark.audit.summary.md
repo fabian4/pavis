@@ -78,7 +78,7 @@
 ### 2. Top Risks
 1. **Thread/Worker Mismatch (Phase 2)**: Pavis is configured with 4 workers vs 2 for competitors, under a 2-CPU limit. This skews efficiency comparisons.
 2. **CI Resource Starvation (Phase 4)**: The `cpuset` pinning (Cores 0-2) exceeds the capacity of standard 2-core CI runners, leading to inevitable CPU contention between the backend and proxy.
-3. **PVS/YAML Discrepancy (Phase 0)**: `bench/config/pavis.yaml` specifies 4 workers, but the runtime uses a `.pvs` file generated during setup. Verification is needed to ensure the generated `.pvs` matches the audited `.yaml`.
+3. **PVS/YAML Discrepancy (Phase 0)**: `bench/config/standalone/pavis.yaml` specifies 4 workers, but the runtime uses a `.pvs` file generated during setup. Verification is needed to ensure the generated `.pvs` matches the audited `.yaml`.
 
 ### 3. Confidence Assessment
 - **Comparability**: Medium. The worker count mismatch must be reconciled.

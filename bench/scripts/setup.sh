@@ -91,7 +91,7 @@ create_kind_cluster() {
 
   log_info "Creating kind cluster: $CLUSTER_NAME"
 
-  local config_file="${BENCH_ROOT}/bench/k8s/kind-config.yaml"
+  local config_file="${BENCH_ROOT}/bench/config/system/kind-config.yaml"
 
   if [[ ! -f "$config_file" ]]; then
     exit_with_error "Kind config not found: $config_file"
@@ -100,6 +100,19 @@ create_kind_cluster() {
   kind create cluster --name "$CLUSTER_NAME" --config "$config_file" --wait 120s
 
   log_info "Kind cluster created successfully"
+}
+
+allow_control_plane_scheduling_if_needed() {
+  local node_count
+  node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+
+  if [[ -z "$node_count" || "$node_count" -ge 2 ]]; then
+    return 0
+  fi
+
+  log_warn "Only ${node_count} node detected; allowing workloads on control-plane"
+  kubectl taint nodes --all node-role.kubernetes.io/control-plane- 2>/dev/null || true
+  kubectl taint nodes --all node-role.kubernetes.io/master- 2>/dev/null || true
 }
 
 build_docker_images() {
@@ -155,7 +168,7 @@ create_namespace() {
 deploy_pavis_infrastructure() {
   log_info "Deploying Pavis control plane and test workloads"
 
-  local manifests_dir="${BENCH_ROOT}/bench/k8s/pavis"
+  local manifests_dir="${BENCH_ROOT}/bench/config/system/pavis"
 
   if [[ ! -d "$manifests_dir" ]]; then
     exit_with_error "Pavis manifests directory not found: $manifests_dir"
@@ -178,7 +191,7 @@ deploy_pavis_infrastructure() {
 deploy_envoy_infrastructure() {
   log_info "Deploying Envoy xDS control plane and test workloads"
 
-  local manifests_dir="${BENCH_ROOT}/bench/k8s/envoy"
+  local manifests_dir="${BENCH_ROOT}/bench/config/system/envoy"
 
   if [[ ! -d "$manifests_dir" ]]; then
     exit_with_error "Envoy manifests directory not found: $manifests_dir"
@@ -240,7 +253,7 @@ deploy_linkerd_infrastructure() {
   log_info "Linkerd control plane ready"
 
   # Deploy test workload with linkerd injection
-  local manifests_dir="${BENCH_ROOT}/bench/k8s/linkerd"
+  local manifests_dir="${BENCH_ROOT}/bench/config/system/linkerd"
 
   if [[ ! -d "$manifests_dir" ]]; then
     exit_with_error "Linkerd manifests directory not found: $manifests_dir"
@@ -260,6 +273,7 @@ setup_environment_system() {
 
   check_kind_requirements
   create_kind_cluster
+  allow_control_plane_scheduling_if_needed
   build_docker_images
   load_images_to_kind
   create_namespace
@@ -392,13 +406,13 @@ count_cpuset() {
 ensure_pavis_config() {
   BENCH_PVS_GENERATED=false
   if [[ ! -f "$BENCH_PVS_CONFIG" ]]; then
-    bench_print_step "Generating .pvs config from ${BENCH_ROOT}/bench/config/pavis.yaml"
+    bench_print_step "Generating .pvs config from ${BENCH_ROOT}/bench/config/standalone/pavis.yaml"
     local pavctl="${BENCH_ROOT}/target/release/pavctl"
     if [[ ! -x "$pavctl" ]]; then
       bench_print_step "Building pavctl"
       cargo build -p pavctl --release
     fi
-    "$pavctl" gen "${BENCH_ROOT}/bench/config/pavis.yaml" "$BENCH_PVS_CONFIG"
+    "$pavctl" gen "${BENCH_ROOT}/bench/config/standalone/pavis.yaml" "$BENCH_PVS_CONFIG"
     BENCH_PVS_GENERATED=true
   fi
 }

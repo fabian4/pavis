@@ -61,17 +61,7 @@ pub async fn spawn_watcher(
             };
 
             tokio::select! {
-                _ = poll_interval.tick() => {
-                    let mtime = tokio::fs::metadata(&ingest_path)
-                        .await
-                        .and_then(|m| m.modified())
-                        .ok();
-                    if mtime != last_mtime {
-                        debug!("File change detected via polling: {:?}, old_mtime={:?}, new_mtime={:?}", ingest_path, last_mtime, mtime);
-                        last_mtime = mtime;
-                        debounce_timer = Some(Box::pin(tokio::time::sleep(debounce)));
-                    }
-                }
+                biased;
                 Some(event) = event_rx.recv() => {
                     match event.kind {
                         EventKind::Modify(_) | EventKind::Create(_) | EventKind::Any => {
@@ -84,6 +74,17 @@ pub async fn spawn_watcher(
                             debounce_timer = Some(Box::pin(tokio::time::sleep(debounce)));
                         }
                         _ => {}
+                    }
+                }
+                _ = poll_interval.tick() => {
+                    let mtime = tokio::fs::metadata(&ingest_path)
+                        .await
+                        .and_then(|m| m.modified())
+                        .ok();
+                    if mtime != last_mtime {
+                        debug!("File change detected via polling: {:?}, old_mtime={:?}, new_mtime={:?}", ingest_path, last_mtime, mtime);
+                        last_mtime = mtime;
+                        debounce_timer = Some(Box::pin(tokio::time::sleep(debounce)));
                     }
                 }
                 _ = timer_fired => {

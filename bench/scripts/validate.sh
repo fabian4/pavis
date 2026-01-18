@@ -271,7 +271,7 @@ USAGE
   fi
 
   if [[ "$proxy" == "pavis" ]]; then
-    local pavis_yaml="${BENCH_ROOT}/bench/config/pavis.yaml"
+    local pavis_yaml="${BENCH_ROOT}/bench/config/standalone/pavis.yaml"
     if [[ ! -f "$pavis_yaml" ]]; then
       exit_with_error "Pavis config not found: $pavis_yaml"
     fi
@@ -297,7 +297,7 @@ USAGE
   if [[ -f "${BENCH_LOADGEN_BIN}.exe" ]]; then
     export BENCH_LOADGEN_BIN="${BENCH_LOADGEN_BIN}.exe"
   fi
-  export BENCH_PVS_CONFIG="${BENCH_ROOT}/bench/config/pavis.pvs"
+  export BENCH_PVS_CONFIG="${BENCH_ROOT}/bench/config/standalone/pavis.pvs"
   export BENCH_DOCKER_COMPOSE="${BENCH_ROOT}/bench/docker-compose.yaml"
   export LOADGEN_WARN="$loadgen_warn"
   export BENCH_BACKGROUND="$background"

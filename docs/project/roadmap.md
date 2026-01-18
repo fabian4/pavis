@@ -7,7 +7,7 @@
 
 > **Status**: Active
 > **Focus**: Phase 7 (Operational Lifecycle)
-> **Reference**: [ARCHITECTURE.md](./ARCHITECTURE.md)
+> **Reference**: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
 This roadmap distinguishes between **Delivery Phases** (user-visible capabilities) and **Technical Debt** (engineering health and optimization).
 
@@ -15,7 +15,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 
 ### P0 – Safety & Correctness
 - [ ] **Header/Method Routing Gap**: Router currently matches path-only despite documentation promising method/header selectors. _Exit criteria_: Router matcher accepts method/header predicates, unit tests cover combos, and E2E proves a method-scoped route is honored.
-- [ ] **Route Retries/Timeouts Ignored**: `Route.retry` / `Route.timeout` are parsed but unused. _Exit criteria_: Runtime wires values into Pingora deadlines/retry logic and regression tests exercise success/failure cases.
+- [x] **Route Retries/Timeouts Ignored**: `Route.retry` / `Route.timeout` are parsed but unused. _Exit criteria_: Runtime wires values into Pingora deadlines/retry logic and regression tests exercise success/failure cases.
 - [x] **Upstream `health_check` Dropped**: Codec accepts the field but discards it. _Exit criteria_: Configs either compile to runtime health probes or are rejected with a clear validation error; E2E proves active probe behavior.
 - [ ] **Upstream `pool.max` Ignored**: Connection limits compile but are unenforced. _Exit criteria_: Runtime enforces `pool.max` and integration tests show capped concurrency.
 - [ ] **Inbound mTLS (rustls) Blocked**: Pingora rustls lacks client-cert verifier hooks. _Exit criteria_: Mark config as invalid or gated when rustls backend is selected, plus tests covering rejection. _Blocked on Pingora rustls inbound verifier wiring._

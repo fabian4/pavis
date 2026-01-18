@@ -51,22 +51,64 @@ kubectl_port_forward_background() {
   local pod_name
   pod_name=$(kubectl_get_pod_name "$label" "$namespace")
 
-  # Start port-forward in background and redirect output
-  kubectl port-forward -n "$namespace" "$pod_name" "$local_port:$remote_port" \
-    > /dev/null 2>&1 &
+  local attempt=0
+  local max_attempts=5
+  local chosen_port="$local_port"
+  local pf_pid=""
 
-  local pf_pid=$!
+  while [[ $attempt -lt $max_attempts ]]; do
+    if [[ $attempt -gt 0 ]]; then
+      chosen_port=$(pick_free_port "$local_port")
+    fi
 
-  # Give port-forward time to establish
-  sleep 2
+    # Start port-forward in background and redirect output
+    kubectl port-forward -n "$namespace" "$pod_name" "$chosen_port:$remote_port" \
+      > /dev/null 2>&1 &
+    pf_pid=$!
 
-  # Verify it's still running using check_process_alive
-  if ! check_process_alive "$pf_pid"; then
-    log_error "Port forward failed to start"
-    return 1
+    # Give port-forward time to establish
+    sleep 2
+
+    # Verify it's still running using check_process_alive
+    if check_process_alive "$pf_pid"; then
+      echo "$pf_pid $chosen_port"
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+  done
+
+  log_error "Port forward failed to start"
+  return 1
+}
+
+pick_free_port() {
+  local fallback_port="$1"
+
+  if command -v python3 > /dev/null 2>&1; then
+    python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+    return 0
   fi
 
-  echo "$pf_pid"
+  if command -v python > /dev/null 2>&1; then
+    python - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+    return 0
+  fi
+
+  echo "$fallback_port"
+  return 0
 }
 
 # Stop port forward by PID

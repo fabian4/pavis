@@ -1,6 +1,6 @@
 # Pavis Benchmark System
 
-This directory contains the orchestration, configuration, and tooling for the Pavis performance evaluation suite. This system is designed to provide scientifically rigorous, reproducible measurements of proxy behavior based on the [7+2+1 Benchmark Methodology](../docs/benchmark/METHODOLOGY.md).
+This directory contains the orchestration, configuration, and tooling for the Pavis performance evaluation suite. This system is designed to provide scientifically rigorous, reproducible measurements of proxy behavior based on the [7+2+1 Benchmark Methodology](../docs/benchmarks/methodology.md).
 
 ## 1. Dual-Mode Evaluation Model
 

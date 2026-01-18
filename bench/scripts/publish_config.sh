@@ -57,11 +57,17 @@ publish_to_pavis_relay() {
   if command -v kubectl > /dev/null 2>&1; then
     local pf_pid=""
     local pf_port="${BENCH_RELAY_LOCAL_PORT:-8090}"
+    local pf_local_port="$pf_port"
     if kubectl_wait_for_endpoint "pavis-relay" "$RELAY_NAMESPACE" 30; then
-      pf_pid=$(kubectl_port_forward_background "app=pavis-relay" "$pf_port" 8090 "$RELAY_NAMESPACE" || true)
+      local pf_info=""
+      pf_info=$(kubectl_port_forward_background "app=pavis-relay" "$pf_port" 8090 "$RELAY_NAMESPACE" || true)
+      if [[ -n "$pf_info" ]]; then
+        pf_pid=$(echo "$pf_info" | awk '{print $1}')
+        pf_local_port=$(echo "$pf_info" | awk '{print $2}')
+      fi
     fi
     if [[ -n "$pf_pid" ]]; then
-      relay_url="http://localhost:${pf_port}/v1/publish"
+      relay_url="http://localhost:${pf_local_port}/v1/publish"
     else
       local relay_ip
       relay_ip=$(kubectl_get_service_ip "pavis-relay" "$RELAY_NAMESPACE")
@@ -167,11 +173,21 @@ generate_pavis_config() {
   local output_file="$2"
   local drop_rate="${3:-0.0}"
 
-  cp "${BENCH_ROOT}/bench/config/pavis.yaml" "$output_file"
+  local config_file
+  config_file=$(resolve_pavis_config_path)
+  cp "$config_file" "$output_file"
   if [[ "$drop_rate" != "0.0" && "$drop_rate" != "0" ]]; then
     log_warn "drop_rate=$drop_rate ignored for current pavis config schema"
   fi
   log_info "Generated pavis config version $version"
+}
+
+resolve_pavis_config_path() {
+  if [[ "${BENCH_MODE:-standalone}" == "system" ]]; then
+    echo "${BENCH_ROOT}/bench/config/system/pavis.yaml"
+  else
+    echo "${BENCH_ROOT}/bench/config/standalone/pavis.yaml"
+  fi
 }
 
 # Deploy baseline config (version 1, no drops)

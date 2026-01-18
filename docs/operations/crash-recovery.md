@@ -686,5 +686,5 @@ A: Safe. Relay will regenerate it from lkg/meta.json on next startup.
 ## See Also
 
 - [Operational Guide](relay.md)
-- [API Reference](../api/relay.md)
+- [API Reference](../api/relay-http.md)
 - [Architecture Documentation](../../ARCHITECTURE.md)

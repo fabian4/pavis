@@ -9,15 +9,18 @@ set -euo pipefail
 # - If service names/ports differ, adjust the variables in the Config section.
 
 CASE_NAME="latency_short_1x"
-DURATION_S=30
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=bench/config/targets.env
+source "${ROOT_DIR}/config/targets.env"
+
+DURATION_S="${STANDALONE_LATENCY_SHORT_1X_DURATION_S}"
 WARMUP_S=5
 COOLDOWN_S=5
-CONNECTIONS=500
-TARGET_RPS=10000
+CONNECTIONS="${STANDALONE_LATENCY_SHORT_1X_CONNECTIONS}"
+TARGET_RPS="${STANDALONE_LATENCY_SHORT_1X_TARGET_RPS}"
 REQUEST_PATH="/fixed"
 
 # Config (single place to adjust service names/ports)
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-${ROOT_DIR}/docker-compose.yaml}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-bench-upstream}"
 BACKEND_CONTAINER="${BACKEND_CONTAINER:-bench-upstream}"

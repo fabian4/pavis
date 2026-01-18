@@ -103,13 +103,13 @@ main() {
   fi
 
   if [[ "${BENCH_MODE:-standalone}" == "standalone" ]]; then
-    "${BENCH_SCRIPTS_DIR}/summarize.sh"
+    bash "${BENCH_SCRIPTS_DIR}/summarize.sh"
     case "${BENCH_PROFILE:-}" in
       workstation)
-        "${BENCH_SCRIPTS_DIR}/report_standalone_workstation.sh"
+        bash "${BENCH_SCRIPTS_DIR}/report_standalone_workstation.sh"
         ;;
       github)
-        "${BENCH_SCRIPTS_DIR}/report_standalone_github.sh"
+        bash "${BENCH_SCRIPTS_DIR}/report_standalone_github.sh"
         ;;
       *)
         log_warn "Skipping report generation for unknown BENCH_PROFILE=${BENCH_PROFILE:-}"

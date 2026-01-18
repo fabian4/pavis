@@ -12,209 +12,86 @@ _Deterministic by construction. Zero runtime policy._
 [![Status](https://img.shields.io/badge/status-Pre--Alpha-red.svg)](#project-status)
 [![codecov](https://codecov.io/gh/fabian4/pavis/branch/main/graph/badge.svg?token=C1DRZN5YDL)](https://codecov.io/gh/fabian4/pavis)
 
+## What is Pavis?
+
 **Pavis** is a highly opinionated L7 sidecar proxy implemented in Rust, built on the Cloudflare Pingora engine.
 
-It is **NOT** a drop-in replacement for Envoy, nor is it a general-purpose programmable proxy.
+It separates policy resolution from packet forwarding. Unlike traditional proxies that evaluate complex logic and defaults at runtime, Pavis executes **only** pre-validated, immutable, Ahead-of-Time (AOT) compiled artifacts.
 
-Pavis is built on the **Frozen Data Plane** architecture. It separates policy resolution from packet forwarding. Unlike traditional proxies that evaluate complex logic, regular expressions, and defaults at runtime, Pavis executes **only** pre-validated, immutable, Ahead-of-Time (AOT) compiled artifacts.
+Pavis eliminates runtime non-determinism by freezing all policy decisions into a binary artifact (`.pvs`) before deployment.
 
-Pavis eliminates runtime non-determinism by freezing all policy decisions into a zero-copy binary artifact before deployment.
+## What is it NOT?
 
-This architectural shift moves complexity left—from the critical path of packet processing to the compilation phase—guaranteeing operational behavior that is verifiable, bounded, and immutable.
+*   It is **NOT** a drop-in replacement for Envoy.
+*   It is **NOT** a general-purpose programmable proxy.
+*   It is **NOT** a platform for runtime scripting (Lua, WASM).
 
-## 🧊 Core Philosophy: The Frozen Data Plane
+## Core Philosophy: The Frozen Data Plane
 
-Pavis rejects the "Smart Proxy" model where the data plane is responsible for interpreting vague configuration or executing scripts.
+Pavis rejects the "Smart Proxy" model. It moves complexity left—from the critical path of packet processing to the compilation phase.
 
-1.  **Immutable Execution**: The runtime executes a static, binary `.pvs` artifact. It cannot load plugins, scripts, or WASM modules.
-2.  **No Runtime Inference**: "Missing" configuration is a compile-time error. The runtime has no logic to apply defaults (e.g., a missing timeout causes artifact rejection, not a fallback to 5s).
-3.  **Determinism**: By removing runtime programmability and enforcing AOT compilation, resource usage and latency variance are strictly bounded.
+*   **Immutable Execution**: The runtime executes a static binary artifact, preventing drift.
+*   **No Runtime Inference**: "Missing" configuration is treated as a compile-time error rather than being filled with implicit defaults.
+*   **Determinism**: By enforcing AOT compilation, resource usage and latency variance are strictly bounded.
 
-This architecture prevents configuration-driven performance regressions, such as thundering herds during reloads or CPU spikes from runtime regex compilation.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the formal architectural invariants.
 
-This approach eliminates an entire class of production incidents where runtime default resolution or regex compilation causes unexpected latency spikes or resource exhaustion during configuration reloads.
+## Capabilities: Supported Today
 
-## 🧱 Architecture
+*   **L7 Routing**: Prefix, Exact, and Regex matching.
+*   **Traffic Management**: Weighted splitting, round-robin load balancing.
+*   **Actions**: Forwarding, Redirects (3xx), Direct Responses (200/400/503).
+*   **Header Manipulation**: Deterministic insert, remove, overwrite.
+*   **Rewrites**: Prefix path and Host literal rewriting.
+*   **TLS**: Server-side termination and Upstream origination.
+*   **Observability**: Prometheus metrics, structured access logging, OTLP tracing.
+*   **Resilience**: Active health checks, outlier ejection, circuit breaking, retries.
+*   **Hot Reload**: Atomic, hitless reload of the data plane.
 
-Pavis treats configuration as a compilation target, not a runtime input. See [ARCHITECTURE.md](./ARCHITECTURE.md) for a detailed system breakdown.
+See [docs/project/features.md](./docs/project/features.md) for a complete feature matrix.
 
-```mermaid
-flowchart LR
-    Source(YAML / xDS) --> Ingest
-    Ingest --> Codec(Compiler)
-    Codec --> Relay(Distributor)
-    Relay -- Long-Poll --> Runtime(Pavis)
-```
+## Operational Model
 
--   **Runtime (`pavis`)**: A "dumb" execution engine. It maps the `.pvs` file directly into memory (zero-copy) and forwards traffic.
--   **Ingest & Codec**: Transforms sparse human intent (YAML, xDS) into fully explicit, validated `RuntimeConfig`. All heavy lifting (regex compilation, policy resolution) happens here.
--   **Relay**: Distributes frozen artifacts via HTTP long-polling.
+The operational model of Pavis is distinct from other proxies:
 
-The Runtime is deliberately constrained to be a pure execution mechanism. It performs no parsing, no semantic validation, no default injection, and no interpretation of intent. By design, the Runtime lacks the logic required to compensate for malformed or incomplete configurations.
+1.  **Compile**: Users compile source intent (YAML, xDS) into a `.pvs` artifact using the Codec pipeline.
+2.  **Distribute**: Artifacts are versioned and distributed via the Relay.
+3.  **Execute**: The Runtime pulls the artifact and atomically swaps the execution state.
 
-## ✅ Supported Today
+For detailed operational guides (Shutdown, Admin API, Relay), see [docs/operations/runtime.md](./docs/operations/runtime.md).
 
-*   **L7 Routing**: Prefix, Exact, and Regex matching (Compiled AOT).
-*   **Traffic Management**: Weighted traffic splitting and round-robin load balancing.
-*   **Actions**: Forwarding, Redirects (3xx), and Direct Responses (synthetic 200/400/503).
-*   **Header Manipulation**: Deterministic insert, remove, and overwrite.
-*   **Rewrites**: Prefix path rewriting and Host literal rewriting.
-*   **Hot Reload**: Atomic, hitless reload of the data plane via pointer swapping.
-*   **Relay Config API**: ETag-based `GET /v1/config` with `wait_ms` long-polling.
-*   **TLS Termination**: Server-side TLS with strict file-based certificates (OpenSSL/BoringSSL backend only).
-*   **Upstream TLS Origination**: Client-side TLS with hostname verification (system CA bundle only with current rustls backend).
-*   **Observability**: Prometheus metrics with cardinality controls, structured access logging, and distributed tracing (OTLP).
-*   **Resilience**: Active health checks, passive outlier ejection, circuit breaker caps, retries, and per-try timeouts.
-*   **Graceful Shutdown**: Configurable drain timeout for in-flight requests on SIGTERM/SIGINT.
-*   **Admin API**: Read-only HTTP endpoints for health checks and runtime statistics.
-
-## 🔧 Operational Features
-
-### Graceful Shutdown
-
-Pavis supports graceful shutdown to ensure in-flight requests complete before the process exits.
-
-**Configuration:**
-
-```yaml
-shutdown:
-  enabled: true           # Default: true
-  drain_timeout_ms: 30000 # Default: 30 seconds
-```
-
-**Behavior:**
-- **SIGTERM/SIGINT**: Triggers graceful shutdown
-- **Drain Phase**: Stops accepting new connections and waits for in-flight requests to complete (up to `drain_timeout_ms`)
-- **Force Close**: After timeout expires, remaining connections are closed immediately
-
-**Recommendations:**
-- **Production**: 30s-60s drain timeout (allows slow requests to complete)
-- **Development**: `enabled: false` for fast iteration
-- **High-traffic**: 60s+ for long-running requests
-
-### Admin API
-
-Pavis provides a **read-only** admin API for health checks and runtime introspection.
-
-**Configuration:**
-
-```yaml
-admin:
-  enabled: false              # Default: false (disabled)
-  address: "127.0.0.1:9901"   # Default: loopback only
-```
-
-**Endpoints:**
-
-| Endpoint | Description | Response |
-|----------|-------------|----------|
-| `GET /health` | Health status | `{"status":"healthy"}` (always 200 OK) |
-| `GET /stats` | Runtime statistics | JSON with version, uptime, config counts |
-
-**Stats Response Example:**
-
-```json
-{
-  "version": "0.0.0",
-  "uptime_seconds": 3600,
-  "listeners": 2,
-  "upstreams": 5,
-  "routes": 10
-}
-```
-
-**Security Note:** The admin API has **no authentication** in the current release. Bind to loopback (`127.0.0.1`) or use firewall rules to restrict access.
-
-**Kubernetes Integration:**
-
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 9901
-  initialDelaySeconds: 5
-  periodSeconds: 10
-```
-
-### TLS Backend Limitations (Rustls)
-
-Pavis currently uses Pingora's rustls backend, which has the following limitations due to upstream Pingora constraints:
-
-1. **No Inbound mTLS (Client Certificate Authentication)**: Pingora's rustls listener does not expose an API to configure client certificate verification. Server-side client certificate authentication is not available. This feature requires the OpenSSL/BoringSSL backend.
-
-2. **No Per-Peer CA Verification**: Upstream TLS connections can only use the system-wide CA bundle. Custom CA certificates specified via `ca_bundle_path` are ignored by the rustls connector. Upstreams relying on private or custom CAs are not supported. This feature requires the OpenSSL/BoringSSL backend.
-
-These are upstream limitations in Pingora. Pavis does not implement local workarounds and is waiting for upstream fixes. Users requiring these features should use the OpenSSL/BoringSSL backend (available via build-time feature flags; see build documentation).
-
-## 🧭 Roadmap (Planned)
-
-The following items represent the planned architectural direction and are not guaranteed for immediate release. See [ROADMAP.md](./ROADMAP.md) for active tracking.
-
-*   **Identity**: mTLS with SPIFFE ID extraction.
-*   **Security**: RBAC with deny-by-default policies.
-*   **xDS**: Compiling Envoy xDS resources into frozen `.pvs` artifacts.
-
-## 🚫 Explicitly Dropped / Not Supported
-
-These features are structurally excluded because they violate the immutability and bounded-execution contracts of the Frozen Data Plane. A complete summary of feature trade-offs is available in [docs/FEATURES.md](./docs/FEATURES.md).
-
-*   **No Runtime Scripting**: No WASM, Lua, or hot-pluggable filters.
-*   **No Regex Rewrites**: Regex *matching* is supported; regex *substitution* is banned due to unpredictable performance costs.
-*   **No Inline Secrets**: TLS certificates must be referenced by file path. They are never embedded in the configuration artifact.
-*   **No Global Rate Limiting**: Requires external state/dependencies that bloat the sidecar.
-*   **No SNI Multi-Cert**: Pavis assumes the sidecar model (one workload identity). It does not support serving multiple certificates on a single listener based on SNI.
-*   **No OIDC / WAF**: These belong in an Edge Gateway, not a sidecar.
-
-## 🔐 TLS: Sidecar-Oriented Encryption
-
-Pavis takes a **minimalist approach to TLS**. TLS support is scoped strictly to enable L7 policy enforcement and is not intended as a general-purpose certificate orchestration or termination system.
-
-*   It supports standard server-side termination to allow L7 inspection.
-*   It does **not** aim to process complex encrypted traffic logic or dynamic certificate negotiation.
-*   Configuration is strictly file-path based. Management of certificate files on disk is the responsibility of the orchestration platform (e.g., cert-manager, SPIRE), not the proxy.
-
-## 📊 Benchmarks
-
-> **Status**: Under Active Re-evaluation
-
-Preliminary benchmarks show Pavis performs competitively with Nginx and Envoy in baseline throughput and latency scenarios due to Pingora's efficient polling model. However, specific bottlenecks under extreme concurrency are currently being analyzed.
-
-*Formal performance claims will only be published once our methodology is stabilized and variance is fully characterized.*
-
-On Linux, the workstation benchmark profile uses `taskset` for CPU pinning and applies memory limits; on non-Linux hosts the runner logs a warning and proceeds without pinning or memory limits.
-Standalone benchmark cases default to `bench/docker-compose.yaml` and source `bench/scripts/pretty.sh` for consistent output formatting.
-Loadgen artifacts record latency percentiles under `latency_ms` in `loadgen.txt.json` (legacy flat `p*_ms` fields are still accepted by validation).
-
-## 🧪 Testing
-
-Run the E2E suites with `./tests/run.sh` (optionally scoping to a suite or case). The runner writes a run-scoped `tests/temp/context.env` and copies it into each case `TEST_TMP` directory for reproducible debugging context.
-Docker-mode tests default the mock upstream image to `pavis-mock-upstream:local` (override with `UPSTREAM_IMAGE`).
-
-## ⚠️ Project Status
+## Project Status & Roadmap
 
 **Current Status**: ⚠️ **Pre-Alpha**
 
-The project is in active development. APIs, the binary format, and configuration schemas are subject to breaking changes. See [ROADMAP.md](./ROADMAP.md) for development phases.
+The project is in active development. APIs and binary formats are subject to breaking changes.
 
-## 👤 Who Should Use Pavis?
+**Planned Features:**
+*   Identity (mTLS/SPIFFE)
+*   RBAC (Deny-by-default)
+*   xDS Compilation
 
-**Consider Pavis if:**
-*   You need a "dumb pipe" sidecar with strict latency bounds.
-*   You want to guarantee that your data plane can *never* drift from its configuration or apply hidden defaults.
-*   You prefer compile-time errors over runtime misconfigurations.
-*   You require auditability where the deployed artifact is a reproducible, inspectable binary representation of the policy.
+See [docs/project/roadmap.md](./docs/project/roadmap.md) for active tracking.
 
-Conversely, Pavis is not designed for environments requiring high runtime flexibility.
+## Explicitly Dropped Features
 
-**Do NOT use Pavis if:**
-*   You need to run custom Lua or WASM scripts at the edge.
-*   You rely on complex, dynamic ingress logic that changes per-request.
-*   You need a feature-complete drop-in replacement for Envoy today.
+These features are excluded to preserve the Frozen Data Plane contract:
+*   **No Runtime Scripting**: No WASM or Lua.
+*   **No Regex Substitutions**: Matching only.
+*   **No Inline Secrets**: Certificates must be file-path references.
+*   **No Global Rate Limiting**: Avoids external runtime dependencies.
+
+## Documentation Index
+
+*   **[ARCHITECTURE.md](./ARCHITECTURE.md)**: Normative system constitution and invariants.
+*   **[docs/operations/runtime.md](./docs/operations/runtime.md)**: Runbooks, configuration guides, and benchmarks.
+*   **[docs/project/features.md](./docs/project/features.md)**: Detailed feature matrix and trade-offs.
+*   **[docs/configuration/reference.md](./docs/configuration/reference.md)**: Configuration reference (Schema).
 
 ## Repository Layout
 
 *   `crates/pavis`: The runtime executable.
-*   `crates/pavis-core`: Shared type definitions and semantic validators.
-*   `crates/pavis-codec-*`: Compilers that transform source formats into frozen config.
-*   `crates/pavis-relay`: Control plane distribution server.
-*   `crates/pavctl`: CLI for artifact generation and debugging.
+*   `crates/pavis-core`: Shared type definitions and validators.
+*   `crates/pavis-codec-*`: Compilers (Source → Frozen Config).
+*   `crates/pavis-relay`: Distribution control plane.
+*   `crates/pavctl`: CLI for artifact generation.

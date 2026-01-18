@@ -16,7 +16,7 @@ env:
   BENCH_PROFILE: github
 
 jobs:
-  bench-standalone:
+  bench:
     runs-on: ubuntu-latest
 
     steps:
@@ -26,74 +26,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Install wrk, jq, and bc
+      - name: Install wrk, jq, bc, kind, and kubectl
         run: |
           sudo apt-get update
           sudo apt-get install -y wrk jq bc
-
-      - name: Build benchmark tools
-        run: |
-          make binary-build CRATE=pavis-benchkit BIN=bench-loadgen
-          make binary-build CRATE=pavctl
-
-      - name: Build Pavis Docker Image
-        run: make docker-build IMAGE=pavis MODE=ci
-
-      - name: Build Upstream Docker Image
-        run: make docker-build IMAGE=bench-upstream MODE=ci
-
-      - name: Benchmark pavis (standalone mode)
-        run: MODE=standalone PROXY=pavis make bench-standalone
-
-      - name: Debug on failure
-        if: failure()
-        working-directory: bench
-        run: |
-          echo "=== Docker Containers ==="
-          echo "--- pavis ---"
-          docker logs bench-pavis 2>&1 || true
-          echo "--- envoy ---"
-          docker logs bench-envoy 2>&1 || true
-          echo "--- nginx ---"
-          docker logs bench-nginx 2>&1 || true
-          echo "--- haproxy ---"
-          docker logs bench-haproxy 2>&1 || true
-          echo "=== Backend Logs ==="
-          docker logs bench-upstream 2>&1 || true
-
-      - name: Cleanup
-        if: always()
-        working-directory: bench
-        run: docker compose down -v
-
-      - name: Generate Summary and Report
-        run: make bench-report
-
-      - name: Append Job Summary
-        run: cat bench/output/standalone/report.md >> "$GITHUB_STEP_SUMMARY" || cat bench/output/report.md >> "$GITHUB_STEP_SUMMARY" || true
-
-      - name: Upload Bench Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bench-output-standalone
-          path: bench/output/
-          retention-days: 30
-
-  bench-system:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Install kind, kubectl, jq, and bc
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq bc
 
           # Install kubectl
           K8S_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt | tr -d '[:space:]')
@@ -111,16 +47,45 @@ jobs:
           make binary-build CRATE=pavis-benchkit BIN=bench-loadgen
           make binary-build CRATE=pavctl
 
+      - name: Build Standalone Docker Images
+        run: |
+          make docker-build IMAGE=pavis MODE=ci
+          make docker-build IMAGE=bench-upstream MODE=ci
+
+      - name: Benchmark pavis (standalone mode)
+        run: MODE=standalone PROXY=pavis make bench-standalone
+
+      - name: Debug standalone failure
+        if: failure()
+        working-directory: bench
+        run: |
+          echo "=== Docker Containers ==="
+          echo "--- pavis ---"
+          docker logs bench-pavis 2>&1 || true
+          echo "--- envoy ---"
+          docker logs bench-envoy 2>&1 || true
+          echo "--- nginx ---"
+          docker logs bench-nginx 2>&1 || true
+          echo "--- haproxy ---"
+          docker logs bench-haproxy 2>&1 || true
+          echo "=== Backend Logs ==="
+          docker logs bench-upstream 2>&1 || true
+
+      - name: Cleanup standalone
+        if: always()
+        working-directory: bench
+        run: docker compose down -v
+
       - name: Build System Mode Docker Images
         run: make bench-system-build MODE=ci
 
       - name: Run System Mode Benchmarks (pavis)
-        id: bench
+        id: bench_system
         run: MODE=system PROXY=pavis BENCH_PROFILE=github BENCH_CLEANUP_ON_FAILURE=false make bench-system
         continue-on-error: true
 
-      - name: Debug on failure
-        if: always() && steps.bench.outcome == 'failure'
+      - name: Debug system failure
+        if: always() && steps.bench_system.outcome == 'failure'
         run: |
           echo "=== Kind Cluster Info ==="
           kind get clusters || true
@@ -144,7 +109,7 @@ jobs:
           echo "=== Events ==="
           kubectl get events -n bench-system --sort-by='.lastTimestamp' || true
 
-      - name: Cleanup System Mode
+      - name: Cleanup system
         if: always()
         run: make bench-system-down
 
@@ -152,12 +117,14 @@ jobs:
         run: make bench-report || true
 
       - name: Append Job Summary
-        run: cat bench/output/system/report.md >> "$GITHUB_STEP_SUMMARY" || cat bench/output/report.md >> "$GITHUB_STEP_SUMMARY" || true
+        run: |
+          cat bench/output/standalone/report.md >> "$GITHUB_STEP_SUMMARY" || true
+          cat bench/output/system/report.md >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Upload Bench Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-output-system
+          name: bench-output
           path: bench/output/
           retention-days: 30

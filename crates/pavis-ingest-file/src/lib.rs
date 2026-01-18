@@ -303,6 +303,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_file_ingest_rapid_updates_debounce_stress() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        file.as_file_mut().write_all(b"v0")?;
+        let path = file.path().to_path_buf();
+        let yaml_path = path.with_extension("yaml");
+        std::fs::rename(&path, &yaml_path)?;
+
+        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(50));
+        let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
+
+        // Skip initial
+        let _ = stream.next().await;
+
+        for round in 1..=3 {
+            for i in 1..=10 {
+                std::fs::write(&yaml_path, format!("v{round}-{i}").as_bytes())?;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+
+            if let Ok(Some(Ok(artifact))) =
+                tokio::time::timeout(Duration::from_millis(500), stream.next()).await
+            {
+                let expected = format!("v{round}-10");
+                assert_eq!(artifact.bytes, Bytes::from(expected));
+            } else {
+                panic!("Expected debounced artifact in round {round}");
+            }
+
+            tokio::select! {
+                _ = stream.next() => panic!("Unexpected additional artifact in round {round}"),
+                _ = tokio::time::sleep(Duration::from_millis(120)) => {}
+            }
+        }
+
+        std::fs::remove_file(yaml_path)?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_file_ingest_missing_initial_file_fails() -> Result<()> {
         let path = PathBuf::from("non_existent_file.yaml");
         let mut ingest = FileIngest::new(path, Duration::from_millis(10));

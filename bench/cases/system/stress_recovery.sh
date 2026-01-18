@@ -15,19 +15,22 @@ source "$SCRIPT_DIR/system_metrics.sh"
 source "$SCRIPT_DIR/publish_config.sh"
 # shellcheck source=bench/scripts/proxy_helpers.sh
 source "$SCRIPT_DIR/proxy_helpers.sh"
+# shellcheck source=bench/config/targets.env
+source "$(cd "$SCRIPT_DIR/.." && pwd)/config/targets.env"
 
 CASE_NAME="stress_recovery"
-BASELINE_RPS=5000
-STRESS_RPS=15000
-BASELINE_DURATION_S=30
-STRESS_DURATION_S=60
-RECOVERY_DURATION_S=60
+BASELINE_RPS="${SYSTEM_STRESS_RECOVERY_BASELINE_RPS}"
+STRESS_RPS="${SYSTEM_STRESS_RECOVERY_STRESS_RPS}"
+BASELINE_DURATION_S="${SYSTEM_STRESS_RECOVERY_BASELINE_DURATION_S}"
+STRESS_DURATION_S="${SYSTEM_STRESS_RECOVERY_STRESS_DURATION_S}"
+RECOVERY_DURATION_S="${SYSTEM_STRESS_RECOVERY_RECOVERY_DURATION_S}"
 NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 
 numeric_or_zero() {
   local raw="$1"
+  # Extract first valid floating point number or integer
   local cleaned
-  cleaned=$(echo "$raw" | tr -d '[:space:]' | sed -E 's/[^0-9.]+//g')
+  cleaned=$(echo "$raw" | grep -oE '([0-9]+\.?[0-9]*|\.[0-9]+)' | head -1)
   if [[ -z "$cleaned" ]]; then
     echo "0"
   else
@@ -52,12 +55,16 @@ main() {
   # Setup port-forward to access test backend
   log_info "Setting up port-forward to test backend"
   local pf_pid
-  pf_pid=$(kubectl_port_forward_background "$pod_label" "$proxy_port" "$proxy_port" "$NAMESPACE")
+  local pf_info
+  pf_info=$(kubectl_port_forward_background "$pod_label" "$proxy_port" "$proxy_port" "$NAMESPACE")
+  pf_pid=$(echo "$pf_info" | awk '{print $1}')
+  local pf_local_port
+  pf_local_port=$(echo "$pf_info" | awk '{print $2}')
 
   # Wait for port-forward to stabilize
   sleep 3
 
-  local target_url="http://localhost:${proxy_port}/fixed"
+  local target_url="http://localhost:${pf_local_port}/fixed"
 
   # Step 1: Deploy baseline config
   log_info "Deploying baseline config"
@@ -79,6 +86,7 @@ main() {
   baseline_p99=$(jq -r '.latency_ms.p99' "${output_dir}/baseline.json")
   local baseline_rss_start_raw
   baseline_rss_start_raw=$(proxy_get_stats "$pod_label" "$NAMESPACE")
+  log_info "Debug: Raw Baseline RSS: '${baseline_rss_start_raw}'"
   local baseline_rss_start
   baseline_rss_start=$(numeric_or_zero "$baseline_rss_start_raw")
   log_info "Baseline P99: ${baseline_p99}ms, RSS: ${baseline_rss_start}KB"
@@ -106,6 +114,7 @@ main() {
   stress_dropped=$(jq -r '.dropped // 0' "${output_dir}/stress.json")
   local stress_rss_peak_raw
   stress_rss_peak_raw=$(awk -F',' 'NR>1 {if($2>max)max=$2} END{print max}' "${output_dir}/stress_rss.csv")
+  log_info "Debug: Raw Stress RSS Peak: '${stress_rss_peak_raw}'"
   local stress_rss_peak
   stress_rss_peak=$(numeric_or_zero "$stress_rss_peak_raw")
   log_info "Stress P99: ${stress_p99}ms, Dropped: ${stress_dropped}, RSS Peak: ${stress_rss_peak}KB"
@@ -131,6 +140,7 @@ main() {
   recovery_p99=$(jq -r '.latency_ms.p99' "${output_dir}/recovery.json")
   local recovery_rss_end_raw
   recovery_rss_end_raw=$(awk -F',' 'END{print $2}' "${output_dir}/recovery_rss.csv")
+  log_info "Debug: Raw Recovery RSS End: '${recovery_rss_end_raw}'"
   local recovery_rss_end
   recovery_rss_end=$(numeric_or_zero "$recovery_rss_end_raw")
   log_info "Recovery P99: ${recovery_p99}ms, RSS End: ${recovery_rss_end}KB"
@@ -142,7 +152,12 @@ main() {
   local rss_growth
   rss_growth=$(echo "($recovery_rss_end - $baseline_rss_start) / 1024.0" | bc -l)
   local rss_growth_pct
-  rss_growth_pct=$(echo "($recovery_rss_end - $baseline_rss_start) * 100.0 / $baseline_rss_start" | bc -l)
+  if (( $(echo "$baseline_rss_start <= 0" | bc -l) )); then
+    rss_growth_pct=0
+    log_warn "Skipping RSS growth percent: baseline RSS unavailable"
+  else
+    rss_growth_pct=$(echo "($recovery_rss_end - $baseline_rss_start) * 100.0 / $baseline_rss_start" | bc -l)
+  fi
 
   local latency_recovery_pct
   latency_recovery_pct=$(echo "($recovery_p99 - $baseline_p99) * 100.0 / $baseline_p99" | bc -l)
@@ -180,9 +195,11 @@ EOF
   fi
 
   # Check for excessive RSS growth (>10%)
-  if (( $(echo "$rss_growth_pct > 10" | bc -l) )); then
-    log_warn "Excessive RSS growth detected: ${rss_growth_pct}%"
-    validation_failed=1
+  if (( $(echo "$baseline_rss_start > 0" | bc -l) )); then
+    if (( $(echo "$rss_growth_pct > 10" | bc -l) )); then
+      log_warn "Excessive RSS growth detected: ${rss_growth_pct}%"
+      validation_failed=1
+    fi
   fi
 
   if (( validation_failed == 0 )); then

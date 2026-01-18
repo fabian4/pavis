@@ -65,14 +65,14 @@ spec:
           - "--config"
           - "/config/bootstrap.pvs"
           - "--relay-url"
-          - "http://pavis-relay:8090/v1/config"
+          - "http://pavis-relay:8090"
         ports:
         - name: proxy
           containerPort: 8080
           protocol: TCP
         env:
         - name: PAVIS_RELAY_URL
-          value: "http://pavis-relay:8090/v1/config"
+          value: "http://pavis-relay:8090"
         - name: PAVIS_UPSTREAM
           value: "127.0.0.1:8081"
         - name: PAVIS_BIND

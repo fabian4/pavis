@@ -257,6 +257,6 @@ These are intentional design choices to keep the tool simple and focused.
 
 ## 📚 References
 
-- **[Benchmark Methodology](../../bench/METHODOLOGY.md)**: How this backend is used in scientific benchmarks.
+- **[Benchmark Methodology](../../docs/benchmarks/methodology.md)**: How this backend is used in scientific benchmarks.
 - **[Benchmark README](../../bench/README.md)**: Full suite documentation.
 

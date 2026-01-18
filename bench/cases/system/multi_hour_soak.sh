@@ -15,12 +15,14 @@ source "$SCRIPT_DIR/system_metrics.sh"
 source "$SCRIPT_DIR/publish_config.sh"
 # shellcheck source=bench/scripts/proxy_helpers.sh
 source "$SCRIPT_DIR/proxy_helpers.sh"
+# shellcheck source=bench/config/targets.env
+source "$(cd "$SCRIPT_DIR/.." && pwd)/config/targets.env"
 
 CASE_NAME="multi_hour_soak"
-TARGET_RPS=7500  # 75% capacity
-DURATION_HOURS="${SOAK_DURATION_HOURS:-4}"
+TARGET_RPS="${SYSTEM_MULTI_HOUR_SOAK_TARGET_RPS}"  # 75% capacity
+DURATION_HOURS="${SOAK_DURATION_HOURS:-${SYSTEM_MULTI_HOUR_SOAK_DURATION_HOURS}}"
 DURATION_S=$((DURATION_HOURS * 3600))
-SAMPLE_INTERVAL_S=60
+SAMPLE_INTERVAL_S="${SYSTEM_MULTI_HOUR_SOAK_SAMPLE_INTERVAL_S}"
 NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 
 main() {
@@ -40,12 +42,16 @@ main() {
   # Setup port-forward to access test backend
   log_info "Setting up port-forward to test backend"
   local pf_pid
-  pf_pid=$(kubectl_port_forward_background "$pod_label" "$proxy_port" "$proxy_port" "$NAMESPACE")
+  local pf_info
+  pf_info=$(kubectl_port_forward_background "$pod_label" "$proxy_port" "$proxy_port" "$NAMESPACE")
+  pf_pid=$(echo "$pf_info" | awk '{print $1}')
+  local pf_local_port
+  pf_local_port=$(echo "$pf_info" | awk '{print $2}')
 
   # Wait for port-forward to stabilize
   sleep 3
 
-  local target_url="http://localhost:${proxy_port}/fixed"
+  local target_url="http://localhost:${pf_local_port}/fixed"
 
   # Step 1: Deploy baseline config
   log_info "Deploying baseline config"

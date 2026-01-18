@@ -15,28 +15,27 @@ source "$SCRIPT_DIR/system_metrics.sh"
 source "$SCRIPT_DIR/publish_config.sh"
 # shellcheck source=bench/scripts/proxy_helpers.sh
 source "$SCRIPT_DIR/proxy_helpers.sh"
+# shellcheck source=bench/config/targets.env
+source "$(cd "$SCRIPT_DIR/.." && pwd)/config/targets.env"
 
 CASE_NAME="rollback_performance"
-TARGET_RPS=1000
-BASELINE_DURATION_S=30
-DEGRADED_DURATION_S=10
-RECOVERY_DURATION_S=30
+TARGET_RPS="${SYSTEM_ROLLBACK_PERFORMANCE_TARGET_RPS}"
+BASELINE_DURATION_S="${SYSTEM_ROLLBACK_PERFORMANCE_BASELINE_DURATION_S}"
+DEGRADED_DURATION_S="${SYSTEM_ROLLBACK_PERFORMANCE_DEGRADED_DURATION_S}"
+RECOVERY_DURATION_S="${SYSTEM_ROLLBACK_PERFORMANCE_RECOVERY_DURATION_S}"
 NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 
 main() {
   log_info "Starting test: $CASE_NAME for ${BENCH_PROXY}"
 
-  # TODO: Test requires drop_rate/fault injection feature in pavis config schema
-  # Currently drop_rate parameter is ignored, so "bad" config = "good" config
-  log_warn "Test skipped: rollback_performance requires fault injection (drop_rate) feature"
-  local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}"
-  ensure_dir "$output_dir"
-  echo "requires fault injection (drop_rate) feature" > "${output_dir}/.skipped"
-  return 0
-
   # Check if proxy supports config versioning
   if ! proxy_supports_config_versioning; then
     log_warn "Proxy ${BENCH_PROXY} does not support config versioning, skipping test"
+    return 0
+  fi
+
+  if [[ "${BENCH_PROXY}" != "pavis" ]]; then
+    log_warn "Proxy ${BENCH_PROXY} does not support degraded config simulation, skipping test"
     return 0
   fi
 
@@ -54,12 +53,16 @@ main() {
   # Setup port-forward to access test backend
   log_info "Setting up port-forward to test backend"
   local pf_pid
-  pf_pid=$(kubectl_port_forward_background "$pod_label" "$proxy_port" "$proxy_port" "$NAMESPACE")
+  local pf_info
+  pf_info=$(kubectl_port_forward_background "$pod_label" "$proxy_port" "$proxy_port" "$NAMESPACE")
+  pf_pid=$(echo "$pf_info" | awk '{print $1}')
+  local pf_local_port
+  pf_local_port=$(echo "$pf_info" | awk '{print $2}')
 
   # Wait for port-forward to stabilize
   sleep 3
 
-  local target_url="http://localhost:${proxy_port}/fixed"
+  local target_url="http://localhost:${pf_local_port}/fixed"
 
   # Step 1: Deploy good config (version 1)
   log_info "Deploying good config (v1)"
@@ -81,9 +84,9 @@ main() {
   baseline_p99=$(jq -r '.latency_ms.p99' "${output_dir}/baseline.json")
   log_info "Baseline P99: ${baseline_p99}ms"
 
-  # Step 3: Deploy bad config (version 2 - 100% drop)
-  log_info "Deploying bad config (v2 - 100% drop rate)"
-  deploy_degraded_config 2 1.0
+  # Step 3: Deploy bad config (version 2 - invalid upstream)
+  log_info "Deploying bad config (v2 - invalid upstream endpoint)"
+  publish_pavis_bad_config 2
 
   sleep 2
 
@@ -203,6 +206,24 @@ EOF
     log_warn "Test completed with warnings: $CASE_NAME"
     return 0
   fi
+}
+
+publish_pavis_bad_config() {
+  local version="$1"
+
+  local temp_config
+  temp_config=$(mktemp --suffix=.yaml)
+
+  cp "$(resolve_pavis_config_path)" "$temp_config"
+  if command -v yq > /dev/null 2>&1; then
+    yq -i '.upstreams[0].endpoints[0].address = "does-not-exist.invalid"' "$temp_config"
+  else
+    sed -i.bak 's/address: "backend"/address: "does-not-exist.invalid"/' "$temp_config"
+    rm -f "${temp_config}.bak"
+  fi
+
+  publish_to_pavis_relay "$temp_config" "$version"
+  rm -f "$temp_config"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

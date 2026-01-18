@@ -62,7 +62,7 @@ main() {
   local bench_scripts_dir="${BENCH_SCRIPTS_DIR:-${bench_root}/bench/scripts}"
   local bench_cases_dir="${BENCH_CASES_DIR:-${bench_root}/bench/cases/${bench_mode}}"
   local bench_loadgen_bin="${BENCH_LOADGEN_BIN:-${bench_root}/target/release/bench-loadgen}"
-  local bench_pvs_config="${BENCH_PVS_CONFIG:-${bench_root}/bench/config/pavis.pvs}"
+  local bench_pvs_config="${BENCH_PVS_CONFIG:-${bench_root}/bench/config/standalone/pavis.pvs}"
 
   local backend_cpuset="${BACKEND_CPUSET:-}"
   local proxy_cpuset="${PROXY_CPUSET:-}"

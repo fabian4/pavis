@@ -53,9 +53,9 @@ docker-build:
 		DOCKERFILE=crates/pavis-benchkit/Dockerfile; \
 		TAG=pavis-bench-upstream:local; \
 	elif [ "$(IMAGE)" = "envoy-xds-server" ]; then \
-		DOCKERFILE=bench/k8s/envoy/xds-server/Dockerfile; \
+		DOCKERFILE=bench/config/system/envoy/xds-server/Dockerfile; \
 		TAG=envoy-xds-server:local; \
-		BUILD_CONTEXT="bench/k8s/envoy/xds-server/"; \
+		BUILD_CONTEXT="bench/config/system/envoy/xds-server/"; \
 	else \
 		echo "Unsupported IMAGE=$(IMAGE) (use pavis, relay, mock-upstream, mock-relay, bench-upstream, or envoy-xds-server)"; \
 		exit 2; \

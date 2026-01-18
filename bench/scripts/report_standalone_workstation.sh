@@ -119,7 +119,6 @@ NR==1 {
     dropped[key]=get(f,"dropped")
     cpu_avg[key]=get(f,"proxy_cpu_avg")
     mem_peak[key]=get(f,"proxy_mem_peak_mib")
-    target_rps[key]=get(f,"target_rps")
     rps_med[key]=get(f,"achieved_rps")
     rps_iqr[key]=get(f,"rps_iqr")
   }
@@ -253,7 +252,7 @@ END {
       if (!latency_seen[key]) continue
       cpu=cpu_avg[key]
       mem=mem_peak[key]
-      targ=target_rps[key]
+      targ=rps_med[key]
       if (is_num(cpu)) {
         if (best_cpu[payload]=="" || cpu+0 < best_cpu[payload]+0) best_cpu[payload]=cpu
       }
@@ -286,7 +285,7 @@ END {
       if (latency_seen[key]) {
         cpu=cpu_avg[key]
         mem=mem_peak[key]
-        targ=target_rps[key]
+        targ=rps_med[key]
         cpu_out=fmt2(cpu)
         mem_out=fmt2(mem)
         if (is_num(targ) && is_num(cpu) && cpu+0 > 0) {
