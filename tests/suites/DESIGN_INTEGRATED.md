@@ -138,7 +138,7 @@ The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`
 **Category**: Failure & LKG
 **Contracts**: I4 (System LKG)
 **Maturity**: L2 (once implemented)
-**Status**: READY (blocked on runtime semantic validation implementation)
+**Status**: SKIPPED (runtime semantic validation not implemented)
 
 **Intent**: Validate runtime-side semantic rejection of an artifact that is syntactically valid (passes relay publication) but semantically broken, ensuring strict preservation of LKG semantics.
 
@@ -217,7 +217,31 @@ All options are pure semantic errors detectable at load time without external st
 
 ---
 
-**Assessment**: Test design is complete and deterministic. Blocked only on runtime implementing semantic validation phase. Once implemented, enable test and set maturity to L2.
+**Assessment**: SKIPPED. Blocked on runtime implementing semantic validation phase. Once implemented, enable test and set maturity to L2.
+
+---
+
+### `32_runtime_env_rejection`
+
+**Category**: Failure & LKG
+**Contracts**: I4 (System LKG)
+**Maturity**: L3
+
+**Scenario**:
+1. Start relay + pavis with valid V1 (backend-v1) and metrics enabled
+2. Publish V2 enabling TLS with missing cert/key paths
+3. Runtime should reject V2 on env validation
+
+**Oracle**:
+- Metrics: `pavis_config_validation_total{result="fail",reason="runtime"}`
+- Upstream echo (`instance_id`)
+
+**Assertions**:
+- Runtime emits runtime validation failure metric
+- Traffic remains on backend-v1 (LKG)
+- Runtime stays alive
+
+**Assessment**: PASS. End-to-end proof of runtime env validation in the control/data plane pipeline.
 
 ---
 

@@ -16,21 +16,24 @@ mkdir -p "$PROJECT_ROOT/tests/temp"
 # Assumes env.sh is sourced for generate_certs/cleanup_certs and wait_for_port helper
 
 can_bind_port() {
-    python3 - <<'PY'
-import socket
-try:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    s.close()
-except PermissionError:
-    raise SystemExit(1)
-PY
+    local port
+    port=$(get_free_port) || return 1
+    [ -n "$port" ]
 }
 
 start_upstreams() {
     local suite="$1"
     if [ "$TEST_MODE" == "binary" ]; then
         start_upstreams_binary
+    else
+        start_upstreams_docker "$suite"
+    fi
+}
+
+ensure_upstreams() {
+    local suite="$1"
+    if [ "$TEST_MODE" == "binary" ]; then
+        ensure_upstreams_binary
     else
         start_upstreams_docker "$suite"
     fi
@@ -162,6 +165,27 @@ start_upstreams_binary() {
     done
 
     echo "✅ Upstreams started (binary mode)"
+}
+
+ensure_upstreams_binary() {
+    local restart_needed=0
+
+    if [ ! -d "$UPSTREAMS_PID_DIR" ]; then
+        restart_needed=1
+    else
+        for port in "$UPSTREAM_HTTP_PORT_V1" "$UPSTREAM_HTTP_PORT_V2" "$UPSTREAM_HTTPS_PORT_V1" "$UPSTREAM_HTTPS_PORT_V2"; do
+            [ -n "$port" ] || continue
+            if ! wait_for_port "$port" 1; then
+                restart_needed=1
+                break
+            fi
+        done
+    fi
+
+    if [ "$restart_needed" -eq 1 ]; then
+        stop_upstreams_binary
+        start_upstreams_binary
+    fi
 }
 
 launch_upstream_process() {

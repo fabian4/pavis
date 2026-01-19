@@ -67,6 +67,9 @@ func (cb *callbacks) OnStreamClosed(id int64, node *core.Node) {
 }
 
 func (cb *callbacks) OnStreamRequest(id int64, req *discoverygrpc.DiscoveryRequest) error {
+	if req.ErrorDetail != nil {
+		log.Printf("NACK node=%s type=%s rejected_version=%s error=%s", req.Node.Id, req.TypeUrl, req.VersionInfo, req.ErrorDetail.Message)
+	}
 	log.Printf("Stream request: id=%d node=%s type=%s version=%s", id, req.Node.Id, req.TypeUrl, req.VersionInfo)
 	return nil
 }
@@ -109,7 +112,7 @@ func newXDSServer() *xdsServer {
 	}
 }
 
-func (s *xdsServer) makeSnapshot() (*cache.Snapshot, error) {
+func (s *xdsServer) makeSnapshot(invalid bool) (*cache.Snapshot, error) {
 	// Create cluster pointing to upstream
 	upstreamCluster := &cluster.Cluster{
 		Name:                 clusterName,
@@ -141,26 +144,39 @@ func (s *xdsServer) makeSnapshot() (*cache.Snapshot, error) {
 	}
 
 	// Create route configuration
+	routes := []*route.Route{{
+		Match: &route.RouteMatch{
+			PathSpecifier: &route.RouteMatch_Prefix{
+				Prefix: "/",
+			},
+		},
+		Action: &route.Route_Route{
+			Route: &route.RouteAction{
+				ClusterSpecifier: &route.RouteAction_Cluster{
+					Cluster: clusterName,
+				},
+			},
+		},
+	}}
+	if invalid {
+		routes = []*route.Route{{
+			Match: &route.RouteMatch{
+				PathSpecifier: &route.RouteMatch_Prefix{
+					Prefix: "/",
+				},
+			},
+		}}
+	}
+
+	virtualHosts := []*route.VirtualHost{{
+		Name:    "local_service",
+		Domains: []string{"*"},
+		Routes:  routes,
+	}}
+
 	routeConfig := &route.RouteConfiguration{
 		Name: routeConfigName,
-		VirtualHosts: []*route.VirtualHost{{
-			Name:    "local_service",
-			Domains: []string{"*"},
-			Routes: []*route.Route{{
-				Match: &route.RouteMatch{
-					PathSpecifier: &route.RouteMatch_Prefix{
-						Prefix: "/",
-					},
-				},
-				Action: &route.Route_Route{
-					Route: &route.RouteAction{
-						ClusterSpecifier: &route.RouteAction_Cluster{
-							Cluster: clusterName,
-						},
-					},
-				},
-			}},
-		}},
+		VirtualHosts: virtualHosts,
 	}
 
 	// Create HTTP connection manager with RDS reference
@@ -246,12 +262,12 @@ func (s *xdsServer) makeSnapshot() (*cache.Snapshot, error) {
 	return snapshot, nil
 }
 
-func (s *xdsServer) updateSnapshot() error {
+func (s *xdsServer) updateSnapshot(invalid bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.version++
-	snapshot, err := s.makeSnapshot()
+	snapshot, err := s.makeSnapshot(invalid)
 	if err != nil {
 		log.Printf("Failed to create snapshot: %v", err)
 		return fmt.Errorf("failed to create snapshot: %w", err)
@@ -273,16 +289,26 @@ func (s *xdsServer) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.updateSnapshot(); err != nil {
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = r.Header.Get("X-Publish-Mode")
+	}
+	invalid := mode == "invalid"
+	if err := s.updateSnapshot(invalid); err != nil {
 		log.Printf("Failed to update snapshot: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	responseMode := "valid"
+	if invalid {
+		responseMode = "invalid"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  "ok",
 		"version": s.version,
+		"mode":    responseMode,
 	})
 }
 
@@ -300,7 +326,7 @@ func main() {
 	xds := newXDSServer()
 
 	// Initialize with first snapshot
-	if err := xds.updateSnapshot(); err != nil {
+	if err := xds.updateSnapshot(false); err != nil {
 		log.Fatalf("Failed to create initial snapshot: %v", err)
 	}
 

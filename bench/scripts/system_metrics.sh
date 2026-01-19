@@ -11,13 +11,15 @@ source "$SCRIPT_DIR/utils.sh"
 source "$SCRIPT_DIR/k8s_helpers.sh"
 
 # Measure config convergence time
-# Usage: collect_convergence_time <expected_version>
+# Usage: collect_convergence_time <expected_version> [max_wait_ms] [pod_label] [container_name]
 # Returns: convergence time in milliseconds
 collect_convergence_time() {
   local expected_version="$1"
   local start_ms
   local end_ms
   local max_wait_ms="${2:-60000}"  # Default 60s timeout
+  local pod_label="${3:-app=test-backend}"
+  local container_name="${4:-pavis-sidecar}"
 
   start_ms=$(date +%s%3N)
   local elapsed_ms=0
@@ -25,7 +27,7 @@ collect_convergence_time() {
   while [[ $elapsed_ms -lt $max_wait_ms ]]; do
     # Query current config version from pavis sidecar
     local current_version
-    current_version=$(detect_config_version "app=test-backend" "pavis-sidecar") || true
+    current_version=$(detect_config_version "$pod_label" "$container_name") || true
 
     if [[ "$current_version" == "$expected_version" ]]; then
       end_ms=$(date +%s%3N)
@@ -49,6 +51,7 @@ detect_config_version() {
   local label="$1"
   local container="$2"
   local namespace="${3:-${BENCH_NAMESPACE:-bench-system}}"
+  local admin_port="${4:-}"
 
   if [[ "$container" == "pavis-sidecar" ]]; then
     local version
@@ -71,8 +74,31 @@ detect_config_version() {
   local pod_ip
   pod_ip=$(kubectl_get_pod_ip "$label" "$namespace")
 
+  if [[ -z "$admin_port" ]]; then
+    if [[ "${BENCH_PROXY:-}" == "envoy" || "$container" == "envoy-sidecar" ]]; then
+      admin_port="9901"
+    else
+      admin_port="9090"
+    fi
+  fi
+
+  if [[ "${BENCH_PROXY:-}" == "envoy" || "$container" == "envoy-sidecar" ]]; then
+    local dump
+    dump=$(curl -s "http://${pod_ip}:${admin_port}/config_dump" 2>/dev/null || true)
+    if [[ -n "$dump" ]]; then
+      local version
+      version=$(echo "$dump" | jq -r '.. | .version_info? // empty' | head -n1)
+      if [[ -n "$version" && "$version" != "null" ]]; then
+        echo "$version"
+        return 0
+      fi
+    fi
+    echo "unknown"
+    return 0
+  fi
+
   # Assume admin exposes /admin/config_version endpoint
-  curl -s "http://${pod_ip}:9090/admin/config_version" 2>/dev/null || echo "unknown"
+  curl -s "http://${pod_ip}:${admin_port}/admin/config_version" 2>/dev/null || echo "unknown"
 }
 
 # Collect RSS memory usage timeline

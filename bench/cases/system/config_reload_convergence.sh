@@ -17,6 +17,8 @@ source "$SCRIPT_DIR/publish_config.sh"
 source "$SCRIPT_DIR/proxy_helpers.sh"
 # shellcheck source=bench/config/config.env
 source "$(cd "$SCRIPT_DIR/.." && pwd)/config/config.env"
+# shellcheck source=scripts/lib/http.sh
+source "$SCRIPT_DIR/../../scripts/lib/http.sh"
 
 CASE_NAME="config_reload_convergence"
 TARGET_RPS="${SYSTEM_CONFIG_RELOAD_CONVERGENCE_TARGET_RPS}"
@@ -49,8 +51,10 @@ main() {
   # Get proxy-specific configuration
   local pod_label
   local proxy_port
+  local container_name
   pod_label=$(get_proxy_pod_label)
   proxy_port=$(get_proxy_port)
+  container_name=$(get_proxy_container_name)
 
   local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}"
   ensure_dir "$output_dir"
@@ -63,6 +67,10 @@ main() {
   pf_pid=$(echo "$pf_info" | awk '{print $1}')
   local pf_local_port
   pf_local_port=$(echo "$pf_info" | awk '{print $2}')
+  if [[ -z "$pf_pid" || -z "$pf_local_port" ]]; then
+    log_error "Port-forward to test backend failed"
+    return 1
+  fi
 
   # Wait for port-forward to stabilize
   sleep 3
@@ -82,6 +90,12 @@ main() {
       kubectl_stop_port_forward "$pf_pid"
       return 1
     fi
+  else
+    if ! wait_for_http_status "$target_url" 30 200; then
+      log_error "Test backend did not become ready at ${target_url}"
+      kubectl_stop_port_forward "$pf_pid"
+      return 1
+    fi
   fi
 
   # Step 2: Start baseline load
@@ -93,7 +107,7 @@ main() {
     --duration "$DURATION_S" \
     --connections 100 \
     --output "${output_dir}/baseline.json" \
-    > /dev/null 2>&1 &
+    > /dev/null 2> "${output_dir}/baseline.err" &
   loadgen_pid=$!
 
   sleep 5
@@ -127,7 +141,7 @@ main() {
       return 1
     }
   else
-    convergence_time=$(collect_convergence_time "$target_version" 60000) || {
+    convergence_time=$(collect_convergence_time "$target_version" 60000 "$pod_label" "$container_name") || {
       log_error "Failed to measure convergence time"
       kubectl_stop_port_forward "$pf_pid"
       kill "$loadgen_pid" 2>/dev/null || true
@@ -144,7 +158,13 @@ main() {
   log_info "Transition P99: ${transition_p99}ms"
 
   # Step 7: Wait for load test to complete
-  wait "$loadgen_pid" 2>/dev/null || true
+  local loadgen_status=0
+  wait "$loadgen_pid" 2>/dev/null || loadgen_status=$?
+  if (( loadgen_status != 0 )); then
+    log_error "bench-loadgen failed during baseline load (see ${output_dir}/baseline.err)"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
+  fi
 
   # Step 8: Cleanup port-forward
   kubectl_stop_port_forward "$pf_pid"

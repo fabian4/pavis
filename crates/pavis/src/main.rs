@@ -18,6 +18,7 @@ use pavis::proxy::Proxy;
 use pavis::state::RuntimeStateHandle;
 use pavis::telemetry::Telemetry;
 use pavis::upstream::{UpstreamHealthMonitor, UpstreamResolver};
+use pavis::validate_env;
 use pavis_core::{AccessLogPolicy, LogLevel, RuntimeConfig, WorkerCount};
 use rustls::RootCertStore;
 use rustls::crypto::{CryptoProvider, ring};
@@ -142,6 +143,7 @@ fn main() -> Result<()> {
         other => anyhow::anyhow!(other),
     })?;
 
+    validate_env::validate_runtime_env(&config, None)?;
     let config = Arc::new(config);
 
     // Setup logging (Subscriber + Reloadable OpenTelemetry Layer)

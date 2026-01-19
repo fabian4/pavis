@@ -13,8 +13,8 @@ The Runtime **MUST NOT** infer policy from missing configuration. "Implicit defa
 **A2: Immutable Execution State**
 The Runtime configuration is immutable. State changes **MUST** occur only via the atomic replacement of the entire PVS artifact. Partial updates or runtime mutation of the active configuration structure are forbidden.
 
-**A3: Codec Sovereignty**
-The Codec layer is the sole authority for policy resolution. It is responsible for parsing, validating, regex compilation, and semantic normalization. The Runtime **MUST** execute the instructions provided by the Codec without semantic re-interpretation.
+**A3: Layered Validation**
+The Codec layer is the sole authority for **format and default resolution**. Canonical semantic validation lives in **Core** (`pavis-core::validate_runtime`). The Runtime **MUST** execute the instructions provided by Core without semantic re-interpretation, but **MUST** enforce environment checks (file readability, port availability) before applying a config.
 
 **A4: Atomic Validity**
 A PVS artifact **MUST** be valid in its entirety. If any component of the configuration is malformed or violates a constraint, the Runtime **MUST** reject the entire artifact. "Best-effort" loading of partial configuration is forbidden.
@@ -31,12 +31,13 @@ Pavis adheres to a strict separation of concerns between compilation, distributi
 | **Codec** (`pavis-codec-*`) | **Compilation**. Transforms source intent (YAML, xDS) into explicit `RuntimeConfig`. | Must resolve all defaults. Must fail on ambiguity. |
 | **Relay** (`pavis-relay`) | **Distribution**. Versions and persists artifacts. | Must be content-agnostic. Must enforce monotonic versioning. |
 | **Runtime** (`pavis`) | **Execution**. Forwards traffic based on frozen state. | Efficient execution. No policy inference. |
+| **Core** (`pavis-core`) | **Semantics**. Validates canonical invariants for `RuntimeConfig`. | Must reject invalid semantics. |
 | **Protocol** (`pavis-core`) | **Schema**. Defines the wire format and memory layout. | Must be versioned. Shared ownership. |
 
 ### 2.1 Data Flow
 
 The data flow is unidirectional:
-`Source Intent → [Codec] → RuntimeConfig → [Relay] → PVS Artifact → [Runtime]`
+`Source Intent → [Codec] → RuntimeConfig → [Core Validation] → ValidatedRuntimeConfig → [Relay] → PVS Artifact → [Runtime]`
 
 1.  **Ingest**: Raw I/O from sources (File, xDS).
 2.  **Compile**: Codec normalizes intent into a fully explicit `RuntimeConfig`.
@@ -52,8 +53,9 @@ Configuration processing **MUST** proceed through distinct stages to enforce the
 
 1.  **SourceArtifact**: Raw input bytes (e.g., `pavis.yaml`, xDS Protobuf).
 2.  **RuntimeConfig**: The fully materialized, in-memory representation. All policies are resolved.
-3.  **ValidatedRuntimeConfig**: Semantic invariants (e.g., regex safety, routing tree integrity) are verified.
+3.  **ValidatedRuntimeConfig**: Semantic invariants (e.g., regex safety, routing tree integrity) are verified in Core.
 4.  **PVS Artifact**: The sealed, binary representation ready for execution.
+5.  **Runtime Env Validation**: File and port checks performed just-in-time before apply.
 
 ### 3.2 Runtime Invariants
 

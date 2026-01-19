@@ -19,9 +19,6 @@ get_proxy_pod_label() {
     envoy)
       echo "app=envoy-test-backend"
       ;;
-    linkerd)
-      echo "app=linkerd-test-backend"
-      ;;
     *)
       echo "app=test-backend"
       ;;
@@ -38,9 +35,6 @@ get_proxy_container_name() {
       ;;
     envoy)
       echo "envoy-sidecar"
-      ;;
-    linkerd)
-      echo "linkerd-proxy"
       ;;
     *)
       echo "pavis-sidecar"
@@ -59,9 +53,6 @@ get_proxy_port() {
     envoy)
       echo "8080"
       ;;
-    linkerd)
-      echo "8081"  # Linkerd uses the app port directly
-      ;;
     *)
       echo "8080"
       ;;
@@ -79,9 +70,6 @@ get_proxy_service_name() {
     envoy)
       echo "envoy-test-backend"
       ;;
-    linkerd)
-      echo "linkerd-test-backend"
-      ;;
     *)
       echo "test-backend"
       ;;
@@ -95,9 +83,6 @@ proxy_supports_config_versioning() {
   case "$proxy" in
     pavis|envoy)
       return 0  # Supports versioning
-      ;;
-    linkerd)
-      return 1  # Does not support versioning
       ;;
     *)
       return 1
@@ -122,10 +107,6 @@ proxy_trigger_config_update() {
       source "$SCRIPT_DIR/publish_config.sh"
       publish_to_envoy_xds
       ;;
-    linkerd)
-      log_warn "Linkerd does not support runtime config updates"
-      return 1
-      ;;
     *)
       log_error "Unknown proxy type: $proxy"
       return 1
@@ -147,10 +128,6 @@ proxy_deploy_baseline_config() {
       # shellcheck source=bench/scripts/publish_config.sh
       source "$SCRIPT_DIR/publish_config.sh"
       publish_to_envoy_xds
-      ;;
-    linkerd)
-      # Linkerd doesn't need baseline config - it's always ready
-      log_info "Linkerd proxy ready (no config deployment needed)"
       ;;
     *)
       log_error "Unknown proxy type: $proxy"

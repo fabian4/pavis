@@ -51,54 +51,10 @@ run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 wait_for_port "$PORT_METRICS" 5
 
-wait_for_log_match() {
-    local pattern="$1"
-    local retries=8
-    local backoff=0.25
-    for _ in $(seq 1 $retries); do
-        if [ -f "$TEST_TMP/logs/pavis.log" ] && grep -Eq "$pattern" "$TEST_TMP/logs/pavis.log"; then
-            return 0
-        fi
-        sleep "$backoff"
-        backoff=$(python3 - "$backoff" <<'PY'
-import sys
-val = float(sys.argv[1]) * 2
-print(val if val < 2.0 else 2.0)
-PY
-)
-    done
-    return 1
-}
-
-assert_metric_at_least() {
-    local pattern="$1"
-    local min="${2:-1}"
-    local retries=8
-    local backoff=0.25
-    for _ in $(seq 1 $retries); do
-        metrics=$(curl -s "http://127.0.0.1:$PORT_METRICS")
-        line=$(echo "$metrics" | grep -E "$pattern" | head -n 1)
-        if [ -n "$line" ]; then
-            value=$(echo "$line" | awk '{print $2}')
-            if awk -v v="$value" -v min="$min" 'BEGIN {exit !(v >= min)}'; then
-                return 0
-            fi
-        fi
-        sleep "$backoff"
-        backoff=$(python3 - "$backoff" <<'PY'
-import sys
-val = float(sys.argv[1]) * 2
-print(val if val < 2.0 else 2.0)
-PY
-)
-    done
-    return 1
-}
-
 assert_backend_v1() {
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     echo "$response" | assert_json_has_key "instance_id"
-    instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))")
+    instance=$(echo "$response" | json_get_string "instance_id")
     if [ "$instance" != "backend-v1" ]; then
         echo "❌ Expected backend-v1, got $instance"
         exit 1
@@ -136,6 +92,27 @@ publish_and_expect_rejection() {
     fi
     if ! assert_metric_at_least 'pavis_config_validation_total\\{[^}]*result="fail"[^}]*\\}'; then
         echo "WARN: Missing config_validation failure metric"
+    fi
+    assert_backend_v1
+}
+
+publish_and_expect_runtime_rejection() {
+    local label="$1"
+    local yaml_path="$2"
+    local pvs_path="$3"
+
+    if ! gen_pvs "$yaml_path" "$pvs_path"; then
+        echo "❌ ${label} failed at compile stage (expected runtime rejection)"
+        exit 1
+    fi
+    publish_config "http://127.0.0.1:$PORT_RELAY" "$pvs_path"
+    sleep 2
+
+    if ! wait_for_log_match 'event="?config_validation"?.*result="?fail"?.*reason="?runtime"?'; then
+        echo "WARN: Missing runtime config_validation failure log"
+    fi
+    if ! assert_metric_at_least 'pavis_config_validation_total\\{[^}]*result="fail"[^}]*reason="runtime"[^}]*\\}'; then
+        echo "WARN: Missing runtime config_validation failure metric"
     fi
     assert_backend_v1
 }
@@ -282,6 +259,6 @@ cat <<-EOF > "$TEST_TMP/config_missing_ca.yaml"
 	          - upstream: "backend-v1"
 	            weight: 1
 EOF
-publish_and_expect_rejection "missing-ca-bundle" "$TEST_TMP/config_missing_ca.yaml" "$TEST_TMP/config_missing_ca.pvs"
+publish_and_expect_runtime_rejection "missing-ca-bundle" "$TEST_TMP/config_missing_ca.yaml" "$TEST_TMP/config_missing_ca.pvs"
 
 echo "✅ semantic_validation_matrix passed"

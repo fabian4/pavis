@@ -73,7 +73,7 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 
 response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 echo "$response" | assert_json_has_key "instance_id"
-instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))")
+instance=$(echo "$response" | json_get_string "instance_id")
 if [ "$instance" != "backend-v1" ]; then
     echo "❌ Expected backend-v1 initially, got $instance"
     exit 1
@@ -114,7 +114,7 @@ for i in $(seq 1 $BURST_COUNT); do
         FAIL_COUNT=$((FAIL_COUNT+1))
         continue
     fi
-    instance=$(python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))" < "$TEST_TMP/burst_$i.body")
+    instance=$(json_get_string "instance_id" < "$TEST_TMP/burst_$i.body")
     if [ "$instance" = "backend-v2" ]; then
         V2_COUNT=$((V2_COUNT+1))
         V2_STARTED=1
@@ -145,7 +145,7 @@ for _ in $(seq 1 20); do
     headers="$TEST_TMP/switch.headers"
     body="$TEST_TMP/switch.body"
     if curl -sS -D "$headers" -o "$body" "http://127.0.0.1:$PORT_PAVIS/echo"; then
-        instance=$(python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))" < "$body")
+        instance=$(json_get_string "instance_id" < "$body")
         if [ "$instance" = "backend-v2" ] && ! grep -qi "^X-Pavis-Version:" "$headers"; then
             SWITCHED=1
             break
@@ -164,7 +164,7 @@ for i in $(seq 1 $POST_COUNT); do
     headers="$TEST_TMP/post_$i.headers"
     body="$TEST_TMP/post_$i.body"
     curl -sS -D "$headers" -o "$body" "http://127.0.0.1:$PORT_PAVIS/echo"
-    instance=$(python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))" < "$body")
+    instance=$(json_get_string "instance_id" < "$body")
     if [ "$instance" != "backend-v2" ]; then
         echo "❌ Post-switch request saw $instance"
         exit 1

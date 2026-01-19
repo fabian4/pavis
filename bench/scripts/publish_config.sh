@@ -41,6 +41,39 @@ build_pvs_from_config() {
   "$pavctl" gen "$config_file" "$output_file"
 }
 
+kubectl_port_forward_service_background() {
+  local service="$1"
+  local local_port="$2"
+  local remote_port="$3"
+  local namespace="${4:-${BENCH_NAMESPACE:-bench-system}}"
+
+  local attempt=0
+  local max_attempts=5
+  local chosen_port="$local_port"
+  local pf_pid=""
+
+  while [[ $attempt -lt $max_attempts ]]; do
+    if [[ $attempt -gt 0 ]]; then
+      chosen_port=$(pick_free_port "$local_port")
+    fi
+
+    kubectl port-forward -n "$namespace" "svc/${service}" "$chosen_port:$remote_port" \
+      > /dev/null 2>&1 &
+    pf_pid=$!
+
+    sleep 2
+
+    if check_process_alive "$pf_pid"; then
+      echo "$pf_pid $chosen_port"
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+  done
+
+  return 1
+}
+
 # Publish config to pavis-relay
 # Usage: publish_to_pavis_relay <config_file> <version>
 publish_to_pavis_relay() {
@@ -140,20 +173,67 @@ publish_to_pavis_relay() {
   return 1
 }
 
-# Publish snapshot to envoy xDS server
-# Usage: publish_to_envoy_xds
-publish_to_envoy_xds() {
+publish_envoy_xds_snapshot() {
+  local publish_mode="${1:-valid}"
+  local pf_pid=""
   local xds_url
   if command -v kubectl > /dev/null 2>&1; then
-    local xds_ip
-    xds_ip=$(kubectl_get_service_ip "envoy-xds" "$RELAY_NAMESPACE")
-    xds_url="http://${xds_ip}:8080/v1/publish"
+    local pf_port="${BENCH_XDS_LOCAL_PORT:-18080}"
+    local pf_local_port="$pf_port"
+    if kubectl_wait_for_endpoint "envoy-xds" "$RELAY_NAMESPACE" 30; then
+      local pf_info=""
+      pf_info=$(kubectl_port_forward_service_background "envoy-xds" "$pf_port" 8080 "$RELAY_NAMESPACE" || true)
+      if [[ -z "$pf_info" ]]; then
+        log_warn "Service port-forward failed; trying pod port-forward"
+        pf_info=$(kubectl_port_forward_background "app=envoy-xds" "$pf_port" 8080 "$RELAY_NAMESPACE" || true)
+      fi
+      if [[ -n "$pf_info" ]]; then
+        read -r pf_pid pf_local_port <<<"$pf_info"
+      fi
+      if [[ ! "$pf_pid" =~ ^[0-9]+$ || ! "$pf_local_port" =~ ^[0-9]+$ ]]; then
+        pf_pid=""
+        pf_local_port="$pf_port"
+      fi
+    fi
+    if [[ -n "$pf_pid" ]]; then
+      xds_url="http://localhost:${pf_local_port}/v1/publish"
+    else
+      log_error "Failed to establish port-forward to envoy-xds"
+      return 1
+    fi
   else
     xds_url="http://localhost:8080/v1/publish"
   fi
 
+  if [[ -z "$xds_url" ]]; then
+    log_error "envoy-xds publish URL is empty"
+    return 1
+  fi
+  if [[ ! "$xds_url" =~ ^http://[^/]+:[0-9]+/v1/publish$ ]]; then
+    log_error "envoy-xds publish URL is invalid: ${xds_url}"
+    return 1
+  fi
+  local url="${xds_url}"
+  if [[ "$publish_mode" == "invalid" ]]; then
+    url="${xds_url}?mode=invalid"
+  fi
+  log_info "Publishing envoy xDS snapshot via ${url}"
+
   local response
-  response=$(curl -s -X POST "$xds_url" 2>&1)
+  local curl_status
+  set +e
+  response=$(curl -s --max-time 5 -X POST "$url" 2>&1)
+  curl_status=$?
+  set -e
+
+  if [[ -n "$pf_pid" ]]; then
+    kubectl_stop_port_forward "$pf_pid"
+  fi
+
+  if (( curl_status != 0 )); then
+    log_error "Failed to publish xDS snapshot (curl exit ${curl_status}): $response"
+    return 1
+  fi
 
   if echo "$response" | jq -e '.status == "ok"' > /dev/null 2>&1; then
     local version
@@ -164,6 +244,12 @@ publish_to_envoy_xds() {
     log_error "Failed to publish xDS snapshot: $response"
     return 1
   fi
+}
+
+# Publish snapshot to envoy xDS server
+# Usage: publish_to_envoy_xds
+publish_to_envoy_xds() {
+  publish_envoy_xds_snapshot "valid"
 }
 
 # Generate test config for pavis
@@ -184,7 +270,7 @@ generate_pavis_config() {
 
 resolve_pavis_config_path() {
   if [[ "${BENCH_MODE:-standalone}" == "system" ]]; then
-    echo "${BENCH_ROOT}/bench/config/system/pavis.yaml"
+    echo "${BENCH_ROOT}/bench/config/system/pavis/pavis.yaml"
   else
     echo "${BENCH_ROOT}/bench/config/standalone/pavis.yaml"
   fi

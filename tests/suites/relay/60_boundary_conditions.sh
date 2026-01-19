@@ -68,11 +68,10 @@ CODE=$(extract_status_code "$TEST_TMP/headers2.txt")
 assert_eq "$CODE" "400" "wait_ms > 60000 should return 400 Bad Request"
 
 echo "Test 3: Missing If-None-Match + wait_ms > 0 should return 200 immediately"
-START=$(now_ms)
-fetch_with_headers "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000" \
-    "$TEST_TMP/headers3.txt" "$TEST_TMP/body3.bin"
-ELAPSED=$(($(now_ms) - START))
-CODE=$(extract_status_code "$TEST_TMP/headers3.txt")
+output=$(curl -sS -D "$TEST_TMP/headers3.txt" -o "$TEST_TMP/body3.bin" -w "%{http_code} %{time_total}" \
+    "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
+CODE=$(echo "$output" | awk '{print $1}')
+ELAPSED=$(echo "$output" | awk '{printf "%.0f", $2 * 1000}')
 
 assert_eq "$CODE" "200" "Missing If-None-Match + wait_ms should return 200"
 
@@ -89,12 +88,17 @@ echo "NOTE: This test takes 60 seconds. Consider running only in full CI (not fa
 if [ "${CI_PROFILE:-full}" = "fast" ]; then
     echo "⏭️  Skipping 60s test in fast CI mode"
 else
-    START=$(now_ms)
-    CODE=$(assert_no_body "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=60000" \
-        "$TEST_TMP/headers4.txt" -H "If-None-Match: $ETAG")
-    ELAPSED=$(($(now_ms) - START))
+    output=$(curl -sS -D "$TEST_TMP/headers4.txt" -o /dev/null -w "%{http_code} %{time_total} %{size_download}" \
+        -H "If-None-Match: $ETAG" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=60000")
+    CODE=$(echo "$output" | awk '{print $1}')
+    ELAPSED=$(echo "$output" | awk '{printf "%.0f", $2 * 1000}')
+    SIZE=$(echo "$output" | awk '{print $3}')
 
     assert_eq "$CODE" "204" "wait_ms=60000 should timeout with 204"
+    if [ "$SIZE" != "0" ]; then
+        echo "❌ Response should have no body (size_download=$SIZE)"
+        exit 1
+    fi
 
     if [ "$ELAPSED" -lt 59000 ] || [ "$ELAPSED" -gt 61000 ]; then
         echo "❌ Timeout incorrect: ${ELAPSED}ms (expected ~60000ms)"

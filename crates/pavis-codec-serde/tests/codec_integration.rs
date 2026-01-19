@@ -161,41 +161,74 @@ fn materialize_enforces_core_validation() {
 }
 
 #[test]
+
 fn materialize_rejects_full_verify_auto_sni_with_ip_endpoint() {
     let yaml = r#"
+
 listeners:
+
   - name: "default"
+
     address: "0.0.0.0:8080"
+
 telemetry: {}
+
 upstreams:
+
   - name: "backend"
+
     tls:
+
       enabled: true
+
       verify_cert: true
+
       verify_hostname: true
+
       sni_mode: auto
+
     endpoints:
+
       - ip: "127.0.0.1"
+
         port: 443
-routes: []
+
+routes:
+
+  - host: "*"
+
+    paths:
+
+      - matcher: !prefix { path: "/" }
+
+        destinations:
+
+          - upstream: "backend"
+
+            weight: 1
+
 "#;
+
     let artifact = Artifact::new(
         yaml.as_bytes().to_vec().into(),
         Format::Yaml,
         SourceInfo::unknown(),
     );
+
     let codec = SerdeCodec {
         format: SerdeFormat::Yaml,
     };
+
     let err = codec
         .materialize(artifact, CompactionLevel::Off)
-        .expect_err("expected compile error");
+        .expect_err("expected core validation error");
+
     match err {
-        CodecError::Compile(inner) => assert!(
-            inner
-                .to_string()
-                .contains("verify=full with sni=auto requires DNS endpoints or route host rewrite")
+        CodecError::Core(CoreValidationError::UpstreamTlsAutoSniRequiresDns(_)) => {}
+
+        _ => panic!(
+            "expected UpstreamTlsAutoSniRequiresDns core error, got {:?}",
+            err
         ),
-        _ => panic!("expected compile error"),
     }
 }

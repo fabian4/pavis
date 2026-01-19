@@ -13,6 +13,7 @@ The Pavis runtime - a high-performance L7 proxy built on Pingora.
 - Routing requests via deterministic matching engine
 - Managing upstream clusters and load balancing
 - Atomic hot-reloading without dropping connections
+- Environment validation (file readability and port availability) before applying configs
 - Optional: Polling remote relay for configuration updates
 
 ## Module Structure
@@ -25,6 +26,7 @@ The Pavis runtime - a high-performance L7 proxy built on Pingora.
 - **`upstream`**: Backend cluster and endpoint management
 - **`agent`**: Background worker for remote configuration updates
 - **`telemetry`**: Metrics, access logs, and distributed tracing
+- **`validate_env`**: Runtime environment checks for file paths and ports
 
 ## Public API
 

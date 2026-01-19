@@ -9,14 +9,15 @@ use tokio::sync::watch;
 
 use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::metrics::MetricsHandle;
+use crate::validate_env::{self, RuntimeEnvError};
 
 use crate::agent::backoff::Backoff;
 use crate::agent::lkg::tmp_path_for;
 use crate::agent::lkg::write_atomic;
-use pavis_core::RuntimeConfig;
+use pavis_core::{CoreValidationError, RuntimeConfig};
 use pavis_pvs::{PvsError, compute_checksum};
 
-const ETAG_HEADER: &str = "etag";
+use pavis_core::{CONFIG_SIZE_HEADER, CONFIG_VERSION_HEADER, ETAG_HEADER};
 
 type UpdateCallback = Box<dyn Fn(&RuntimeConfig) + Send + Sync>;
 
@@ -169,16 +170,32 @@ impl ConfigAgent {
                     .ok_or_else(|| anyhow::anyhow!("missing {ETAG_HEADER} response header"))?;
                 let header_checksum = parse_etag_header(header_etag)?;
 
+                let config_version = response
+                    .headers()
+                    .get(CONFIG_VERSION_HEADER)
+                    .and_then(|value| value.to_str().ok())
+                    .map(|value| value.to_string());
+                let config_size = response
+                    .headers()
+                    .get(CONFIG_SIZE_HEADER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.parse::<u64>().ok());
+
                 if self.is_checksum_current(&header_checksum) {
+                    self.record_config_stats(
+                        config_version.as_deref(),
+                        config_size,
+                        "current checksum",
+                    );
                     tracing::debug!(
                         checksum = header_checksum,
                         "config checksum unchanged, skipping update"
                     );
                     return Ok(PollOutcome::NoChange);
                 }
-
                 let bytes = response.bytes().await?;
-                self.apply_update(bytes.to_vec(), header_checksum).await?;
+                self.apply_update(bytes.to_vec(), header_checksum, config_version)
+                    .await?;
                 Ok(PollOutcome::Updated)
             }
             204 | 304 => Ok(PollOutcome::NoChange),
@@ -186,7 +203,12 @@ impl ConfigAgent {
         }
     }
 
-    async fn apply_update(&self, bytes: Vec<u8>, expected_checksum: String) -> anyhow::Result<()> {
+    async fn apply_update(
+        &self,
+        bytes: Vec<u8>,
+        expected_checksum: String,
+        config_version: Option<String>,
+    ) -> anyhow::Result<()> {
         let actual_checksum = checksum_for_bytes(&bytes);
         if actual_checksum != expected_checksum {
             return Err(self.record_validation_failure(anyhow::anyhow!(
@@ -211,6 +233,11 @@ impl ConfigAgent {
         };
         // SAFETY: agent receives `.pvs` artifacts which are canonically validated.
         let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let current = self.state.load();
+        if let Err(err) = validate_env::validate_runtime_env(&validated, Some(&current.config)) {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(self.record_validation_failure(err.into()));
+        }
         let state = RuntimeState::from_config(&validated)
             .map_err(|err| self.record_validation_failure(err))?;
 
@@ -229,6 +256,11 @@ impl ConfigAgent {
 
         self.state.store(state);
         self.set_last_checksum(actual_checksum);
+        self.record_config_stats(
+            config_version.as_deref(),
+            Some(bytes.len() as u64),
+            "applied update",
+        );
 
         let callback = match self.on_update_callback.lock() {
             Ok(guard) => guard,
@@ -272,6 +304,16 @@ impl ConfigAgent {
         }
     }
 
+    fn record_config_stats(&self, version: Option<&str>, size_bytes: Option<u64>, reason: &str) {
+        let (Some(handle), Some(version), Some(size_bytes)) =
+            (self.metrics_handle(), version, size_bytes)
+        else {
+            tracing::debug!(reason, "skipping config stats update");
+            return;
+        };
+        handle.update_config_stats(version, size_bytes);
+    }
+
     fn record_validation_failure(&self, err: anyhow::Error) -> anyhow::Error {
         let reason = classify_validation_error(&err);
         self.record_validation("fail", reason);
@@ -309,7 +351,7 @@ impl ConfigAgent {
         bytes: Vec<u8>,
         checksum: String,
     ) -> anyhow::Result<()> {
-        self.apply_update(bytes, checksum).await
+        self.apply_update(bytes, checksum, None).await
     }
 
     #[cfg(test)]
@@ -343,6 +385,12 @@ fn classify_validation_error(err: &anyhow::Error) -> &'static str {
             PvsError::VersionMismatch { .. } => "version",
             _ => "parse",
         };
+    }
+    if err.downcast_ref::<RuntimeEnvError>().is_some() {
+        return "runtime";
+    }
+    if err.downcast_ref::<CoreValidationError>().is_some() {
+        return "semantic";
     }
     if err.to_string().contains("checksum mismatch") {
         return "parse";

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
-fn gen_warns_on_missing_cert_paths() -> Result<()> {
+fn gen_does_not_warn_on_missing_cert_paths() -> Result<()> {
     let pavctl_bin = pavctl_bin();
 
     // 1. Setup config with missing paths
@@ -41,10 +41,8 @@ fn gen_warns_on_missing_cert_paths() -> Result<()> {
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert!(
-        stderr.contains("Warning: Certificate file not found locally: /tmp/non-existent-cert.pem")
-    );
-    assert!(stderr.contains("Warning: Key file not found locally: /tmp/non-existent-key.pem"));
+    assert!(!stderr.contains("Warning: Certificate file not found locally"));
+    assert!(!stderr.contains("Warning: Key file not found locally"));
 
     Ok(())
 }

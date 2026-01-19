@@ -9,6 +9,7 @@ assert_body() {
     shift 2
     local actual
     actual=$(pavis_curl_body "$url" "$@")
+    echo "DEBUG: assert_body got '$actual'"
     if [[ "$actual" != *"$expected"* ]]; then
         echo "❌ Assertion failed: Expected body to contain '$expected', got '$actual'"
         return 1
@@ -62,7 +63,9 @@ assert_header_eq() {
 assert_json_has_key() {
     local key="$1"
     # Read JSON from stdin
-    if ! python3 -c "import sys, json; data=json.load(sys.stdin); assert '$key' in data, 'Key $key missing'" 2>/dev/null; then
+    local body
+    body=$(cat)
+    if ! printf '%s' "$body" | grep -q "\"$key\""; then
         echo "❌ JSON assertion failed: Key '$key' missing in response"
         return 1
     fi
@@ -76,7 +79,8 @@ wait_for_url() {
     local start_time
     start_time=$(date +%s)
 
-    while true; do
+    while true;
+ do
         if curl -s -o /dev/null "${extra_args[@]}" "$url"; then
             return 0
         fi
@@ -96,8 +100,10 @@ wait_for_port() {
     local start_time
     start_time=$(date +%s)
 
-    while true; do
-        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+    while true;
+ do
+        if nc -z 127.0.0.1 "$port" 2>/dev/null;
+ then
             return 0
         fi
         local current_time
@@ -111,7 +117,9 @@ wait_for_port() {
 
 get_admin_version() {
     local admin_url="$1"
-    pavis_curl_body "${admin_url}/stats" | python3 -c "import sys, json; print(json.load(sys.stdin).get('version',''))"
+    pavis_curl_body "${admin_url}/stats" \
+        | tr -d '\n' \
+        | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p'
 }
 
 wait_for_admin_version() {
@@ -121,7 +129,8 @@ wait_for_admin_version() {
     local start_time
     start_time=$(date +%s)
 
-    while true; do
+    while true;
+ do
         local version
         version=$(get_admin_version "$admin_url")
         if [ "$version" = "$expected" ]; then
@@ -147,4 +156,247 @@ assert_eq() {
         echo "   Actual:   '$actual'"
         exit 1
     fi
+}
+
+wait_for_log_match() {
+    local pattern="$1"
+    local timeout="${2:-10}"
+    local log_file="${3:-$TEST_TMP/logs/pavis.log}"
+    local retries=$((timeout * 4))
+    local backoff=0.25
+    
+            for _ in $(seq 1 $retries); do
+    
+                if [ -f "$log_file" ]; then
+    
+                     if grep -qE "$pattern" "$log_file"; then
+    
+                        return 0
+    
+                     fi
+    
+                fi
+    
+                sleep "$backoff"
+    
+            done
+    
+        
+    
+    
+    return 1
+}
+
+assert_metric_at_least() {
+    local pattern="$1"
+    local min="${2:-1}"
+    local timeout="${3:-10}"
+    local metrics_url="${4:-http://127.0.0.1:$PORT_METRICS}"
+    local retries=$((timeout * 4))
+    local backoff=0.25
+    
+            for _ in $(seq 1 $retries); do
+    
+                metrics=$(curl -s --connect-timeout 1 --max-time 2 "$metrics_url")
+    
+                line=$(echo "$metrics" | grep -E "$pattern" | head -n 1)
+    
+                if [ -n "$line" ]; then
+    
+                    value=$(echo "$line" | awk '{print $2}')
+    
+                    echo "DEBUG: Checking metric line: '$line' extracted value: '$value' against min: '$min'"
+    
+                    if awk -v v="$value" -v min="$min" 'BEGIN {exit !(v >= min)}'; then
+    
+                        echo "DEBUG: Assertion passed."
+    
+                        return 0
+    
+                    else
+    
+                        echo "DEBUG: Assertion failed (value < min)."
+    
+                    fi
+    
+                else
+    
+                     echo "DEBUG: Metric pattern '$pattern' not found in metrics."
+    
+                fi
+    
+                sleep "$backoff"
+    
+            done
+    
+            echo "DEBUG: Metric assertion failed for pattern '$pattern'. Last metrics fetch:"
+    
+            curl -s "$metrics_url"
+    
+            return 1
+    
+        }
+    
+        
+    
+    
+
+get_relay_config_version() {
+    local relay_url="$1"
+    local headers_file="${2:-$TEST_TMP/relay.headers}"
+
+    pavis_curl_headers "$headers_file" "${relay_url}/v1/config"
+    header_value "$headers_file" "x-config-version"
+}
+
+get_runtime_config_version() {
+    local metrics_url="$1"
+    local metrics
+    metrics=$(curl -s --connect-timeout 1 --max-time 2 "$metrics_url" | tr -d '\r') || return 1
+    printf '%s\n' "$metrics" | awk '
+        match($0, /pavis_runtime_config_version\{[^}]*version="[^"]+"/) {
+            value=substr($0, RSTART, RLENGTH)
+            sub(/^.*version="/, "", value)
+            sub(/"$/, "", value)
+            print value
+            found=1
+            exit
+        }
+        END { if (!found) exit 1 }
+    '
+}
+
+wait_for_runtime_config_version() {
+    local metrics_url="$1"
+    local timeout="${2:-10}"
+    local retries=$((timeout * 4))
+    local backoff=0.25
+    local version
+
+    for _ in $(seq 1 $retries); do
+        if version=$(get_runtime_config_version "$metrics_url"); then
+            echo "$version"
+            return 0
+        fi
+        sleep "$backoff"
+    done
+    return 1
+}
+
+json_get_string() {
+    local key="$1"
+    awk -v key="$key" '
+        { gsub(/\r|\n/, "", $0) }
+        match($0, "\"" key "\"[[:space:]]*:[[:space:]]*\"[^\"]*\"") {
+            value=substr($0, RSTART, RLENGTH)
+            sub(/.*:[[:space:]]*"/, "", value)
+            sub(/"$/, "", value)
+            print value
+            found=1
+            exit
+        }
+        END { if (!found) exit 1 }
+    '
+}
+
+json_get_number() {
+    local key="$1"
+    awk -v key="$key" '
+        { gsub(/\r|\n/, "", $0) }
+        match($0, "\"" key "\"[[:space:]]*:[[:space:]]*[0-9]+") {
+            value=substr($0, RSTART, RLENGTH)
+            sub(/.*:[[:space:]]*/, "", value)
+            print value
+            found=1
+            exit
+        }
+        END { if (!found) exit 1 }
+    '
+}
+
+json_get_bool() {
+    local key="$1"
+    awk -v key="$key" '
+        { gsub(/\r|\n/, "", $0) }
+        match($0, "\"" key "\"[[:space:]]*:[[:space:]]*(true|false)") {
+            value=substr($0, RSTART, RLENGTH)
+            sub(/.*:[[:space:]]*/, "", value)
+            print value
+            found=1
+            exit
+        }
+        END { if (!found) exit 1 }
+    '
+}
+
+json_get_header_first() {
+    local header="$1"
+    awk -v header="$header" '
+        { gsub(/\r|\n/, "", $0) }
+        match($0, "\"" header "\"[[:space:]]*:[[:space:]]*\\[\"[^\"]*\"") {
+            value=substr($0, RSTART, RLENGTH)
+            pos=index(value, "[\"")
+            if (pos > 0) {
+                value=substr(value, pos + 2)
+            }
+            sub(/"$/, "", value)
+            print value
+            found=1
+            exit
+        }
+        END { if (!found) exit 1 }
+    '
+}
+
+json_get_header_joined() {
+    local header="$1"
+    awk -v header="$header" '
+        { gsub(/\r|\n/, "", $0) }
+        match($0, "\"" header "\"[[:space:]]*:[[:space:]]*\\[[^]]*\\]") {
+            value=substr($0, RSTART, RLENGTH)
+            start=index(value, "[")
+            end=index(value, "]")
+            if (start > 0 && end > start) {
+                value=substr(value, start + 1, end - start - 1)
+            }
+            gsub(/"/, "", value)
+            gsub(/[[:space:]]+/, "", value)
+            gsub(/,/, ", ", value)
+            print value
+            found=1
+            exit
+        }
+        END { if (!found) exit 1 }
+    '
+}
+
+json_get_tls_bool() {
+    local key="$1"
+    awk -v key="$key" '
+        { gsub(/\r|\n/, "", $0) }
+        match($0, "\"tls\"[^}]*\"" key "\"[[:space:]]*:[[:space:]]*(true|false)") {
+            value=substr($0, RSTART, RLENGTH)
+            sub(/.*:[[:space:]]*/, "", value)
+            print value
+            found=1
+            exit
+        }
+        END { if (!found) exit 1 }
+    '
+}
+
+json_get_tls_string() {
+    local key="$1"
+    awk -v key="$key" '
+        { gsub(/\r|\n/, "", $0) }
+        match($0, "\"tls\"[^}]*\"" key "\"[[:space:]]*:[[:space:]]*\"[^\"]*\"") {
+            value=substr($0, RSTART, RLENGTH)
+            sub(/.*:[[:space:]]*"/, "", value)
+            sub(/"$/, "", value)
+            print value
+            found=1
+            exit
+        }
+        END { if (!found) exit 1 }
+    '
 }

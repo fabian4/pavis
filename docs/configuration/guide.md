@@ -6,9 +6,10 @@ This guide provides scenario-based instructions and recipes for configuring the 
 
 Configuration follows a linear flow:
 1. **YAML/JSON**: High-level intent defined by the user.
-2. **Codec Layer**: Parses the source, applies defaults, and performs shape-completion.
-3. **Validation**: Enforces semantic rules (e.g., path normalization, upstream referencing).
-4. **Runtime Artifact**: An immutable, optimized binary representation used by the proxy.
+2. **Codec Layer**: Parses the source, applies defaults, and performs format/static checks.
+3. **Core Layer**: Enforces semantic rules (e.g., path normalization, upstream referencing).
+4. **Runtime Layer**: Validates environment-specific constraints (file paths, port availability).
+5. **Runtime Artifact**: An immutable, optimized binary representation used by the proxy.
 
 ---
 

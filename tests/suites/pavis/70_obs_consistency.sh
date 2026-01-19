@@ -90,7 +90,7 @@ pavis_curl_body -o /dev/null "http://127.0.0.1:$PORT_PAVIS/echo"
 pavis_curl_body -o /dev/null "http://127.0.0.1:$PORT_PAVIS/echo?foo=bar"
 
 RESPONSE=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/consistent")
-if ! echo "$RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); assert 'traceparent' in data.get('headers', {})"; then
+if ! echo "$RESPONSE" | grep -q '"traceparent"'; then
     echo "❌ Traceparent header missing in upstream request"
     exit 1
 fi
@@ -116,13 +116,13 @@ if [ -z "$LOG_LINE" ]; then
 fi
 
 echo "$LOG_LINE" | assert_json_has_key "upstream"
-LOG_UPSTREAM=$(echo "$LOG_LINE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('upstream',''))")
+LOG_UPSTREAM=$(echo "$LOG_LINE" | json_get_string "upstream")
 if [ "$LOG_UPSTREAM" != "backend-consistent" ]; then
     echo "❌ Access log upstream mismatch: $LOG_UPSTREAM"
     exit 1
 fi
 
-LOG_STATUS=$(echo "$LOG_LINE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('status',''))")
+LOG_STATUS=$(echo "$LOG_LINE" | json_get_number "status")
 if [ "$LOG_STATUS" != "200" ]; then
     echo "❌ Access log status mismatch: $LOG_STATUS"
     exit 1

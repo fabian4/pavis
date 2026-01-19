@@ -68,7 +68,7 @@ echo "Health response: $health_response"
 
 # Verify health endpoint returns correct JSON
 echo "$health_response" | assert_json_has_key "status"
-health_status=$(echo "$health_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])")
+health_status=$(echo "$health_response" | json_get_string "status")
 
 if [ "$health_status" != "healthy" ]; then
     echo "❌ Expected status 'healthy', got '$health_status'"
@@ -94,9 +94,9 @@ echo "Admin version: $admin_version"
 echo "✓ /stats endpoint returns all required fields"
 
 # 6. Verify Config Counts in Stats
-listeners_count=$(echo "$stats_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['listeners'])")
-upstreams_count=$(echo "$stats_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['upstreams'])")
-routes_count=$(echo "$stats_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['routes'])")
+listeners_count=$(echo "$stats_response" | json_get_number "listeners")
+upstreams_count=$(echo "$stats_response" | json_get_number "upstreams")
+routes_count=$(echo "$stats_response" | json_get_number "routes")
 
 if [ "$listeners_count" != "1" ]; then
     echo "❌ Expected 1 listener, got $listeners_count"
@@ -118,8 +118,8 @@ echo "✓ /stats endpoint reflects correct config counts"
 # 7. Verify Uptime Increases
 sleep 2
 stats_response_2=$(pavis_curl_body "http://127.0.0.1:$PORT_ADMIN/stats")
-uptime_1=$(echo "$stats_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['uptime_seconds'])")
-uptime_2=$(echo "$stats_response_2" | python3 -c "import sys, json; print(json.load(sys.stdin)['uptime_seconds'])")
+uptime_1=$(echo "$stats_response" | json_get_number "uptime_seconds")
+uptime_2=$(echo "$stats_response_2" | json_get_number "uptime_seconds")
 
 if [ "$uptime_2" -le "$uptime_1" ]; then
     echo "❌ Expected uptime to increase, got $uptime_1 -> $uptime_2"

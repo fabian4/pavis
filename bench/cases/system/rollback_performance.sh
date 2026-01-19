@@ -34,17 +34,12 @@ main() {
     return 0
   fi
 
-  if [[ "${BENCH_PROXY}" != "pavis" ]]; then
-    log_warn "Proxy ${BENCH_PROXY} does not support degraded config simulation, skipping test"
-    return 0
-  fi
-
   # Get proxy-specific configuration
   local pod_label
-#  local container_name
+  local container_name
   local proxy_port
   pod_label=$(get_proxy_pod_label)
-#  container_name=$(get_proxy_container_name)
+  container_name=$(get_proxy_container_name)
   proxy_port=$(get_proxy_port)
 
   local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}"
@@ -84,13 +79,30 @@ main() {
   baseline_p99=$(jq -r '.latency_ms.p99' "${output_dir}/baseline.json")
   log_info "Baseline P99: ${baseline_p99}ms"
 
-  # Step 3: Deploy bad config (version 2 - invalid upstream)
-  log_info "Deploying bad config (v2 - invalid upstream endpoint)"
-  publish_pavis_bad_config 2
+  # Step 3: Deploy bad config (version 2 - invalid update)
+  log_info "Deploying bad config (v2 - invalid update)"
+  if [[ "${BENCH_PROXY}" == "pavis" ]]; then
+    publish_pavis_bad_config 2
+  elif [[ "${BENCH_PROXY}" == "envoy" ]]; then
+    if ! publish_envoy_xds_snapshot "invalid"; then
+      log_error "Failed to publish invalid envoy snapshot"
+      kubectl_stop_port_forward "$pf_pid"
+      return 1
+    fi
+    if ! wait_for_envoy_nack 30 "$pod_label" "$container_name" "$NAMESPACE"; then
+      log_error "Timed out waiting for Envoy NACK"
+      kubectl_stop_port_forward "$pf_pid"
+      return 1
+    fi
+  else
+    log_warn "Proxy ${BENCH_PROXY} does not support degraded config simulation, skipping test"
+    kubectl_stop_port_forward "$pf_pid"
+    return 0
+  fi
 
   sleep 2
 
-  # Step 4: Verify degradation
+  # Step 4: Verify degraded/steady-state behavior
   log_info "Measuring degraded performance"
   "${BENCH_LOADGEN_BIN}" \
     --url "$target_url" \
@@ -102,14 +114,30 @@ main() {
 
   local degraded_errors
   degraded_errors=$(jq -r '.errors' "${output_dir}/degraded.json")
-  log_info "Degraded errors: $degraded_errors (expected high)"
+  if [[ "${BENCH_PROXY}" == "envoy" ]]; then
+    log_info "Degraded errors: $degraded_errors (expected 0; baseline should remain active)"
+  else
+    log_info "Degraded errors: $degraded_errors (expected high)"
+  fi
 
   # Step 5: Rollback to good config (v1)
   log_info "Rolling back to good config (v1)"
   local rollback_start
   rollback_start=$(timestamp_ms)
 
-  rollback_config 1
+  if [[ "${BENCH_PROXY}" == "pavis" ]]; then
+    rollback_config 1
+  elif [[ "${BENCH_PROXY}" == "envoy" ]]; then
+    if ! publish_envoy_xds_snapshot "valid"; then
+      log_error "Failed to publish valid envoy snapshot for rollback"
+      kubectl_stop_port_forward "$pf_pid"
+      return 1
+    fi
+  else
+    log_warn "Proxy ${BENCH_PROXY} does not support rollback config publish"
+    kubectl_stop_port_forward "$pf_pid"
+    return 0
+  fi
 
   # Step 6: Measure time to baseline restoration (TTBR)
   log_info "Measuring time to baseline restoration (TTBR)"
@@ -221,6 +249,27 @@ EOF
     log_warn "Test completed with warnings: $CASE_NAME"
     return 0
   fi
+}
+
+wait_for_envoy_nack() {
+  local timeout_s="${1:-30}"
+  local label="$2"
+  local container="$3"
+  local namespace="$4"
+  local start_ts
+  start_ts=$(date +%s)
+
+  while (( $(date +%s) - start_ts < timeout_s )); do
+    if kubectl logs -n "$namespace" -l app=envoy-xds --since=30s 2>/dev/null | grep -q "NACK"; then
+      return 0
+    fi
+    if kubectl logs -n "$namespace" -l "$label" -c "$container" --since=30s 2>/dev/null | grep -qi "nack"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
 }
 
 publish_pavis_bad_config() {

@@ -88,7 +88,7 @@ if ! grep -qi "^X-Pavis-Version: v1" "$TEST_TMP/inflight.headers"; then
     echo "❌ In-flight response did not preserve v1 header"
     exit 1
 fi
-delayed_ms=$(python3 -c "import sys, json; print(json.load(sys.stdin).get('delayed_ms',''))" < "$TEST_TMP/inflight.body")
+delayed_ms=$(json_get_number "delayed_ms" < "$TEST_TMP/inflight.body")
 if [ "$delayed_ms" != "1500" ]; then
     echo "❌ In-flight response body mismatch: delayed_ms=$delayed_ms"
     exit 1

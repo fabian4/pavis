@@ -69,12 +69,6 @@ check_kind_requirements() {
     exit_with_error "Docker daemon is not running. Please start Docker"
   fi
 
-  # Check for linkerd CLI if testing linkerd
-  if [[ "${BENCH_PROXY:-}" == "linkerd" ]]; then
-    if ! command -v linkerd > /dev/null 2>&1; then
-      exit_with_error "linkerd CLI not found. Install from: https://linkerd.io/2/getting-started/#step-1-install-the-cli"
-    fi
-  fi
 
   log_info "All requirements satisfied (kind, kubectl, docker)"
 }
@@ -249,46 +243,6 @@ deploy_envoy_infrastructure() {
   log_info "Envoy infrastructure deployed successfully"
 }
 
-deploy_linkerd_infrastructure() {
-  log_info "Deploying Linkerd control plane and test workloads"
-
-  # Check if linkerd is already installed
-  if linkerd check --pre > /dev/null 2>&1; then
-    log_info "Linkerd pre-check passed"
-  else
-    log_warn "Linkerd pre-check failed, attempting installation anyway"
-  fi
-
-  # Install linkerd control plane
-  log_info "Installing Linkerd control plane"
-  linkerd install --crds | kubectl apply -f - > /dev/null 2>&1
-  linkerd install | kubectl apply -f - > /dev/null 2>&1
-
-  # Wait for linkerd control plane to be ready
-  log_info "Waiting for Linkerd control plane to be ready"
-  linkerd check --wait=5m > /dev/null 2>&1 || {
-    log_error "Linkerd control plane failed to become ready"
-    linkerd check
-    return 1
-  }
-
-  log_info "Linkerd control plane ready"
-
-  # Deploy test workload with linkerd injection
-  local manifests_dir="${BENCH_ROOT}/bench/config/system/linkerd"
-
-  if [[ ! -d "$manifests_dir" ]]; then
-    exit_with_error "Linkerd manifests directory not found: $manifests_dir"
-  fi
-
-  kubectl apply -f "$manifests_dir/test-workload.yaml" -n "$NAMESPACE"
-
-  # Wait for test workload to be ready (linkerd proxy + app)
-  log_info "Waiting for linkerd-test-backend to be ready"
-  kubectl wait --for=condition=ready pod -l app=linkerd-test-backend -n "$NAMESPACE" --timeout=120s
-
-  log_info "Linkerd infrastructure deployed successfully"
-}
 
 setup_environment_system() {
   bench_print_step "Setting up system mode (Kubernetes) environment"
@@ -308,9 +262,6 @@ setup_environment_system() {
       ;;
     envoy)
       deploy_envoy_infrastructure
-      ;;
-    linkerd)
-      deploy_linkerd_infrastructure
       ;;
     *)
       exit_with_error "Unsupported proxy for system mode: ${BENCH_PROXY}"

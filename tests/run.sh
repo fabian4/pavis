@@ -52,7 +52,7 @@ run_case() {
     local t_end
     local duration
     t_end=$(get_time)
-    duration=$(python3 -c "print(f'{($t_end - $t_start):.2f}')")
+    duration=$(awk -v end="$t_end" -v start="$t_start" 'BEGIN { printf "%.2f", (end - start) }')
     
     # Format the line
     local suite_upper
@@ -85,7 +85,7 @@ run_case() {
 
 run_suite() {
     local suite="$1"
-    local specific_case="$2"
+    local specific_case="${2:-}"
     local suite_upper
     suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
     
@@ -124,6 +124,9 @@ run_suite() {
             suite_failed=1
         else
             local status=0
+            if [[ "$suite" == "pavis" || "$suite" == "integrated" ]]; then
+                ensure_upstreams "$suite"
+            fi
             run_case "$suite" "$test_path" || status=$?
             if [ $status -ne 0 ] && [ $status -ne 77 ]; then
                 suite_failed=1
@@ -133,6 +136,9 @@ run_suite() {
         for test_case in "$SCRIPT_DIR/suites/$suite"/*.sh; do
             [ -e "$test_case" ] || continue
             local status=0
+            if [[ "$suite" == "pavis" || "$suite" == "integrated" ]]; then
+                ensure_upstreams "$suite"
+            fi
             run_case "$suite" "$test_case" || status=$?
             if [ $status -ne 0 ] && [ $status -ne 77 ]; then
                 suite_failed=1

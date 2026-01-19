@@ -28,11 +28,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_NONE_MATCH, RETRY_AFTER};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use pavis_core::{CONFIG_SIZE_HEADER, CONFIG_VERSION_HEADER};
 use std::sync::Arc;
 use std::time::Duration;
-
-const CONFIG_SIZE_HEADER: &str = "x-config-size";
-const CONFIG_VERSION_HEADER: &str = "x-config-version";
 
 #[derive(serde::Serialize)]
 pub(crate) struct PublishResponse {

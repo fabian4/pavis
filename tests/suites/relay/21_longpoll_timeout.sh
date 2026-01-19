@@ -43,11 +43,15 @@ fetch_with_headers "http://127.0.0.1:$PORT_RELAY/v1/config" \
 ETAG=$(extract_etag "$TEST_TMP/headers_init.txt")
 assert_etag_format "$ETAG"
 
-START_TIME=$(now_ms)
-CODE=$(assert_no_body "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=2000" \
-    "$TEST_TMP/headers_timeout.txt" -H "If-None-Match: $ETAG")
-END_TIME=$(now_ms)
-DURATION=$((END_TIME - START_TIME))
+output=$(curl -sS -D "$TEST_TMP/headers_timeout.txt" -o /dev/null -w "%{http_code} %{time_total} %{size_download}" \
+    -H "If-None-Match: $ETAG" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=2000")
+CODE=$(echo "$output" | awk '{print $1}')
+DURATION=$(echo "$output" | awk '{printf "%.0f", $2 * 1000}')
+SIZE=$(echo "$output" | awk '{print $3}')
+if [ "$SIZE" != "0" ]; then
+    echo "❌ Response should have no body (size_download=$SIZE)"
+    exit 1
+fi
 
 if [ "$CODE" != "204" ]; then
     echo "❌ Expected 204, got $CODE"

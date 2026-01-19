@@ -4,6 +4,10 @@ pub mod validate;
 pub use runtime::*;
 pub use validate::{CoreValidationError, CoreValidationResult, validate_runtime};
 
+pub const ETAG_HEADER: &str = "etag";
+pub const CONFIG_VERSION_HEADER: &str = "x-config-version";
+pub const CONFIG_SIZE_HEADER: &str = "x-config-size";
+
 #[cfg(feature = "serde")]
 mod serde_impl;
 

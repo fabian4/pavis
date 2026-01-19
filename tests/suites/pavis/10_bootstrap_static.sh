@@ -47,7 +47,7 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
 
 echo "$response" | assert_json_has_key "instance_id"
-instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['instance_id'])")
+instance=$(echo "$response" | json_get_string "instance_id")
 
 if [ "$instance" != "backend-v1" ]; then
     echo "❌ Expected backend-v1, got $instance"

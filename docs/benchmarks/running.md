@@ -17,7 +17,7 @@ Pavis benchmarks are split into two non-overlapping modes to isolate micro-archi
 ### B. System / Kubernetes (kind) Mode
 *   **Purpose**: Measure system-level lifecycle behavior, configuration convergence, and durability.
 *   **Environment**: Kubernetes (`kind`).
-*   **Configuration**: Dynamic; requires active control-plane participation (Pavis Relay, Envoy xDS, or Linkerd control plane).
+*   **Configuration**: Dynamic; requires active control-plane participation (Pavis Relay or Envoy xDS).
 *   **Scope**: Covers Dimension #6 (Operational Characteristics), Derived B (Recovery), and the Durability gate.
 *   **Comparability**: **Cross-proxy performance ranking is explicitly forbidden in this mode.**
 *   **Output**: Event-correlated timelines and threshold-based validation (e.g., "Reload converged within 2s").
@@ -67,7 +67,7 @@ The Pavis project maintains a strict boundary between automated regression testi
 *   `BENCH_PROFILE=github` is supported in GitHub CI for system mode (CI-only gating, Pavis-only).
 *   `BENCH_PROFILE=workstation` enables authoritative runs on dedicated hardware.
 *   If `BENCH_PROFILE` is unset, it defaults to `workstation`.
-*   `PROXY=pavis|envoy|linkerd` selects the proxy to test (default: pavis).
+*   `PROXY=pavis|envoy` selects the proxy to test (default: pavis).
 *   System mode tests are located in `bench/cases/system/`.
 *   **No MODE set**: Runs both standalone and system modes sequentially.
 
@@ -101,7 +101,6 @@ System mode tests measure operational characteristics that require a control pla
 |-------|---------------|-------------------|-------------------|
 | **Pavis** | pavis-relay (HTTP long-polling) | ✅ Yes | Manual (manifest) |
 | **Envoy** | Custom xDS server (go-control-plane) | ✅ Yes | Manual (manifest) |
-| **Linkerd** | Linkerd control plane | ❌ No | Automatic (annotation) |
 
 ### System Mode Test Cases
 
@@ -111,13 +110,12 @@ Located in `bench/cases/system/`:
    - Measures time from config publish to first request served by new version
    - Validates zero 5xx errors during transition
    - Measures P99 latency delta during convergence
-   - **Skipped for Linkerd** (no config versioning support)
 
 2. **rollback_performance.sh**
    - Tests rollback from bad config to known-good baseline
    - Measures TTBR (Time to Baseline Restoration)
    - Validates error recovery patterns
-   - **Skipped for Linkerd** (no config versioning support)
+   - Envoy uses an invalid xDS publish (`POST /v1/publish?mode=invalid`) to force a NACK while preserving the last ACKed config
 
 3. **stress_recovery.sh**
    - Applies 150% saturation load, then returns to baseline
@@ -210,8 +208,6 @@ MODE=system PROXY=pavis BENCH_PROFILE=workstation \
 # Test Envoy
 MODE=system PROXY=envoy make bench-system
 
-# Test Linkerd
-MODE=system PROXY=linkerd make bench-system
 
 # Test all proxies
 make bench-system-all
@@ -242,7 +238,7 @@ BENCH_PROFILE=workstation \
 |----------|--------|---------|-------------|
 | `MODE` | `standalone`, `system`, unset | unset | Benchmark mode (unset runs both) |
 | `BENCH_PROFILE` | `github`, `workstation` | `workstation` | Execution environment |
-| `PROXY` | `pavis`, `envoy`, `nginx`, `haproxy`, `linkerd` | `pavis` | Proxy under test |
+| `PROXY` | `pavis`, `envoy`, `nginx`, `haproxy` | `pavis` | Proxy under test |
 | `CASE` | case names (space-separated) | all | Specific test cases to run |
 | `BENCH_PAYLOAD_SIZE` | `64B`, `4KiB`, etc. | `64B` | Request/response payload size |
 | `BENCH_TLS` | `true`, `false` | `false` | Enable TLS encryption |
@@ -261,7 +257,6 @@ BENCH_PROFILE=workstation \
 *   `k8s/`: Kubernetes manifests for system mode
     *   `k8s/pavis/`: Pavis relay deployment and test workloads
     *   `k8s/envoy/`: Envoy xDS server and test workloads
-    *   `k8s/linkerd/`: Linkerd test workloads (uses automatic injection)
 *   `scripts/`: Tools for setup, execution, metrics, and reporting
     *   `scripts/setup.sh`: Unified environment setup (standalone + system)
     *   `scripts/k8s_helpers.sh`: Kubernetes utility functions

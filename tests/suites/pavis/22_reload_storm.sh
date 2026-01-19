@@ -69,7 +69,7 @@ TOTAL_TRAFFIC=400
             echo "FAIL" > "$TEST_TMP/traffic_${i}.fail"
             continue
         fi
-        if ! instance=$(python3 -c "import json; print(json.load(open('$body')).get('instance_id',''))" 2>/dev/null); then
+        if ! instance=$(json_get_string "instance_id" < "$body"); then
             echo "FAIL" > "$TEST_TMP/traffic_${i}.fail"
             continue
         fi
@@ -96,7 +96,7 @@ for v in $(seq 2 10); do
         body="$TEST_TMP/switch_v${v}.body"
         if curl -sS -D "$headers" -o "$body" "http://127.0.0.1:$PORT_PAVIS/echo"; then
             got_version=$(awk 'tolower($1)=="x-pavis-version:" {print $2}' "$headers" | tr -d '\r')
-            got_instance=$(python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))" < "$body")
+            got_instance=$(json_get_string "instance_id" < "$body")
             if [ "$got_version" = "$expected_version" ] && [ "$got_instance" = "$expected_instance" ]; then
                 SWITCHED=1
                 break
@@ -118,7 +118,7 @@ for v in $(seq 2 10); do
             exit 1
         fi
         got_version=$(awk 'tolower($1)=="x-pavis-version:" {print $2}' "$headers" | tr -d '\r')
-        if ! got_instance=$(python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))" 2>/dev/null < "$body"); then
+        if ! got_instance=$(json_get_string "instance_id" < "$body"); then
             echo "❌ Failed to parse post-switch body for v${v}"
             exit 1
         fi

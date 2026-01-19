@@ -59,11 +59,10 @@ fetch_with_headers "http://127.0.0.1:$PORT_RELAY/v1/config" \
 ETAG1=$(extract_etag "$TEST_TMP/headers1.txt")
 assert_etag_format "$ETAG1"
 
-START=$(now_ms)
 (
-    CODE=$(assert_no_body "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=3000" \
-        "$TEST_TMP/headers_longpoll.txt" -H "If-None-Match: $ETAG1")
-    echo "$CODE" > "$TEST_TMP/longpoll_result.txt"
+    output=$(curl -sS -D "$TEST_TMP/headers_longpoll.txt" -o /dev/null -w "%{http_code} %{time_total} %{size_download}" \
+        -H "If-None-Match: $ETAG1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=3000")
+    echo "$output" > "$TEST_TMP/longpoll_result.txt"
 ) &
 LONGPOLL_PID=$!
 
@@ -82,10 +81,15 @@ ETAG2=$(extract_etag "$TEST_TMP/headers2.txt")
 assert_eq "$ETAG2" "$ETAG1" "ETag must not change on republish of identical bytes"
 
 wait $LONGPOLL_PID
-ELAPSED=$(($(now_ms) - START))
-
-LONGPOLL_CODE=$(cat "$TEST_TMP/longpoll_result.txt")
+result=$(cat "$TEST_TMP/longpoll_result.txt")
+LONGPOLL_CODE=$(echo "$result" | awk '{print $1}')
+ELAPSED=$(echo "$result" | awk '{printf "%.0f", $2 * 1000}')
+SIZE=$(echo "$result" | awk '{print $3}')
 assert_eq "$LONGPOLL_CODE" "204" "Long-poll should timeout with 204 (no early wake)"
+if [ "$SIZE" != "0" ]; then
+    echo "❌ Response should have no body (size_download=$SIZE)"
+    exit 1
+fi
 
 if [ "$ELAPSED" -lt 2800 ] || [ "$ELAPSED" -gt 3300 ]; then
     echo "❌ Long-poll woke early: ${ELAPSED}ms (expected ~3000ms)"

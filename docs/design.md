@@ -48,7 +48,7 @@ Pavis adopts the **Frozen Data Plane** model to solve the problem of runtime non
 
 **Rationale:**
 - **L7 Capability**: Enables L7 routing and header manipulation while maintaining the frozen data plane model.
-- **Simplicity**: File-based keys keep the runtime simple—it validates file existence at startup before binding listeners.
+- **Simplicity**: File-based keys keep the runtime simple—it validates file existence before applying configs (startup and reload).
 - **Lifecycle Separation**: Consistent with constraint #2 (File-Based Certificates), ensuring secrets management stays separate from policy distribution.
 
 ---
@@ -63,7 +63,7 @@ Pavis adopts the **Frozen Data Plane** model to solve the problem of runtime non
 - `Rewrite` (Prefix & Host only)
 
 **Rationale:**
-- **Compile-Time Validation**: All actions are validated at compile time by the Codec. The runtime executes them as simple data transformations with bounded execution cost.
+- **Compile-Time Validation**: Actions are validated by the Codec (format/static) and Core (semantic). The runtime performs environment checks before apply and then executes actions as simple data transformations with bounded execution cost.
 - **Predictability**: No runtime interpretation, no unbounded loops, no memory allocation variability.
 - **Trade-off**: Less flexible than Lua/WASM, but complex logic belongs in upstream services, not the sidecar.
 

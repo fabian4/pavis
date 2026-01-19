@@ -16,6 +16,7 @@ trap cleanup_trap EXIT
 
 PORT_PAVIS=$(get_free_port)
 PORT_RELAY=$(get_free_port)
+PORT_METRICS=$(get_free_port)
 
 cat <<-EOF > "$TEST_TMP/relay.yaml"
 	http:
@@ -32,6 +33,8 @@ cat <<-EOF > "$TEST_TMP/config.yaml"
 	listeners:
 	  - name: "default"
 	    address: "127.0.0.1:$PORT_PAVIS"
+	telemetry:
+	  metrics: "127.0.0.1:$PORT_METRICS"
 	upstreams:
 	  - name: "backend"
 	    endpoints:
@@ -54,6 +57,14 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 cp "$TEST_TMP/config.pvs" "$TEST_TMP/initial.pvs"
 run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
+wait_for_port "$PORT_METRICS" 5
+
+METRICS_URL="http://127.0.0.1:$PORT_METRICS"
+BASELINE_RUNTIME_VERSION=$(wait_for_runtime_config_version "$METRICS_URL" 10 || true)
+if [ -z "$BASELINE_RUNTIME_VERSION" ]; then
+    echo "❌ Missing runtime config version metric"
+    exit 1
+fi
 
 # Assert V1
 assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
@@ -70,6 +81,28 @@ RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PORT_RE
 echo "Publish response: $RESP"
 
 sleep 2
+RELAY_VERSION=$(get_relay_config_version "http://127.0.0.1:$PORT_RELAY")
+RUNTIME_VERSION=$(get_runtime_config_version "$METRICS_URL")
+if [ -z "$RELAY_VERSION" ] || [ -z "$RUNTIME_VERSION" ]; then
+    echo "❌ Missing relay/runtime version after corrupt publish"
+    exit 1
+fi
+if [ "$RESP" -lt 100 ]; then
+    echo "❌ Publish request failed (no HTTP response)"
+    exit 1
+fi
+
+if [ "$RESP" -ge 400 ]; then
+    if [ "$RELAY_VERSION" -ne "$RUNTIME_VERSION" ]; then
+        echo "❌ Relay advanced despite rejecting corrupt publish"
+        exit 1
+    fi
+else
+    if [ "$RELAY_VERSION" -le "$RUNTIME_VERSION" ]; then
+        echo "❌ Relay version did not advance beyond runtime after corrupt publish"
+        exit 1
+    fi
+fi
 
 # Assert Traffic Continues
 
@@ -79,6 +112,7 @@ assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
 
 cat <<-EOF > "$TEST_TMP/config_v3.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
+	telemetry: { metrics: "127.0.0.1:$PORT_METRICS" }
 	upstreams: [{ name: "backend-v3", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }] }]
 	routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: "backend-v3", weight: 1 }] }] }]
 EOF

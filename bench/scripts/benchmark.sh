@@ -25,6 +25,9 @@ run_benchmark() {
     rm -rf "${output_subdir}"
   fi
   ensure_dir "$output_subdir"
+  if ! bash "${BENCH_SCRIPTS_DIR}/gen_context_env.sh" "$output_subdir/context.env"; then
+    exit_with_error "Failed to generate context.env for ${BENCH_PROXY}"
+  fi
 
   for case_name in $BENCH_CASES; do
     if ! run_case "$case_name" "$open_loop_cases"; then

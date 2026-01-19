@@ -78,8 +78,7 @@ run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 
 get_instance() {
-    pavis_curl_body "http://127.0.0.1:$PORT_PAVIS$1" |
-        python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))"
+    pavis_curl_body "http://127.0.0.1:$PORT_PAVIS$1" | json_get_string "instance_id"
 }
 
 echo "== Phase A: Match precedence + regex fallback =="
@@ -112,13 +111,17 @@ echo "== Phase B: Headers / actions / rewrites =="
 
 # Step B1: Header policies
 response=$(curl -s -H "X-To-Remove: should-be-gone" -H "X-Request-Append: original" "http://127.0.0.1:$PORT_PAVIS/headers/echo")
-val=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['headers'].get('x-request-set',[''])[0])")
+val=$(echo "$response" | json_get_header_first "x-request-set")
 assert_eq "pavis-set" "$val" "X-Request-Set should be set"
-val=$(echo "$response" | python3 -c "import sys,json; h=json.load(sys.stdin)['headers']; print(', '.join(h.get('x-request-append',[])))")
+val=$(echo "$response" | json_get_header_joined "x-request-append")
 assert_eq "original, pavis-appended" "$val" "X-Request-Append should be appended"
-val=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['headers'].get('x-request-add',[''])[0])")
+val=$(echo "$response" | json_get_header_first "x-request-add")
 assert_eq "pavis-added" "$val" "X-Request-Add should be added"
-val=$(echo "$response" | python3 -c "import sys,json; print('PRESENT' if 'x-to-remove' in json.load(sys.stdin)['headers'] else 'ABSENT')")
+if echo "$response" | grep -qi '"x-to-remove"'; then
+    val="PRESENT"
+else
+    val="ABSENT"
+fi
 assert_eq "ABSENT" "$val" "X-To-Remove should be stripped"
 resp_headers=$(curl -sI "http://127.0.0.1:$PORT_PAVIS/headers/echo")
 if ! echo "$resp_headers" | grep -qi "X-Response-Set: pavis-resp-set"; then
@@ -141,11 +144,11 @@ assert_eq "200" "$status" "Direct response status"
 
 # Step B4: Rewrite path & host
 rewrite_resp=$(curl -s -H "Host: rewrite.test" "http://127.0.0.1:$PORT_PAVIS/service-a/echo?q=bar")
-rewritten_path=$(echo "$rewrite_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['path'])")
+rewritten_path=$(echo "$rewrite_resp" | json_get_string "path")
 assert_eq "/echo" "$rewritten_path" "Path should be rewritten"
-rewritten_query=$(echo "$rewrite_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['query'])")
+rewritten_query=$(echo "$rewrite_resp" | json_get_string "query")
 assert_eq "q=bar" "$rewritten_query" "Query must be preserved"
-rewritten_host=$(echo "$rewrite_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['headers'].get('host',[''])[0])")
+rewritten_host=$(echo "$rewrite_resp" | json_get_header_first "host")
 assert_eq "rewritten.internal" "$rewritten_host" "Host should be rewritten"
 
 echo "✅ traffic_40_routing_semantics passed"

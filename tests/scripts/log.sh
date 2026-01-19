@@ -4,11 +4,11 @@
 # Handles logging, summary reporting, and GitHub Actions grouping.
 
 # Initialize timing
-START_TIME=$(python3 -c 'import time; print(time.time())')
+START_TIME=$(date +%s)
 
-# Helper for precise timing
+# Helper for timing
 get_time() {
-    python3 -c 'import time; print(time.time())'
+    date +%s
 }
 
 log_group() {
@@ -29,7 +29,7 @@ print_summary() {
     local end_time
     local duration
     end_time=$(get_time)
-    duration=$(python3 -c "print(f'{($end_time - $START_TIME):.2f}')")
+    duration=$(awk -v end="$end_time" -v start="$START_TIME" 'BEGIN { printf "%.2f", (end - start) }')
     
     echo "=================================================="
     echo "🧾 FINAL SUMMARY"

@@ -32,6 +32,8 @@ data:
       - name: xds_cluster
         type: STRICT_DNS
         connect_timeout: 1s
+        http2_protocol_options: {}
+        dns_lookup_family: V4_ONLY
         load_assignment:
           cluster_name: xds_cluster
           endpoints:
@@ -39,13 +41,8 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: envoy-xds
+                    address: envoy-xds.bench-system.svc.cluster.local.
                     port_value: 18000
-        typed_extension_protocol_options:
-          envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
-            "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-            explicit_http_config:
-              http2_protocol_options: {}
 
     admin:
       address:

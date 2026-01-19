@@ -237,6 +237,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
    - Invalid circuit breaker limits
    - Invalid outlier detection settings
    - Invalid health check thresholds
+   - Missing upstream CA bundle file (runtime env validation)
 3. After each attempt, validate LKG traffic remains on backend-v1
 
 **Oracle**:
@@ -247,6 +248,30 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 - Each invalid config is rejected (compile or runtime) and traffic remains on backend-v1
 
 **Assessment**: PASS. Covers a matrix of semantic validation errors while preserving LKG.
+
+---
+
+### `34_runtime_env_rejection`
+
+**Category**: Failure & LKG
+**Contracts**: B (LKG Preservation)
+**Maturity**: L3
+
+**Scenario**:
+1. Start with valid V1 (backend-v1) + metrics enabled
+2. Publish V2 enabling TLS with missing cert/key paths
+3. Runtime should reject V2 at env validation stage
+
+**Oracle**:
+- Metrics: `pavis_config_validation_total{result="fail",reason="runtime"}`
+- Upstream echo (`instance_id`)
+
+**Assertions**:
+- Runtime emits runtime validation failure metric
+- Traffic remains on backend-v1 (LKG)
+- Runtime stays alive
+
+**Assessment**: PASS. Validates runtime-only environment checks with LKG preservation.
 
 ---
 
@@ -279,7 +304,8 @@ Tests comprehensive routing semantics in single artifact:
 - Response headers transformed per config (set/remove)
 - Direct response: status 200, body "Custom Static Response"
 - Redirect: status 301, Location header correct
-- Rewrite: path `/service-a` → `/`, Host `rewrite.test` → `rewritten.internal`, query preserved
+- Rewrite: path `/service-a/echo` → `/echo`, Host `rewrite.test` → `rewritten.internal`, query preserved
+- Response headers transformed per config (set); removal not asserted in current script
 
 **Assessment**: PASS. Comprehensive routing semantics coverage in single artifact without runtime restart.
 
@@ -439,7 +465,7 @@ Tests comprehensive routing semantics in single artifact:
 **Category**: Security
 **Contracts**: (inbound mTLS with client cert validation)
 **Maturity**: N/A
-**Status**: SKIPPED (rustls backend limitation: inbound mTLS not supported)
+**Status**: SKIPPED (rustls backend limitation: per-peer CA / client auth not supported)
 
 **Intent**: Validate HTTPS termination with client certificate validation and unknown-CA rejection.
 
@@ -447,7 +473,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `62_security_rbac_spiffe`
+### `63_security_rbac_spiffe`
 
 **Category**: Security (RBAC)
 **Contracts**: (SPIFFE identity exact match)
@@ -455,11 +481,13 @@ Tests comprehensive routing semantics in single artifact:
 
 **Intent**: SPIFFE identity exact match authorization.
 
-**Assessment**: PASS. Covers match, mismatch, and no identity scenarios.
+**Status**: SKIPPED (RBAC not yet implemented)
+
+**Assessment**: N/A. Blocked by missing RBAC implementation.
 
 ---
 
-### `63_security_rbac_prefix`
+### `64_security_rbac_prefix`
 
 **Category**: Security (RBAC)
 **Contracts**: (SPIFFE prefix match)
@@ -467,11 +495,13 @@ Tests comprehensive routing semantics in single artifact:
 
 **Intent**: SPIFFE prefix match authorization.
 
-**Assessment**: PASS. Ensures prefix match enforcement and deny-by-default.
+**Status**: SKIPPED (RBAC not yet implemented)
+
+**Assessment**: N/A. Blocked by missing RBAC implementation.
 
 ---
 
-### `64_security_mtls_outbound`
+### `65_security_mtls_outbound`
 
 **Category**: Security
 **Contracts**: (outbound mTLS with client cert)
@@ -484,7 +514,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `65_security_tls_sni_auto`
+### `66_security_tls_sni_auto`
 
 **Category**: Security
 **Contracts**: (auto SNI derivation)
@@ -497,12 +527,12 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `66_security_mtls_chain_mode`
+### `67_security_mtls_chain_mode`
 
 **Category**: Security
 **Contracts**: (client cert chain_mode)
 **Maturity**: N/A
-**Status**: SKIPPED (rustls backend limitation: client cert presentation not supported)
+**Status**: SKIPPED (rustls backend limitation: per-peer CA / client cert not supported)
 
 **Intent**: Client cert chain_mode handling (embedded vs default none).
 
@@ -524,7 +554,7 @@ Tests comprehensive routing semantics in single artifact:
 5. Scrape metrics, validate counters for `/echo`, `/consistent`, and upstream total
 6. **Cardinality protection**: Send 2 requests to unmatched paths
 7. Validate unmatched paths NOT in metrics
-8. **Hot reload test**: Publish new config, wait for admin version change, send traffic, validate counter persistence
+8. **Hot reload test**: Publish new config, wait 2s, send traffic, validate counter persistence
 
 **Oracle**:
 - Upstream echo headers
@@ -667,7 +697,7 @@ Tests comprehensive routing semantics in single artifact:
 **Scenario**:
 1. Start with V1 (backend-v1)
 2. Publish V2..V7 sequentially (header `X-Pavis-Version: vN`)
-3. After each reload, sample resource indicators (FD count, RSS)
+3. After each reload, sample resource indicators (FD count, RSS) when /proc is available; otherwise log info and exit
 
 **Oracle**:
 - Process resource indicators (`/proc/<pid>/fd`, `/proc/<pid>/status`)

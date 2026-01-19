@@ -71,6 +71,7 @@ if [[ "$profile" == "github" ]]; then
   fi
 
   profile="${BENCH_PROFILE:-}"
+  bench_proxy="${BENCH_PROXY:-}"
   payload="${BENCH_PAYLOAD_SIZE:-}"
   tls="${BENCH_TLS:-}"
   metrics="${BENCH_METRICS:-}"
@@ -81,9 +82,15 @@ if [[ "$profile" == "github" ]]; then
   kernel="${BENCH_HOST_KERNEL:-}"
   cpu_model="${BENCH_HOST_CPU_MODEL:-}"
 
+  if [[ "$bench_proxy" != "pavis" ]]; then
+    echo "Report generation skipped for BENCH_PROXY=$bench_proxy under BENCH_PROFILE=github (only pavis supported)."
+    exit 0
+  fi
+
   awk -v standalone_csv="$STANDALONE_CSV" \
     -v system_csv="$SYSTEM_CSV" \
     -v profile="$profile" \
+    -v bench_proxy="$bench_proxy" \
     -v payload="$payload" \
     -v tls="$tls" \
     -v metrics="$metrics" \
@@ -130,10 +137,6 @@ if [[ "$profile" == "github" ]]; then
     x = dequote(x)
     if (x == "" || x == "null") return "—"
     return x
-  }
-  function with_suffix(val, suffix) {
-    if (val == "—" || suffix == "") return val
-    return val " " suffix
   }
   function mem_gib(x,    v) {
     if (!is_num(x)) return x
@@ -186,13 +189,6 @@ if [[ "$profile" == "github" ]]; then
         data_s[case_name,"rps_iqr"]=get(f,"rps_iqr")
         data_s[case_name,"proxy_cpu_avg"]=get(f,"proxy_cpu_avg")
         data_s[case_name,"proxy_mem_peak_mib"]=get(f,"proxy_mem_peak_mib")
-        if (is_num(data_s[case_name,"achieved_rps"])) { if (best_achieved=="" || data_s[case_name,"achieved_rps"]+0 > best_achieved+0) best_achieved=data_s[case_name,"achieved_rps"] }
-        if (is_num(data_s[case_name,"p99_ms"])) { if (best_p99=="" || data_s[case_name,"p99_ms"]+0 < best_p99+0) best_p99=data_s[case_name,"p99_ms"] }
-        if (is_num(data_s[case_name,"errors"])) { if (best_errors=="" || data_s[case_name,"errors"]+0 < best_errors+0) best_errors=data_s[case_name,"errors"] }
-        if (is_num(data_s[case_name,"dropped"])) { if (best_dropped=="" || data_s[case_name,"dropped"]+0 < best_dropped+0) best_dropped=data_s[case_name,"dropped"] }
-        if (is_num(data_s[case_name,"rps_iqr"])) { if (best_rps_iqr=="" || data_s[case_name,"rps_iqr"]+0 < best_rps_iqr+0) best_rps_iqr=data_s[case_name,"rps_iqr"] }
-        if (is_num(data_s[case_name,"proxy_cpu_avg"])) { if (best_cpu=="" || data_s[case_name,"proxy_cpu_avg"]+0 < best_cpu+0) best_cpu=data_s[case_name,"proxy_cpu_avg"] }
-        if (is_num(data_s[case_name,"proxy_mem_peak_mib"])) { if (best_mem=="" || data_s[case_name,"proxy_mem_peak_mib"]+0 < best_mem+0) best_mem=data_s[case_name,"proxy_mem_peak_mib"] }
       } else if (mode == "system") {
         if (dequote(get(f,"bench_mode")) != "system") continue
         case_name=dequote(get(f,"case"))
@@ -294,11 +290,13 @@ if [[ "$profile" == "github" ]]; then
     print ""
     print "## Overall Gate Summary"
     print ""
-    print "| domain | case | check | value | threshold | result |"
-    print "|------|------|-------|-------|-----------|--------|"
-    for (i=1; i<=gate_count; i++) {
-      print "| " gate_rows[i,"domain"] " | " gate_rows[i,"case"] " | " gate_rows[i,"check"] \
-        " | " gate_rows[i,"value"] " | " gate_rows[i,"threshold"] " | " gate_rows[i,"result"] " |"
+    if (gate_count > 0) {
+      print "| domain | case | check | value | threshold | result |"
+      print "|------|------|-------|-------|-----------|--------|"
+      for (i=1; i<=gate_count; i++) {
+        print "| " gate_rows[i,"domain"] " | " gate_rows[i,"case"] " | " gate_rows[i,"check"] \
+          " | " gate_rows[i,"value"] " | " gate_rows[i,"threshold"] " | " gate_rows[i,"result"] " |"
+      }
     }
     print ""
     print "Notes:"
@@ -321,12 +319,12 @@ if [[ "$profile" == "github" ]]; then
       if (!(case_name SUBSEP "case" in data_s)) continue
       printf "| %s | %s | %s | %s | %s | %s | %s |\n",
         case_name,
-        (is_num(data_s[case_name,"achieved_rps"]) && best_achieved!="" && data_s[case_name,"achieved_rps"]+0 < best_achieved+0) ? with_suffix(render(data_s[case_name,"achieved_rps"]), "↓") : render(data_s[case_name,"achieved_rps"]),
-        (is_num(data_s[case_name,"rps_iqr"]) && best_rps_iqr!="" && data_s[case_name,"rps_iqr"]+0 > best_rps_iqr+0) ? with_suffix(render(data_s[case_name,"rps_iqr"]), "↑") : render(data_s[case_name,"rps_iqr"]),
-        (is_num(data_s[case_name,"errors"]) && best_errors!="" && data_s[case_name,"errors"]+0 > best_errors+0) ? with_suffix(render(data_s[case_name,"errors"]), "↑") : render(data_s[case_name,"errors"]),
-        (is_num(data_s[case_name,"dropped"]) && best_dropped!="" && data_s[case_name,"dropped"]+0 > best_dropped+0) ? with_suffix(render(data_s[case_name,"dropped"]), "↑") : render(data_s[case_name,"dropped"]),
-        (is_num(data_s[case_name,"proxy_cpu_avg"]) && best_cpu!="" && data_s[case_name,"proxy_cpu_avg"]+0 > best_cpu+0) ? with_suffix(render(data_s[case_name,"proxy_cpu_avg"]), "↑") : render(data_s[case_name,"proxy_cpu_avg"]),
-        (is_num(data_s[case_name,"proxy_mem_peak_mib"]) && best_mem!="" && data_s[case_name,"proxy_mem_peak_mib"]+0 >= best_mem+0*1.5) ? with_suffix(render(data_s[case_name,"proxy_mem_peak_mib"]), "⚠︎") : (is_num(data_s[case_name,"proxy_mem_peak_mib"]) && best_mem!="" && data_s[case_name,"proxy_mem_peak_mib"]+0 > best_mem+0) ? with_suffix(render(data_s[case_name,"proxy_mem_peak_mib"]), "↑") : render(data_s[case_name,"proxy_mem_peak_mib"])
+        render(data_s[case_name,"achieved_rps"]),
+        render(data_s[case_name,"rps_iqr"]),
+        render(data_s[case_name,"errors"]),
+        render(data_s[case_name,"dropped"]),
+        render(data_s[case_name,"proxy_cpu_avg"]),
+        render(data_s[case_name,"proxy_mem_peak_mib"])
     }
     print ""
     print "### Latency / Saturation"
@@ -338,11 +336,11 @@ if [[ "$profile" == "github" ]]; then
       printf "| %s | %s | %s | %s | %s | %s | %s |\n",
         case_name,
         render(data_s[case_name,"target_rps"]),
-        (is_num(data_s[case_name,"achieved_rps"]) && best_achieved!="" && data_s[case_name,"achieved_rps"]+0 < best_achieved+0) ? with_suffix(render(data_s[case_name,"achieved_rps"]), "↓") : render(data_s[case_name,"achieved_rps"]),
-        (is_num(data_s[case_name,"p99_ms"]) && best_p99!="" && data_s[case_name,"p99_ms"]+0 > best_p99+0) ? with_suffix(render(data_s[case_name,"p99_ms"]), "↑") : render(data_s[case_name,"p99_ms"]),
-        (is_num(data_s[case_name,"dropped"]) && best_dropped!="" && data_s[case_name,"dropped"]+0 > best_dropped+0) ? with_suffix(render(data_s[case_name,"dropped"]), "↑") : render(data_s[case_name,"dropped"]),
-        (is_num(data_s[case_name,"errors"]) && best_errors!="" && data_s[case_name,"errors"]+0 > best_errors+0) ? with_suffix(render(data_s[case_name,"errors"]), "↑") : render(data_s[case_name,"errors"]),
-        (is_num(data_s[case_name,"proxy_mem_peak_mib"]) && best_mem!="" && data_s[case_name,"proxy_mem_peak_mib"]+0 >= best_mem+0*1.5) ? with_suffix(render(data_s[case_name,"proxy_mem_peak_mib"]), "⚠︎") : (is_num(data_s[case_name,"proxy_mem_peak_mib"]) && best_mem!="" && data_s[case_name,"proxy_mem_peak_mib"]+0 > best_mem+0) ? with_suffix(render(data_s[case_name,"proxy_mem_peak_mib"]), "↑") : render(data_s[case_name,"proxy_mem_peak_mib"])
+        render(data_s[case_name,"achieved_rps"]),
+        render(data_s[case_name,"p99_ms"]),
+        render(data_s[case_name,"dropped"]),
+        render(data_s[case_name,"errors"]),
+        render(data_s[case_name,"proxy_mem_peak_mib"])
     }
     print ""
     print "---"

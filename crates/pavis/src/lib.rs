@@ -7,3 +7,4 @@ pub mod shutdown;
 pub mod state;
 pub mod telemetry;
 pub mod upstream;
+pub mod validate_env;

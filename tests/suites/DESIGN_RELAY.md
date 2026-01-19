@@ -112,7 +112,7 @@ The Relay Suite validates the **Control Plane** correctness of the `pavis-relay`
 - ETag unchanged
 - `400ms < elapsed < 700ms`
 
-**Assessment**: PARTIAL. Proves timeout behavior but does not verify subscriber actually blocked during wait period (could be immediate 204). Missing: liveness check of background subscriber process before publish to confirm blocking state.
+**Assessment**: PASS. Proves timeout behavior with elapsed-time liveness check.
 
 ---
 

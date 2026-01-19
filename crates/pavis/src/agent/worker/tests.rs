@@ -25,10 +25,7 @@ use std::time::Duration;
 fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
     let listener = ListenerBuilder::new()
         .name(ListenerName("default".to_string()))
-        .address(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            8080,
-        ))
+        .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0))
         .workers(WorkerCount::Auto)
         .tls(TlsConfig::Disabled)
         .build()

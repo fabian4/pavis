@@ -4,7 +4,7 @@ mod routes;
 mod server;
 mod upstreams;
 
-use crate::runtime::{RuntimeConfig, ValidatedRuntimeConfig};
+use crate::runtime::{RuntimeConfig, UpstreamName, ValidatedRuntimeConfig};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CoreValidationError {
@@ -26,8 +26,16 @@ pub enum CoreValidationError {
     MissingTlsFiles,
     #[error("upstream '{0}' has verify=full with sni=disabled")]
     UpstreamTlsSniDisabled(String),
-    #[error("upstream '{0}' has verify=full with sni=auto but no DNS endpoints")]
+    #[error(
+        "upstream '{0}' has verify=full with sni=auto but no DNS endpoints or route host rewrite"
+    )]
     UpstreamTlsAutoSniRequiresDns(String),
+    #[error("port {port} is used by both {left} and {right}")]
+    PortConflict {
+        port: u16,
+        left: String,
+        right: String,
+    },
     #[error("upstream '{0}' has invalid health check path")]
     InvalidHealthCheckPath(String),
     #[error("upstream '{0}' health check timeout exceeds interval")]
@@ -97,9 +105,120 @@ pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<Validated
 
     upstreams::validate_upstreams(&config.upstreams)?;
     routes::validate_routes(&config.routes, &config.upstreams)?;
+    validate_sni_auto_requires_dns_or_rewrite(&config.routes, &config.upstreams)?;
+    validate_port_conflicts(&config)?;
     admin::validate_shutdown(&config.shutdown)?;
     admin::validate_admin(&config.admin)?;
     Ok(ValidatedRuntimeConfig::new(config))
+}
+
+fn validate_sni_auto_requires_dns_or_rewrite(
+    routes: &[crate::runtime::VirtualHost],
+    upstreams: &[crate::runtime::Upstream],
+) -> CoreValidationResult<()> {
+    use crate::runtime::{EndpointAddr, RewriteHost, SniName, TlsPolicy, TlsVerify};
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct OverrideState {
+        referenced: bool,
+        missing_rewrite: bool,
+    }
+
+    let mut needs_override: HashMap<&UpstreamName, OverrideState> = HashMap::new();
+    for upstream in upstreams {
+        let tls = match &upstream.tls {
+            TlsPolicy::Enabled { verify, sni, .. } => (verify, sni),
+            TlsPolicy::Disabled => continue,
+            #[allow(unreachable_patterns)]
+            _ => continue,
+        };
+        if !matches!(tls, (TlsVerify::Full, SniName::Auto)) {
+            continue;
+        }
+
+        let has_dns = upstream
+            .endpoints
+            .iter()
+            .any(|ep| matches!(ep.address, EndpointAddr::Dns { .. }));
+        if !has_dns {
+            needs_override.insert(&upstream.name, OverrideState::default());
+        }
+    }
+
+    if needs_override.is_empty() {
+        return Ok(());
+    }
+
+    for vhost in routes {
+        for route in &vhost.paths {
+            let rewrite_host = matches!(route.rewrite.host, RewriteHost::Literal { .. });
+            if let crate::runtime::RouteAction::Forward(destinations) = &route.action {
+                for dest in destinations {
+                    if let Some(state) = needs_override.get_mut(&dest.upstream) {
+                        state.referenced = true;
+                        if !rewrite_host {
+                            state.missing_rewrite = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (upstream, state) in needs_override {
+        if state.referenced && state.missing_rewrite {
+            return Err(CoreValidationError::UpstreamTlsAutoSniRequiresDns(
+                upstream.0.clone(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_port_conflicts(config: &RuntimeConfig) -> CoreValidationResult<()> {
+    use crate::runtime::{AdminConfig, Metrics};
+    use std::collections::HashMap;
+
+    let mut seen: HashMap<u16, String> = HashMap::new();
+    for listener in &config.listeners {
+        let port = listener.address.port();
+        let label = format!("listener '{}'", listener.name.0);
+        if let Some(existing) = seen.insert(port, label.clone()) {
+            return Err(CoreValidationError::PortConflict {
+                port,
+                left: existing,
+                right: label,
+            });
+        }
+    }
+
+    if let AdminConfig::Enabled { addr } = config.admin {
+        let port = addr.port();
+        let label = "admin".to_string();
+        if let Some(existing) = seen.insert(port, label.clone()) {
+            return Err(CoreValidationError::PortConflict {
+                port,
+                left: existing,
+                right: label,
+            });
+        }
+    }
+
+    if let Metrics::Enabled { addr } = config.telemetry.metrics {
+        let port = addr.port();
+        let label = "metrics".to_string();
+        if let Some(existing) = seen.insert(port, label.clone()) {
+            return Err(CoreValidationError::PortConflict {
+                port,
+                left: existing,
+                right: label,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -265,11 +384,43 @@ mod tests {
     }
 
     #[test]
-    fn upstream_verify_full_auto_sni_allows_ip_endpoints() {
+    fn upstream_verify_full_auto_sni_allows_dns_endpoints() {
         let mut cfg = base_config();
         if let TlsPolicy::Enabled { sni, .. } = &mut cfg.upstreams[0].tls {
             *sni = SniName::Auto;
         }
+        cfg.upstreams[0].endpoints[0].address = EndpointAddr::Dns {
+            host: Hostname("backend.local".to_string()),
+            port: Port(std::num::NonZeroU16::new(80).unwrap()),
+        };
+        assert!(validate_runtime(cfg).is_ok());
+    }
+
+    #[test]
+    fn upstream_auto_sni_requires_dns_or_rewrite() {
+        let mut cfg = base_config();
+        if let TlsPolicy::Enabled { sni, .. } = &mut cfg.upstreams[0].tls {
+            *sni = SniName::Auto;
+        }
+        let err = validate_runtime(cfg).expect_err("expected auto sni error");
+        assert!(matches!(
+            err,
+            CoreValidationError::UpstreamTlsAutoSniRequiresDns(_)
+        ));
+    }
+
+    #[test]
+    fn upstream_auto_sni_allows_host_rewrite() {
+        let mut cfg = base_config();
+        if let TlsPolicy::Enabled { sni, .. } = &mut cfg.upstreams[0].tls {
+            *sni = SniName::Auto;
+        }
+        cfg.routes[0].paths[0].rewrite = Rewrite {
+            path: RewritePath::Disabled,
+            host: RewriteHost::Literal {
+                host: Hostname("backend.local".to_string()),
+            },
+        };
         assert!(validate_runtime(cfg).is_ok());
     }
 
@@ -593,6 +744,27 @@ mod tests {
         cfg.listeners.push(duplicate);
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::DuplicateListener(_)));
+    }
+
+    #[test]
+    fn duplicate_listener_port_fails() {
+        let mut cfg = base_config();
+        let mut duplicate = cfg.listeners[0].clone();
+        duplicate.name = ListenerName("dup".to_string());
+        duplicate.address = cfg.listeners[0].address;
+        cfg.listeners.push(duplicate);
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::PortConflict { .. }));
+    }
+
+    #[test]
+    fn admin_port_conflict_fails() {
+        let mut cfg = base_config();
+        cfg.admin = AdminConfig::Enabled {
+            addr: cfg.listeners[0].address,
+        };
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::PortConflict { .. }));
     }
 
     #[test]

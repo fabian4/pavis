@@ -56,12 +56,11 @@ pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     --data-binary "@$TEST_TMP/v5.pvs" > /dev/null
 
-START=$(now_ms)
-CODE=$(pavis_curl_body -o /dev/null -w "%{http_code}" \
+output=$(pavis_curl_body -o /dev/null -w "%{http_code} %{time_total}" \
     -H "If-None-Match: $ETAG1" \
     "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
-END=$(now_ms)
-DURATION=$((END - START))
+CODE=$(echo "$output" | awk '{print $1}')
+DURATION=$(echo "$output" | awk '{printf "%.0f", $2 * 1000}')
 
 if [ "$CODE" != "200" ]; then echo "❌ Expected 200, got $CODE"; exit 1; fi
 if [ "$DURATION" -ge 2000 ]; then echo "❌ Request blocked unexpectedly"; exit 1; fi

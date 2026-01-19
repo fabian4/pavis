@@ -50,11 +50,9 @@ pavis_curl_body -m 1 -H "If-None-Match: $ETAG1" \
 pavis_curl_body -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     --data-binary "@$TEST_TMP/v2.pvs" > /dev/null
 
-START_TIME=$(now_ms)
-fetch_with_headers "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000" \
-    "$TEST_TMP/resp" "$TEST_TMP/body" -H "If-None-Match: $ETAG1"
-END_TIME=$(now_ms)
-DURATION=$((END_TIME - START_TIME))
+output=$(curl -sS -D "$TEST_TMP/resp" -o "$TEST_TMP/body" -w "%{http_code} %{time_total}" \
+    -H "If-None-Match: $ETAG1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=5000")
+DURATION=$(echo "$output" | awk '{printf "%.0f", $2 * 1000}')
 
 assert_status_eq "$TEST_TMP/resp" 200
 if ! cmp -s "$TEST_TMP/v2.pvs" "$TEST_TMP/body"; then

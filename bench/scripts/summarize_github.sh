@@ -252,7 +252,7 @@ parse_case() {
 
   # Extract meta information early for iteration rows
   # Prefer run-level context.env; legacy case-level context.env is supported.
-  local run_context="${OUTPUT_DIR}/context.env"
+  local run_context="${case_dir%/*}/context.env"
   if [ -f "${case_dir}/context.env" ]; then
     # shellcheck source=/dev/null
     source "${case_dir}/context.env"
@@ -489,8 +489,14 @@ main() {
     exit 1
   fi
 
-  local run_context="${OUTPUT_DIR}/context.env"
-  if [ -f "$run_context" ]; then
+  local run_context=""
+  for proxy_dir in "$OUTPUT_DIR"/*; do
+    if [ -f "${proxy_dir}/context.env" ]; then
+      run_context="${proxy_dir}/context.env"
+      break
+    fi
+  done
+  if [ -n "$run_context" ]; then
     # shellcheck source=/dev/null
     source "$run_context"
     if [ "${BENCH_MODE:-}" = "system" ]; then

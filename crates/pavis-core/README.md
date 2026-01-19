@@ -70,6 +70,8 @@ The implementation enforces the following at validation time:
 - **Normalization**: Paths for Prefix and Exact matches must start with `/` and contain no trailing slashes (except for `/` itself).
 - **Referential Integrity**: All destinations in routes must point to defined upstream clusters.
 - **TLS Consistency**: If TLS is enabled, certificate and key paths must be non-empty.
+- **TLS SNI Safety**: `verify=full` with `sni=auto` requires DNS endpoints or a route host rewrite.
+- **Port Uniqueness**: Listener, admin, and metrics ports must not conflict.
 - **Regex Safety**: Regular expressions are limited to 2048 characters and must be valid per the `regex` crate.
 
 ### Feature Flags

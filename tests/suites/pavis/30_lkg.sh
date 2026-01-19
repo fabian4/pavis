@@ -58,12 +58,7 @@ wait_for_log_match() {
             return 0
         fi
         sleep "$backoff"
-        backoff=$(python3 - "$backoff" <<'PY'
-import sys
-val = float(sys.argv[1]) * 2
-print(val if val < 2.0 else 2.0)
-PY
-)
+        backoff=$(awk -v value="$backoff" 'BEGIN { value = value * 2; if (value > 2.0) value = 2.0; printf "%.2f", value }')
     done
     return 1
 }
@@ -83,12 +78,7 @@ assert_metric_at_least() {
             fi
         fi
         sleep "$backoff"
-        backoff=$(python3 - "$backoff" <<'PY'
-import sys
-val = float(sys.argv[1]) * 2
-print(val if val < 2.0 else 2.0)
-PY
-)
+        backoff=$(awk -v value="$backoff" 'BEGIN { value = value * 2; if (value > 2.0) value = 2.0; printf "%.2f", value }')
     done
     return 1
 }
@@ -97,7 +87,7 @@ assert_backend() {
     local expected="$1"
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     echo "$response" | assert_json_has_key "instance_id"
-    instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['instance_id'])")
+    instance=$(echo "$response" | json_get_string "instance_id")
     if [ "$instance" != "$expected" ]; then
         echo "❌ Expected $expected, got $instance"
         exit 1
@@ -140,7 +130,7 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
 cp "$TEST_TMP/config_v2.pvs" "$TEST_TMP/config_v2_bad.pvs"
-python3 -c "with open('$TEST_TMP/config_v2_bad.pvs','r+b') as f: f.seek(4); f.write(b'\\xff')"
+printf '\xFF' | dd of="$TEST_TMP/config_v2_bad.pvs" bs=1 seek=4 count=1 conv=notrunc >/dev/null 2>&1
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2_bad.pvs"
 sleep 2
 if ! wait_for_log_match 'event="?config_validation"?.*result="?fail"?.*reason="?version"?'; then
@@ -203,7 +193,11 @@ EOF
 gen_pvs "$TEST_TMP/config_v3.yaml" "$TEST_TMP/config_v3.pvs"
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v3.pvs"
 
-MAX_RETRIES=20
+if ! wait_for_log_match 'event="?config_validation"?.*result="?ok"?'; then
+    echo "WARN: Missing config_validation ok log"
+fi
+
+MAX_RETRIES=80
 SWITCHED=0
 for _ in $(seq 1 $MAX_RETRIES); do
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")

@@ -127,12 +127,12 @@ response_content=$(cat "$TEST_TMP/in_flight_response.json")
 echo "In-flight response: $response_content"
 
 # Check response contains expected data
-echo "$response_content" | python3 -c "import sys, json; data=json.load(sys.stdin); assert 'instance_id' in data" || {
+if ! echo "$response_content" | assert_json_has_key "instance_id"; then
     echo "❌ In-flight request did not return valid response"
     exit 1
-}
+fi
 
-instance=$(echo "$response_content" | python3 -c "import sys, json; print(json.load(sys.stdin)['instance_id'])")
+instance=$(echo "$response_content" | json_get_string "instance_id")
 if [ "$instance" != "slow-backend" ]; then
     echo "❌ Expected instance_id 'slow-backend', got '$instance'"
     exit 1

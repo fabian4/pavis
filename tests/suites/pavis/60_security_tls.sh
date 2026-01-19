@@ -57,8 +57,8 @@ if [ -z "$response" ]; then
     echo "❌ Empty response from Pavis"
     exit 1
 fi
-tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('enabled'))")
-if [ "$tls_enabled" == "True" ] || [ "$tls_enabled" == "true" ]; then
+tls_enabled=$(echo "$response" | json_get_tls_bool "enabled")
+if [ "$tls_enabled" = "true" ]; then
     echo "❌ Expected HTTP initially, got TLS enabled"
     exit 1
 fi
@@ -100,7 +100,7 @@ for _ in $(seq 1 $MAX_RETRIES); do
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
     
     if [ -n "$response" ]; then
-        tls_enabled=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('enabled', False))")
+        tls_enabled=$(echo "$response" | json_get_tls_bool "enabled")
         
         if [ "$tls_enabled" == "True" ] || [ "$tls_enabled" == "true" ]; then
             SWITCHED=1
@@ -116,7 +116,7 @@ if [ "$SWITCHED" -eq 0 ]; then
 fi
 
 # SNI Validation (Optional/Pending Upstream Support)
-sni_value=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tls', {}).get('sni'))")
+sni_value=$(echo "$response" | json_get_tls_string "sni")
 echo "Reported SNI: $sni_value"
 
 if [ "$sni_value" == "localhost" ]; then

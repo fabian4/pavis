@@ -58,10 +58,31 @@ assert_eq "$CODE" "200" "Initial fetch should return 200"
 ETAG1=$(extract_etag "$TEST_TMP/headers1.txt")
 assert_etag_format "$ETAG1"
 
-START=$(now_ms)
-CODE=$(assert_no_body "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=500" \
-    "$TEST_TMP/headers2.txt" -H "If-None-Match: $ETAG1")
-ELAPSED=$(($(now_ms) - START))
+LONGPOLL_HEADERS="$TEST_TMP/headers_live.txt"
+pavis_curl_headers "$LONGPOLL_HEADERS" \
+    -H "If-None-Match: $ETAG1" \
+    "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=1000" &
+LONGPOLL_PID=$!
+
+sleep 0.1
+if ! kill -0 "$LONGPOLL_PID" 2>/dev/null; then
+    echo "❌ Long-poll request exited early"
+    exit 1
+fi
+
+wait "$LONGPOLL_PID"
+LIVE_CODE=$(extract_status_code "$LONGPOLL_HEADERS")
+assert_eq "$LIVE_CODE" "204" "Long-poll should stay open and timeout with 204"
+
+output=$(curl -sS -D "$TEST_TMP/headers2.txt" -o /dev/null -w "%{http_code} %{time_total} %{size_download}" \
+    -H "If-None-Match: $ETAG1" "http://127.0.0.1:$PORT_RELAY/v1/config?wait_ms=500")
+CODE=$(echo "$output" | awk '{print $1}')
+ELAPSED=$(echo "$output" | awk '{printf "%.0f", $2 * 1000}')
+SIZE=$(echo "$output" | awk '{print $3}')
+if [ "$SIZE" != "0" ]; then
+    echo "❌ Response should have no body (size_download=$SIZE)"
+    exit 1
+fi
 
 assert_eq "$CODE" "204" "Long-poll timeout should return 204"
 

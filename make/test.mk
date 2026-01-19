@@ -15,4 +15,4 @@ coverage-html:
 # Generate coverage markdown (requires cargo-tarpaulin + grcov)
 coverage-report:
 	cargo tarpaulin --workspace --all-features --exclude pavis-benchkit --exclude pavis-testkit --exclude-files 'crates/*/tests/*' --exclude-files "crates/**/*tests.rs" --out Lcov
-	grcov lcov.info --source-dir . --output-type markdown --ignore 'crates/*/tests/*' --ignore 'crates/**/*tests.rs' --ignore 'crates/pavis-benchkit/*' --ignore 'crates/pavis-testkit/*' --output-path ./docs/coverage.md
+	grcov lcov.info --source-dir . --output-type markdown --ignore 'crates/*/tests/*' --ignore 'crates/**/*tests.rs' --ignore 'crates/pavis-benchkit/*' --ignore 'crates/pavis-testkit/*' --output-path ./docs/roadmap/coverage.md

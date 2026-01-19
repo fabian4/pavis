@@ -30,6 +30,7 @@ export UPSTREAM_HTTPS_PORT_V1=${UPSTREAM_HTTPS_PORT_V1:-8443}
 export UPSTREAM_HTTPS_PORT_V2=${UPSTREAM_HTTPS_PORT_V2:-8444}
 
 CERTS_DIR="$PROJECT_ROOT/tests/suites/config/certs"
+USED_PORTS=""
 
 setup_test() {
     local case_name="$1"
@@ -101,14 +102,33 @@ cleanup_test() {
 }
 
 get_free_port() {
-    python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()'
+    local attempts=200
+    local port
+
+    while [ "$attempts" -gt 0 ]; do
+        port=$((20000 + (RANDOM % 40000)))
+        if [[ " $USED_PORTS " == *" $port "* ]]; then
+            attempts=$((attempts - 1))
+            continue
+        fi
+        if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+            attempts=$((attempts - 1))
+            continue
+        fi
+        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+            attempts=$((attempts - 1))
+            continue
+        fi
+        USED_PORTS="$USED_PORTS $port"
+        echo "$port"
+        return 0
+        attempts=$((attempts - 1))
+    done
+    return 1
 }
 
 now_ms() {
-    python3 - <<'PY'
-import time
-print(int(time.time() * 1000))
-PY
+    echo "$(date +%s)000"
 }
 
 generate_signed_cert() {
@@ -310,7 +330,11 @@ run_pavis() {
     fi
     
     if [ "$TEST_MODE" == "binary" ]; then
-        RUST_LOG=debug "$PAVIS_BIN" "${args[@]}" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        local cmd=("$PAVIS_BIN" "${args[@]}")
+        if command -v stdbuf >/dev/null 2>&1; then
+            cmd=(stdbuf -oL -eL "${cmd[@]}")
+        fi
+        RUST_LOG=debug "${cmd[@]}" > "$TEST_TMP/logs/${name}.log" 2>&1 &
         record_pid $! "$name"
     else
         local docker_args=(

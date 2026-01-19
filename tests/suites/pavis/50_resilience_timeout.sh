@@ -70,11 +70,10 @@ publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
 MAX_RETRIES=20
 SWITCHED=0
 for _ in $(seq 1 $MAX_RETRIES); do
-    start_ms=$(now_ms)
-    status=$(pavis_curl_body -o /dev/null -w "%{http_code}" --max-time 2 \
+    output=$(pavis_curl_body -o /dev/null -w "%{http_code} %{time_total}" --max-time 2 \
         "http://127.0.0.1:$PORT_PAVIS/delay?ms=200")
-    end_ms=$(now_ms)
-    elapsed_ms=$((end_ms - start_ms))
+    status=$(echo "$output" | awk '{print $1}')
+    elapsed_ms=$(echo "$output" | awk '{printf "%.0f", $2 * 1000}')
 
     if [ "$status" != "200" ] && [ "$elapsed_ms" -lt 500 ]; then
         SWITCHED=1

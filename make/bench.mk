@@ -1,4 +1,4 @@
-.PHONY: bench bench-build bench-down bench-all bench-all-build
+.PHONY: bench-all-build
 .PHONY: bench-standalone bench-standalone-build bench-standalone-down bench-standalone-all
 .PHONY: bench-system bench-system-build bench-system-down bench-system-all bench-report
 
@@ -41,7 +41,6 @@ bench-standalone-down:
 # Backward Compatibility Aliases
 # ============================================================================
 
-bench-build: bench-standalone-build
 bench-all-build:
 	$(MAKE) binary-build CRATE=pavctl
 	$(MAKE) docker-build IMAGE=relay MODE=$(MODE)
@@ -54,9 +53,6 @@ bench-all-build:
 	else \
 		echo "Skipping envoy xDS server image for BENCH_PROFILE=github"; \
 	fi
-bench: bench-standalone
-bench-all: bench-standalone-all
-bench-down: bench-standalone-down
 
 # ============================================================================
 # System Mode (Kubernetes) Targets
@@ -107,6 +103,4 @@ bench-system-down:
 
 # Generate summary CSV and markdown report from existing results
 bench-report:
-	@bash bench/scripts/summarize_github.sh
 	@bash bench/scripts/report.sh
-	@bash bench/scripts/summarize_system.sh

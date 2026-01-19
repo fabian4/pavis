@@ -17,6 +17,8 @@ source "$SCRIPT_DIR/publish_config.sh"
 source "$SCRIPT_DIR/proxy_helpers.sh"
 # shellcheck source=bench/config/config.env
 source "$(cd "$SCRIPT_DIR/.." && pwd)/config/config.env"
+# shellcheck source=scripts/lib/http.sh
+source "$SCRIPT_DIR/../../scripts/lib/http.sh"
 
 CASE_NAME="stress_recovery"
 BASELINE_RPS="${SYSTEM_STRESS_RECOVERY_BASELINE_RPS}"
@@ -73,6 +75,10 @@ main() {
   pf_pid=$(echo "$pf_info" | awk '{print $1}')
   local pf_local_port
   pf_local_port=$(echo "$pf_info" | awk '{print $2}')
+  if [[ -z "$pf_pid" || -z "$pf_local_port" ]]; then
+    log_error "Port-forward to test backend failed"
+    return 1
+  fi
 
   # Wait for port-forward to stabilize
   sleep 3
@@ -84,16 +90,25 @@ main() {
   proxy_deploy_baseline_config
 
   sleep 2
+  if ! wait_for_http_status "$target_url" 30 200; then
+    log_error "Test backend did not become ready at ${target_url}"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
+  fi
 
   # Step 2: Establish baseline at 50% load
   log_info "Establishing baseline at ${BASELINE_RPS} RPS (50% load)"
-  "${BENCH_LOADGEN_BIN}" \
+  if ! "${BENCH_LOADGEN_BIN}" \
     --url "$target_url" \
     --rate "$BASELINE_RPS" \
     --duration "$BASELINE_DURATION_S" \
     --connections 100 \
     --output "${output_dir}/baseline.json" \
-    > /dev/null 2>&1
+    > /dev/null 2> "${output_dir}/baseline.err"; then
+    log_error "bench-loadgen failed during baseline load (see ${output_dir}/baseline.err)"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
+  fi
 
   local baseline_p99
   baseline_p99=$(jq -r '.latency_ms.p99' "${output_dir}/baseline.json")
@@ -111,13 +126,17 @@ main() {
   collect_rss_timeline "$STRESS_DURATION_S" 5 "${output_dir}/stress_rss.csv" "$pod_label" "$container_name" "$NAMESPACE" &
   local rss_monitor_pid=$!
 
-  "${BENCH_LOADGEN_BIN}" \
+  if ! "${BENCH_LOADGEN_BIN}" \
     --url "$target_url" \
     --rate "$STRESS_RPS" \
     --duration "$STRESS_DURATION_S" \
     --connections 200 \
     --output "${output_dir}/stress.json" \
-    > /dev/null 2>&1
+    > /dev/null 2> "${output_dir}/stress.err"; then
+    log_error "bench-loadgen failed during stress load (see ${output_dir}/stress.err)"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
+  fi
 
   wait "$rss_monitor_pid" 2>/dev/null || true
 
@@ -139,13 +158,17 @@ main() {
   collect_rss_timeline "$RECOVERY_DURATION_S" 5 "${output_dir}/recovery_rss.csv" "$pod_label" "$container_name" "$NAMESPACE" &
   local recovery_rss_pid=$!
 
-  "${BENCH_LOADGEN_BIN}" \
+  if ! "${BENCH_LOADGEN_BIN}" \
     --url "$target_url" \
     --rate "$BASELINE_RPS" \
     --duration "$RECOVERY_DURATION_S" \
     --connections 100 \
     --output "${output_dir}/recovery.json" \
-    > /dev/null 2>&1
+    > /dev/null 2> "${output_dir}/recovery.err"; then
+    log_error "bench-loadgen failed during recovery load (see ${output_dir}/recovery.err)"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
+  fi
 
   wait "$recovery_rss_pid" 2>/dev/null || true
 

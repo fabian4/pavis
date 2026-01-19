@@ -4,7 +4,7 @@ This document provides a normative, exhaustive reference for the Pavis data plan
 
 ## Overview
 
-The configuration is parsed by the Pavis codec layer (using `serde`), validated for semantic invariants, and then converted into an immutable `RuntimeConfig` artifact used by the proxy engine.
+The configuration flows through three validation layers: **Codec** (format/static checks), **Core** (semantic invariants), and **Runtime** (environment checks). After validation, it is converted into an immutable `RuntimeConfig` artifact used by the proxy engine.
 
 ### Top-Level Schema
 
@@ -29,6 +29,7 @@ Defines how the proxy accepts inbound traffic.
 - **Type**: `string`
 - **Required**: Yes
 - **Allowed values**: A valid socket address (IP:PORT), e.g., `"0.0.0.0:8080"`.
+- **Validation**: Port must be unique across listeners, admin, and metrics.
 - **Runtime Effect**: Binds the proxy to this address.
 
 ### `listeners[].workers`
@@ -46,11 +47,13 @@ Defines how the proxy accepts inbound traffic.
 ### `listeners[].tls.cert_path`
 - **Type**: `string`
 - **Required**: Yes (if `tls` is set)
+- **Validation**: Runtime validates the path exists and is readable.
 - **Runtime Effect**: Path to the PEM certificate file.
 
 ### `listeners[].tls.key_path`
 - **Type**: `string`
 - **Required**: Yes (if `tls` is set)
+- **Validation**: Runtime validates the path exists and is readable.
 - **Runtime Effect**: Path to the PEM private key file.
 
 ### `listeners[].tls.client_auth`
@@ -60,6 +63,7 @@ Defines how the proxy accepts inbound traffic.
   - `disabled`: Unit variant. No client auth.
   - `optional: { ca_path: "..." }`: Client certificate requested but not required.
   - `required: { ca_path: "..." }`: Valid client certificate mandatory.
+- **Validation**: Runtime validates `ca_path` exists and is readable.
 - **Backend Constraints**: Peer certificate extraction for Rustls mode is currently unimplemented (TODO in code).
 
 ---
@@ -91,6 +95,7 @@ Defines how the proxy accepts inbound traffic.
 - **Required**: Optional
 - **Alias**: `prometheus_addr`
 - **Allowed values**: Valid socket address (IP:PORT).
+- **Validation**: Port must be unique across listeners, admin, and metrics.
 - **Runtime Effect**: Starts a Prometheus metrics exporter on this address.
 
 ### `telemetry.access_log`
@@ -214,11 +219,13 @@ Defines how the proxy accepts inbound traffic.
 - **Default**: `auto`
 - **Allowed values**: `auto`, `name` (requires `sni`), `disabled`.
 - **Validation**: `verify=full` (both `verify_cert` and `verify_hostname` are `true`) requires `sni_mode` to be `auto` or `name`.
+- **Validation**: `verify=full` with `sni_mode=auto` requires DNS endpoints or a route host rewrite.
 
 ### `upstreams[].tls.ca_bundle_path`
 - **Type**: `string`
 - **Required**: Optional
 - **Alias**: `ca_bundle`
+- **Validation**: Runtime validates the path exists and is readable when set.
 - **Backend Constraint**: **IGNORED** by the Pingora Rustls connector.
 
 ### `upstreams[].tls.cert`
@@ -229,15 +236,18 @@ Defines how the proxy accepts inbound traffic.
 ### `upstreams[].tls.cert.cert_path`
 - **Type**: `string`
 - **Required**: Yes
+- **Validation**: Runtime validates the path exists and is readable.
 
 ### `upstreams[].tls.cert.key_path`
 - **Type**: `string`
 - **Required**: Yes
+- **Validation**: Runtime validates the path exists and is readable.
 
 ### `upstreams[].tls.cert.chain_path`
 - **Type**: `string`
 - **Required**: Optional
 - **Validation**: Allowed only if `chain_mode` is `file`.
+- **Validation**: Runtime validates the path exists and is readable when set.
 
 ### `upstreams[].tls.cert.chain_mode`
 - **Type**: `string` (enum)

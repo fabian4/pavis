@@ -86,7 +86,7 @@ wait_for_version() {
         body="$TEST_TMP/wait.body"
         if curl -sS -D "$headers" -o "$body" "http://127.0.0.1:$PORT_PAVIS/echo"; then
             got_version=$(awk 'tolower($1)=="x-pavis-version:" {print $2}' "$headers" | tr -d '\r')
-            got_instance=$(python3 -c "import sys, json; print(json.load(sys.stdin).get('instance_id',''))" < "$body")
+            got_instance=$(json_get_string "instance_id" < "$body")
             if [ "$got_version" = "$expected_version" ] && [ "$got_instance" = "$expected_instance" ]; then
                 return 0
             fi
@@ -104,52 +104,73 @@ wait_for_version() {
 KEEPALIVE_OUT="$TEST_TMP/keepalive_results.txt"
 KEEPALIVE_GO="$TEST_TMP/reload_go"
 
-python3 - "$PORT_PAVIS" "$KEEPALIVE_OUT" "$KEEPALIVE_GO" <<'PY' &
-import sys
-import json
-import time
-import http.client
-import os
+keepalive_client() {
+    local port="$1"
+    local out_path="$2"
+    local go_path="$3"
 
-port = int(sys.argv[1])
-out_path = sys.argv[2]
-go_path = sys.argv[3]
+    exec 3<>"/dev/tcp/127.0.0.1/${port}" || {
+        echo "phase=before error=connect" >> "$out_path"
+        return 1
+    }
 
-def write_line(line):
-    with open(out_path, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    keepalive_request() {
+        local phase="$1"
+        local status_line
+        local header
+        local version=""
+        local content_length=""
+        local body
+        local instance
 
-conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-try:
-    conn.request("GET", "/echo", headers={"Connection": "keep-alive"})
-    resp = conn.getresponse()
-    body = resp.read()
-    version = resp.getheader("X-Pavis-Version")
-    instance = json.loads(body).get("instance_id", "")
-    write_line(f"phase=before version={version} instance={instance}")
-except Exception as exc:
-    write_line(f"phase=before error={exc}")
-    sys.exit(1)
+        printf 'GET /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n' >&3
+        if ! IFS= read -r status_line <&3; then
+            echo "phase=${phase} error=read_status" >> "$out_path"
+            return 1
+        fi
+        : "$status_line"
+        while IFS= read -r header <&3; do
+            [ "$header" = $'\r' ] && break
+            case "$header" in
+                [Xx]-[Pp][Aa][Vv][Ii][Ss]-[Vv]ersion:*)
+                    version=$(echo "$header" | awk '{print $2}' | tr -d '\r')
+                    ;;
+                [Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll]ength:*)
+                    content_length=$(echo "$header" | awk '{print $2}' | tr -d '\r')
+                    ;;
+            esac
+        done
+        if [ -z "$content_length" ]; then
+            echo "phase=${phase} error=missing_length" >> "$out_path"
+            return 1
+        fi
+        body=$(dd bs=1 count="$content_length" <&3 2>/dev/null)
+        instance=$(printf '%s' "$body" | json_get_string "instance_id")
+        if [ -z "$instance" ]; then
+            echo "phase=${phase} error=missing_instance" >> "$out_path"
+            return 1
+        fi
+        echo "phase=${phase} version=${version} instance=${instance}" >> "$out_path"
+    }
 
-start = time.time()
-while not os.path.exists(go_path):
-    if time.time() - start > 10:
-        write_line("phase=wait error=timeout")
-        sys.exit(1)
-    time.sleep(0.1)
+    keepalive_request "before" || return 1
 
-for i in range(10):
-    try:
-        conn.request("GET", "/echo", headers={"Connection": "keep-alive"})
-        resp = conn.getresponse()
-        body = resp.read()
-        version = resp.getheader("X-Pavis-Version")
-        instance = json.loads(body).get("instance_id", "")
-        write_line(f"phase=after version={version} instance={instance}")
-    except Exception as exc:
-        write_line(f"phase=after error={exc}")
-        sys.exit(1)
-PY
+    local start
+    start=$(date +%s)
+    while [ ! -f "$go_path" ]; do
+        if [ $(( $(date +%s) - start )) -gt 10 ]; then
+            echo "phase=wait error=timeout" >> "$out_path"
+            return 1
+        fi
+        sleep 0.1
+    done
+
+    for _ in $(seq 1 10); do
+        keepalive_request "after" || return 1
+    done
+}
+
+keepalive_client "$PORT_PAVIS" "$KEEPALIVE_OUT" "$KEEPALIVE_GO" &
 KEEPALIVE_PID=$!
 
 sleep 0.5

@@ -19,7 +19,8 @@ kubectl_wait_ready() {
   kubectl wait --for=condition=ready pod \
     -l "$label" \
     -n "$namespace" \
-    --timeout="$timeout"
+    --timeout="$timeout" \
+    > /dev/null
 }
 
 # Get pod IP address
@@ -27,8 +28,14 @@ kubectl_get_pod_ip() {
   local label="$1"
   local namespace="${2:-${BENCH_NAMESPACE:-bench-system}}"
 
-  kubectl get pod -l "$label" -n "$namespace" \
-    -o jsonpath='{.items[0].status.podIP}'
+  local pod_ip
+  pod_ip=$(kubectl get pod -l "$label" -n "$namespace" \
+    -o json 2>/dev/null | jq -r '.items[0].status.podIP // empty' 2>/dev/null || true)
+  if [[ -z "$pod_ip" ]]; then
+    log_error "No pod IP found for label '$label' in namespace '$namespace'"
+    return 1
+  fi
+  echo "$pod_ip"
 }
 
 # Get pod name by label
@@ -36,8 +43,14 @@ kubectl_get_pod_name() {
   local label="$1"
   local namespace="${2:-${BENCH_NAMESPACE:-bench-system}}"
 
-  kubectl get pod -l "$label" -n "$namespace" \
-    -o jsonpath='{.items[0].metadata.name}'
+  local pod_name
+  pod_name=$(kubectl get pod -l "$label" -n "$namespace" \
+    -o json 2>/dev/null | jq -r '.items[0].metadata.name // empty' 2>/dev/null || true)
+  if [[ -z "$pod_name" ]]; then
+    log_error "No pod found for label '$label' in namespace '$namespace'"
+    return 1
+  fi
+  echo "$pod_name"
 }
 
 # Start port forward in background
@@ -48,8 +61,13 @@ kubectl_port_forward_background() {
   local remote_port="$3"
   local namespace="${4:-${BENCH_NAMESPACE:-bench-system}}"
 
+  if ! kubectl_wait_ready "$label" "$namespace" 120s; then
+    log_error "Timed out waiting for pod readiness for label '$label' in namespace '$namespace'"
+    return 1
+  fi
+
   local pod_name
-  pod_name=$(kubectl_get_pod_name "$label" "$namespace")
+  pod_name=$(kubectl_get_pod_name "$label" "$namespace") || return 1
 
   local attempt=0
   local max_attempts=5
@@ -128,7 +146,7 @@ kubectl_exec_in_container() {
   local namespace="${4:-${BENCH_NAMESPACE:-bench-system}}"
 
   local pod_name
-  pod_name=$(kubectl_get_pod_name "$label" "$namespace")
+  pod_name=$(kubectl_get_pod_name "$label" "$namespace") || return 1
 
   kubectl exec -n "$namespace" "$pod_name" -c "$container" -- sh -c "$command"
 }
@@ -140,7 +158,7 @@ kubectl_get_container_stats() {
   local namespace="${3:-${BENCH_NAMESPACE:-bench-system}}"
 
   local pod_name
-  pod_name=$(kubectl_get_pod_name "$label" "$namespace")
+  pod_name=$(kubectl_get_pod_name "$label" "$namespace") || return 1
 
   # Get memory usage from metrics-server (if installed)
   # Falls back to /proc read, but do not fail benchmarks if the container lacks a shell.
@@ -170,7 +188,7 @@ kubectl_get_fd_count() {
   local namespace="${3:-${BENCH_NAMESPACE:-bench-system}}"
 
   local pod_name
-  pod_name=$(kubectl_get_pod_name "$label" "$namespace")
+  pod_name=$(kubectl_get_pod_name "$label" "$namespace") || return 1
   local output
   local exec_status
   set +e
@@ -205,7 +223,7 @@ kubectl_get_logs() {
   local lines="${4:-100}"
 
   local pod_name
-  pod_name=$(kubectl_get_pod_name "$label" "$namespace")
+  pod_name=$(kubectl_get_pod_name "$label" "$namespace") || return 1
 
   kubectl logs -n "$namespace" "$pod_name" -c "$container" --tail="$lines"
 }
@@ -227,7 +245,8 @@ kubectl_wait_for_endpoint() {
 
   local elapsed=0
   while [[ $elapsed -lt $timeout ]]; do
-    if kubectl get endpoints "$service_name" -n "$namespace" -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null | grep -q "."; then
+    if kubectl get endpoints "$service_name" -n "$namespace" -o json 2>/dev/null \
+      | jq -e '([.subsets[]?.addresses[]?.ip] | length) > 0' >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -243,8 +262,14 @@ kubectl_get_service_ip() {
   local service_name="$1"
   local namespace="${2:-${BENCH_NAMESPACE:-bench-system}}"
 
-  kubectl get service "$service_name" -n "$namespace" \
-    -o jsonpath='{.spec.clusterIP}'
+  local service_ip
+  service_ip=$(kubectl get service "$service_name" -n "$namespace" \
+    -o json 2>/dev/null | jq -r '.spec.clusterIP // empty' 2>/dev/null || true)
+  if [[ -z "$service_ip" || "$service_ip" == "None" ]]; then
+    log_error "No service IP found for service '$service_name' in namespace '$namespace'"
+    return 1
+  fi
+  echo "$service_ip"
 }
 
 # Delete resources by label
@@ -262,76 +287,6 @@ kubectl_scale_deployment() {
   local namespace="${3:-${BENCH_NAMESPACE:-bench-system}}"
 
   kubectl scale deployment "$deployment" -n "$namespace" --replicas="$replicas"
-}
-
-# ============================================================================
-# Linkerd-specific helpers
-# ============================================================================
-
-# Check if pod has linkerd proxy injected
-linkerd_is_injected() {
-  local label="$1"
-  local namespace="${2:-${BENCH_NAMESPACE:-bench-system}}"
-
-  local pod_name
-  pod_name=$(kubectl_get_pod_name "$label" "$namespace")
-
-  # Check if linkerd-proxy container exists
-  kubectl get pod "$pod_name" -n "$namespace" \
-    -o jsonpath='{.spec.containers[*].name}' | grep -q "linkerd-proxy"
-}
-
-# Get linkerd proxy container stats (RSS memory)
-linkerd_get_proxy_stats() {
-  local label="$1"
-  local namespace="${2:-${BENCH_NAMESPACE:-bench-system}}"
-
-  kubectl_get_container_stats "$label" "linkerd-proxy" "$namespace"
-}
-
-# Get linkerd proxy version
-linkerd_get_proxy_version() {
-  local label="$1"
-  local namespace="${2:-${BENCH_NAMESPACE:-bench-system}}"
-
-  local pod_name
-  pod_name=$(kubectl_get_pod_name "$label" "$namespace")
-
-  kubectl get pod "$pod_name" -n "$namespace" \
-    -o jsonpath='{.metadata.annotations.linkerd\.io/proxy-version}'
-}
-
-# Get linkerd proxy metrics via admin port
-linkerd_get_proxy_metrics() {
-  local label="$1"
-  local namespace="${2:-${BENCH_NAMESPACE:-bench-system}}"
-
-  kubectl_exec_in_container "$label" "linkerd-proxy" \
-    "curl -s http://localhost:4191/metrics" "$namespace"
-}
-
-# Check linkerd data plane status for a pod
-linkerd_check_pod() {
-  local label="$1"
-  local namespace="${2:-${BENCH_NAMESPACE:-bench-system}}"
-
-  local pod_name
-  pod_name=$(kubectl_get_pod_name "$label" "$namespace")
-
-  linkerd check --proxy --namespace "$namespace" --output short 2>&1 | grep -q "$pod_name"
-}
-
-# Get linkerd proxy connection count
-linkerd_get_connection_count() {
-  local label="$1"
-  local namespace="${2:-${BENCH_NAMESPACE:-bench-system}}"
-
-  # Query prometheus metrics from linkerd-proxy
-  local metrics
-  metrics=$(linkerd_get_proxy_metrics "$label" "$namespace")
-
-  # Extract tcp_open_connections metric
-  echo "$metrics" | grep "^tcp_open_connections" | awk '{print $2}' | head -1
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

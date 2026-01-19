@@ -92,7 +92,7 @@ MAX_RETRIES=20
 SWITCHED=0
 for _ in $(seq 1 $MAX_RETRIES); do
     response=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
-    instance=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['instance_id'])")
+    instance=$(echo "$response" | json_get_string "instance_id")
     if [ "$instance" == "backend-v2" ]; then
         SWITCHED=1
         break
@@ -119,12 +119,7 @@ for _ in $(seq 1 $MAX_RETRIES); do
         break
     fi
     sleep "$BACKOFF"
-    BACKOFF=$(python3 - <<PY
-import sys
-val = float(sys.argv[1]) * 2
-print(val if val < 2.0 else 2.0)
-PY
-"$BACKOFF")
+    BACKOFF=$(awk -v value="$BACKOFF" 'BEGIN { value = value * 2; if (value > 2.0) value = 2.0; printf "%.2f", value }')
 done
 
 if [ "$LOG_READY" -ne 1 ]; then

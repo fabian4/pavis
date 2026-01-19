@@ -89,8 +89,14 @@ main() {
     exit 0
   fi
 
-  local run_context="${OUTPUT_DIR}/context.env"
-  if [ ! -f "$run_context" ]; then
+  local run_context=""
+  for proxy_dir in "$OUTPUT_DIR"/*; do
+    if [ -f "${proxy_dir}/context.env" ]; then
+      run_context="${proxy_dir}/context.env"
+      break
+    fi
+  done
+  if [ -z "$run_context" ]; then
     echo "warn: missing run-level context.env in $OUTPUT_DIR" >&2
     exit 0
   fi

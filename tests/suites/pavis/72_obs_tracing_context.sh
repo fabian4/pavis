@@ -55,7 +55,7 @@ sleep 2
 # 4. Generate Traffic
 # We expect Pavis to generate a traceparent header for upstream requests.
 RESPONSE_V1=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
-if ! echo "$RESPONSE_V1" | python3 -c "import sys, json; data=json.load(sys.stdin); assert 'traceparent' in data.get('headers', {})"; then
+if ! echo "$RESPONSE_V1" | grep -q '"traceparent"'; then
     echo "❌ traceparent header missing when tracing is enabled"
     exit 1
 fi
@@ -93,7 +93,7 @@ sleep 1
 
 # 6. Verify Tracing Stopped
 RESPONSE_V2=$(pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo")
-if echo "$RESPONSE_V2" | python3 -c "import sys, json; data=json.load(sys.stdin); assert 'traceparent' not in data.get('headers', {})"; then
+if ! echo "$RESPONSE_V2" | grep -q '"traceparent"'; then
     echo "✅ obs_03_tracing_context passed"
 else
     echo "❌ traceparent header present when tracing is disabled"
