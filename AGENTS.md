@@ -76,7 +76,7 @@ Every agent MUST adhere to the "Zero-Option" configuration philosophy when modif
 | [README.md](../README.md)     | Project overview and quick start         |
 | [ARCHITECTURE.md](../ARCHITECTURE.md) | System design and protocol details |
 | [ROADMAP.md](../docs/project/roadmap.md)   | Development phases and progress          |
-| [docs/project/features.md](../docs/project/features.md) | Feature matrix, status tracking, and Envoy comparison |
+| [docs/project/features.md](../docs/project/features.md) | Feature status tracking |
 | [Cargo.toml](../Cargo.toml)   | Workspace configuration and dependencies |
 
 ---

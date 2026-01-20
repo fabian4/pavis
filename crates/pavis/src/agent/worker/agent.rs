@@ -30,6 +30,7 @@ pub struct ConfigAgent {
     backoff: Backoff,
     state: Arc<RuntimeStateHandle>,
     last_checksum: Arc<Mutex<Option<String>>>,
+    last_version: Arc<Mutex<Option<u64>>>,
     on_update_callback: Mutex<Option<UpdateCallback>>,
     metrics: Arc<Mutex<Option<Arc<MetricsHandle>>>>,
 }
@@ -92,6 +93,7 @@ impl ConfigAgent {
             backoff,
             state,
             last_checksum: Arc::new(Mutex::new(None)),
+            last_version: Arc::new(Mutex::new(None)),
             on_update_callback: Mutex::new(None),
             metrics: Arc::new(Mutex::new(None)),
         })
@@ -140,6 +142,7 @@ impl ConfigAgent {
             backoff,
             state,
             last_checksum: Arc::new(Mutex::new(None)),
+            last_version: Arc::new(Mutex::new(None)),
             on_update_callback: Mutex::new(None),
             metrics: Arc::new(Mutex::new(None)),
         }
@@ -174,7 +177,7 @@ impl ConfigAgent {
                     .headers()
                     .get(CONFIG_VERSION_HEADER)
                     .and_then(|value| value.to_str().ok())
-                    .map(|value| value.to_string());
+                    .and_then(parse_config_version_header);
                 let config_size = response
                     .headers()
                     .get(CONFIG_SIZE_HEADER)
@@ -182,16 +185,20 @@ impl ConfigAgent {
                     .and_then(|value| value.parse::<u64>().ok());
 
                 if self.is_checksum_current(&header_checksum) {
-                    self.record_config_stats(
-                        config_version.as_deref(),
-                        config_size,
-                        "current checksum",
-                    );
+                    self.record_config_stats(config_version, config_size, "current checksum");
                     tracing::debug!(
                         checksum = header_checksum,
                         "config checksum unchanged, skipping update"
                     );
                     return Ok(PollOutcome::NoChange);
+                }
+                if let Some(new_version) = config_version
+                    && let Some(last_version) = self.last_version()
+                    && new_version > last_version + 1
+                {
+                    for missing_version in (last_version + 1)..new_version {
+                        self.fetch_and_apply_version(missing_version).await?;
+                    }
                 }
                 let bytes = response.bytes().await?;
                 self.apply_update(bytes.to_vec(), header_checksum, config_version)
@@ -207,7 +214,7 @@ impl ConfigAgent {
         &self,
         bytes: Vec<u8>,
         expected_checksum: String,
-        config_version: Option<String>,
+        config_version: Option<u64>,
     ) -> anyhow::Result<()> {
         let actual_checksum = checksum_for_bytes(&bytes);
         if actual_checksum != expected_checksum {
@@ -256,11 +263,7 @@ impl ConfigAgent {
 
         self.state.store(state);
         self.set_last_checksum(actual_checksum);
-        self.record_config_stats(
-            config_version.as_deref(),
-            Some(bytes.len() as u64),
-            "applied update",
-        );
+        self.record_config_stats(config_version, Some(bytes.len() as u64), "applied update");
 
         let callback = match self.on_update_callback.lock() {
             Ok(guard) => guard,
@@ -282,6 +285,9 @@ impl ConfigAgent {
             result = "ok",
             checksum = expected_checksum
         );
+        if let Some(version) = config_version {
+            self.set_last_version(version);
+        }
         Ok(())
     }
 
@@ -304,14 +310,14 @@ impl ConfigAgent {
         }
     }
 
-    fn record_config_stats(&self, version: Option<&str>, size_bytes: Option<u64>, reason: &str) {
+    fn record_config_stats(&self, version: Option<u64>, size_bytes: Option<u64>, reason: &str) {
         let (Some(handle), Some(version), Some(size_bytes)) =
             (self.metrics_handle(), version, size_bytes)
         else {
             tracing::debug!(reason, "skipping config stats update");
             return;
         };
-        handle.update_config_stats(version, size_bytes);
+        handle.update_config_stats(&version.to_string(), size_bytes);
     }
 
     fn record_validation_failure(&self, err: anyhow::Error) -> anyhow::Error {
@@ -350,8 +356,9 @@ impl ConfigAgent {
         &self,
         bytes: Vec<u8>,
         checksum: String,
+        version: Option<u64>,
     ) -> anyhow::Result<()> {
-        self.apply_update(bytes, checksum, None).await
+        self.apply_update(bytes, checksum, version).await
     }
 
     #[cfg(test)]
@@ -361,6 +368,15 @@ impl ConfigAgent {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_version_for_tests(&self) -> Option<u64> {
+        let guard = self
+            .last_version
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard
     }
 
     #[cfg(test)]
@@ -409,6 +425,10 @@ fn checksum_for_bytes(bytes: &[u8]) -> String {
     out
 }
 
+fn parse_config_version_header(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok()
+}
+
 fn parse_etag_header(value: &str) -> anyhow::Result<String> {
     let trimmed = value.trim();
     if !trimmed.starts_with('"') || !trimmed.ends_with('"') || trimmed.len() < 2 {
@@ -440,5 +460,33 @@ impl ConfigAgent {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = Some(checksum);
+    }
+
+    fn last_version(&self) -> Option<u64> {
+        let guard = self
+            .last_version
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard
+    }
+
+    fn set_last_version(&self, version: u64) {
+        let mut guard = self
+            .last_version
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(version);
+    }
+
+    async fn fetch_and_apply_version(&self, version: u64) -> anyhow::Result<()> {
+        let url = format!("{}/v1/artifacts/{version}", self.relay_base);
+        let response = self.client.get(url).send().await?;
+        if response.status().as_u16() != 200 {
+            anyhow::bail!("artifact fetch failed: status={}", response.status());
+        }
+        let bytes = response.bytes().await?;
+        let expected_checksum = checksum_for_bytes(&bytes);
+        self.apply_update(bytes.to_vec(), expected_checksum, Some(version))
+            .await
     }
 }

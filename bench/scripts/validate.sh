@@ -105,10 +105,10 @@ validate_inputs() {
         background=1
         i=$((i+1))
         ;;
-      --help)
+  --help)
         cat <<'USAGE'
 Usage: bench/run.sh [options]
-  --proxy <name>
+  --proxy <name>           (pavis only)
   --cases "case1 case2"
   --dry-run
   --profile <github|workstation>
@@ -223,8 +223,8 @@ USAGE
     fi
   done
 
-  if [[ "$profile" == "github" && "$proxy" != "pavis" ]]; then
-    exit_with_error "BENCH_PROFILE=github only supports PROXY=pavis"
+  if [[ "$proxy" != "pavis" ]]; then
+    exit_with_error "Only PROXY=pavis is supported in this repository"
   fi
 
   if [[ "$profile" == "github" ]]; then
@@ -256,18 +256,16 @@ USAGE
   fi
 
   if [[ "$profile" == "workstation" && "$cases" == "$default_cases_standalone" ]]; then
-    log_info "Workstation profile runs payload matrix for throughput/latency cases"
+    log_info "Workstation profile runs a payload set for throughput/latency cases"
   fi
 
   if [[ -n "$input_file" && ! -f "$input_file" ]]; then
     exit_with_error "Input file not found: $input_file"
   fi
 
-  if [[ "$proxy" == "pavis" ]]; then
-    local pavis_yaml="${BENCH_ROOT}/bench/config/standalone/pavis.yaml"
-    if [[ ! -f "$pavis_yaml" ]]; then
-      exit_with_error "Pavis config not found: $pavis_yaml"
-    fi
+  local pavis_yaml="${BENCH_ROOT}/bench/config/standalone/pavis.yaml"
+  if [[ ! -f "$pavis_yaml" ]]; then
+    exit_with_error "Pavis config not found: $pavis_yaml"
   fi
 
   export BENCH_PROXY="$proxy"

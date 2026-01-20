@@ -5,6 +5,10 @@ set -e
 # Category: End-to-End Reload
 # Invariants: I2 (Monotonic), I5 (No Regression)
 
+if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
+    set -x
+fi
+
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
@@ -14,9 +18,19 @@ setup_test "multiversion_50"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 
+TEST_TIMEOUT="${TEST_TIMEOUT:-120}"
+(
+    sleep "$TEST_TIMEOUT"
+    echo "❌ multiversion_50 timed out after ${TEST_TIMEOUT}s"
+    kill -TERM "$$"
+) &
+WATCHDOG_PID=$!
+trap 'kill "$WATCHDOG_PID" 2>/dev/null || true' EXIT
+
 PORT_PAVIS=$(get_free_port)
 PORT_RELAY=$(get_free_port)
 PORT_METRICS=$(get_free_port)
+echo "Ports: pavis=$PORT_PAVIS relay=$PORT_RELAY metrics=$PORT_METRICS"
 
 # 1. Start Relay
 cat <<-EOF > "$TEST_TMP/relay.yaml"
@@ -27,8 +41,11 @@ cat <<-EOF > "$TEST_TMP/relay.yaml"
 	artifact:
 	  lkg_path: "$TEST_TMP/lkg.pvs"
 EOF
+echo "Starting relay"
 run_relay "$TEST_TMP/relay.yaml"
-wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
+echo "Waiting for relay health"
+wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5 --connect-timeout 1 --max-time 2
+echo "Relay is healthy"
 
 # V1
 cat <<-EOF > "$TEST_TMP/config_v1.yaml"
@@ -127,14 +144,20 @@ EOF
 gen_pvs "$TEST_TMP/config_v4.yaml" "$TEST_TMP/config_v4.pvs"
 
 # Publish V1 and start runtime
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+echo "Publishing v1"
+curl -s -f --connect-timeout 2 --max-time 5 -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/config_v1.pvs" > /dev/null
+echo "Published v1"
 
 cp "$TEST_TMP/config_v1.pvs" "$TEST_TMP/initial.pvs"
+echo "Starting pavis runtime"
 run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
-wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
+echo "Waiting for pavis healthz"
+wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5 --connect-timeout 1 --max-time 2
+echo "Waiting for metrics port"
 wait_for_port "$PORT_METRICS" 5
+echo "Metrics port is open"
 
 METRICS_URL="http://127.0.0.1:$PORT_METRICS"
 INITIAL_VERSION=$(wait_for_runtime_config_version "$METRICS_URL" 10 || true)
@@ -142,17 +165,7 @@ if [ "$INITIAL_VERSION" != "1" ]; then
     echo "❌ Expected initial runtime version 1, got '$INITIAL_VERSION'"
     exit 1
 fi
-
-# Publish V2 -> V3 -> V4 rapidly
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 2" \
-    --data-binary "@$TEST_TMP/config_v2.pvs" > /dev/null
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 3" \
-    --data-binary "@$TEST_TMP/config_v3.pvs" > /dev/null
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 4" \
-    --data-binary "@$TEST_TMP/config_v4.pvs" > /dev/null
+echo "Initial runtime version is 1"
 
 wait_for_version() {
     local expected="$1"
@@ -170,23 +183,71 @@ wait_for_version() {
     return 1
 }
 
-assert_version_header() {
-    local expected="$1"
-    local headers="$TEST_TMP/resp_v${expected}.headers"
-    pavis_curl_headers "$headers" "http://127.0.0.1:$PORT_PAVIS/echo"
-    if ! grep -qi "^X-Pavis-Version: v${expected}" "$headers"; then
-        echo "❌ Missing X-Pavis-Version: v${expected} header"
-        exit 1
-    fi
+publish_version() {
+    local version="$1"
+    local pvs_path="$2"
+    curl -s -f --connect-timeout 2 --max-time 5 -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
+        -H "x-pavis-version: $version" \
+        --data-binary "@$pvs_path" > /dev/null
 }
 
-for expected in 2 3 4; do
-    if ! wait_for_version "$expected" 20; then
-        echo "❌ Runtime did not apply version $expected"
-        exit 1
-    fi
-    assert_version_header "$expected"
-done
+start_version_monitor() {
+    local out_file="$1"
+    : > "$out_file"
+    (
+        local last=""
+        while true; do
+            local v
+            v=$(get_runtime_config_version "$METRICS_URL") || true
+            if [ -n "$v" ] && [ "$v" != "$last" ]; then
+                printf '%s\n' "$v" >> "$out_file"
+                last="$v"
+            fi
+            sleep 0.1
+        done
+    ) >/dev/null 2>&1 &
+    echo $!
+}
+
+assert_versions_in_order() {
+    local out_file="$1"
+    local expected_sequence="$2"
+    local observed
+    observed=$(awk '{
+        if ($0 != last) {
+            seq = seq $0 " "
+            last = $0
+        }
+    } END { print seq }' "$out_file")
+    for expected in $expected_sequence; do
+        case " $observed " in
+            *" $expected "*) observed="${observed#* $expected }" ;;
+            *) echo "❌ Missing version $expected in monitor log"; return 1 ;;
+        esac
+    done
+    return 0
+}
+
+monitor_pid=$(start_version_monitor "$TEST_TMP/runtime_versions.log")
+trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+
+# Publish V2 -> V3 -> V4 rapidly
+echo "Publishing v2..v4"
+publish_version 2 "$TEST_TMP/config_v2.pvs"
+publish_version 3 "$TEST_TMP/config_v3.pvs"
+publish_version 4 "$TEST_TMP/config_v4.pvs"
+echo "Published v2..v4"
+
+if ! wait_for_version 4 20; then
+    echo "❌ Runtime did not apply version 4"
+    exit 1
+fi
+echo "Runtime reached version 4"
+
+if ! assert_versions_in_order "$TEST_TMP/runtime_versions.log" "2 3 4"; then
+    echo "❌ Runtime did not apply versions in order (2 -> 3 -> 4)"
+    exit 1
+fi
 
 if ! check_sut_alive "pavis"; then
     echo "❌ Pavis died during multi-version chain"

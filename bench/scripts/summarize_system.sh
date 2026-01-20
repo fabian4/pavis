@@ -46,23 +46,23 @@ emit_row() {
   local proxy="$3"
   local case_name="$4"
   local target_rps="$5"
-  local baseline_p99_ms="$6"
-  local stress_p99_ms="$7"
-  local recovery_p99_ms="$8"
-  local transition_p99_ms="$9"
-  local convergence_time_ms="${10}"
-  local rollback_ttbr_ms="${11}"
-  local p99_delta_ms="${12}"
-  local latency_recovery_pct="${13}"
-  local stress_dropped="${14}"
-  local errors="${15}"
-  local errors_5xx="${16}"
-  local p99_ms="${17}"
-  local baseline_rps="${18}"
-  local stress_rps="${19}"
-  local baseline_achieved_rps="${20}"
-  local stress_achieved_rps="${21}"
-  local recovery_achieved_rps="${22}"
+  local baseline_rps="$6"
+  local stress_rps="$7"
+  local baseline_achieved_rps="$8"
+  local stress_achieved_rps="$9"
+  local recovery_achieved_rps="${10}"
+  local baseline_p99_ms="${11}"
+  local stress_p99_ms="${12}"
+  local recovery_p99_ms="${13}"
+  local transition_p99_ms="${14}"
+  local p99_delta_ms="${15}"
+  local convergence_time_ms="${16}"
+  local rollback_ttbr_ms="${17}"
+  local latency_regression_pct="${18}"
+  local stress_dropped="${19}"
+  local errors="${20}"
+  local errors_5xx="${21}"
+  local p99_ms="${22}"
   local baseline_rss_kb="${23}"
   local stress_rss_peak_kb="${24}"
   local recovery_rss_kb="${25}"
@@ -80,7 +80,7 @@ emit_row() {
   local bench_profile="${37}"
   local bench_mode="${38}"
 
-  echo "$(csv_field "$git_sha"),$(csv_field "$timestamp"),$(csv_field "$proxy"),$(csv_field "$case_name"),$(csv_field "$target_rps"),$(csv_field "$baseline_rps"),$(csv_field "$stress_rps"),$(csv_field "$baseline_achieved_rps"),$(csv_field "$stress_achieved_rps"),$(csv_field "$recovery_achieved_rps"),$(csv_field "$baseline_p99_ms"),$(csv_field "$stress_p99_ms"),$(csv_field "$recovery_p99_ms"),$(csv_field "$transition_p99_ms"),$(csv_field "$p99_delta_ms"),$(csv_field "$convergence_time_ms"),$(csv_field "$rollback_ttbr_ms"),$(csv_field "$latency_recovery_pct"),$(csv_field "$stress_dropped"),$(csv_field "$errors"),$(csv_field "$errors_5xx"),$(csv_field "$p99_ms"),$(csv_field "$baseline_rss_kb"),$(csv_field "$stress_rss_peak_kb"),$(csv_field "$recovery_rss_kb"),$(csv_field "$rss_growth_mb"),$(csv_field "$rss_growth_pct"),$(csv_field "$config_version_before"),$(csv_field "$config_version_after"),$(csv_field "$duration_s"),$(csv_field "$achieved_rps"),$(csv_field "$baseline_restored"),$(csv_field "$config_versions"),$(csv_field "$degraded_achieved_rps"),$(csv_field "$degraded_errors"),$(csv_field "$recovery_errors"),$(csv_field "$bench_profile"),$(csv_field "$bench_mode")"
+  echo "$(csv_field "$git_sha"),$(csv_field "$timestamp"),$(csv_field "$proxy"),$(csv_field "$case_name"),$(csv_field "$target_rps"),$(csv_field "$baseline_rps"),$(csv_field "$stress_rps"),$(csv_field "$baseline_achieved_rps"),$(csv_field "$stress_achieved_rps"),$(csv_field "$recovery_achieved_rps"),$(csv_field "$baseline_p99_ms"),$(csv_field "$stress_p99_ms"),$(csv_field "$recovery_p99_ms"),$(csv_field "$transition_p99_ms"),$(csv_field "$p99_delta_ms"),$(csv_field "$convergence_time_ms"),$(csv_field "$rollback_ttbr_ms"),$(csv_field "$latency_regression_pct"),$(csv_field "$stress_dropped"),$(csv_field "$errors"),$(csv_field "$errors_5xx"),$(csv_field "$p99_ms"),$(csv_field "$baseline_rss_kb"),$(csv_field "$stress_rss_peak_kb"),$(csv_field "$recovery_rss_kb"),$(csv_field "$rss_growth_mb"),$(csv_field "$rss_growth_pct"),$(csv_field "$config_version_before"),$(csv_field "$config_version_after"),$(csv_field "$duration_s"),$(csv_field "$achieved_rps"),$(csv_field "$baseline_restored"),$(csv_field "$config_versions"),$(csv_field "$degraded_achieved_rps"),$(csv_field "$degraded_errors"),$(csv_field "$recovery_errors"),$(csv_field "$bench_profile"),$(csv_field "$bench_mode")"
 }
 
 main() {
@@ -109,7 +109,7 @@ main() {
     exit 0
   fi
 
-  echo "git_sha,timestamp,proxy,case,target_rps,baseline_rps,stress_rps,baseline_achieved_rps,stress_achieved_rps,recovery_achieved_rps,baseline_p99_ms,stress_p99_ms,recovery_p99_ms,transition_p99_ms,p99_delta_ms,convergence_time_ms,rollback_ttbr_ms,latency_recovery_pct,stress_dropped,errors,errors_5xx,p99_ms,baseline_rss_kb,stress_rss_peak_kb,recovery_rss_kb,rss_growth_mb,rss_growth_pct,config_version_before,config_version_after,duration_s,achieved_rps,baseline_restored,config_versions,degraded_achieved_rps,degraded_errors,recovery_errors,bench_profile,bench_mode" > "$SUMMARY_CSV"
+  echo "git_sha,timestamp,proxy,case,target_rps,baseline_rps,stress_rps,baseline_achieved_rps,stress_achieved_rps,recovery_achieved_rps,baseline_p99_ms,stress_p99_ms,recovery_p99_ms,transition_p99_ms,p99_delta_ms,convergence_time_ms,rollback_ttbr_ms,latency_regression_pct,stress_dropped,errors,errors_5xx,p99_ms,baseline_rss_kb,stress_rss_peak_kb,recovery_rss_kb,rss_growth_mb,rss_growth_pct,config_version_before,config_version_after,duration_s,achieved_rps,baseline_restored,config_versions,degraded_achieved_rps,degraded_errors,recovery_errors,bench_profile,bench_mode" > "$SUMMARY_CSV"
 
   local found_results=0
   for proxy_dir in "$OUTPUT_DIR"/*; do
@@ -119,6 +119,9 @@ main() {
 
     local proxy
     proxy=$(basename "$proxy_dir")
+    if [ "$proxy" != "pavis" ]; then
+      continue
+    fi
 
     for case_dir in "$proxy_dir"/*; do
       if [ ! -d "$case_dir" ]; then
@@ -152,8 +155,8 @@ main() {
       convergence_time_ms=$(jq -r '.convergence_time_ms // empty' "$metrics" 2>/dev/null || true)
       local rollback_ttbr_ms
       rollback_ttbr_ms=$(jq -r '.rollback_ttbr_ms // empty' "$metrics" 2>/dev/null || true)
-      local latency_recovery_pct
-      latency_recovery_pct=$(jq -r '.latency_recovery_pct // empty' "$metrics" 2>/dev/null || true)
+      local latency_regression_pct
+      latency_regression_pct=$(jq -r '.latency_regression_pct // empty' "$metrics" 2>/dev/null || true)
       local errors
       errors=$(jq -r '.errors // empty' "$metrics" 2>/dev/null || true)
       local errors_5xx
@@ -202,17 +205,17 @@ main() {
       recovery_errors=$(jq -r '.recovery_errors // empty' "$metrics" 2>/dev/null || true)
 
       emit_row "${GIT_SHA:-}" "${RUN_TIMESTAMP:-}" "$proxy" "$case_name" \
-        "$target_rps" "$baseline_p99_ms" "$stress_p99_ms" "$recovery_p99_ms" \
-        "$transition_p99_ms" "$convergence_time_ms" "$rollback_ttbr_ms" \
-        "$p99_delta_ms" "$latency_recovery_pct" "$stress_dropped" "$errors" \
-        "$errors_5xx" "$p99_ms" "$baseline_rps" "$stress_rps" \
-        "$baseline_achieved_rps" "$stress_achieved_rps" "$recovery_achieved_rps" \
-        "$baseline_rss_kb" "$stress_rss_peak_kb" "$recovery_rss_kb" \
-        "$rss_growth_mb" "$rss_growth_pct" "$config_version_before" \
-        "$config_version_after" "$duration_s" "$achieved_rps" \
-        "$baseline_restored" "$config_versions" "$degraded_achieved_rps" \
-        "$degraded_errors" "$recovery_errors" "${BENCH_PROFILE:-}" \
-        "${BENCH_MODE:-}" >> "$SUMMARY_CSV"
+        "$target_rps" "$baseline_rps" "$stress_rps" "$baseline_achieved_rps" \
+        "$stress_achieved_rps" "$recovery_achieved_rps" "$baseline_p99_ms" \
+        "$stress_p99_ms" "$recovery_p99_ms" "$transition_p99_ms" \
+        "$p99_delta_ms" "$convergence_time_ms" "$rollback_ttbr_ms" \
+        "$latency_regression_pct" "$stress_dropped" "$errors" "$errors_5xx" \
+        "$p99_ms" "$baseline_rss_kb" "$stress_rss_peak_kb" \
+        "$recovery_rss_kb" "$rss_growth_mb" "$rss_growth_pct" \
+        "$config_version_before" "$config_version_after" "$duration_s" \
+        "$achieved_rps" "$baseline_restored" "$config_versions" \
+        "$degraded_achieved_rps" "$degraded_errors" "$recovery_errors" \
+        "${BENCH_PROFILE:-}" "${BENCH_MODE:-}" >> "$SUMMARY_CSV"
     done
   done
 

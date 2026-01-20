@@ -42,12 +42,6 @@ format_float_3_or_empty() {
 main() {
   log_info "Starting test: $CASE_NAME for ${BENCH_PROXY}"
 
-  # Check if proxy supports config versioning
-  if ! proxy_supports_config_versioning; then
-    log_warn "Proxy ${BENCH_PROXY} does not support config versioning, skipping test"
-    return 0
-  fi
-
   # Get proxy-specific configuration
   local pod_label
   local proxy_port
@@ -84,18 +78,10 @@ main() {
   proxy_deploy_baseline_config
   local baseline_version="${PAVIS_PUBLISHED_VERSION:-1}"
 
-  if [[ "${BENCH_PROXY}" == "pavis" ]]; then
-    if ! wait_for_response_body "$health_url" "OK" 30; then
-      log_error "Failed to observe baseline health response"
-      kubectl_stop_port_forward "$pf_pid"
-      return 1
-    fi
-  else
-    if ! wait_for_http_status "$target_url" 30 200; then
-      log_error "Test backend did not become ready at ${target_url}"
-      kubectl_stop_port_forward "$pf_pid"
-      return 1
-    fi
+  if ! wait_for_response_body "$health_url" "OK" 30; then
+    log_error "Failed to observe baseline health response"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
   fi
 
   # Step 2: Start baseline load
@@ -123,31 +109,18 @@ main() {
 #  local convergence_start
 #  convergence_start=$(timestamp_ms)
 
-  if [[ "${BENCH_PROXY}" == "pavis" ]]; then
-    publish_pavis_config_variant 2 "OK-V2"
-  else
-    proxy_trigger_config_update 2 0.0
-  fi
+  publish_pavis_config_variant 2 "OK-V2"
   local target_version="${PAVIS_PUBLISHED_VERSION:-2}"
 
   # Step 5: Measure convergence time
   log_info "Measuring convergence time"
   local convergence_time
-  if [[ "${BENCH_PROXY}" == "pavis" ]]; then
-    convergence_time=$(collect_convergence_time_response "$health_url" "OK-V2" 60000) || {
-      log_error "Failed to measure convergence time"
-      kubectl_stop_port_forward "$pf_pid"
-      kill "$loadgen_pid" 2>/dev/null || true
-      return 1
-    }
-  else
-    convergence_time=$(collect_convergence_time "$target_version" 60000 "$pod_label" "$container_name") || {
-      log_error "Failed to measure convergence time"
-      kubectl_stop_port_forward "$pf_pid"
-      kill "$loadgen_pid" 2>/dev/null || true
-      return 1
-    }
-  fi
+  convergence_time=$(collect_convergence_time_response "$health_url" "OK-V2" 60000) || {
+    log_error "Failed to measure convergence time"
+    kubectl_stop_port_forward "$pf_pid"
+    kill "$loadgen_pid" 2>/dev/null || true
+    return 1
+  }
   log_info "Convergence time: ${convergence_time}ms"
 
   # Step 6: Measure transition P99

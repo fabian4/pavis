@@ -1,107 +1,74 @@
-# Pavis Test Suite Evolution Plan
+# Test Suite Evolution Plan
 
-This plan evolves the Runtime, Relay, and Integrated suites to improve
-version validation, LKG semantics, concurrency/load coverage, and semantic
-validation coverage.
+This document consolidates unfinished work items from the suite DESIGN docs.
 
-## Assumptions
+## Integrated Suite
 
-- Runtime config version is observable via metrics (`pavis_runtime_config_version`).
-- Runtime suite LKG test is `tests/suites/pavis/30_lkg.sh`.
-- Legacy names like `20_reload_norestart` or `21_reload_zero_option_impact`
-  may already be consolidated into `tests/suites/pavis/20_reload_contract_core.sh`.
+### Gaps
+- `30_lkg_artifact` relies on fixed sleep instead of explicit version validation.
+- `31_lkg_rejection` is blocked on runtime semantic validation.
 
-## Recent Updates (Implemented)
+### Short-Term (Must Address)
+1. `30_lkg_artifact` enhancement:
+   - Add relay version check (e.g., `/v1/config` or `/v1/status`).
+   - Add runtime version check (explicit version header or equivalent).
+   - Assert relay version > runtime version after bad artifact publish.
+2. `31_lkg_rejection` enabling:
+   - Implement semantic validation phase in runtime (route→upstream reference or duplicate listener port).
+   - Ensure validation happens before `apply_config()`.
 
-- Added runtime env rejection tests:
-  - `tests/suites/pavis/34_runtime_env_rejection.sh`
-  - `tests/suites/integrated/32_runtime_env_rejection.sh`
-- Updated `tests/suites/pavis/33_semantic_validation_matrix.sh` to treat missing CA bundle
-  as a runtime env failure (`reason="runtime"`).
-- Updated suite design docs to reflect runtime env validation coverage.
+### Mid-Term (Should Improve)
+3. Concurrent traffic during reload:
+   - Add burst testing during `20_reload_switch`.
+   - Validate zero-drop semantics under load.
 
-## Short-Term Actions (Priority)
+### Long-Term (Optional Enhancements)
+4. pavctl integration testing (explicit binary tests for version flag, errors, exit codes).
+5. Network partition simulation (iptables/pf) and recovery validation.
+6. Relay failover during long-poll.
 
-### Runtime Suite (Data Plane)
+## Pavis Runtime Suite
 
-0) Runtime env rejection coverage (DONE).
-   - `tests/suites/pavis/34_runtime_env_rejection.sh` validates runtime env failures and LKG preservation.
+### Gaps
+- TLS/mTLS coverage blocked by rustls backend (7 cases).
+- Timeout/retry policies, access log flush/sync timing, and tracing remain unimplemented (3 cases).
 
-1) Add explicit version validation to LKG.
-   - Update `tests/suites/pavis/30_lkg.sh` to:
-     - Fetch relay `x-config-version` after publishing corrupt/incompatible artifacts.
-     - Scrape runtime metrics and assert `pavis_runtime_config_version` unchanged.
-     - Keep existing traffic-based LKG assertions.
+### Short-Term (Must Address)
+1. Stabilize TLS/mTLS coverage:
+   - Migrate to a TLS backend with per-peer CA and client cert support.
+2. Implement timeout/retry policies in runtime.
+3. Resolve access log flush/sync timing issues.
 
-2) Confirm reload coverage consolidation.
-   - Verify any legacy `20_reload_norestart` / `21_reload_zero_option_impact`
-     coverage is present in `tests/suites/pavis/20_reload_contract_core.sh`.
-   - If legacy files exist, merge missing assertions, then remove duplicates.
+### Mid-Term (Should Improve)
+4. Add negative resilience tests:
+   - Outlier detection with partial failures.
+   - Circuit breaker recovery after backoff.
 
-### Relay Suite
+### Long-Term (Optional Enhancements)
+5. Weighted routing with probabilistic splits (large sample sizes).
+6. Concurrent reload stress test (V1 → V10 under sustained traffic).
 
-3) Long-poll liveness proof before publish.
-   - Update `tests/suites/relay/20_longpoll_wait.sh` to:
-     - Start long-poll in background.
-     - Assert process still alive after short delay or use metrics-based readiness.
+## Relay Suite
 
-4) Strict monotonicity in concurrency test.
-   - Update `tests/suites/relay/40_concurrency_rapid.sh` to:
-     - Record all observed versions from `x-config-version`.
-     - Assert strictly increasing sequence across all observed 200 responses.
+### Gaps
+- `20_longpoll_wait` lacks explicit subscriber liveness proof.
+- `40_concurrency_rapid` validates only final state, not full monotonic sequence.
 
-### Integrated Suite
+### Short-Term (Must Address)
+1. `20_longpoll_wait` enhancement:
+   - Add subscriber process liveness check before publish.
+   - Prove blocking behavior (no immediate 204).
+2. `40_concurrency_rapid` instrumentation:
+   - Log all observed version headers during polling.
+   - Assert strict monotonicity across observed versions.
 
-4) Runtime env rejection coverage (DONE).
-   - `tests/suites/integrated/32_runtime_env_rejection.sh` validates end-to-end runtime env failures.
+### Mid-Term (Should Improve)
+3. Metrics consistency validation:
+   - Cross-check `pavis_relay_longpoll_wait_total` vs. subscriber count.
+4. Persistence edge cases:
+   - Relay restart while subscribers are waiting.
+   - Validate reconnection behavior.
 
-5) LKG version checks in end-to-end test.
-   - Update `tests/suites/integrated/30_lkg_artifact.sh` to:
-     - Enable runtime metrics for the test config.
-     - Assert relay version > runtime version after bad artifact publish.
-     - Keep traffic-based LKG assertions.
-
-## Mid-Term Actions
-
-### Integrated Suite
-
-6) Concurrency during reload.
-   - Enhance `tests/suites/integrated/20_reload_switch.sh` with a 200-request
-     burst during V1 -> V2 transition, mirroring runtime test logic.
-   - Assert zero failures and no version regression within the burst.
-
-7) Multi-version chain test.
-   - Add a new test (e.g. `tests/suites/integrated/50_multiversion_chain.sh`) to:
-     - Publish V1 -> V2 -> V3 -> V4 rapidly.
-     - Validate relay versions advance and runtime applies in-order.
-
-### Relay Suite
-
-8) Optional: long-poll metrics consistency under churn.
-   - Cross-check `pavis_relay_longpoll_wait_total` vs. actual subscriber count.
-
-## Long-Term Actions
-
-9) Semantic rejection in integrated suite.
-   - Enable `tests/suites/integrated/31_lkg_rejection.sh` once runtime implements
-     semantic validation before apply.
-   - Use deterministic semantic errors (e.g., route references unknown upstream).
-
-10) Network partition and failover simulation.
-   - Add integrated tests for relay unreachability and recovery behavior.
-
-## Cross-Cutting Helpers
-
-- Add shared helper(s) in `tests/scripts/assert.sh` to:
-  - Extract relay `x-config-version`.
-  - Scrape runtime `pavis_runtime_config_version`.
-  - Compare relay/runtime versions in LKG tests.
-
-## Validation
-
-- After suite edits:
-  - `tests/run.sh pavis`
-  - `tests/run.sh relay`
-  - `tests/run.sh integrated`
-- If Rust code changes are required:
-  - `make ci-local`
+### Long-Term (Optional Enhancements)
+5. ETag collision handling (theoretical).
+6. Backpressure under sustained publish load.

@@ -156,14 +156,14 @@ run_case() {
       BENCH_LOADGEN_BIN="${BENCH_ROOT}/target/release/bench-loadgen"
   fi
 
-  local payload_matrix=("$BENCH_PAYLOAD_SIZE")
+  local payload_set=("$BENCH_PAYLOAD_SIZE")
   if [[ "${BENCH_PROFILE:-}" == "workstation" ]]; then
     if [[ "$case_name" == "throughput_short_1x" || "$case_name" == "latency_short_1x" || "$case_name" == "latency_extended_1x" ]]; then
-      payload_matrix=("64B" "4KiB")
+      payload_set=("64B" "4KiB")
     fi
   fi
 
-  for payload_size in "${payload_matrix[@]}"; do
+  for payload_size in "${payload_set[@]}"; do
     local payload_bytes
     payload_bytes=$(payload_size_to_bytes "$payload_size")
     if [[ -z "$payload_bytes" ]]; then

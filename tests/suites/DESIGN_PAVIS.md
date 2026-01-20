@@ -10,14 +10,6 @@
 - Strong LKG guardrails with sequential proof (corrupt → incompatible → recovery)
 - Deterministic weight flipping eliminates statistical flakiness
 
-**Known Gaps**:
-- 10 cases skipped: 7 due to rustls backend limitations (TLS/mTLS features), 3 due to unimplemented features (timeout/retry, access logs, tracing)
-- Gaps are feature-level, not test design weaknesses
-
-**Next Actions**: Implement timeout/retry policies in runtime; migrate to TLS backend supporting per-peer CA and client certs; resolve access log flush/sync timing issues.
-
----
-
 ## Data Plane Contract
 
 The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` binary must:
@@ -223,7 +215,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 ---
 
-### `33_semantic_validation_matrix`
+### `33_semantic_validation_suite`
 
 **Category**: Failure & LKG
 **Contracts**: B (LKG Preservation)
@@ -247,7 +239,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 **Assertions**:
 - Each invalid config is rejected (compile or runtime) and traffic remains on backend-v1
 
-**Assessment**: PASS. Covers a matrix of semantic validation errors while preserving LKG.
+**Assessment**: PASS. Covers a set of semantic validation errors while preserving LKG.
 
 ---
 
@@ -746,29 +738,3 @@ Tests comprehensive routing semantics in single artifact:
 
 **Weak or Partially Covered Areas**:
 - **TLS/mTLS**: Blocked by rustls backend (7 cases skipped)
-
----
-
-## Evolution Plan
-
-### Short-Term (Must Address)
-
-1. **Stabilize TLS/mTLS coverage**:
-   - Migrate to a TLS backend with per-peer CA and client cert support
-   - Unblock 7 TLS/mTLS test cases
-
-### Mid-Term (Should Improve)
-
-2. **Add negative resilience tests**:
-   - Test outlier detection with partial failures (not just consecutive)
-   - Test circuit breaker recovery after backoff
-
-### Long-Term (Optional Enhancements)
-
-3. **Weighted routing with probabilistic splits**:
-   - Add statistical validation for 50/50 or 70/30 splits (not just 100/0)
-   - Requires large sample sizes (N > 1000) for statistical confidence
-
-4. **Concurrent reload stress test**:
-   - Publish V1 → V2 → V3 → ... → V10 rapidly while sending sustained traffic
-   - Validate zero-drop across multiple rapid transitions

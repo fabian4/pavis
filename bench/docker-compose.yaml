@@ -6,11 +6,8 @@
 #   BACKEND_CPUSET  - CPU cores for backend (set to empty string to disable pinning)
 #   PROXY_CPUSET    - CPU cores for proxy (set to empty string to disable pinning)
 #
-# Proxies:
+# Proxy:
 #   - pavis:    Port 8080 (Rust, async)
-#   - envoy:    Port 8081 (C++, reference)
-#   - nginx:    Port 8082 (C, widely used)
-#   - haproxy:  Port 8083 (C, baseline control)
 
 services:
   # Backend service (bench-upstream - canonical backend)
@@ -69,84 +66,3 @@ services:
     sysctls:
       - net.core.somaxconn=65535
 
-  # Envoy Proxy (C++, industry standard)
-  envoy:
-    image: envoyproxy/envoy:${ENVOY_TAG:-v1.32.2}
-    container_name: bench-envoy
-    volumes:
-      - ./config/standalone/envoy.yaml:/etc/envoy/envoy.yaml:ro
-    ports:
-      - "8081:8081"
-    depends_on:
-      bench-upstream:
-        condition: service_started
-    command: ["-c", "/etc/envoy/envoy.yaml", "--concurrency", "${CPU_LIMIT:-2}"]
-    deploy:
-      resources:
-        limits:
-          cpus: '${CPU_LIMIT:-2}'
-          memory: ${MEMORY_LIMIT:-512M}
-        reservations:
-          cpus: '${CPU_LIMIT:-2}'
-          memory: ${MEMORY_LIMIT:-512M}
-    cpuset: "${PROXY_CPUSET}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-    sysctls:
-      - net.core.somaxconn=65535
-
-  # Nginx (C, widely-used reverse proxy)
-  nginx:
-    image: nginx:${NGINX_TAG:-1.26.2-alpine}
-    container_name: bench-nginx
-    volumes:
-      - ./config/standalone/nginx.conf:/etc/nginx/nginx.conf:ro
-    ports:
-      - "8082:8082"
-    depends_on:
-      bench-upstream:
-        condition: service_started
-    deploy:
-      resources:
-        limits:
-          cpus: '${CPU_LIMIT:-2}'
-          memory: ${MEMORY_LIMIT:-512M}
-        reservations:
-          cpus: '${CPU_LIMIT:-2}'
-          memory: ${MEMORY_LIMIT:-512M}
-    cpuset: "${PROXY_CPUSET}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-    sysctls:
-      - net.core.somaxconn=65535
-  # HAProxy (C, baseline control - mature, optimized)
-  # Note: nbthread=2 hardcoded; CPU actually limited via cgroups
-  haproxy:
-    image: haproxy:${HAPROXY_TAG:-2.9.6-alpine}
-    container_name: bench-haproxy
-    volumes:
-      - ./config/standalone/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-    ports:
-      - "8083:8083"
-    depends_on:
-      bench-upstream:
-        condition: service_started
-    deploy:
-      resources:
-        limits:
-          cpus: '${CPU_LIMIT:-2}'
-          memory: ${MEMORY_LIMIT:-512M}
-        reservations:
-          cpus: '${CPU_LIMIT:-2}'
-          memory: ${MEMORY_LIMIT:-512M}
-    cpuset: "${PROXY_CPUSET}"  # Pin to CPUs 1-2 (distinct from backend on CPU 0)
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-    sysctls:
-      - net.core.somaxconn=65535

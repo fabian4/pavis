@@ -6,7 +6,7 @@
 
 Pavis is designed as a **Pragmatic & Lightweight Sidecar** for microservices. It is NOT a clone of Envoy and does not aim to support every feature of a general-purpose edge gateway.
 
-This document provides a feature comparison matrix for reference.
+This document provides a feature status overview for reference.
 
 **Legend:**
 *   ✅ **Supported**: Implementation is complete and verified.

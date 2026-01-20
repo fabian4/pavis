@@ -81,7 +81,7 @@ wait_for_url() {
 
     while true;
  do
-        if curl -s -o /dev/null "${extra_args[@]}" "$url"; then
+        if curl -s --connect-timeout 1 --max-time 2 -o /dev/null "${extra_args[@]}" "$url"; then
             return 0
         fi
         local current_time

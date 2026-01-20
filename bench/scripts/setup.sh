@@ -190,8 +190,11 @@ deploy_pavis_infrastructure() {
     exit_with_error "Pavis manifests directory not found: $manifests_dir"
   fi
 
-  # Apply all Pavis manifests
-  kubectl apply -f "$manifests_dir/" -n "$NAMESPACE"
+  # Apply only Kubernetes manifests (exclude pavis.yaml config)
+  kubectl apply -f "$manifests_dir/relay-configmap.yaml" -n "$NAMESPACE"
+  kubectl apply -f "$manifests_dir/relay-deployment.yaml" -n "$NAMESPACE"
+  kubectl apply -f "$manifests_dir/relay-service.yaml" -n "$NAMESPACE"
+  kubectl apply -f "$manifests_dir/test-workload.yaml" -n "$NAMESPACE"
 
   # Wait for relay to be ready
   log_info "Waiting for pavis-relay to be ready"
@@ -204,48 +207,12 @@ deploy_pavis_infrastructure() {
   log_info "Pavis infrastructure deployed successfully"
 }
 
-deploy_envoy_infrastructure() {
-  log_info "Deploying Envoy xDS control plane and test workloads"
-
-  local manifests_dir="${BENCH_ROOT}/bench/config/system/envoy"
-
-  if [[ ! -d "$manifests_dir" ]]; then
-    exit_with_error "Envoy manifests directory not found: $manifests_dir"
-  fi
-
-  # Build and load xDS server image
-  log_info "Building envoy-xds-server:local image"
-  local build_mode
-  build_mode="$(resolve_docker_build_mode)"
-  if should_quiet_build; then
-    make -C "${BENCH_ROOT}" docker-build IMAGE=envoy-xds-server MODE="${build_mode}" > /dev/null 2>&1
-  else
-    make -C "${BENCH_ROOT}" docker-build IMAGE=envoy-xds-server MODE="${build_mode}"
-  fi
-
-  log_info "Loading envoy-xds-server image into kind cluster"
-  kind load docker-image envoy-xds-server:local --name "$CLUSTER_NAME"
-
-  # Apply xDS deployment
-  kubectl apply -f "$manifests_dir/xds-deployment.yaml" -n "$NAMESPACE"
-
-  # Wait for xDS server to be ready
-  log_info "Waiting for envoy-xds to be ready"
-  kubectl wait --for=condition=ready pod -l app=envoy-xds -n "$NAMESPACE" --timeout=120s
-
-  # Apply test workload
-  kubectl apply -f "$manifests_dir/test-workload.yaml" -n "$NAMESPACE"
-
-  # Wait for test workload to be ready
-  log_info "Waiting for envoy-test-backend to be ready"
-  kubectl wait --for=condition=ready pod -l app=envoy-test-backend -n "$NAMESPACE" --timeout=120s
-
-  log_info "Envoy infrastructure deployed successfully"
-}
-
-
 setup_environment_system() {
   bench_print_step "Setting up system mode (Kubernetes) environment"
+
+  if [[ "${BENCH_PROXY:-pavis}" != "pavis" ]]; then
+    exit_with_error "System mode only supports BENCH_PROXY=pavis in this repository"
+  fi
 
   check_kind_requirements
   create_kind_cluster
@@ -255,18 +222,8 @@ setup_environment_system() {
   load_images_to_kind
   create_namespace
 
-  # Deploy infrastructure based on proxy type
-  case "${BENCH_PROXY:-pavis}" in
-    pavis)
-      deploy_pavis_infrastructure
-      ;;
-    envoy)
-      deploy_envoy_infrastructure
-      ;;
-    *)
-      exit_with_error "Unsupported proxy for system mode: ${BENCH_PROXY}"
-      ;;
-  esac
+  # Deploy Pavis infrastructure
+  deploy_pavis_infrastructure
 
   # Export cluster context for use in tests
   export BENCH_KIND_CLUSTER="$CLUSTER_NAME"

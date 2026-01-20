@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # System Mode Test: Rollback Performance
-# Measures time to restore baseline performance after rolling back from bad config
+# Measures time to restore baseline performance after rolling back from a degraded config.
+# Apply and rollback are proven by response fingerprinting (frozen data plane semantics).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts"
 # shellcheck source=bench/scripts/utils.sh
@@ -24,15 +25,16 @@ BASELINE_DURATION_S="${SYSTEM_ROLLBACK_PERFORMANCE_BASELINE_DURATION_S}"
 DEGRADED_DURATION_S="${SYSTEM_ROLLBACK_PERFORMANCE_DEGRADED_DURATION_S}"
 RECOVERY_DURATION_S="${SYSTEM_ROLLBACK_PERFORMANCE_RECOVERY_DURATION_S}"
 NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
+FINGERPRINT_HEADER="X-Pavis-Config-Version"
+DEGRADED_DELAY_MS="10"
+
+is_number() {
+  local value="$1"
+  [[ "$value" =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]
+}
 
 main() {
   log_info "Starting test: $CASE_NAME for ${BENCH_PROXY}"
-
-  # Check if proxy supports config versioning
-  if ! proxy_supports_config_versioning; then
-    log_warn "Proxy ${BENCH_PROXY} does not support config versioning, skipping test"
-    return 0
-  fi
 
   # Get proxy-specific configuration
   local pod_label
@@ -57,11 +59,17 @@ main() {
   # Wait for port-forward to stabilize
   sleep 3
 
-  local target_url="http://localhost:${pf_local_port}/fixed"
+  local target_url="http://localhost:${pf_local_port}/fixed?ms=${DEGRADED_DELAY_MS}"
 
-  # Step 1: Deploy good config (version 1)
+  # Step 1: Deploy good config (version 1) and prove it is applied.
   log_info "Deploying good config (v1)"
-  proxy_deploy_baseline_config
+  publish_pavis_config_variant 1 "1" ""
+
+  if ! wait_for_response_header "$target_url" "$FINGERPRINT_HEADER" "1" 30; then
+    log_error "Failed to observe baseline fingerprint v1"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
+  fi
 
   sleep 2
 
@@ -77,27 +85,21 @@ main() {
 
   local baseline_p99
   baseline_p99=$(jq -r '.latency_ms.p99' "${output_dir}/baseline.json")
+  if ! is_number "$baseline_p99" || (( $(echo "$baseline_p99 <= 0" | bc -l) )); then
+    log_error "Invalid baseline P99: '${baseline_p99}'"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
+  fi
   log_info "Baseline P99: ${baseline_p99}ms"
 
-  # Step 3: Deploy bad config (version 2 - invalid update)
-  log_info "Deploying bad config (v2 - invalid update)"
-  if [[ "${BENCH_PROXY}" == "pavis" ]]; then
-    publish_pavis_bad_config 2
-  elif [[ "${BENCH_PROXY}" == "envoy" ]]; then
-    if ! publish_envoy_xds_snapshot "invalid"; then
-      log_error "Failed to publish invalid envoy snapshot"
-      kubectl_stop_port_forward "$pf_pid"
-      return 1
-    fi
-    if ! wait_for_envoy_nack 30 "$pod_label" "$container_name" "$NAMESPACE"; then
-      log_error "Timed out waiting for Envoy NACK"
-      kubectl_stop_port_forward "$pf_pid"
-      return 1
-    fi
-  else
-    log_warn "Proxy ${BENCH_PROXY} does not support degraded config simulation, skipping test"
+  # Step 3: Deploy degraded config (version 2) and prove it is applied.
+  log_info "Deploying degraded config (v2 - fixed delay + fingerprint)"
+  publish_pavis_config_variant 2 "2" "/sleep"
+
+  if ! wait_for_response_header "$target_url" "$FINGERPRINT_HEADER" "2" 30; then
+    log_error "Failed to observe degraded fingerprint v2"
     kubectl_stop_port_forward "$pf_pid"
-    return 0
+    return 1
   fi
 
   sleep 2
@@ -113,31 +115,20 @@ main() {
     > /dev/null 2>&1
 
   local degraded_errors
-  degraded_errors=$(jq -r '.errors' "${output_dir}/degraded.json")
-  if [[ "${BENCH_PROXY}" == "envoy" ]]; then
-    log_info "Degraded errors: $degraded_errors (expected 0; baseline should remain active)"
-  else
-    log_info "Degraded errors: $degraded_errors (expected high)"
-  fi
+  degraded_errors=$(jq -r '.errors // 0' "${output_dir}/degraded.json")
+  log_info "Degraded errors: $degraded_errors"
 
-  # Step 5: Rollback to good config (v1)
+  # Step 5: Rollback to good config (v1) and measure TTBR.
+  # Contract:
+  # - rollback_ttbr_ms is the elapsed time from rollback publish until recovery is FIRST satisfied.
+  # - recovery condition: v1 fingerprint observed AND p99 <= baseline * 1.10.
+  # - If recovery never happens within timeout, rollback_ttbr_ms == timeout_ms and baseline_restored=false.
   log_info "Rolling back to good config (v1)"
-  local rollback_start
-  rollback_start=$(timestamp_ms)
-
-  if [[ "${BENCH_PROXY}" == "pavis" ]]; then
-    rollback_config 1
-  elif [[ "${BENCH_PROXY}" == "envoy" ]]; then
-    if ! publish_envoy_xds_snapshot "valid"; then
-      log_error "Failed to publish valid envoy snapshot for rollback"
-      kubectl_stop_port_forward "$pf_pid"
-      return 1
-    fi
-  else
-    log_warn "Proxy ${BENCH_PROXY} does not support rollback config publish"
-    kubectl_stop_port_forward "$pf_pid"
-    return 0
-  fi
+  local baseline_restored=false
+  local rollback_ttbr_ms=0
+  publish_pavis_config_variant 1 "1" ""
+  local start_ts
+  start_ts=$(timestamp_ms)
 
   # Step 6: Measure time to baseline restoration (TTBR)
   log_info "Measuring time to baseline restoration (TTBR)"
@@ -152,28 +143,35 @@ main() {
     > /dev/null 2>&1 &
   local recovery_pid=$!
 
-  # Poll for baseline P99 restoration
-  local ttbr_ms=0
-  local max_wait_ms=30000
+  # Poll for baseline restoration.
+  # Rollback completion requires:
+  # 1) fingerprint == v1 (applied), and
+  # 2) P99 <= baseline * 1.10.
+  local timeout_ms=30000
   local elapsed_ms=0
-  local restored=0
+  local restore_threshold_pct=10
+  local restore_threshold_ms
+  restore_threshold_ms=$(echo "$baseline_p99 * (1 + $restore_threshold_pct / 100)" | bc -l)
 
-  while [[ $elapsed_ms -lt $max_wait_ms ]]; do
+  while [[ $elapsed_ms -lt $timeout_ms ]]; do
     sleep 1
-    elapsed_ms=$(( $(timestamp_ms) - rollback_start ))
+    elapsed_ms=$(( $(timestamp_ms) - start_ts ))
 
-    # Check current P99
+    local current_fingerprint
+    current_fingerprint=$(fetch_response_header "$target_url" "$FINGERPRINT_HEADER")
+    if [[ "$current_fingerprint" != "1" ]]; then
+      continue
+    fi
+
+    # Check current P99 once v1 is observed
     local current_p99
     current_p99=$(capture_p99_snapshot 2 "$target_url" "$TARGET_RPS") || continue
 
     # Check if within 10% of baseline
-    local threshold
-    threshold=$(echo "$baseline_p99 * 1.1" | bc -l)
-
-    if (( $(echo "$current_p99 <= $threshold" | bc -l) )); then
-      ttbr_ms=$elapsed_ms
-      restored=1
-      log_info "Baseline restored at ${ttbr_ms}ms (P99: ${current_p99}ms <= ${threshold}ms)"
+    if (( $(echo "$current_p99 <= $restore_threshold_ms" | bc -l) )); then
+      rollback_ttbr_ms=$elapsed_ms
+      baseline_restored=true
+      log_info "Baseline restored at ${rollback_ttbr_ms}ms (P99: ${current_p99}ms <= ${restore_threshold_ms}ms)"
       break
     fi
   done
@@ -181,14 +179,11 @@ main() {
   # Wait for recovery test to complete
   wait "$recovery_pid" 2>/dev/null || true
 
-  # Cleanup port-forward
-  kubectl_stop_port_forward "$pf_pid"
-
   # Step 7: Extract final recovery stats
   local recovery_p99
   recovery_p99=$(jq -r '.latency_ms.p99' "${output_dir}/recovery.json")
   local recovery_errors
-  recovery_errors=$(jq -r '.errors' "${output_dir}/recovery.json")
+  recovery_errors=$(jq -r '.errors // 0' "${output_dir}/recovery.json")
   local baseline_achieved_rps=""
   local degraded_achieved_rps=""
   local recovery_achieved_rps=""
@@ -202,6 +197,14 @@ main() {
     recovery_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/recovery.json")
   fi
 
+  if [[ "$baseline_restored" != "true" ]]; then
+    rollback_ttbr_ms=$timeout_ms
+    log_warn "Baseline not restored within ${timeout_ms}ms (threshold ${restore_threshold_ms}ms)"
+  fi
+
+  # Cleanup port-forward
+  kubectl_stop_port_forward "$pf_pid"
+
   # Step 8: Write metrics JSON
   cat > "${output_dir}/metrics.json" <<EOF
 {
@@ -212,10 +215,12 @@ main() {
   "baseline_achieved_rps": $baseline_achieved_rps,
   "degraded_achieved_rps": $degraded_achieved_rps,
   "recovery_achieved_rps": $recovery_achieved_rps,
-  "rollback_ttbr_ms": $ttbr_ms,
+  "rollback_ttbr_ms": $rollback_ttbr_ms,
   "recovery_p99_ms": $recovery_p99,
   "recovery_errors": $recovery_errors,
-  "baseline_restored": $([ $restored -eq 1 ] && echo "true" || echo "false"),
+  "baseline_restored": $baseline_restored,
+  "restore_threshold_pct": $restore_threshold_pct,
+  "restore_threshold_ms": $restore_threshold_ms,
   "config_versions": [1, 2, 1],
   "target_rps": $TARGET_RPS
 }
@@ -227,13 +232,23 @@ EOF
   log_info "Validating results"
   local validation_failed=0
 
-  if (( restored == 0 )); then
-    log_warn "Failed to restore baseline performance within ${max_wait_ms}ms"
+  if (( $(echo "$rollback_ttbr_ms < 0" | bc -l) )); then
+    log_warn "Invalid rollback_ttbr_ms: ${rollback_ttbr_ms}ms"
     validation_failed=1
   fi
 
-  if (( $(echo "$ttbr_ms > 10000" | bc -l) )); then
-    log_warn "TTBR exceeded 10s threshold: ${ttbr_ms}ms"
+  if [[ "$baseline_restored" == "true" ]] && (( rollback_ttbr_ms >= timeout_ms )); then
+    log_warn "baseline_restored=true but rollback_ttbr_ms >= timeout (${rollback_ttbr_ms}ms)"
+    validation_failed=1
+  fi
+
+  if [[ "$baseline_restored" != "true" ]]; then
+    log_warn "Failed to restore baseline performance within ${timeout_ms}ms"
+    validation_failed=1
+  fi
+
+  if (( $(echo "$rollback_ttbr_ms > 10000" | bc -l) )); then
+    log_warn "TTBR exceeded 10s threshold: ${rollback_ttbr_ms}ms"
     validation_failed=1
   fi
 
@@ -251,39 +266,63 @@ EOF
   fi
 }
 
-wait_for_envoy_nack() {
-  local timeout_s="${1:-30}"
-  local label="$2"
-  local container="$3"
-  local namespace="$4"
-  local start_ts
-  start_ts=$(date +%s)
+fetch_response_header() {
+  local url="$1"
+  local header="$2"
+  curl -s -D - -o /dev/null "$url" | tr -d '\r' | awk -v h="$header" 'tolower($1) == tolower(h ":") {print $2}' | tail -n1
+}
 
-  while (( $(date +%s) - start_ts < timeout_s )); do
-    if kubectl logs -n "$namespace" -l app=envoy-xds --since=30s 2>/dev/null | grep -q "NACK"; then
-      return 0
-    fi
-    if kubectl logs -n "$namespace" -l "$label" -c "$container" --since=30s 2>/dev/null | grep -qi "nack"; then
+wait_for_response_header() {
+  local url="$1"
+  local header="$2"
+  local expected="$3"
+  local timeout_s="${4:-30}"
+
+  local elapsed=0
+  while [[ $elapsed -lt $timeout_s ]]; do
+    local value
+    value=$(fetch_response_header "$url" "$header")
+    if [[ "$value" == "$expected" ]]; then
       return 0
     fi
     sleep 1
+    elapsed=$((elapsed + 1))
   done
 
   return 1
 }
 
-publish_pavis_bad_config() {
+publish_pavis_config_variant() {
   local version="$1"
+  local fingerprint="$2"
+  local rewrite_path="${3:-}"
 
   local temp_config
   temp_config=$(mktemp --suffix=.yaml)
 
   cp "$(resolve_pavis_config_path)" "$temp_config"
   if command -v yq > /dev/null 2>&1; then
-    yq -i '.upstreams[0].endpoints[0].address = "does-not-exist.invalid"' "$temp_config"
+    yq -i '.routes[0].paths[1].matcher.path = "/fixed"' "$temp_config"
+    yq -i ".routes[0].paths[1].response_headers.set_headers = [[\"${FINGERPRINT_HEADER}\", \"${fingerprint}\"]]" "$temp_config"
+    if [[ -n "$rewrite_path" ]]; then
+      yq -i ".routes[0].paths[1].rewrite.path = \"${rewrite_path}\"" "$temp_config"
+    else
+      yq -i 'del(.routes[0].paths[1].rewrite)' "$temp_config"
+    fi
   else
-    sed -i.bak 's/address: "backend"/address: "does-not-exist.invalid"/' "$temp_config"
+    sed -i.bak '0,/matcher: !prefix/{/path: "\/"/s//path: "\/fixed"/}' "$temp_config"
     rm -f "${temp_config}.bak"
+    sed -i.bak "/weight: 100/a\\
+        response_headers:\\
+          set_headers:\\
+            - [\"${FINGERPRINT_HEADER}\", \"${fingerprint}\"]" "$temp_config"
+    rm -f "${temp_config}.bak"
+    if [[ -n "$rewrite_path" ]]; then
+      sed -i.bak "/path: \"\\/fixed\"/a\\
+        rewrite:\\
+          path: \"${rewrite_path}\"" "$temp_config"
+      rm -f "${temp_config}.bak"
+    fi
   fi
 
   publish_to_pavis_relay "$temp_config" "$version"

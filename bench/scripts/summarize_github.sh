@@ -492,6 +492,9 @@ main() {
   local run_context=""
   for proxy_dir in "$OUTPUT_DIR"/*; do
     if [ -f "${proxy_dir}/context.env" ]; then
+      if [ "$(basename "$proxy_dir")" != "pavis" ]; then
+        continue
+      fi
       run_context="${proxy_dir}/context.env"
       break
     fi
@@ -519,6 +522,9 @@ main() {
 
     local proxy
     proxy=$(basename "$proxy_dir")
+    if [ "$proxy" != "pavis" ]; then
+      continue
+    fi
 
     for case_dir in "$proxy_dir"/*; do
       if [ ! -d "$case_dir" ]; then

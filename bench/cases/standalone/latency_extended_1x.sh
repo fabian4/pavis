@@ -39,39 +39,17 @@ source "$PRETTY_OUTPUT"
 
 PROXY="${PROXY:-pavis}"
 PAVIS_PORT="${PAVIS_PORT:-8080}"
-ENVOY_PORT="${ENVOY_PORT:-8081}"
-NGINX_PORT="${NGINX_PORT:-8082}"
-HAPROXY_PORT="${HAPROXY_PORT:-8083}"
 
 PROXY_CPUSET_EXPECTED="${PROXY_CPUSET_EXPECTED:-1-2}"
 BACKEND_CPUSET_EXPECTED="${BACKEND_CPUSET_EXPECTED:-0}"
 
-case "$PROXY" in
-  pavis)
-    PROXY_SERVICE="pavis"
-    PROXY_CONTAINER="bench-pavis"
-    PROXY_PORT="$PAVIS_PORT"
-    ;;
-  envoy)
-    PROXY_SERVICE="envoy"
-    PROXY_CONTAINER="bench-envoy"
-    PROXY_PORT="$ENVOY_PORT"
-    ;;
-  nginx)
-    PROXY_SERVICE="nginx"
-    PROXY_CONTAINER="bench-nginx"
-    PROXY_PORT="$NGINX_PORT"
-    ;;
-  haproxy)
-    PROXY_SERVICE="haproxy"
-    PROXY_CONTAINER="bench-haproxy"
-    PROXY_PORT="$HAPROXY_PORT"
-    ;;
-  *)
-    echo "error: unknown PROXY '$PROXY' (expected pavis|envoy|nginx|haproxy)" >&2
-    exit 1
-    ;;
- esac
+if [ "$PROXY" != "pavis" ]; then
+  echo "error: only PROXY=pavis is supported in this repository" >&2
+  exit 1
+fi
+PROXY_SERVICE="pavis"
+PROXY_CONTAINER="bench-pavis"
+PROXY_PORT="$PAVIS_PORT"
 
 bench_print_case_header "$CASE_NAME" "$PROXY"
 

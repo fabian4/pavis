@@ -75,26 +75,7 @@ detect_config_version() {
   pod_ip=$(kubectl_get_pod_ip "$label" "$namespace")
 
   if [[ -z "$admin_port" ]]; then
-    if [[ "${BENCH_PROXY:-}" == "envoy" || "$container" == "envoy-sidecar" ]]; then
-      admin_port="9901"
-    else
-      admin_port="9090"
-    fi
-  fi
-
-  if [[ "${BENCH_PROXY:-}" == "envoy" || "$container" == "envoy-sidecar" ]]; then
-    local dump
-    dump=$(curl -s "http://${pod_ip}:${admin_port}/config_dump" 2>/dev/null || true)
-    if [[ -n "$dump" ]]; then
-      local version
-      version=$(echo "$dump" | jq -r '.. | .version_info? // empty' | head -n1)
-      if [[ -n "$version" && "$version" != "null" ]]; then
-        echo "$version"
-        return 0
-      fi
-    fi
-    echo "unknown"
-    return 0
+    admin_port="9090"
   fi
 
   # Assume admin exposes /admin/config_version endpoint

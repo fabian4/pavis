@@ -2,6 +2,8 @@
 
 This directory contains the orchestration, configuration, and tooling for the Pavis performance evaluation suite. This system is designed to provide scientifically rigorous, reproducible measurements of proxy behavior based on the [7+2+1 Benchmark Methodology](../docs/benchmarks/methodology.md).
 
+Side-by-side benchmarks are managed in a separate repository; this repo runs Pavis-only CI health/regression benchmarks.
+
 ## 1. Dual-Mode Evaluation Model
 
 Pavis benchmarks are split into two non-overlapping modes to isolate micro-architectural performance from macro-system behavior.
@@ -11,15 +13,13 @@ Pavis benchmarks are split into two non-overlapping modes to isolate micro-archi
 *   **Environment**: Docker-composed containers on Workstation or Bare-metal.
 *   **Configuration**: Static and immutable at process startup.
 *   **Scope**: Covers Core Dimensions #1–#5 and #7.
-*   **Comparability**: This is the only mode permitted for cross-proxy comparisons.(Pavis vs. Envoy vs. Nginx vs. HAProxy).
 *   **Output**: Generates the authoritative `report.md` (workstation) and resource-cost profiles. CI uses `report.github.md` for a consolidated summary.
 
 ### B. System / Kubernetes (kind) Mode
 *   **Purpose**: Measure system-level lifecycle behavior, configuration convergence, and durability.
 *   **Environment**: Kubernetes (`kind`).
-*   **Configuration**: Dynamic; requires active control-plane participation (Pavis Relay or Envoy xDS).
+*   **Configuration**: Dynamic; requires active control-plane participation (Pavis Relay).
 *   **Scope**: Covers Dimension #6 (Operational Characteristics), Derived B (Recovery), and the Durability gate.
-*   **Comparability**: **Cross-proxy performance ranking is explicitly forbidden in this mode.**
 *   **Output**: Event-correlated timelines and threshold-based validation (e.g., "Reload converged within 2s").
 
 ---
@@ -29,24 +29,20 @@ Pavis benchmarks are split into two non-overlapping modes to isolate micro-archi
 The Pavis project maintains a strict boundary between automated regression testing and authoritative performance reporting.
 
 ### CI (GitHub-hosted Runners)
-*   **Target**: Runs against **Pavis only**. Other proxies are excluded to avoid noise-polluted comparisons.
+*   **Target**: Runs against **Pavis only**.
 *   **Goal**: Continuous regression detection for the current branch.
 *   **Constraints**:
     *   Generates a CI-only `report.github.md` derived from standalone + system summaries.
-    *   Does NOT produce cross-proxy rankings or comparative claims.
+    *   Does NOT produce rankings or competitive claims.
 *   **Non-Authoritative**: Due to the shared, multi-tenant nature of GitHub-hosted runners (vCPU stealing, noisy neighbors), results are non-authoritative and used solely for internal gating.
 
 ### Workstation (Authoritative Source)
-*   **Target**: All proxies in the matrix.
+*   **Target**: Pavis-only in this repository. Side-by-side runs live elsewhere.
 *   **Goal**: Generation of authoritative benchmark reports.
 *   **Constraints**: Requires dedicated hardware, CPU pinning (`cpuset`), and consistent kernel tuning.
     *   **CPU Allocation Rule (Workstation)**: 4 dedicated cores total: 1 for loadgen/wrk, 1 for upstream, 2 for proxy.
     *   **Proxy Memory Limit (Workstation)**: 1GiB (`MEMORY_LIMIT=1G`).
-*   **Authority**: This is the **only** environment permitted to generate:
-    *   Cross-proxy performance comparisons.
-    *   Payload size matrix results.
-    *   Feature tax measurements (TLS, metrics overhead).
-    *   Published benchmark reports for documentation.
+*   **Authority**: This is the **only** environment permitted to generate published Pavis benchmark reports for documentation.
 
 ---
 
@@ -56,8 +52,8 @@ The Pavis project maintains a strict boundary between automated regression testi
 *   `MODE=standalone` enables standalone dataplane mode (Docker Compose).
 *   `BENCH_PROFILE=github|workstation` controls gating; `github` is Pavis-only and skips `latency_extended_1x`.
 *   If `BENCH_PROFILE` is unset, it defaults to `workstation`.
-*   `BENCH_PROFILE=workstation` runs a payload matrix for `throughput_short_1x`, `latency_short_1x`, `latency_extended_1x` at `64B` and `4KiB`.
-*   `REPORT_PAYLOAD_SIZE=64B|4KiB` selects a payload when generating `report.md` from matrix runs.
+*   `BENCH_PROFILE=workstation` runs a payload set for `throughput_short_1x`, `latency_short_1x`, `latency_extended_1x` at `64B` and `4KiB`.
+*   `REPORT_PAYLOAD_SIZE=64B|4KiB` selects a payload when generating `report.md` from multi-size runs.
 *   `BENCH_PAYLOAD_SIZE` defaults to `64B` (parameterized variant input).
 *   `BENCH_TLS` and `BENCH_METRICS` default to `false` (variant toggles).
 *   `BENCH_PROFILE=github` produces a CI-only `report.github.md` and must not be used for publication.
@@ -67,7 +63,7 @@ The Pavis project maintains a strict boundary between automated regression testi
 *   `BENCH_PROFILE=github` is supported in GitHub CI for system mode (CI-only gating, Pavis-only).
 *   `BENCH_PROFILE=workstation` enables authoritative runs on dedicated hardware.
 *   If `BENCH_PROFILE` is unset, it defaults to `workstation`.
-*   `PROXY=pavis|envoy` selects the proxy to test (default: pavis).
+*   `PROXY=pavis` selects the proxy to test (default: pavis).
 *   System mode tests are located in `bench/cases/system/`.
 *   **No MODE set**: Runs both standalone and system modes sequentially.
 
@@ -85,22 +81,21 @@ Ad-hoc or generic load tests are rejected by design. Every benchmark case script
 
 ## 4. Performance Integrity Disclaimer
 
-Authoritative performance claims require hardware isolation that CI environments cannot provide. The project strictly prohibits using CI-generated metrics for public comparisons. 
+Authoritative performance claims require hardware isolation that CI environments cannot provide. The project strictly prohibits using CI-generated metrics for public claims. 
 
-All comparative rankings must be derived from the **Standalone Dataplane Mode** executed on a tuned **Workstation** with verified CPU pinning to ensure that the delta between proxies reflects architectural differences rather than environment noise.
+Published reports must be derived from the **Standalone Dataplane Mode** executed on a tuned **Workstation** with verified CPU pinning.
 
 ---
 
 ## 5. System Mode Architecture
 
-System mode tests measure operational characteristics that require a control plane and dynamic configuration updates. This mode uses Kubernetes (via `kind`) to deploy realistic service mesh scenarios.
+System mode tests measure operational characteristics that require a control plane and dynamic configuration updates. This mode uses Kubernetes (via `kind`) to deploy realistic service scenarios.
 
 ### Supported Proxies
 
 | Proxy | Control Plane | Config Versioning | Sidecar Injection |
 |-------|---------------|-------------------|-------------------|
 | **Pavis** | pavis-relay (HTTP long-polling) | ✅ Yes | Manual (manifest) |
-| **Envoy** | Custom xDS server (go-control-plane) | ✅ Yes | Manual (manifest) |
 
 ### System Mode Test Cases
 
@@ -112,22 +107,21 @@ Located in `bench/cases/system/`:
    - Measures P99 latency delta during convergence
 
 2. **rollback_performance.sh**
-   - Tests rollback from bad config to known-good baseline
-   - Measures TTBR (Time to Baseline Restoration)
-   - Validates error recovery patterns
-   - Envoy uses an invalid xDS publish (`POST /v1/publish?mode=invalid`) to force a NACK while preserving the last ACKed config
+   - Tests rollback from a degraded (fixed delay) config to known-good baseline
+   - Proves apply/rollback via response fingerprints before timing TTBR
+   - Measures TTBR (Time to Baseline Restoration) once v1 is re-applied and latency recovers
 
 3. **stress_recovery.sh**
    - Applies 150% saturation load, then returns to baseline
    - Measures latency recovery timeline
    - Checks RSS hysteresis (memory growth)
-   - Works with all proxies
+   - Pavis only
 
 4. **multi_hour_soak.sh**
    - Runs at 75% capacity for 4+ hours
    - Tracks RSS slope via linear regression
    - Validates file descriptor stability
-   - Works with all proxies
+   - Pavis only
 
 ### Architecture Components
 
@@ -147,7 +141,7 @@ Located in `bench/cases/system/`:
 │  ┌──────────────┐                           │
 │  │ Control      │  /v1/config               │
 │  │ Plane        │◀────────────┐             │
-│  │ (relay/xDS)  │             │             │
+│  │ (relay)      │             │             │
 │  └──────────────┘             │             │
 │                               │             │
 │  ┌────────────────────────────┴───────────┐ │
@@ -182,9 +176,6 @@ MODE=standalone BENCH_PROFILE=workstation \
 # Run specific test case
 MODE=standalone CASE="throughput_short_1x" make bench-standalone
 
-# Test all proxies
-make bench-standalone-all
-
 # Cleanup
 make bench-standalone-down
 
@@ -204,13 +195,6 @@ make bench-system-build
 # Run Pavis system tests
 MODE=system PROXY=pavis BENCH_PROFILE=workstation \
   make bench-system
-
-# Test Envoy
-MODE=system PROXY=envoy make bench-system
-
-
-# Test all proxies
-make bench-system-all
 
 # Cleanup kind cluster
 make bench-system-down
@@ -238,7 +222,7 @@ BENCH_PROFILE=workstation \
 |----------|--------|---------|-------------|
 | `MODE` | `standalone`, `system`, unset | unset | Benchmark mode (unset runs both) |
 | `BENCH_PROFILE` | `github`, `workstation` | `workstation` | Execution environment |
-| `PROXY` | `pavis`, `envoy`, `nginx`, `haproxy` | `pavis` | Proxy under test |
+| `PROXY` | `pavis` | `pavis` | Proxy under test |
 | `CASE` | case names (space-separated) | all | Specific test cases to run |
 | `BENCH_PAYLOAD_SIZE` | `64B`, `4KiB`, etc. | `64B` | Request/response payload size |
 | `BENCH_TLS` | `true`, `false` | `false` | Enable TLS encryption |
@@ -253,14 +237,13 @@ BENCH_PROFILE=workstation \
 *   `cases/`: Test case scripts
     *   `cases/standalone/`: Standalone mode test scripts (dataplane performance)
     *   `cases/system/`: System mode test scripts (config convergence, soak tests)
-*   `config/`: Static bootstrap configurations for Pavis, Envoy, Nginx, and HAProxy
+*   `config/`: Static bootstrap configurations for Pavis
 *   `k8s/`: Kubernetes manifests for system mode
     *   `k8s/pavis/`: Pavis relay deployment and test workloads
-    *   `k8s/envoy/`: Envoy xDS server and test workloads
 *   `scripts/`: Tools for setup, execution, metrics, and reporting
     *   `scripts/setup.sh`: Unified environment setup (standalone + system)
     *   `scripts/k8s_helpers.sh`: Kubernetes utility functions
-    *   `scripts/proxy_helpers.sh`: Proxy-agnostic test abstractions
+*   `scripts/proxy_helpers.sh`: Pavis test abstractions
 *   `scripts/summarize_github.sh`: Result aggregation
     *   `scripts/report.sh`: Report generation
 *   `output/`: Destination for raw data, CSVs, and generated Markdown reports

@@ -16,7 +16,7 @@
 //! ### Strict ETag Validation
 //! - Rejects weak ETags (W/), wildcards (*), multiple ETags
 //! - Explicit quote validation (no `trim_matches`)
-//! - Normalizes hex to lowercase for comparison
+//! - Normalizes hex to lowercase for matching
 //!
 //! ### Response Builder Pattern
 //! All responses use `Response::builder()` for explicit body construction.

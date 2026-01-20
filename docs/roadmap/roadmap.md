@@ -13,6 +13,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 
 ## Feature Verification Follow-ups (Code-Based)
 
+
 ### P0 – Safety & Correctness
 - [ ] **Header/Method Routing Gap**: Router currently matches path-only despite documentation promising method/header selectors. _Exit criteria_: Router matcher accepts method/header predicates, unit tests cover combos, and E2E proves a method-scoped route is honored.
 - [x] **Route Retries/Timeouts Ignored**: `Route.retry` / `Route.timeout` are parsed but unused. _Exit criteria_: Runtime wires values into Pingora deadlines/retry logic and regression tests exercise success/failure cases.
@@ -22,7 +23,7 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [ ] **Outbound Custom CA (rustls) Blocked**: Pingora rustls ignores per-peer CA bundles. _Exit criteria_: Either enforce backing logic or reject configs when rustls is active, with tests proving behavior. _Blocked on Pingora rustls per-peer CA support._
 
 ### P1 – Process & Test Hardening
-- [ ] **Backend-aware E2E Matrix**: Need matrix showing Supported vs Rejected vs Skipped config behaviors. _Exit criteria_: CI publishes the matrix per backend (rustls/OpenSSL) and fails when regressions appear.
+- [ ] **Backend-aware E2E Table**: Need a table showing Supported vs Rejected vs Skipped config behaviors. _Exit criteria_: CI publishes the table per backend (rustls/OpenSSL) and fails when regressions appear.
 - [ ] **Validation Suite for Ignored Fields**: Ensure configs hitting “parsed but ignored / blocked” paths fail fast. _Exit criteria_: New E2E validation suite in the ingest pipeline asserting rejection with precise error messages.
 
 ### P2 – Feature Candidates

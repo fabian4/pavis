@@ -6,16 +6,8 @@
 
 **Key Strengths**:
 - Metrics-based subscriber readiness polling eliminates race conditions
-- Byte-level opaque verification using binary comparison oracles
+- Byte-level opaque verification using binary matching oracles
 - Comprehensive long-poll semantics coverage including boundary conditions and false-wake prevention
-
-**Known Gaps**:
-- `20_longpoll_wait` lacks explicit subscriber liveness proof before publish event
-- `40_concurrency_rapid` validates final state only; does not track version monotonicity during full sequence
-
-**Next Actions**: Add background process liveness checks; instrument subscriber loop to log and validate all observed version headers for strict monotonicity.
-
----
 
 ## Control Plane Contract
 
@@ -62,7 +54,7 @@ The Relay Suite validates the **Control Plane** correctness of the `pavis-relay`
 - ETag matches format `^sha256:[0-9a-f]{64}$`
 - Published and fetched artifacts are byte-identical (via `cmp` oracle)
 
-**Assessment**: PASS. Binary comparison provides strong opaque transfer proof.
+**Assessment**: PASS. Binary matching provides strong opaque transfer proof.
 
 ---
 
@@ -455,39 +447,3 @@ Tests edge cases:
 **Weak or Partially Covered Areas**:
 - **Long-poll blocking proof** (R3): L2 - `20_longpoll_wait` lacks liveness check
 - **Version monotonicity during concurrent updates** (R5): L2 - `40_concurrency_rapid` checks final state only
-
----
-
-## Evolution Plan
-
-### Short-Term (Must Address)
-
-1. **`20_longpoll_wait` enhancement**:
-   - Add explicit subscriber process liveness check before publish
-   - Verify background process is actually blocking (not immediately returning 204)
-   - Proof strategy: Check process state or add heartbeat logging
-
-2. **`40_concurrency_rapid` instrumentation**:
-   - Log all observed version headers during subscriber polling loop
-   - Assert strict monotonicity: `v[i] < v[i+1]` for all observed versions
-   - Detect and fail on any version regression in real-time (not just final check)
-
-### Mid-Term (Should Improve)
-
-3. **Metrics consistency validation**:
-   - Add cross-check between `pavis_relay_longpoll_wait_total` and actual subscriber count
-   - Validate metric accuracy under rapid subscribe/unsubscribe
-
-4. **Persistence edge cases**:
-   - Test relay restart while subscribers are actively waiting (long-poll in progress)
-   - Validate subscriber reconnection behavior after relay crash
-
-### Long-Term (Optional Enhancements)
-
-5. **ETag collision detection**:
-   - Publish two different artifacts that might produce same sha256 (theoretical, for robustness)
-   - Validate relay detects and handles collision (if applicable to design)
-
-6. **Backpressure under load**:
-   - Stress test with sustained high publish rate
-   - Validate relay maintains performance and correctness under resource pressure

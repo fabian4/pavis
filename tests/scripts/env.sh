@@ -461,13 +461,20 @@ EOF
 
 
 pavis_curl_body() {
-    curl -s -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" -H "X-Pavis-Test-Case: ${CASE_NAME:-unknown}" "$@"
+    curl -s --connect-timeout 1 --max-time 2 \
+        -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
+        -H "X-Pavis-Test-Case: ${CASE_NAME:-unknown}" \
+        "$@"
 }
 
 pavis_curl_headers() {
     local output_file="$1"
     shift
-    curl -s -i -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" -H "X-Pavis-Test-Case: ${CASE_NAME:-unknown}" -o "$output_file" "$@"
+    curl -s -i --connect-timeout 1 --max-time 2 \
+        -H "X-Pavis-Test-Run: ${RUN_ID:-manual}" \
+        -H "X-Pavis-Test-Case: ${CASE_NAME:-unknown}" \
+        -o "$output_file" \
+        "$@"
 }
 
 extract_etag() {

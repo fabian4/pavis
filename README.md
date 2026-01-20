@@ -98,7 +98,7 @@ These features are excluded to preserve the Frozen Data Plane contract:
 
 **Project Status:**
 *   **[docs/roadmap/roadmap.md](./docs/roadmap/roadmap.md)** - Development roadmap and milestones
-*   **[docs/roadmap/features.md](./docs/roadmap/features.md)** - Feature status matrix
+*   **[docs/roadmap/features.md](./docs/roadmap/features.md)** - Feature status overview
 *   **[docs/roadmap/coverage.md](./docs/roadmap/coverage.md)** - Test coverage analysis
 
 **Performance:**

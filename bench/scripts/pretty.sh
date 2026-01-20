@@ -117,7 +117,7 @@ bench_print_completion() {
   local errors="${1:-0}"
   local dropped="${2:-0}"
   
-  # Remove formatting for comparison
+  # Remove formatting for matching
   local err_num="${errors//,/}"
   local drop_num="${dropped//,/}"
   

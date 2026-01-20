@@ -53,6 +53,11 @@ format_float_3_or_empty() {
   printf "%.3f" "$value"
 }
 
+is_number() {
+  local value="$1"
+  [[ "$value" =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]
+}
+
 main() {
   log_info "Starting test: $CASE_NAME for ${BENCH_PROXY}"
 
@@ -112,6 +117,11 @@ main() {
 
   local baseline_p99
   baseline_p99=$(jq -r '.latency_ms.p99' "${output_dir}/baseline.json")
+  if ! is_number "$baseline_p99" || (( $(echo "$baseline_p99 <= 0" | bc -l) )); then
+    log_error "Invalid baseline P99: '${baseline_p99}'"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
+  fi
   local baseline_rss_start_raw
   baseline_rss_start_raw=$(proxy_get_stats "$pod_label" "$NAMESPACE")
   log_info "Debug: Raw Baseline RSS: '${baseline_rss_start_raw}'"
@@ -174,6 +184,11 @@ main() {
 
   local recovery_p99
   recovery_p99=$(jq -r '.latency_ms.p99' "${output_dir}/recovery.json")
+  if ! is_number "$recovery_p99" || (( $(echo "$recovery_p99 <= 0" | bc -l) )); then
+    log_error "Invalid recovery P99: '${recovery_p99}'"
+    kubectl_stop_port_forward "$pf_pid"
+    return 1
+  fi
   local recovery_rss_end_raw
   recovery_rss_end_raw=$(awk -F',' 'END{print $2}' "${output_dir}/recovery_rss.csv")
   log_info "Debug: Raw Recovery RSS End: '${recovery_rss_end_raw}'"
@@ -195,8 +210,9 @@ main() {
     rss_growth_pct=$(echo "($recovery_rss_end - $baseline_rss_start) * 100.0 / $baseline_rss_start" | bc -l)
   fi
 
-  local latency_recovery_pct
-  latency_recovery_pct=$(echo "($recovery_p99 - $baseline_p99) * 100.0 / $baseline_p99" | bc -l)
+  # Percent delta from baseline after recovery (smaller is better).
+  local latency_regression_pct
+  latency_regression_pct=$(echo "($recovery_p99 - $baseline_p99) * 100.0 / $baseline_p99" | bc -l)
 
   local baseline_achieved_rps=""
   local stress_achieved_rps=""
@@ -219,7 +235,7 @@ main() {
   local baseline_p99_fmt
   local stress_p99_fmt
   local recovery_p99_fmt
-  local latency_recovery_pct_fmt
+  local latency_regression_pct_fmt
   local stress_dropped_fmt
   local baseline_rss_fmt
   local stress_rss_peak_fmt
@@ -234,7 +250,7 @@ main() {
   baseline_p99_fmt=$(format_float_3 "$baseline_p99")
   stress_p99_fmt=$(format_float_3 "$stress_p99")
   recovery_p99_fmt=$(format_float_3 "$recovery_p99")
-  latency_recovery_pct_fmt=$(format_float_3 "$latency_recovery_pct")
+  latency_regression_pct_fmt=$(format_float_3 "$latency_regression_pct")
   stress_dropped_fmt=$(format_float_3 "$stress_dropped")
   baseline_rss_fmt=$(format_float_3 "$baseline_rss_start")
   stress_rss_peak_fmt=$(format_float_3 "$stress_rss_peak")
@@ -255,7 +271,7 @@ main() {
   "baseline_p99_ms": $baseline_p99_fmt,
   "stress_p99_ms": $stress_p99_fmt,
   "recovery_p99_ms": $recovery_p99_fmt,
-  "latency_recovery_pct": $latency_recovery_pct_fmt,
+  "latency_regression_pct": $latency_regression_pct_fmt,
   "stress_dropped": $stress_dropped_fmt,
   "baseline_rss_kb": $baseline_rss_fmt,
   "stress_rss_peak_kb": $stress_rss_peak_fmt,
@@ -272,8 +288,8 @@ EOF
   local validation_failed=0
 
   # Check if latency recovered to within 20% of baseline
-  if (( $(echo "$latency_recovery_pct > 20" | bc -l) )); then
-    log_warn "Latency did not recover: ${latency_recovery_pct}% above baseline"
+  if (( $(echo "$latency_regression_pct > 20" | bc -l) )); then
+    log_warn "Latency regression too high: ${latency_regression_pct}% above baseline"
     validation_failed=1
   fi
 

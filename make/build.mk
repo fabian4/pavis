@@ -30,7 +30,7 @@ binary-build:
 		$$CMD; \
 	fi
 
-# Build Docker image (IMAGE=pavis|relay|mock-upstream|mock-relay|bench-upstream|envoy-xds-server, MODE=local|ci)
+# Build Docker image (IMAGE=pavis|relay|mock-upstream|mock-relay|bench-upstream, MODE=local|ci)
 docker-build:
 	@set -e; \
 	BUILD_ARGS=""; \
@@ -52,12 +52,8 @@ docker-build:
 	elif [ "$(IMAGE)" = "bench-upstream" ]; then \
 		DOCKERFILE=crates/pavis-benchkit/Dockerfile; \
 		TAG=pavis-bench-upstream:local; \
-	elif [ "$(IMAGE)" = "envoy-xds-server" ]; then \
-		DOCKERFILE=bench/config/system/envoy/xds-server/Dockerfile; \
-		TAG=envoy-xds-server:local; \
-		BUILD_CONTEXT="bench/config/system/envoy/xds-server/"; \
 	else \
-		echo "Unsupported IMAGE=$(IMAGE) (use pavis, relay, mock-upstream, mock-relay, bench-upstream, or envoy-xds-server)"; \
+		echo "Unsupported IMAGE=$(IMAGE) (use pavis, relay, mock-upstream, mock-relay, or bench-upstream)"; \
 		exit 2; \
 	fi; \
 	if [ "$(MODE)" = "local" ]; then \

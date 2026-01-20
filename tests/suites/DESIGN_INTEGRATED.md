@@ -10,13 +10,6 @@
 - Relay restart resilience with automatic reconnection validated
 - Idempotent update stability testing eliminates false-positive failures
 
-**Known Gaps**:
-- `30_lkg_artifact` relies on fixed sleep instead of explicit version header validation (assumes poll happened without proof)
-
-**Next Actions**: Add relay and runtime version header checks to `30_lkg_artifact`; instrument version mismatch explicitly.
-
----
-
 ## System Integration Contract
 
 The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`, `pavis` runtime, `pavis-mock-upstream`) function correctly as a distributed system. Configuration compiled by a user must propagate through the control plane and be applied by the data plane without downtime.
@@ -320,51 +313,3 @@ All options are pure semantic errors detectable at load time without external st
 **Weak or Partially Covered Areas**:
 - **System LKG with explicit version validation** (I4): L2 - `30_lkg_artifact` lacks version header checks
 - **Semantic config rejection** (I4): READY - test redesigned with deterministic error (route→upstream reference); blocked on runtime implementing semantic validation phase
-
----
-
-## Evolution Plan
-
-### Short-Term (Must Address)
-
-1. **`30_lkg_artifact` enhancement**:
-   - Add relay version check: fetch relay `/v1/config` or `/v1/status` to get current version
-   - Add runtime version check: add debug header `X-Pavis-Config-Version` in runtime responses
-   - Assert: relay version > runtime version after bad artifact publish
-   - Proves: runtime fetched but rejected the bad artifact (not just "didn't poll yet")
-
-2. **`31_lkg_rejection` enabling**:
-   - Implement semantic validation phase in runtime (route→upstream reference validation OR duplicate listener port detection)
-   - Validation MUST occur before `apply_config()` so broken artifacts never become active
-   - Once implemented, enable test and validate semantic rejection with pure, deterministic error
-
-### Mid-Term (Should Improve)
-
-3. **Concurrent traffic during reload**:
-   - Add burst testing during `20_reload_switch` (similar to pavis suite `20_reload_contract_core`)
-   - Use 200 concurrent requests during V1 → V2 transition
-   - Validate I1 (End-to-End Publish) with zero-drop semantics
-
-4. **Multi-version chain**:
-   - Test V1 → V2 → V3 → V4 in rapid succession
-   - Validate relay fanout + runtime catch-up semantics under high update frequency
-   - Ensure no version skipped or applied out of order
-
-### Long-Term (Optional Enhancements)
-
-5. **pavctl integration testing**:
-   - Currently uses `gen_pvs` helper (wraps pavctl)
-   - Add explicit `pavctl` binary tests: version flag, error handling, exit codes
-   - Validate pavctl error messages in CI
-
-6. **Network partition simulation**:
-   - Use firewall rules (iptables/pf) to simulate relay unreachability
-   - Validate runtime behavior under network partition:
-     - LKG preservation
-     - Exponential backoff reconnection
-     - Immediate catch-up after partition heals
-
-7. **Relay failover**:
-   - Deploy 2 relay instances behind load balancer
-   - Kill primary relay during active long-poll
-   - Validate runtime seamlessly fails over to secondary relay

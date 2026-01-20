@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Case: semantic_validation_matrix
+# Case: semantic_validation_suite
 # Category: Failure & LKG
 # Invariants: B (LKG Preservation)
 
@@ -10,7 +10,7 @@ source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
 source "$(dirname "$0")/../../scripts/assert.sh"
 
-setup_test "semantic_validation_matrix"
+setup_test "semantic_validation_suite"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 
@@ -261,4 +261,4 @@ cat <<-EOF > "$TEST_TMP/config_missing_ca.yaml"
 EOF
 publish_and_expect_runtime_rejection "missing-ca-bundle" "$TEST_TMP/config_missing_ca.yaml" "$TEST_TMP/config_missing_ca.pvs"
 
-echo "✅ semantic_validation_matrix passed"
+echo "✅ semantic_validation_suite passed"

@@ -46,16 +46,8 @@ function fmt3(x) { if (x=="" || !is_num(x)) return "—"; return sprintf("%.3f",
 function fmt2(x) { if (x=="" || !is_num(x)) return "—"; return sprintf("%.2f", x+0) }
 function fmt1(x) { if (x=="" || !is_num(x)) return "—"; return sprintf("%.1f", x+0) }
 function get(f, name) { return f[col[name]] }
-function with_suffix(val, suffix) {
-  if (val == "—" || suffix == "") return val
-  return val " " suffix
-}
-
 BEGIN {
-  proxy_order[1]="haproxy"
-  proxy_order[2]="nginx"
-  proxy_order[3]="pavis"
-  proxy_order[4]="envoy"
+  proxy_order[1]="pavis"
   payload_order[1]="64B"
   payload_order[2]="4KiB"
 }
@@ -138,7 +130,7 @@ END {
 
   print "# Benchmark Report"
   print ""
-  print "> Intended for health checks, regression detection, and multi-proxy trend comparison."
+  print "> Intended for health checks and regression detection."
   print ""
   print "---"
   print ""
@@ -148,7 +140,7 @@ END {
   print "- **env**: `" cpu "` · `" kernel "`"
   print "- **mode**: `workstation / standalone`"
   print "- **payloads**: `64B`, `4KiB`"
-  print "- **proxies**: `haproxy@unknown` · `nginx@unknown` · `pavis@" run_id "` · `envoy@unknown`"
+  print "- **proxy**: `pavis@" run_id "`"
   print "- **cases**: `throughput` · `latency(short/extended)` · `concurrency` · `churn` · `reload`"
   print "- **docs**: docs/benchmark/METHODOLOGY.md · docs/benchmark/CASES_STANDALONE.md"
   print "- **data**: bench/output/standalone/summary.csv"
@@ -169,7 +161,7 @@ END {
     best_max_rps[payload]=""
     best_p99[payload]=""
     best_p99_iqr[payload]=""
-    for (pj=1; pj<=4; pj++) {
+    for (pj=1; pj<=1; pj++) {
       proxy=proxy_order[pj]
       key=proxy SUBSEP payload
       if (throughput_seen[key] && is_num(max_rps[key])) {
@@ -192,7 +184,7 @@ END {
     if (payload_blocks > 1) {
       print "| — | — | — | — | — | — |"
     }
-    for (pj=1; pj<=4; pj++) {
+    for (pj=1; pj<=1; pj++) {
       proxy=proxy_order[pj]
       key=proxy SUBSEP payload
 
@@ -203,15 +195,7 @@ END {
       p99 = l_seen ? fmt3(p99_ms[key]) : "—"
       p99iqr = l_seen ? fmt3(p99_iqr[key]) : "—"
 
-      if (maxr != "—" && best_max_rps[payload] != "" && max_rps[key]+0 < best_max_rps[payload]+0) {
-        maxr=with_suffix(maxr, "↓")
-      }
-      if (p99 != "—" && best_p99[payload] != "" && p99_ms[key]+0 > best_p99[payload]+0) {
-        p99=with_suffix(p99, "↑")
-      }
-      if (p99iqr != "—" && best_p99_iqr[payload] != "" && p99_iqr[key]+0 > best_p99_iqr[payload]+0) {
-        p99iqr=with_suffix(p99iqr, "↑")
-      }
+      # No marker decorations in tables.
 
       verdict = "PASS"
       if (!t_seen || !l_seen) {
@@ -246,7 +230,7 @@ END {
     best_mem[payload]=""
     best_rps_cpu[payload]=""
     best_rps_mib[payload]=""
-    for (pj=1; pj<=4; pj++) {
+    for (pj=1; pj<=1; pj++) {
       proxy=proxy_order[pj]
       key=proxy SUBSEP payload
       if (!latency_seen[key]) continue
@@ -278,7 +262,7 @@ END {
     if (payload_blocks > 1) {
       print "| — | — | — | — | — | — |"
     }
-    for (pj=1; pj<=4; pj++) {
+    for (pj=1; pj<=1; pj++) {
       proxy=proxy_order[pj]
       key=proxy SUBSEP payload
 
@@ -303,22 +287,7 @@ END {
           rps_mib="—"
         }
 
-        if (cpu_out != "—" && best_cpu[payload] != "" && cpu+0 > best_cpu[payload]+0) {
-          cpu_out=with_suffix(cpu_out, "↑")
-        }
-        if (mem_out != "—" && best_mem[payload] != "") {
-          if (mem+0 >= (best_mem[payload]+0)*1.5) {
-            mem_out=with_suffix(mem_out, "⚠︎")
-          } else if (mem+0 > best_mem[payload]+0) {
-            mem_out=with_suffix(mem_out, "↑")
-          }
-        }
-        if (rps_cpu != "—" && best_rps_cpu[payload] != "" && rps_cpu_val != "" && rps_cpu_val < best_rps_cpu[payload]+0) {
-          rps_cpu=with_suffix(rps_cpu, "↓")
-        }
-        if (rps_mib != "—" && best_rps_mib[payload] != "" && rps_mib_val != "" && rps_mib_val < best_rps_mib[payload]+0) {
-          rps_mib=with_suffix(rps_mib, "↓")
-        }
+        # No marker decorations in tables.
       } else {
         cpu_out="—"
         mem_out="—"
@@ -349,7 +318,7 @@ END {
     best_p99_t3[payload]=""
     best_p99_iqr_t3[payload]=""
     best_dropped[payload]=""
-    for (pj=1; pj<=4; pj++) {
+    for (pj=1; pj<=1; pj++) {
       proxy=proxy_order[pj]
       key=proxy SUBSEP payload
       if (!latency_seen[key]) continue
@@ -392,21 +361,7 @@ END {
         if (drop=="" || !is_num(drop)) drop="—"
         else drop=sprintf("%.0f", drop+0)
 
-        if (rpsm != "—" && best_rps_med[payload] != "" && rps_med[key]+0 < best_rps_med[payload]+0) {
-          rpsm=with_suffix(rpsm, "↓")
-        }
-        if (rpsi != "—" && best_rps_iqr[payload] != "" && rps_iqr[key]+0 > best_rps_iqr[payload]+0) {
-          rpsi=with_suffix(rpsi, "↑")
-        }
-        if (p99 != "—" && best_p99_t3[payload] != "" && p99_ms[key]+0 > best_p99_t3[payload]+0) {
-          p99=with_suffix(p99, "↑")
-        }
-        if (p99iq != "—" && best_p99_iqr_t3[payload] != "" && p99_iqr[key]+0 > best_p99_iqr_t3[payload]+0) {
-          p99iq=with_suffix(p99iq, "↑")
-        }
-        if (drop != "—" && best_dropped[payload] != "" && dropped[key]+0 > best_dropped[payload]+0) {
-          drop=with_suffix(drop, "↑")
-        }
+        # No marker decorations in tables.
       } else {
         rpsm="—"
         rpsi="—"

@@ -8,9 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  ENVOY_TAG: v1.32.2
-  NGINX_TAG: 1.26.2-alpine
-  HAPROXY_TAG: 2.9.6-alpine
   BENCH_VERBOSE: 0
   LOADGEN_WARN: 0
 
@@ -56,12 +53,6 @@ jobs:
           echo "=== Docker Containers ==="
           echo "--- pavis ---"
           docker logs bench-pavis 2>&1 || true
-          echo "--- envoy ---"
-          docker logs bench-envoy 2>&1 || true
-          echo "--- nginx ---"
-          docker logs bench-nginx 2>&1 || true
-          echo "--- haproxy ---"
-          docker logs bench-haproxy 2>&1 || true
           echo "=== Backend Logs ==="
           docker logs bench-upstream 2>&1 || true
 

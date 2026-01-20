@@ -1,6 +1,6 @@
 # Pavis Benchmarking Guide
 
-This document provides a comprehensive guide to Pavis benchmarking methodology, test cases, and fairness criteria.
+This document provides a comprehensive guide to Pavis benchmarking methodology and test cases.
 
 ---
 
@@ -9,17 +9,15 @@ This document provides a comprehensive guide to Pavis benchmarking methodology, 
 1. [Methodology](#1-methodology)
 2. [Standalone Dataplane Cases](#2-standalone-dataplane-cases)
 3. [System / Kubernetes Cases](#3-system--kubernetes-cases)
-4. [Fairness & Configuration Equivalence](#4-fairness--configuration-equivalence)
-
 ---
 
 ## 1. Methodology
 
 ### 1.1. Introduction
 
-Naive benchmarking of network proxies focuses almost exclusively on "max throughput" (Requests Per Second) under ideal conditions. While useful for marketing, this metric is insufficient for engineering robust service mesh infrastructure. A proxy that pushes 100k RPS but imposes 500ms tail latency during garbage collection, or consumes 4GB of RAM to handle a traffic spike, is operationally unfit for production.
+Naive benchmarking of network proxies focuses almost exclusively on "max throughput" (Requests Per Second) under ideal conditions. While useful for marketing, this metric is insufficient for engineering robust proxy infrastructure. A proxy that pushes 100k RPS but imposes 500ms tail latency during garbage collection, or consumes 4GB of RAM to handle a traffic spike, is operationally unfit for production.
 
-This document establishes a rigorous, multidimensional framework for evaluating **production-grade service mesh sidecars**. It distinguishes between *kernel development benchmarks* (micro-benchmarks of packet forwarding) and *productization benchmarks* (macro-benchmarks of full protocol stacks).
+This document establishes a rigorous, multidimensional framework for evaluating **production-grade Pavis sidecars**. It distinguishes between *kernel development benchmarks* (micro-benchmarks of packet forwarding) and *productization benchmarks* (macro-benchmarks of full protocol stacks).
 
 Our goal is not merely to measure speed, but to quantify predictability, efficiency, and safety. All future performance evaluations must adhere to the dimensions and constraints defined herein.
 
@@ -34,20 +32,20 @@ To ensure scientific rigor and clarity of purpose, all Pavis benchmarks are exec
 *   **Environment:** Minimal Docker or bare-metal environment.
 *   **Constraints:** Static configuration only; no control-plane components (Relay, Config Agent) are present.
 *   **Target Dimensions:** Capacity (#1), Tail Latency (#2), Stability (#3), Resource Efficiency (#4), Stress Behavior (#5), and Consistency (#7).
-*   **Comparability:** Primary mode for benchmarking Pavis against industry-standard proxies (Envoy, Nginx).
+*   **Scope:** Pavis-only in this repository.
 
 #### 1.2.2. System / Kubernetes Mode
 *   **Purpose:** Measure **control-plane assisted lifecycle behavior** and system-wide reliability.
 *   **Environment:** Kubernetes (kind) cluster.
 *   **Constraints:** Includes full system components (Relay, Agent); configuration is dynamic and pushed during tests.
 *   **Target Dimensions:** Operational Characteristics (#6), Recovery (#B), and Durability (#Gate).
-*   **Comparability:** Architecture-specific; measures the maturity of the Pavis ecosystem rather than micro-performance.
+*   **Scope:** Measures the maturity of the Pavis ecosystem rather than micro-performance.
 
 #### 1.2.3. Execution Profiles & Authority
 Benchmark execution is further constrained by environment profile.
 
 *   **github (CI-only):** Pavis-only regression signal; skips `latency_extended_1x`. Reports are generated from `summary.csv` and are **non-authoritative** due to shared runner variance.
-*   **workstation (authoritative):** Dedicated hardware required. CPU pinning is mandatory with a 4-core allocation (1 loadgen/wrk, 1 upstream, 2 proxy) and a 1GiB proxy memory limit. Standalone payload matrix runs `throughput_short_1x`, `latency_short_1x`, and `latency_extended_1x` at `64B` and `4KiB`.
+*   **workstation (authoritative):** Dedicated hardware required. CPU pinning is mandatory with a 4-core allocation (1 loadgen/wrk, 1 upstream, 2 proxy) and a 1GiB proxy memory limit. Standalone payload set runs `throughput_short_1x`, `latency_short_1x`, and `latency_extended_1x` at `64B` and `4KiB`.
 
 ---
 
@@ -77,12 +75,12 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 *   **Primary Metrics:**
     *   **Latency Standard Deviation:** Deviation from the mean.
     *   **Coefficient of Variation (CV):** Ratio of standard deviation to the mean.
-*   **Clarification:** Latency distributions in networked systems are non-normal. While mean-based statistics are provided for legacy baseline comparison, percentile-based dispersion (e.g., P99 Interquartile Range) is more representative of real-world variance and is preferred in implementation analysis.
+*   **Clarification:** Latency distributions in networked systems are non-normal. While mean-based statistics are provided for legacy baselines, percentile-based dispersion (e.g., P99 Interquartile Range) is more representative of real-world variance and is preferred in implementation analysis.
 *   **Typical Cases:** Steady-state load testing over medium duration (e.g., 10 minutes) analyzing time-series consistency.
 
 #### 1.3.4. Resource Efficiency
 *   **The Question:** What is the infrastructure cost per unit of work?
-*   **Production Relevance:** Directly dictates the Total Cost of Ownership (TCO) of the service mesh.
+*   **Production Relevance:** Directly dictates the Total Cost of Ownership (TCO) of the runtime.
 *   **Primary Metrics:**
     *   **CPU/RPS Ratio:** Millicores consumed per 1,000 requests.
     *   **Memory Footprint:** RSS memory usage at specific load tiers.
@@ -104,13 +102,13 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
     *   **Convergence Time:** Time from config push to traffic shifting.
 *   **Typical Cases:** Hot-restart tests, certificate rotation simulation, and dynamic upstream reconfiguration during load.
 
-#### 1.3.7. Cross-Scenario Consistency
+#### 1.3.7. Scenario Consistency
 *   **The Question:** Does the system perform reliably across different traffic patterns?
 *   **Production Relevance:** Ensures the proxy is general-purpose and not over-optimized for a single synthetic use case (e.g., 64-byte payloads).
 *   **Primary Metrics:**
     *   **Performance Delta:** Variance in throughput/latency between small (1KB) and large (1MB) payloads.
     *   **Protocol Overhead:** degradation moving from HTTP/1.1 to HTTP/2 or gRPC.
-*   **Typical Cases:** Matrix testing across payload sizes, connection keep-alive settings, and protocol versions.
+*   **Typical Cases:** Multi-variant testing across payload sizes, connection keep-alive settings, and protocol versions.
 
 ---
 
@@ -123,7 +121,7 @@ Derived dimensions are not independent tests; they are specific analytical cuts 
 
 *   **Definition:** `(Performance_Baseline - Performance_Feature) / Performance_Baseline`
 *   **Mandatory Analysis Areas:**
-    *   **TLS Tax:** The cryptographic overhead of HTTPS versus plain HTTP. This comparison may include standard HTTPS or be extended to mutual TLS (mTLS) to evaluate the additional handshake and certificate validation costs.
+    *   **TLS Tax:** The cryptographic overhead of HTTPS versus plain HTTP. This contrast may include standard HTTPS or be extended to mutual TLS (mTLS) to evaluate the additional handshake and certificate validation costs.
     *   **Observability Tax:** The CPU/Latency cost of generating high-cardinality metrics and distributed tracing spans.
 *   **Usage:** Feature Tax should be applied to *Performance Ceiling* and *Resource Efficiency* analysis to set realistic production expectations.
 
@@ -246,7 +244,7 @@ Standalone mode supports two profiles:
 | `churn_short_1x` | **Primary** | `errors`, `achieved_rps` | Stresses accept queue and handshake logic (Connection Storm). |
 | `concurrency_short_1x` | Secondary | `errors` | Checks for file descriptor exhaustion or OOM kills under connection pressure. |
 
-#### 2.4.6. Cross-Scenario Consistency
+#### 2.4.6. Scenario Consistency
 
 **The Question:** Does the system perform reliably across different traffic patterns?
 
@@ -254,9 +252,9 @@ Standalone mode supports two profiles:
 | :--- | :--- | :--- | :--- |
 | `throughput_short_1x` | Secondary | `achieved_rps` | Compared against `latency_short_1x` to quantify "Usable Capacity" vs "Max Capacity". |
 
-#### 2.4.7. Payload Matrix (Workstation)
+#### 2.4.7. Payload Set (Workstation)
 
-Workstation runs a payload matrix for `throughput_short_1x`, `latency_short_1x`, and `latency_extended_1x` at `64B` and `4KiB`.
+Workstation runs a payload set for `throughput_short_1x`, `latency_short_1x`, and `latency_extended_1x` at `64B` and `4KiB`.
 
 ### 2.5. Load Generation & Tooling
 
@@ -319,7 +317,7 @@ System benchmarks are executed in a controlled Kubernetes environment using **ki
 
 Control-plane participation is an intentional and required part of this evaluation mode.
 
-CI executions (when run) are **non-authoritative** and must not be used for cross-proxy comparisons or public performance claims.
+CI executions (when run) are **non-authoritative** and must not be used for public performance claims.
 
 ### 3.3. Mode Boundary Rules
 
@@ -369,101 +367,9 @@ CI executions (when run) are **non-authoritative** and must not be used for cros
 ### 3.6. Explicit Non-Goals
 
 System Mode does **NOT** aim to:
-*   Rank proxies by performance against competitors.
+*   Rank performance.
 *   Measure or report raw throughput maximums.
 *   Evaluate micro-architectural dataplane efficiency.
 
 ---
 
-## 4. Fairness & Configuration Equivalence
-
-### 4.1. Purpose
-
-This section ensures all proxies in the benchmark (Pavis, Envoy, Nginx, HAProxy) are configured with equivalent semantics to enable fair performance comparison.
-
-We strictly adhere to a **"Fairness Standard"** where proxies are unthrottled and given equal access to available resources (CPU/RAM/Connections) within the container limits.
-
----
-
-### 4.2. Configuration Equivalence Table
-
-The following table maps the semantic behaviors across all tested proxies.
-
-| Semantic Behavior                  | Pavis                                      | Envoy                                      | Nginx                                      | HAProxy                                    |
-|------------------------------------|--------------------------------------------|--------------------------------------------|--------------------------------------------|--------------------------------------------|
-| **Workers/Threads**                | Runtime-detected (2 expected)              | `--concurrency 2`                          | `worker_processes 2`                       | `nbthread 2`                               |
-| **Worker CPU Affinity**            | Runtime (OS scheduler)                     | Runtime (OS scheduler)                     | Runtime (OS scheduler)                     | `cpu-map 1 0`, `cpu-map 2 1`               |
-| **Downstream Keepalive Enabled**   | ✅ Enabled (default)                       | ✅ Enabled (default)                       | ✅ `keepalive_timeout 65`                  | ✅ Enabled (HTTP mode default)             |
-| **Downstream Keepalive Timeout**   | 30s (assumed default)                      | 3600s (route timeout, can be overridden)   | `keepalive_timeout 65`                     | `timeout client 30s`                       |
-| **Downstream Keepalive Requests**  | Unlimited (assumed)                        | Unlimited (default)                        | `keepalive_requests 10000`                 | Unlimited (default)                        |
-| **Upstream Keepalive Enabled**     | ✅ Connection pool (default)               | ✅ Connection pool (cluster)               | ✅ `keepalive 1000` (upstream)             | ✅ Enabled (default)                       |
-| **Upstream Connection Pool Size**  | Runtime-managed                            | Cluster config (circuit breaker)           | `keepalive 1000` (persistent pool)         | No explicit limit                          |
-| **HTTP Version (Downstream)**      | HTTP/1.1                                   | HTTP/1.1                                   | HTTP/1.1 (default)                         | HTTP/1.1 (HTTP mode)                       |
-| **HTTP Version (Upstream)**        | HTTP/1.1                                   | HTTP/1.1                                   | `proxy_http_version 1.1`                   | HTTP/1.1 (HTTP mode)                       |
-| **Connection Header (Upstream)**   | `Connection: keep-alive` (implicit)        | Managed by cluster                         | `proxy_set_header Connection ""`           | Managed by backend config                  |
-| **Max Concurrent Connections**     | No explicit limit (OS-limited)             | No explicit limit                          | `worker_connections 65535` (per worker)    | `maxconn 20000` (global)                   |
-| **Idle Timeout (Upstream)**        | 30s (assumed)                              | Connection pool idle timeout               | Persistent (with keepalive)                | `timeout server 30s`                       |
-| **Connect Timeout (Upstream)**     | Default (5s assumed)                       | Default                                    | Default                                    | `timeout connect 5s`                       |
-| **Logging**                        | ⛔ Disabled for benchmark                  | ⛔ `/dev/null`                             | ⛔ `access_log off; error_log /dev/null`   | ⛔ `no log`                                |
-| **TCP Optimizations**              | OS defaults                                | OS defaults                                | `tcp_nopush on; tcp_nodelay on`            | OS defaults                                |
-| **Event Model**                    | Async (Rust tokio)                         | Event-driven (C++ libevent)                | `use epoll; multi_accept on`               | Event-driven (C epoll)                     |
-| **Worker Connections Limit**       | OS ulimit (`ulimit -n`)                    | OS ulimit                                  | `worker_connections 65535`                 | `maxconn 20000`                            |
-
----
-
-### 4.3. Detailed Configuration Analysis
-
-#### Worker/Thread Count
-**Equivalence**: All proxies are configured with **2 workers/threads** to match the baseline resource profile (2 CPUs).
-- **Pavis**: Automatically detects available CPUs (container limit).
-- **Envoy**: `--concurrency 2` flag.
-- **Nginx**: `worker_processes 2`.
-- **HAProxy**: `nbthread 2`.
-
-#### Keepalive Configuration
-**Downstream (Client → Proxy)**:
-- All proxies support persistent connections.
-- Timeouts vary slightly (30s - 3600s) but are sufficient for the 30s benchmark duration.
-
-**Upstream (Proxy → Backend)**:
-- **Pavis**: Runtime-managed connection pool.
-- **Envoy**: Cluster circuit breaker config.
-- **Nginx**: `upstream { keepalive 1000; }` (Increased from 100 to prevent bottlenecks).
-- **HAProxy**: Unlimited server connections.
-
-#### Logging Overhead
-**Requirement**: All proxies must disable access logging to eliminate Disk I/O overhead.
-- **Pavis**: Logging disabled by default in benchmark mode.
-- **Envoy**: `/dev/null`.
-- **Nginx**: `access_log off`.
-- **HAProxy**: `no log`.
-
-#### Nginx-Specific Optimizations
-To ensure Nginx is not unfairly penalized:
-- **Connections**: `worker_connections` increased to `65535`.
-- **TCP**: `tcp_nopush on` and `tcp_nodelay on` are enabled (standard best practice).
-- **Event Model**: `use epoll` and `multi_accept on` are enabled.
-
----
-
-### 4.4. Validation Checklist
-
-Before running benchmarks, verify the following:
-
-- [ ] All proxies use 2 workers/threads.
-- [ ] Downstream & Upstream keepalive is enabled.
-- [ ] HTTP/1.1 is used for all connections.
-- [ ] Logging is disabled.
-- [ ] CPU pinning is active (`cpuset_cpus` in docker-compose).
-- [ ] **Host `ulimit -n` is ≥ 65535** (Crucial for high concurrency tests).
-- [ ] CPU governor is set to `performance`.
-
----
-
-### 4.5. Reporting Fairness Violations
-
-If you identify a configuration mismatch that affects fairness (e.g., one proxy has an unfair advantage or handicap):
-
-1. **Document the discrepancy**: Which setting is different?
-2. **Assess impact**: Does it materially affect RPS or Latency?
-3. **Open an Issue**: https://github.com/fabian4/pavis/issues

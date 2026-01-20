@@ -11,7 +11,7 @@ Pavis adopts the **Frozen Data Plane** model to solve the problem of runtime non
 **Decision:** Pavis restricts listeners to a single certificate.
 
 **Rationale:**
-- **Sidecar Identity**: In a service mesh, a sidecar represents a single workload identity. Multi-tenant termination is an edge gateway concern, not a sidecar concern.
+- **Sidecar Identity**: In a distributed deployment, a sidecar represents a single workload identity. Multi-tenant termination is an edge gateway concern, not a sidecar concern.
 - **Determinism**: SNI parsing introduces variable latency and branching logic during the TLS handshake. Eliminating SNI guarantees constant-time handshake logic (O(1)).
 
 ---

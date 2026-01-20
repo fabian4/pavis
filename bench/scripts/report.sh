@@ -82,11 +82,6 @@ if [[ "$profile" == "github" ]]; then
   kernel="${BENCH_HOST_KERNEL:-}"
   cpu_model="${BENCH_HOST_CPU_MODEL:-}"
 
-  if [[ "$bench_proxy" != "pavis" ]]; then
-    echo "Report generation skipped for BENCH_PROXY=$bench_proxy under BENCH_PROFILE=github (only pavis supported)."
-    exit 0
-  fi
-
   awk -v standalone_csv="$STANDALONE_CSV" \
     -v system_csv="$SYSTEM_CSV" \
     -v profile="$profile" \
@@ -204,7 +199,8 @@ if [[ "$profile" == "github" ]]; then
         data_sys[case_name,"p99_delta_ms"]=get(f,"p99_delta_ms")
         data_sys[case_name,"convergence_time_ms"]=get(f,"convergence_time_ms")
         data_sys[case_name,"rollback_ttbr_ms"]=get(f,"rollback_ttbr_ms")
-        data_sys[case_name,"latency_recovery_pct"]=get(f,"latency_recovery_pct")
+        data_sys[case_name,"baseline_restored"]=get(f,"baseline_restored")
+        data_sys[case_name,"latency_regression_pct"]=get(f,"latency_regression_pct")
         data_sys[case_name,"rss_growth_mb"]=get(f,"rss_growth_mb")
         data_sys[case_name,"errors"]=get(f,"errors")
         data_sys[case_name,"config_versions"]=get(f,"config_versions")
@@ -253,38 +249,24 @@ if [[ "$profile" == "github" ]]; then
     if (("rollback_performance" SUBSEP "case") in data_sys) {
       val = render(data_sys["rollback_performance","rollback_ttbr_ms"])
       if (is_num(val)) {
-        res = (val + 0 > 0) ? "FAIL" : "PASS"
+        res = (val + 0 > 10000) ? "FAIL" : "PASS"
         overall = worst_result(overall, res)
-        gate_row("system", "rollback_performance", "rollback_ttbr_ms", val, "= 0", result_label(res))
+        gate_row("system", "rollback_performance", "rollback_ttbr_ms", val, "≤ 10000", result_label(res))
       }
     }
     if (("stress_recovery" SUBSEP "case") in data_sys) {
-      val = render(data_sys["stress_recovery","latency_recovery_pct"])
+      val = render(data_sys["stress_recovery","latency_regression_pct"])
       if (is_num(val)) {
-        res = (val + 0 < 20) ? "FAIL" : "PASS"
+        res = (val + 0 > 20) ? "FAIL" : "PASS"
         overall = worst_result(overall, res)
-        gate_row("system", "stress_recovery", "latency_recovery_pct", val, "≥ 20", result_label(res))
+        gate_row("system", "stress_recovery", "latency_regression_pct", val, "≤ 20", result_label(res))
       }
     }
 
-    print "# 🧪 CI Benchmark Summary — Health & Regression Signal"
+    print "# 🧪 CI Benchmark Summary"
     print ""
     print "CI-grade benchmark output.  "
     print "Intended for **health checks and regression detection only**.  "
-    print "NOT suitable for cross-proxy performance comparison or publication."
-    print ""
-    print "---"
-    print ""
-    print "## Run Context"
-    print ""
-    git_short=substr(git_sha, 1, 10)
-    if (payload != "") {
-      print "profile=" profile " · payload=" payload " · tls=" tls " · metrics=" metrics
-    } else {
-      print "profile=" profile
-    }
-    print "git=" git_short " · host=" host_cores "c(cpuset=" host_cpuset ") · mem=" mem_gib(host_mem_kib)
-    print "kernel=" kernel " · cpu=" cpu_trim(cpu_model)
     print ""
     print "---"
     print ""
@@ -383,13 +365,13 @@ if [[ "$profile" == "github" ]]; then
     if (("stress_recovery" SUBSEP "case") in data_sys) {
       print "### Stress → Recovery"
       print ""
-      print "| baseline_rps | stress_rps | stress_p99_ms | recovery_p99_ms | latency_recovery_pct | rss_growth_mb | errors |"
+      print "| baseline_rps | stress_rps | stress_p99_ms | recovery_p99_ms | latency_regression_pct | rss_growth_mb | errors |"
       print "|--------------|------------|---------------|------------------|----------------------|---------------|--------|"
       print "| " render(data_sys["stress_recovery","baseline_rps"]) " | " \
             render(data_sys["stress_recovery","stress_rps"]) " | " \
             render(data_sys["stress_recovery","stress_p99_ms"]) " | " \
             render(data_sys["stress_recovery","recovery_p99_ms"]) " | " \
-            render(data_sys["stress_recovery","latency_recovery_pct"]) " | " \
+            render(data_sys["stress_recovery","latency_regression_pct"]) " | " \
             render(data_sys["stress_recovery","rss_growth_mb"]) " | " \
             (render(data_sys["stress_recovery","errors"])=="—" ? "0" : render(data_sys["stress_recovery","errors"])) " |"
       print ""
@@ -402,7 +384,6 @@ if [[ "$profile" == "github" ]]; then
     print "- **Standalone**: dataplane health & regression signals; CI noise expected."
     print "- **System**: lifecycle safety & control-plane invariants."
     print "- Only the **Overall Gate Summary** carries judgement."
-    print "- Regression decisions are **trend-based**, not single-run absolute values."
     print ""
   }
   ' > "$REPORT_OUT"
