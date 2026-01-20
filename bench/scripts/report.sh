@@ -2,6 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_ENV="${CONFIG_ENV:-$SCRIPT_DIR/../config/config.env}"
+# shellcheck source=bench/config/config.env
+if [[ -f "$CONFIG_ENV" ]]; then
+  source "$CONFIG_ENV"
+fi
 
 STANDALONE_CSV="${STANDALONE_CSV:-bench/output/standalone/summary.csv}"
 SYSTEM_CSV="${SYSTEM_CSV:-bench/output/system/summary.csv}"
@@ -94,7 +99,8 @@ if [[ "$profile" == "github" ]]; then
     -v host_cpuset="$host_cpuset" \
     -v host_mem_kib="$host_mem_kib" \
     -v kernel="$kernel" \
-    -v cpu_model="$cpu_model" '
+    -v cpu_model="$cpu_model" \
+    -v rollback_ttbr_threshold_ms="${ROLLBACK_TTBR_THRESHOLD_MS:-1000}" '
   function csv_split(line, out,    i,c,inq,field,n,len) {
     n=0; field=""; inq=0; len=length(line)
     for (i=1; i<=len; i++) {
@@ -249,10 +255,12 @@ if [[ "$profile" == "github" ]]; then
     if (("rollback_performance" SUBSEP "case") in data_sys) {
       val = render(data_sys["rollback_performance","rollback_ttbr_ms"])
       if (is_num(val)) {
-        res = (val + 0 > 10000) ? "FAIL" : "PASS"
-        overall = worst_result(overall, res)
-        gate_row("system", "rollback_performance", "rollback_ttbr_ms", val, "≤ 10000", result_label(res))
+        res = (val + 0 > rollback_ttbr_threshold_ms + 0) ? "FAIL" : "PASS"
+      } else {
+        res = "FAIL"
       }
+      overall = worst_result(overall, res)
+      gate_row("system", "rollback_performance", "rollback_ttbr_ms", val, "≤ " rollback_ttbr_threshold_ms, result_label(res))
     }
     if (("stress_recovery" SUBSEP "case") in data_sys) {
       val = render(data_sys["stress_recovery","latency_regression_pct"])
