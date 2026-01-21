@@ -76,6 +76,31 @@ pub struct Pool {
     pub idle: IdleTimeout,
     pub connect: ConnectTimeout,
     pub max: ConnectionLimit,
+    pub queue: PoolQueue,
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[archive(check_bytes)]
+pub struct PoolQueue {
+    /// Maximum number of queued requests waiting for an upstream connection.
+    /// A value of 0 disables queuing.
+    pub capacity: u32,
+    /// Maximum time (milliseconds) a request may wait in the queue before failing.
+    pub timeout_ms: u32,
+}
+
+impl Default for Pool {
+    fn default() -> Self {
+        Self {
+            idle: IdleTimeout::Disabled,
+            connect: ConnectTimeout::Disabled,
+            max: ConnectionLimit(
+                NonZeroU32::new(DEFAULT_POOL_MAX).expect("DEFAULT_POOL_MAX is non-zero"),
+            ),
+            queue: PoolQueue::default(),
+        }
+    }
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
@@ -118,14 +143,15 @@ pub enum ActiveHealthCheck {
     },
 }
 
+/// Maximum concurrent connections per upstream peer.
+/// Per P0 plan: must always be >= 1 (no unlimited variant).
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[archive(check_bytes)]
-#[non_exhaustive]
-pub enum ConnectionLimit {
-    Unlimited,
-    Limited(NonZeroU32),
-}
+pub struct ConnectionLimit(pub NonZeroU32);
+
+/// Default pool max connections (per P0 plan).
+pub const DEFAULT_POOL_MAX: u32 = 128;
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

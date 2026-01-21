@@ -88,8 +88,14 @@ pub struct ConnectionPoolConfig {
     /// Connection timeout. Default: 5s
     #[serde(default, with = "humantime_serde")]
     pub connect: Option<Duration>,
-    /// Connection limit. Default: 0 (unlimited)
-    pub max: Option<u32>,
+    /// Connection limit. Default: codec materializes a finite default.
+    pub max: Option<i64>,
+    /// Maximum number of requests allowed to wait for an upstream connection. Default: 0 (no queue).
+    #[serde(default)]
+    pub queue_capacity: Option<i64>,
+    /// Maximum time (in milliseconds) a queued request may wait before being failed. Default: 0 (immediate failure).
+    #[serde(default)]
+    pub queue_timeout_ms: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

@@ -1,21 +1,22 @@
 use anyhow::Result;
-use pavis_core::RouteAction as CoreRouteAction;
+use compact_str::CompactString;
+use pavis_core::{ErrorCode, FieldPathBuilder, PavisError, RouteAction as CoreRouteAction};
 use std::num::{NonZeroU16, NonZeroU32};
 
 use crate::config::types::{
-    HeaderOperations, Matcher, PrincipalConfig, RetryPolicy, RewritePolicy, Route,
-    RouteAction as CodecRouteAction, VirtualHost, WeightedDestination,
+    HeaderOperations, HeaderPredicate, Matcher, PathMatcher, PrincipalConfig, RetryPolicy,
+    RewritePolicy, Route, RouteAction as CodecRouteAction, VirtualHost, WeightedDestination,
 };
 
 pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::VirtualHost>> {
     let mut runtime_routes = Vec::new();
 
-    for v in routes {
+    for (vh_index, v) in routes.into_iter().enumerate() {
         let mut paths = Vec::new();
-        for p in v.paths {
+        for (path_index, p) in v.paths.into_iter().enumerate() {
             let request_headers = to_runtime_headers(p.request_headers);
             let response_headers = to_runtime_headers(p.response_headers);
-            let matcher = p.matcher.unwrap_or_else(default_matcher);
+            let matcher_cfg = p.matcher.unwrap_or_else(default_matcher);
 
             let action = match p.action {
                 CodecRouteAction::Forward { destinations } => {
@@ -87,7 +88,7 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 Some(r) => {
                     let path = match r.path {
                         Some(to) => {
-                            let from = matcher_path(&matcher);
+                            let from = matcher_path(&matcher_cfg);
                             pavis_core::RewritePath::Prefix {
                                 from: pavis_core::Path(from),
                                 to: pavis_core::Path(to),
@@ -105,16 +106,46 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 }
             };
 
-            let matcher = match matcher {
-                Matcher::Prefix { path } => pavis_core::PathMatch::Prefix {
-                    path: pavis_core::Path(path),
-                },
-                Matcher::Exact { path } => pavis_core::PathMatch::Exact {
-                    path: pavis_core::Path(path),
-                },
-                Matcher::Regex { path } => pavis_core::PathMatch::Regex {
-                    path: pavis_core::Path(path),
-                },
+            let matcher = match matcher_cfg {
+                Matcher {
+                    path: PathMatcher::Prefix { path },
+                    method,
+                    headers,
+                } => to_runtime_matcher(
+                    pavis_core::PathMatch::Prefix {
+                        path: pavis_core::Path(path),
+                    },
+                    method,
+                    headers,
+                    vh_index,
+                    path_index,
+                )?,
+                Matcher {
+                    path: PathMatcher::Exact { path },
+                    method,
+                    headers,
+                } => to_runtime_matcher(
+                    pavis_core::PathMatch::Exact {
+                        path: pavis_core::Path(path),
+                    },
+                    method,
+                    headers,
+                    vh_index,
+                    path_index,
+                )?,
+                Matcher {
+                    path: PathMatcher::Regex { path },
+                    method,
+                    headers,
+                } => to_runtime_matcher(
+                    pavis_core::PathMatch::Regex {
+                        path: pavis_core::Path(path),
+                    },
+                    method,
+                    headers,
+                    vh_index,
+                    path_index,
+                )?,
             };
 
             let principal = match p.principal {
@@ -239,10 +270,22 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Result<Vec<V
                 }),
             };
 
-            let matcher = match p.matcher {
-                pavis_core::PathMatch::Prefix { path } => Matcher::Prefix { path: path.0 },
-                pavis_core::PathMatch::Exact { path } => Matcher::Exact { path: path.0 },
-                pavis_core::PathMatch::Regex { path } => Matcher::Regex { path: path.0 },
+            let matcher = match p.matcher.path {
+                pavis_core::PathMatch::Prefix { path } => Matcher {
+                    path: PathMatcher::Prefix { path: path.0 },
+                    method: from_runtime_method(&p.matcher.method),
+                    headers: from_runtime_headers_predicates(&p.matcher.headers),
+                },
+                pavis_core::PathMatch::Exact { path } => Matcher {
+                    path: PathMatcher::Exact { path: path.0 },
+                    method: from_runtime_method(&p.matcher.method),
+                    headers: from_runtime_headers_predicates(&p.matcher.headers),
+                },
+                pavis_core::PathMatch::Regex { path } => Matcher {
+                    path: PathMatcher::Regex { path: path.0 },
+                    method: from_runtime_method(&p.matcher.method),
+                    headers: from_runtime_headers_predicates(&p.matcher.headers),
+                },
                 #[allow(unreachable_patterns)]
                 _ => {
                     return Err(anyhow::anyhow!("unknown path match variant"));
@@ -283,16 +326,285 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Result<Vec<V
 }
 
 fn default_matcher() -> Matcher {
-    Matcher::Prefix {
-        path: "/".to_string(),
+    Matcher {
+        path: PathMatcher::Prefix {
+            path: "/".to_string(),
+        },
+        method: None,
+        headers: None,
     }
 }
 
 fn matcher_path(matcher: &Matcher) -> String {
-    match matcher {
-        Matcher::Prefix { path } => path.clone(),
-        Matcher::Exact { path } => path.clone(),
-        Matcher::Regex { path } => path.clone(),
+    match &matcher.path {
+        PathMatcher::Prefix { path } => path.clone(),
+        PathMatcher::Exact { path } => path.clone(),
+        PathMatcher::Regex { path } => path.clone(),
+    }
+}
+
+/// Convert DTO matcher to core RouteMatcher with default materialization.
+fn to_runtime_matcher(
+    path: pavis_core::PathMatch,
+    method: Option<String>,
+    headers: Option<Vec<HeaderPredicate>>,
+    vhost_index: usize,
+    path_index: usize,
+) -> Result<pavis_core::RouteMatcher> {
+    let method_field_path = route_method_field_path(vhost_index, path_index);
+
+    // Materialize method predicate (default: Any)
+    let method = match method {
+        None => pavis_core::MethodPredicate::Any,
+        Some(m) => {
+            let http_method = parse_http_method(&m, method_field_path.clone())?;
+            pavis_core::MethodPredicate::Specific(http_method)
+        }
+    };
+
+    // Materialize header predicates (default: None)
+    let headers = match headers {
+        None => pavis_core::HeaderPredicates::None,
+        Some(preds) if preds.is_empty() => pavis_core::HeaderPredicates::None,
+        Some(preds) => {
+            let core_preds = preds
+                .into_iter()
+                .enumerate()
+                .map(|(header_index, predicate)| {
+                    to_runtime_header_predicate(predicate, vhost_index, path_index, header_index)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            pavis_core::HeaderPredicates::Some(core_preds)
+        }
+    };
+
+    Ok(pavis_core::RouteMatcher {
+        path,
+        method,
+        headers,
+    })
+}
+
+/// Parse HTTP method string (case-insensitive).
+fn parse_http_method(method: &str, field_path: String) -> Result<pavis_core::HttpMethod> {
+    match method.to_uppercase().as_str() {
+        "GET" => Ok(pavis_core::HttpMethod::GET),
+        "POST" => Ok(pavis_core::HttpMethod::POST),
+        "PUT" => Ok(pavis_core::HttpMethod::PUT),
+        "DELETE" => Ok(pavis_core::HttpMethod::DELETE),
+        "PATCH" => Ok(pavis_core::HttpMethod::PATCH),
+        "HEAD" => Ok(pavis_core::HttpMethod::HEAD),
+        "OPTIONS" => Ok(pavis_core::HttpMethod::OPTIONS),
+        "CONNECT" => Ok(pavis_core::HttpMethod::CONNECT),
+        "TRACE" => Ok(pavis_core::HttpMethod::TRACE),
+        _ => Err(invalid_config_error(
+            format!(
+                "invalid HTTP method '{}' (supported: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE)",
+                method
+            ),
+            Some(field_path),
+            Some("valid_http_method"),
+        )),
+    }
+}
+
+fn route_match_field_path(vhost_index: usize, path_index: usize) -> FieldPathBuilder {
+    FieldPathBuilder::new()
+        .root("routes")
+        .index(vhost_index)
+        .field("paths")
+        .index(path_index)
+        .field("match")
+}
+
+fn route_method_field_path(vhost_index: usize, path_index: usize) -> String {
+    route_match_field_path(vhost_index, path_index)
+        .field("method")
+        .finish()
+}
+
+fn route_headers_field_path(vhost_index: usize, path_index: usize) -> FieldPathBuilder {
+    route_match_field_path(vhost_index, path_index).field("headers")
+}
+
+fn header_field_path(
+    vhost_index: usize,
+    path_index: usize,
+    header_name: Option<&str>,
+    header_index: usize,
+) -> String {
+    let builder = route_headers_field_path(vhost_index, path_index);
+    match header_name {
+        Some(name) if !name.is_empty() => builder.map_key(name).finish(),
+        _ => builder.index(header_index).finish(),
+    }
+}
+
+fn invalid_config_error(
+    message: impl Into<String>,
+    field_path: Option<String>,
+    constraint: Option<&str>,
+) -> anyhow::Error {
+    let err = PavisError::new(ErrorCode::InvalidConfig, message);
+    let err = err.with_context(|ctx| {
+        let mut ctx = ctx;
+        if let Some(path) = field_path {
+            ctx = ctx.with_field_path(path);
+        }
+        if let Some(code) = constraint {
+            ctx = ctx.with_constraint(code.to_string());
+        }
+        ctx
+    });
+    anyhow::Error::new(err)
+}
+
+/// Convert DTO header predicate to core type.
+fn to_runtime_header_predicate(
+    pred: HeaderPredicate,
+    vhost_index: usize,
+    path_index: usize,
+    header_index: usize,
+) -> Result<pavis_core::HeaderPredicate> {
+    let canonical_name = pred.name.to_ascii_lowercase();
+    let header_path =
+        header_field_path(vhost_index, path_index, Some(&canonical_name), header_index);
+
+    if pred.name.is_empty() {
+        return Err(invalid_config_error(
+            "header predicate name cannot be empty",
+            Some(header_field_path(
+                vhost_index,
+                path_index,
+                None,
+                header_index,
+            )),
+            Some("header_name_non_empty"),
+        ));
+    }
+
+    // Validate header name (RFC 7230 token rules - basic check)
+    if !pred
+        .name
+        .chars()
+        .all(|c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(invalid_config_error(
+            format!(
+                "invalid header name '{}' (must contain only alphanumeric, -, or _)",
+                pred.name
+            ),
+            Some(header_path.clone()),
+            Some("header_name_invalid"),
+        ));
+    }
+
+    let matcher = if pred.absent {
+        // Absent takes precedence
+        if pred.value.is_some() || pred.regex {
+            return Err(invalid_config_error(
+                format!(
+                    "header predicate '{}': absent=true is incompatible with value or regex",
+                    pred.name
+                ),
+                Some(header_path.clone()),
+                Some("header_absent_incompatible"),
+            ));
+        }
+        pavis_core::HeaderMatch::Absent
+    } else {
+        match (&pred.value, pred.regex) {
+            (None, false) => pavis_core::HeaderMatch::Present,
+            (Some(val), false) => pavis_core::HeaderMatch::Exact(CompactString::new(val)),
+            (Some(pattern), true) => {
+                // Validate regex pattern syntax at codec time
+                regex::Regex::new(pattern).map_err(|e| {
+                    invalid_config_error(
+                        format!("invalid regex pattern for header '{}': {}", pred.name, e),
+                        Some(header_path.clone()),
+                        Some("regex_invalid_syntax"),
+                    )
+                })?;
+                pavis_core::HeaderMatch::Regex(CompactString::new(pattern))
+            }
+            (None, true) => {
+                return Err(invalid_config_error(
+                    format!(
+                        "header predicate '{}': regex=true requires a value",
+                        pred.name
+                    ),
+                    Some(header_path.clone()),
+                    Some("regex_requires_value"),
+                ));
+            }
+        }
+    };
+
+    Ok(pavis_core::HeaderPredicate {
+        name: CompactString::new(&canonical_name),
+        matcher,
+    })
+}
+
+/// Convert core method predicate to DTO (None if Any).
+fn from_runtime_method(method: &pavis_core::MethodPredicate) -> Option<String> {
+    match method {
+        pavis_core::MethodPredicate::Any => None,
+        pavis_core::MethodPredicate::Specific(m) => Some(m.as_str().to_string()),
+        #[allow(unreachable_patterns)]
+        _ => None,
+    }
+}
+
+/// Convert core header predicates to DTO (None if no predicates).
+fn from_runtime_headers_predicates(
+    headers: &pavis_core::HeaderPredicates,
+) -> Option<Vec<HeaderPredicate>> {
+    match headers {
+        pavis_core::HeaderPredicates::None => None,
+        pavis_core::HeaderPredicates::Some(preds) => {
+            let dto_preds = preds.iter().map(from_runtime_header_predicate).collect();
+            Some(dto_preds)
+        }
+        #[allow(unreachable_patterns)]
+        _ => None,
+    }
+}
+
+/// Convert core header predicate to DTO.
+fn from_runtime_header_predicate(pred: &pavis_core::HeaderPredicate) -> HeaderPredicate {
+    match &pred.matcher {
+        pavis_core::HeaderMatch::Present => HeaderPredicate {
+            name: pred.name.to_string(),
+            value: None,
+            regex: false,
+            absent: false,
+        },
+        pavis_core::HeaderMatch::Exact(val) => HeaderPredicate {
+            name: pred.name.to_string(),
+            value: Some(val.to_string()),
+            regex: false,
+            absent: false,
+        },
+        pavis_core::HeaderMatch::Regex(pattern) => HeaderPredicate {
+            name: pred.name.to_string(),
+            value: Some(pattern.to_string()),
+            regex: true,
+            absent: false,
+        },
+        pavis_core::HeaderMatch::Absent => HeaderPredicate {
+            name: pred.name.to_string(),
+            value: None,
+            regex: false,
+            absent: true,
+        },
+        #[allow(unreachable_patterns)]
+        _ => HeaderPredicate {
+            name: pred.name.to_string(),
+            value: None,
+            regex: false,
+            absent: false,
+        },
     }
 }
 
@@ -393,7 +705,7 @@ pub(crate) fn retry_flags_to_values(flags: pavis_core::RetryFlags) -> Vec<serde_
 mod tests {
     use super::*;
     use crate::config::types::{
-        Matcher, RetryPolicy, Route, RouteAction as CodecRouteAction, VirtualHost,
+        Matcher, PathMatcher, RetryPolicy, Route, RouteAction as CodecRouteAction, VirtualHost,
         WeightedDestination,
     };
     use std::time::Duration;
@@ -403,8 +715,12 @@ mod tests {
         let vhost = VirtualHost {
             host: "*".to_string(),
             paths: vec![Route {
-                matcher: Some(Matcher::Prefix {
-                    path: "/".to_string(),
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    headers: None,
                 }),
                 timeout: None,
                 retry: None,
@@ -427,8 +743,12 @@ mod tests {
         let vhost = VirtualHost {
             host: "*".to_string(),
             paths: vec![Route {
-                matcher: Some(Matcher::Prefix {
-                    path: "/".to_string(),
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    headers: None,
                 }),
                 timeout: None,
                 retry: None,
@@ -496,8 +816,12 @@ mod tests {
         let vhost = VirtualHost {
             host: "*".to_string(),
             paths: vec![Route {
-                matcher: Some(Matcher::Prefix {
-                    path: "/".to_string(),
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    headers: None,
                 }),
                 timeout: Some(Duration::from_millis(u64::MAX)), // Exceeds u32
                 retry: None,
@@ -519,8 +843,12 @@ mod tests {
         let vhost = VirtualHost {
             host: "*".to_string(),
             paths: vec![Route {
-                matcher: Some(Matcher::Prefix {
-                    path: "/".to_string(),
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    headers: None,
                 }),
                 timeout: None,
                 retry: Some(RetryPolicy {
@@ -570,8 +898,12 @@ mod tests {
         let runtime_vhost = pavis_core::VirtualHost {
             host: Host("example.com".to_string()),
             paths: vec![pavis_core::Route {
-                matcher: PathMatch::Prefix {
-                    path: Path("/".to_string()),
+                matcher: RouteMatcher {
+                    path: PathMatch::Prefix {
+                        path: Path("/".to_string()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
                 },
                 timeout: Timeout::Enabled(pavis_core::Duration(NonZeroU32::new(5000).unwrap())),
                 retry: RetryPolicy::Enabled {
@@ -626,7 +958,8 @@ mod tests {
     #[test]
     fn conversion_handles_all_variants() {
         use crate::config::types::{
-            Matcher, PrincipalConfig, Route, RouteAction as CodecRouteAction, VirtualHost,
+            Matcher, PathMatcher, PrincipalConfig, Route, RouteAction as CodecRouteAction,
+            VirtualHost,
         };
         use pavis_core::{PathMatch, Principal, RouteAction as CoreRouteAction};
 
@@ -635,8 +968,12 @@ mod tests {
             paths: vec![
                 // 1. Redirect, Authenticated Principal, Exact Match
                 Route {
-                    matcher: Some(Matcher::Exact {
-                        path: "/secure".to_string(),
+                    matcher: Some(Matcher {
+                        path: PathMatcher::Exact {
+                            path: "/secure".to_string(),
+                        },
+                        method: None,
+                        headers: None,
                     }),
                     timeout: None,
                     retry: None,
@@ -653,8 +990,12 @@ mod tests {
                 },
                 // 2. Direct, Prefix Principal, Regex Match
                 Route {
-                    matcher: Some(Matcher::Regex {
-                        path: "^/admin/.*".to_string(),
+                    matcher: Some(Matcher {
+                        path: PathMatcher::Regex {
+                            path: "^/admin/.*".to_string(),
+                        },
+                        method: None,
+                        headers: None,
                     }),
                     timeout: None,
                     retry: None,
@@ -689,7 +1030,7 @@ mod tests {
             }
             _ => panic!("expected authenticated"),
         }
-        match &paths[0].matcher {
+        match &paths[0].matcher.path {
             PathMatch::Exact { path } => assert_eq!(path.0, "/secure"),
             _ => panic!("expected exact match"),
         }
@@ -705,7 +1046,7 @@ mod tests {
             Principal::Prefix { prefix } => assert_eq!(prefix, "admin-"),
             _ => panic!("expected prefix"),
         }
-        match &paths[1].matcher {
+        match &paths[1].matcher.path {
             PathMatch::Regex { path } => assert_eq!(path.0, "^/admin/.*"),
             _ => panic!("expected regex match"),
         }

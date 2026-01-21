@@ -79,11 +79,12 @@ mod tests {
     use crate::config::types::SerdeConfig;
     use pavis_core::{
         AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint,
-        EndpointAddr, Host, HttpVersion, IdleTimeout, ListenerName, LoadBalancer, LogLevel,
-        Metrics, Path, PathMatch, Pool, Port, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RetryFlags,
-        RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction, ServiceName, Telemetry,
-        Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, TryTimeout,
-        UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
+        EndpointAddr, HeaderPredicates, Host, HttpVersion, IdleTimeout, ListenerName, LoadBalancer,
+        LogLevel, MethodPredicate, Metrics, Path, PathMatch, Pool, Port, RETRY_CONNECT_FAILURE,
+        RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction,
+        RouteMatcher, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify,
+        TracingPolicy, TracingProvider, TryTimeout, UpstreamId, UpstreamName, VirtualHost, Weight,
+        WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::{NonZeroU16, NonZeroU32};
@@ -107,8 +108,8 @@ upstreams:
 routes:
   - host: "example.com"
     paths:
-      - matcher: !prefix
-          path: "/"
+      - matcher:
+          path: !prefix { path: "/" }
         timeout: "1s"
         request_headers:
           set_headers:
@@ -209,7 +210,8 @@ routes:
             .pool(Pool {
                 idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(10_000).unwrap())),
                 connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(2_000).unwrap())),
-                max: ConnectionLimit::Limited(NonZeroU32::new(10).unwrap()),
+                max: ConnectionLimit(NonZeroU32::new(10).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Enabled {
                 verify: TlsVerify::CaOnly,
@@ -247,8 +249,12 @@ routes:
             .add_route(VirtualHost {
                 host: Host("example.com".to_string()),
                 paths: vec![pavis_core::Route {
-                    matcher: PathMatch::Exact {
-                        path: Path("/".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Exact {
+                            path: Path("/".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Enabled(Duration(NonZeroU32::new(1500).unwrap())),
                     retry: RetryPolicy::Enabled {

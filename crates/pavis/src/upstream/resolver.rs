@@ -289,7 +289,7 @@ mod tests {
         Port, TlsPolicy, Upstream, UpstreamBuilder, UpstreamId, UpstreamName, Weight,
     };
     use std::net::{IpAddr, Ipv4Addr};
-    use std::num::NonZeroU16;
+    use std::num::{NonZeroU16, NonZeroU32};
 
     fn build_upstream(discovery: Discovery, endpoints: Vec<Endpoint>) -> Upstream {
         let mut builder = UpstreamBuilder::new()
@@ -301,7 +301,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled);
 

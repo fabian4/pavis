@@ -136,8 +136,12 @@ mod tests {
             routes: Some(vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![Route {
-                    matcher: Some(Matcher::Prefix {
-                        path: "/".to_string(),
+                    matcher: Some(Matcher {
+                        path: PathMatcher::Prefix {
+                            path: "/".to_string(),
+                        },
+                        method: None,
+                        headers: None,
                     }),
                     timeout: None,
                     retry: Some(RetryPolicy {
@@ -169,8 +173,12 @@ mod tests {
             routes: Some(vec![VirtualHost {
                 host: "*".to_string(),
                 paths: vec![Route {
-                    matcher: Some(Matcher::Prefix {
-                        path: "/".to_string(),
+                    matcher: Some(Matcher {
+                        path: PathMatcher::Prefix {
+                            path: "/".to_string(),
+                        },
+                        method: None,
+                        headers: None,
                     }),
                     timeout: None,
                     retry: Some(RetryPolicy {

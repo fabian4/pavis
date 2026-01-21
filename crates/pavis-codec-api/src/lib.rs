@@ -241,10 +241,10 @@ mod tests {
     use bytes::Bytes;
     use pavis_core::{
         AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration,
-        Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout, ListenerName, LoadBalancer,
-        Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost, RewritePath,
-        RouteAction, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, UpstreamId,
-        UpstreamName, VirtualHost, Weight, WorkerCount,
+        Endpoint, EndpointAddr, HeaderPredicates, Host, HttpVersion, IdleTimeout, ListenerName,
+        LoadBalancer, MethodPredicate, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite,
+        RewriteHost, RewritePath, RouteAction, RouteMatcher, ServiceName, Telemetry, Timeout,
+        TlsConfig, TlsPolicy, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::{NonZeroU16, NonZeroU32};
@@ -317,7 +317,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
                 connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(Endpoint {
@@ -344,8 +345,12 @@ mod tests {
             .add_route(VirtualHost {
                 host: Host("*".to_string()),
                 paths: vec![pavis_core::Route {
-                    matcher: PathMatch::Prefix {
-                        path: Path("/".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Prefix {
+                            path: Path("/".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,

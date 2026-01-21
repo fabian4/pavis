@@ -7,11 +7,11 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use pavis_core::{
     AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Discovery,
-    Duration as RuntimeDuration, Endpoint, EndpointAddr, Host, HttpVersion, IdleTimeout,
-    ListenerBuilder, ListenerName, LoadBalancer, Metrics, Path, PathMatch, Pool, Port, RetryPolicy,
-    Rewrite, RewriteHost, RewritePath, RouteAction, RuntimeConfigBuilder, ServiceName, Telemetry,
-    Timeout, TlsConfig, TlsPolicy, UpstreamBuilder, UpstreamId, UpstreamName, VirtualHost, Weight,
-    WorkerCount,
+    Duration as RuntimeDuration, Endpoint, EndpointAddr, HeaderPredicates, Host, HttpVersion,
+    IdleTimeout, ListenerBuilder, ListenerName, LoadBalancer, MethodPredicate, Metrics, Path,
+    PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction,
+    RouteMatcher, RuntimeConfigBuilder, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy,
+    UpstreamBuilder, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
 };
 use pavis_pvs::{PAVIS_CHECKSUM_HEADER, compute_checksum};
 use pingora::services::Service;
@@ -41,7 +41,8 @@ fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
         .pool(Pool {
             idle: IdleTimeout::Enabled(RuntimeDuration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(RuntimeDuration(NonZeroU32::new(5_000).unwrap())),
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Disabled)
         .add_endpoint(Endpoint {
@@ -68,8 +69,12 @@ fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
         .add_route(VirtualHost {
             host: Host("*".to_string()),
             paths: vec![pavis_core::Route {
-                matcher: PathMatch::Prefix {
-                    path: Path("/".to_string()),
+                matcher: RouteMatcher {
+                    path: PathMatch::Prefix {
+                        path: Path("/".to_string()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,

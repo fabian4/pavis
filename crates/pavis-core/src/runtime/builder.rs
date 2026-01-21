@@ -1,8 +1,8 @@
 use crate::runtime::{
-    ActiveHealthCheck, AdminConfig, CircuitBreakerPolicy, ConnectionLimit, Discovery, Endpoint,
-    HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, OutlierDetectionPolicy, Pool,
-    RuntimeConfig, ShutdownPolicy, Telemetry, TlsConfig, TlsPolicy, Upstream, UpstreamId,
-    UpstreamName, WorkerCount,
+    ActiveHealthCheck, AdminConfig, CircuitBreakerPolicy, Discovery, Endpoint, HttpVersion,
+    Listener, ListenerName, LoadBalancer, OutlierDetectionPolicy, Pool, RuntimeConfig,
+    ShutdownPolicy, Telemetry, TlsConfig, TlsPolicy, Upstream, UpstreamId, UpstreamName,
+    WorkerCount,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -164,11 +164,7 @@ impl UpstreamBuilder {
             discovery: Discovery::Static,
             balancer: LoadBalancer::RoundRobin,
             protocol: HttpVersion::H1,
-            pool: Pool {
-                idle: IdleTimeout::Disabled,
-                connect: crate::runtime::ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
-            },
+            pool: Pool::default(),
             outlier_detection: OutlierDetectionPolicy::Disabled,
             circuit_breaker: CircuitBreakerPolicy::Disabled,
             health_check: ActiveHealthCheck::Disabled,

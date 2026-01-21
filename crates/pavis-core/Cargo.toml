@@ -15,6 +15,7 @@ serde = { workspace = true, optional = true }
 regex = "1"
 thiserror = "1"
 http = "1.4"
+compact_str = { version = "0.8", features = ["rkyv", "serde"] }
 
 [dev-dependencies]
 serde_json = "1.0"

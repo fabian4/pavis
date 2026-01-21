@@ -6,8 +6,8 @@ mod upstreams;
 
 pub use admin::{AdminConfig, ShutdownConfig};
 pub use routes::{
-    HeaderOperations, Matcher, PrincipalConfig, RetryPolicy, RewritePolicy, Route, RouteAction,
-    VirtualHost, WeightedDestination,
+    HeaderOperations, HeaderPredicate, Matcher, PathMatcher, PrincipalConfig, RetryPolicy,
+    RewritePolicy, Route, RouteAction, VirtualHost, WeightedDestination,
 };
 pub use server::{ClientAuthConfig, Listener, TlsConfig};
 pub use telemetry::{TelemetryConfig, TracingConfig};
@@ -104,8 +104,8 @@ upstreams:
 routes:
   - host: "example.com"
     paths:
-      - matcher: !prefix
-          path: "/"
+      - matcher:
+          path: !prefix { path: "/" }
         destinations:
           - upstream: "backend"
             weight: 1
@@ -133,7 +133,7 @@ routes:
       "host": "example.com",
       "paths": [
         {
-          "matcher": { "prefix": { "path": "/" } },
+          "matcher": { "path": { "prefix": { "path": "/" } } },
           "destinations": [{ "upstream": "backend", "weight": 1 }]
         }
       ]

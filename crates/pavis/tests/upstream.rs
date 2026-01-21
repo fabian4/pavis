@@ -20,7 +20,8 @@ fn upstream(name: &str, id: u16, lb: LoadBalancer, port: u16, tls: TlsPolicy) ->
         .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(tls)
         .add_endpoint(Endpoint {
@@ -89,7 +90,8 @@ fn test_upstream_empty_endpoints() {
             .pool(Pool {
                 idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
                 connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .build()

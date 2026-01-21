@@ -61,7 +61,7 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
     for vhost in &config.routes {
         writeln!(&mut out, "Host: {}", vhost.host.0).ok();
         for route in &vhost.paths {
-            let (match_type, path) = match &route.matcher {
+            let (match_type, path) = match &route.matcher.path {
                 binary::PathMatch::Prefix { path } => ("prefix", path.0.as_str()),
                 binary::PathMatch::Exact { path } => ("exact", path.0.as_str()),
                 binary::PathMatch::Regex { path } => ("regex", path.0.as_str()),
@@ -133,11 +133,11 @@ mod tests {
     use super::{format_config, format_header, format_stats};
     use pavis_core::{
         AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint,
-        EndpointAddr, Host, HttpVersion, IdleTimeout, ListenerBuilder, ListenerName, LoadBalancer,
-        Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite, RewriteHost, RewritePath,
-        RouteAction, RuntimeConfig, RuntimeConfigBuilder, ServiceName, Telemetry, Timeout,
-        TlsConfig, TlsPolicy, UpstreamBuilder, UpstreamId, UpstreamName, VirtualHost, Weight,
-        WorkerCount,
+        EndpointAddr, HeaderPredicates, Host, HttpVersion, IdleTimeout, ListenerBuilder,
+        ListenerName, LoadBalancer, MethodPredicate, Metrics, Path, PathMatch, Pool, Port,
+        RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction, RouteMatcher, RuntimeConfig,
+        RuntimeConfigBuilder, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy,
+        UpstreamBuilder, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use pavis_pvs::{PAVIS_HASH_ALGORITHM_SHA256, PAVIS_MAGIC, PAVIS_VERSION, PvsHeader};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -165,7 +165,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
                 connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(Endpoint {
@@ -187,7 +188,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(30_000).unwrap())),
                 connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(3_000).unwrap())),
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(Endpoint {
@@ -216,8 +218,12 @@ mod tests {
                 host: Host("example.com".to_string()),
                 paths: vec![
                     pavis_core::Route {
-                        matcher: PathMatch::Exact {
-                            path: Path("/health".to_string()),
+                        matcher: RouteMatcher {
+                            path: PathMatch::Exact {
+                                path: Path("/health".to_string()),
+                            },
+                            method: MethodPredicate::Any,
+                            headers: HeaderPredicates::None,
                         },
                         timeout: Timeout::Disabled,
                         retry: RetryPolicy::Disabled,
@@ -234,8 +240,12 @@ mod tests {
                         }]),
                     },
                     pavis_core::Route {
-                        matcher: PathMatch::Regex {
-                            path: Path("^/items/[0-9]+$".to_string()),
+                        matcher: RouteMatcher {
+                            path: PathMatch::Regex {
+                                path: Path("^/items/[0-9]+$".to_string()),
+                            },
+                            method: MethodPredicate::Any,
+                            headers: HeaderPredicates::None,
                         },
                         timeout: Timeout::Disabled,
                         retry: RetryPolicy::Disabled,
@@ -321,7 +331,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(Endpoint {
@@ -349,8 +360,12 @@ mod tests {
                 host: Host("vhost".to_string()),
                 paths: vec![
                     pavis_core::Route {
-                        matcher: PathMatch::Prefix {
-                            path: Path("/redirect".to_string()),
+                        matcher: RouteMatcher {
+                            path: PathMatch::Prefix {
+                                path: Path("/redirect".to_string()),
+                            },
+                            method: MethodPredicate::Any,
+                            headers: HeaderPredicates::None,
                         },
                         timeout: Timeout::Disabled,
                         retry: RetryPolicy::Disabled,
@@ -367,8 +382,12 @@ mod tests {
                         },
                     },
                     pavis_core::Route {
-                        matcher: PathMatch::Prefix {
-                            path: Path("/direct".to_string()),
+                        matcher: RouteMatcher {
+                            path: PathMatch::Prefix {
+                                path: Path("/direct".to_string()),
+                            },
+                            method: MethodPredicate::Any,
+                            headers: HeaderPredicates::None,
                         },
                         timeout: Timeout::Disabled,
                         retry: RetryPolicy::Disabled,

@@ -227,18 +227,20 @@ mod tests {
     use crate::runtime::{
         AccessLogPolicy, ActiveHealthCheck, AdminConfig, CircuitBreakerPolicy, ClientAuth,
         ClientCert, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint,
-        EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy, Host, Hostname, HttpVersion,
-        IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel, Metrics,
-        OutlierDetectionPolicy, Path, PathMatch, Pool, Port, Principal, RETRY_FIVE_XX, RetryFlags,
-        RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction, SampleRate,
-        ServiceName, ShutdownPolicy, SniName, Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify,
-        TracingPolicy, TracingProvider, TryTimeout, Upstream, UpstreamCa, UpstreamId, UpstreamName,
-        VirtualHost, Weight, WorkerCount,
+        EndpointAddr, HeaderName, HeaderPredicates, HeaderValue, Headers, HeadersPolicy, Host,
+        Hostname, HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel,
+        MethodPredicate, Metrics, OutlierDetectionPolicy, Path, PathMatch, Pool, Port, Principal,
+        RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route,
+        RouteAction, RouteMatcher, SampleRate, ServiceName, ShutdownPolicy, SniName, Telemetry,
+        Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, TryTimeout,
+        Upstream, UpstreamCa, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::num::NonZeroU16;
+    use std::num::{NonZeroU16, NonZeroU32};
     use std::sync::{Arc, Mutex};
+
+    const DEFAULT_POOL_MAX: u32 = 128;
 
     fn duration_ms(ms: u32) -> Duration {
         Duration(std::num::NonZeroU32::new(ms).unwrap())
@@ -273,7 +275,8 @@ mod tests {
                 pool: Pool {
                     idle: IdleTimeout::Enabled(duration_ms(60_000)),
                     connect: ConnectTimeout::Enabled(duration_ms(5_000)),
-                    max: ConnectionLimit::Unlimited,
+                    max: ConnectionLimit(NonZeroU32::new(DEFAULT_POOL_MAX).expect("non-zero")),
+                    ..Pool::default()
                 },
                 outlier_detection: OutlierDetectionPolicy::Disabled,
                 circuit_breaker: CircuitBreakerPolicy::Disabled,
@@ -295,8 +298,12 @@ mod tests {
             routes: vec![VirtualHost {
                 host: Host("*".to_string()),
                 paths: vec![Route {
-                    matcher: PathMatch::Prefix {
-                        path: Path("/".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Prefix {
+                            path: Path("/".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Enabled {
@@ -464,8 +471,12 @@ mod tests {
     #[test]
     fn invalid_regex_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
-            path: Path("[unclosed".to_string()),
+        cfg.routes[0].paths[0].matcher = RouteMatcher {
+            path: PathMatch::Regex {
+                path: Path("[unclosed".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::InvalidRegex { .. }));
@@ -474,8 +485,12 @@ mod tests {
     #[test]
     fn valid_regex_passes() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
-            path: Path("^/items/[0-9]+$".to_string()),
+        cfg.routes[0].paths[0].matcher = RouteMatcher {
+            path: PathMatch::Regex {
+                path: Path("^/items/[0-9]+$".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         assert!(validate_runtime(cfg.clone()).is_ok());
     }
@@ -636,14 +651,22 @@ mod tests {
     #[test]
     fn path_not_normalized_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].matcher = PathMatch::Prefix {
-            path: Path("api".to_string()),
+        cfg.routes[0].paths[0].matcher = RouteMatcher {
+            path: PathMatch::Prefix {
+                path: Path("api".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::PathNotNormalized(_)));
 
-        cfg.routes[0].paths[0].matcher = PathMatch::Prefix {
-            path: Path("/api/".to_string()),
+        cfg.routes[0].paths[0].matcher = RouteMatcher {
+            path: PathMatch::Prefix {
+                path: Path("/api/".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::PathNotNormalized(_)));
@@ -653,8 +676,12 @@ mod tests {
     fn duplicate_prefix_route_fails() {
         let mut cfg = base_config();
         let mut route = cfg.routes[0].paths[0].clone();
-        route.matcher = PathMatch::Prefix {
-            path: Path("/api".to_string()),
+        route.matcher = RouteMatcher {
+            path: PathMatch::Prefix {
+                path: Path("/api".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         cfg.routes[0].paths = vec![route.clone(), route];
         let err = validate_runtime(cfg.clone()).unwrap_err();
@@ -665,8 +692,12 @@ mod tests {
     fn duplicate_exact_route_fails() {
         let mut cfg = base_config();
         let mut route = cfg.routes[0].paths[0].clone();
-        route.matcher = PathMatch::Exact {
-            path: Path("/".to_string()),
+        route.matcher = RouteMatcher {
+            path: PathMatch::Exact {
+                path: Path("/".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         cfg.routes[0].paths = vec![route.clone(), route];
         let err = validate_runtime(cfg.clone()).unwrap_err();
@@ -677,8 +708,12 @@ mod tests {
     fn duplicate_regex_route_fails() {
         let mut cfg = base_config();
         let mut route = cfg.routes[0].paths[0].clone();
-        route.matcher = PathMatch::Regex {
-            path: Path("^/api$".to_string()),
+        route.matcher = RouteMatcher {
+            path: PathMatch::Regex {
+                path: Path("^/api$".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         cfg.routes[0].paths = vec![route.clone(), route];
         let err = validate_runtime(cfg.clone()).unwrap_err();
@@ -689,12 +724,20 @@ mod tests {
     fn prefix_and_exact_same_path_is_allowed() {
         let mut cfg = base_config();
         let mut exact = cfg.routes[0].paths[0].clone();
-        exact.matcher = PathMatch::Exact {
-            path: Path("/api".to_string()),
+        exact.matcher = RouteMatcher {
+            path: PathMatch::Exact {
+                path: Path("/api".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         let mut prefix = exact.clone();
-        prefix.matcher = PathMatch::Prefix {
-            path: Path("/api".to_string()),
+        prefix.matcher = RouteMatcher {
+            path: PathMatch::Prefix {
+                path: Path("/api".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         cfg.routes[0].paths = vec![exact, prefix];
         validate_runtime(cfg).expect("prefix/exact allowed");
@@ -703,8 +746,12 @@ mod tests {
     #[test]
     fn regex_path_not_normalized_is_allowed() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
-            path: Path("api".to_string()),
+        cfg.routes[0].paths[0].matcher = RouteMatcher {
+            path: PathMatch::Regex {
+                path: Path("api".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         validate_runtime(cfg).expect("regex normalization is not enforced");
     }
@@ -712,8 +759,12 @@ mod tests {
     #[test]
     fn regex_too_long_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
-            path: Path("a".repeat(2049)),
+        cfg.routes[0].paths[0].matcher = RouteMatcher {
+            path: PathMatch::Regex {
+                path: Path("a".repeat(2049)),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         let err = validate_runtime(cfg.clone()).unwrap_err();
         assert!(matches!(err, CoreValidationError::RegexTooLong { .. }));
@@ -722,8 +773,12 @@ mod tests {
     #[test]
     fn rewrite_regex_fails() {
         let mut cfg = base_config();
-        cfg.routes[0].paths[0].matcher = PathMatch::Regex {
-            path: Path("^/api/.*".to_string()),
+        cfg.routes[0].paths[0].matcher = RouteMatcher {
+            path: PathMatch::Regex {
+                path: Path("^/api/.*".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         };
         cfg.routes[0].paths[0].rewrite = Rewrite {
             path: RewritePath::Prefix {

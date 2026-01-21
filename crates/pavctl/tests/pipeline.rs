@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use pavis_codec_serde::SerdeFormat;
 use pavis_codec_serde::config::{
-    Listener, Matcher, Route, RouteAction, SerdeConfig, Upstream, VirtualHost, WeightedDestination,
+    Listener, Matcher, PathMatcher, Route, RouteAction, SerdeConfig, Upstream, VirtualHost,
+    WeightedDestination,
 };
 use pavis_core::{Discovery, HttpVersion, LoadBalancer};
 use std::fs;
@@ -133,8 +134,12 @@ fn sample_config() -> SerdeConfig {
         routes: Some(vec![VirtualHost {
             host: "example.com".to_string(),
             paths: vec![Route {
-                matcher: Some(Matcher::Prefix {
-                    path: "/".to_string(),
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    headers: None,
                 }),
                 timeout: None,
                 retry: None,

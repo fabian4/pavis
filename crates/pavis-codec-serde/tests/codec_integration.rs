@@ -199,7 +199,8 @@ routes:
 
     paths:
 
-      - matcher: !prefix { path: "/" }
+      - matcher:
+          path: !prefix { path: "/" }
 
         destinations:
 
@@ -231,4 +232,333 @@ routes:
             err
         ),
     }
+}
+
+// P0 Feature #1: Header/Method Routing Gap - Integration Tests
+// These tests verify codec parsing of method and header predicates.
+
+/// Test 1: Codec parses method predicates correctly (GET, POST, etc.)
+#[test]
+fn codec_parses_method_predicates() {
+    let yaml = r#"
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints:
+      - address: "127.0.0.1"
+        port: 8080
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/api" }
+          method: "GET"
+        destinations:
+          - upstream: "backend"
+            weight: 1
+"#;
+
+    let artifact = Artifact::new(
+        yaml.as_bytes().to_vec().into(),
+        Format::Yaml,
+        SourceInfo::unknown(),
+    );
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
+    let config = codec
+        .materialize(artifact, CompactionLevel::Off)
+        .expect("materialize");
+
+    let route = &config.into_inner().routes[0].paths[0];
+    match &route.matcher.method {
+        pavis_core::MethodPredicate::Specific(m) => {
+            assert_eq!(m.as_str(), "GET");
+        }
+        _ => panic!("expected specific method predicate"),
+    }
+}
+
+/// Test 2: Codec parses single header predicate (exact match)
+#[test]
+fn codec_parses_single_header_predicate() {
+    let yaml = r#"
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints:
+      - address: "127.0.0.1"
+        port: 8080
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/api" }
+          headers:
+            - name: "x-tenant"
+              value: "alice"
+        destinations:
+          - upstream: "backend"
+            weight: 1
+"#;
+
+    let artifact = Artifact::new(
+        yaml.as_bytes().to_vec().into(),
+        Format::Yaml,
+        SourceInfo::unknown(),
+    );
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
+    let config = codec
+        .materialize(artifact, CompactionLevel::Off)
+        .expect("materialize");
+
+    let route = &config.into_inner().routes[0].paths[0];
+    match &route.matcher.headers {
+        pavis_core::HeaderPredicates::Some(predicates) => {
+            assert_eq!(predicates.len(), 1);
+            assert_eq!(predicates[0].name.as_str(), "x-tenant");
+            match &predicates[0].matcher {
+                pavis_core::HeaderMatch::Exact(v) => assert_eq!(v.as_str(), "alice"),
+                _ => panic!("expected exact header match"),
+            }
+        }
+        _ => panic!("expected header predicates"),
+    }
+}
+
+/// Test 3: Codec parses multiple header predicates (AND logic)
+#[test]
+fn codec_parses_multiple_header_predicates() {
+    let yaml = r#"
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints:
+      - address: "127.0.0.1"
+        port: 8080
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/api" }
+          headers:
+            - name: "x-tenant"
+              value: "alice"
+            - name: "x-region"
+              value: "us-east"
+        destinations:
+          - upstream: "backend"
+            weight: 1
+"#;
+
+    let artifact = Artifact::new(
+        yaml.as_bytes().to_vec().into(),
+        Format::Yaml,
+        SourceInfo::unknown(),
+    );
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
+    let config = codec
+        .materialize(artifact, CompactionLevel::Off)
+        .expect("materialize");
+
+    let route = &config.into_inner().routes[0].paths[0];
+    match &route.matcher.headers {
+        pavis_core::HeaderPredicates::Some(predicates) => {
+            assert_eq!(predicates.len(), 2);
+            assert_eq!(predicates[0].name.as_str(), "x-tenant");
+            assert_eq!(predicates[1].name.as_str(), "x-region");
+        }
+        _ => panic!("expected header predicates"),
+    }
+}
+
+/// Test 4: Codec parses compound matcher (path + method + headers)
+#[test]
+fn codec_parses_compound_matcher() {
+    let yaml = r#"
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints:
+      - address: "127.0.0.1"
+        port: 8080
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/api" }
+          method: "POST"
+          headers:
+            - name: "content-type"
+              value: "application/json"
+        destinations:
+          - upstream: "backend"
+            weight: 1
+"#;
+
+    let artifact = Artifact::new(
+        yaml.as_bytes().to_vec().into(),
+        Format::Yaml,
+        SourceInfo::unknown(),
+    );
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
+    let config = codec
+        .materialize(artifact, CompactionLevel::Off)
+        .expect("materialize");
+
+    let route = &config.into_inner().routes[0].paths[0];
+
+    // Verify path
+    match &route.matcher.path {
+        pavis_core::PathMatch::Prefix { path } => assert_eq!(path.0, "/api"),
+        _ => panic!("expected prefix path match"),
+    }
+
+    // Verify method
+    match &route.matcher.method {
+        pavis_core::MethodPredicate::Specific(m) => assert_eq!(m.as_str(), "POST"),
+        _ => panic!("expected specific method"),
+    }
+
+    // Verify headers
+    match &route.matcher.headers {
+        pavis_core::HeaderPredicates::Some(predicates) => {
+            assert_eq!(predicates.len(), 1);
+            assert_eq!(predicates[0].name.as_str(), "content-type");
+        }
+        _ => panic!("expected header predicates"),
+    }
+}
+
+/// Test 5: Codec defaults to MethodPredicate::Any when method not specified
+#[test]
+fn codec_defaults_method_to_any() {
+    let yaml = r#"
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints:
+      - address: "127.0.0.1"
+        port: 8080
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/api" }
+        destinations:
+          - upstream: "backend"
+            weight: 1
+"#;
+
+    let artifact = Artifact::new(
+        yaml.as_bytes().to_vec().into(),
+        Format::Yaml,
+        SourceInfo::unknown(),
+    );
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
+    let config = codec
+        .materialize(artifact, CompactionLevel::Off)
+        .expect("materialize");
+
+    let route = &config.into_inner().routes[0].paths[0];
+    assert!(matches!(
+        route.matcher.method,
+        pavis_core::MethodPredicate::Any
+    ));
+    assert!(matches!(
+        route.matcher.headers,
+        pavis_core::HeaderPredicates::None
+    ));
+}
+
+// P0 Feature #2: Pool Validation - Integration Tests
+// These tests verify pool configuration is correctly wired from codec to runtime.
+
+/// Test 6: Codec correctly wires pool.max to ConnectionLimit
+#[test]
+fn codec_wires_pool_max_to_connection_limit() {
+    let yaml = r#"
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    pool:
+      max: 256
+    endpoints:
+      - address: "127.0.0.1"
+        port: 8080
+"#;
+
+    let artifact = Artifact::new(
+        yaml.as_bytes().to_vec().into(),
+        Format::Yaml,
+        SourceInfo::unknown(),
+    );
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
+    let config = codec
+        .materialize(artifact, CompactionLevel::Off)
+        .expect("materialize");
+
+    let upstream = &config.into_inner().upstreams[0];
+    assert_eq!(upstream.pool.max.0.get(), 256);
+}
+
+/// Test 7: Codec enforces pool.max >= 1 validation at compile time
+#[test]
+fn codec_rejects_pool_max_zero() {
+    let yaml = r#"
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    pool:
+      max: 0
+    endpoints:
+      - address: "127.0.0.1"
+        port: 8080
+"#;
+
+    let artifact = Artifact::new(
+        yaml.as_bytes().to_vec().into(),
+        Format::Yaml,
+        SourceInfo::unknown(),
+    );
+    let codec = SerdeCodec {
+        format: SerdeFormat::Yaml,
+    };
+    let err = codec
+        .materialize(artifact, CompactionLevel::Off)
+        .expect_err("pool.max=0 should be rejected");
+
+    // pool.max=0 is rejected at YAML parsing level (NonZeroU32 type constraint)
+    assert!(matches!(err, pavis_codec_api::CodecError::Compile(_)));
 }

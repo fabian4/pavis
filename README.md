@@ -12,13 +12,21 @@ _Deterministic by construction. Zero runtime policy._
 [![Status](https://img.shields.io/badge/status-Pre--Alpha-red.svg)](#project-status)
 [![codecov](https://codecov.io/gh/fabian4/pavis/branch/main/graph/badge.svg?token=C1DRZN5YDL)](https://codecov.io/gh/fabian4/pavis)
 
+## Philosophy
+
+Pavis is built around a single architectural constraint: the runtime is not allowed to interpret configuration.
+
+All semantic work happens before deployment. The runtime only executes a fully materialized artifact.
+
+This design is described in detail in: [**“Pavis: A Dumb Proxy for Boring Reloads”**](https://fabian4.site/blog/dumb-proxy/).
+
 ## What is Pavis?
 
 **Pavis** is a highly opinionated L7 sidecar proxy implemented in Rust, built on the Cloudflare Pingora engine.
 
-It separates policy resolution from packet forwarding. Unlike traditional proxies that evaluate complex logic and defaults at runtime, Pavis executes **only** pre-validated, immutable, Ahead-of-Time (AOT) compiled artifacts.
+It acts as a runtime for executing pre-compiled, immutable policy artifacts (`.pvs`) produced by an external control plane.
 
-Pavis eliminates runtime non-determinism by freezing all policy decisions into a binary artifact (`.pvs`) before deployment.
+At runtime, Pavis loads a versioned `.pvs` artifact and forwards traffic according to the instructions encoded in the currently active execution state.
 
 ## What is it NOT?
 
@@ -26,7 +34,7 @@ Pavis eliminates runtime non-determinism by freezing all policy decisions into a
 *   It is **NOT** a general-purpose programmable proxy.
 *   It is **NOT** a platform for runtime scripting (Lua, WASM).
 
-## Core Philosophy: The Frozen Data Plane
+## Why a Frozen Data Plane?
 
 Pavis rejects the "Smart Proxy" model. It moves complexity left—from the critical path of packet processing to the compilation phase.
 
@@ -45,7 +53,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the formal architectural invariants
 *   **Rewrites**: Prefix path and Host literal rewriting.
 *   **TLS**: Server-side termination and Upstream origination.
 *   **Observability**: Prometheus metrics, structured access logging, OTLP tracing.
-*   **Resilience**: Active health checks, outlier ejection, circuit breaking, retries.
+*   **Resilience**: Active health checks, outlier ejection, circuit breaking, retries (reaction-only; no learned policy state).
 *   **Hot Reload**: Atomic, hitless reload of the data plane.
 
 See [docs/roadmap/features.md](./docs/roadmap/features.md) for a complete feature matrix.

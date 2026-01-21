@@ -17,7 +17,7 @@
       "host": "example.com",
       "paths": [
         {
-          "matcher": { "prefix": { "path": "/" } },
+          "matcher": { "path": { "prefix": { "path": "/" } } },
           "timeout": "1s",
           "request_headers": {
             "set_headers": [["x-added", "1"]]

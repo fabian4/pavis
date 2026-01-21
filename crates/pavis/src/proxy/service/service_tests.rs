@@ -9,12 +9,13 @@ use crate::upstream::Manager;
 use arc_swap::ArcSwap;
 use pavis_core::{
     AccessLogPolicy, ClientCert, ClientCertChain, ConnectTimeout, ConnectionLimit, Destination,
-    Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderValue, Headers, HeadersPolicy,
-    Host, Hostname, HttpVersion, IdleTimeout, LoadBalancer, Metrics, Path, PathMatch, Pool, Port,
-    RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost,
-    RewritePath, RouteAction, ServiceName, SniName, Telemetry as RuntimeTelemetry, Timeout,
-    TlsPolicy, TryTimeout, Upstream, UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName,
-    VirtualHost, Weight,
+    Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderPredicates, HeaderValue,
+    Headers, HeadersPolicy, Host, Hostname, HttpVersion, IdleTimeout, LoadBalancer,
+    MethodPredicate, Metrics, Path, PathMatch, Pool, PoolQueue, Port, RETRY_CONNECT_FAILURE,
+    RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction,
+    RouteMatcher, ServiceName, SniName, Telemetry as RuntimeTelemetry, Timeout, TlsPolicy,
+    TryTimeout, Upstream, UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName, VirtualHost,
+    Weight,
 };
 use pingora::http::ResponseHeader;
 use pingora::prelude::{ProxyHttp, RequestHeader, Session};
@@ -30,8 +31,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[test]
 fn apply_route_headers_populates_router_context() {
     let route = pavis_core::Route {
-        matcher: PathMatch::Exact {
-            path: Path("/".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Exact {
+                path: Path("/".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Enabled(Duration(NonZeroU32::new(500).unwrap())),
         retry: RetryPolicy::Enabled {
@@ -90,6 +95,7 @@ fn apply_route_headers_populates_router_context() {
         route_pattern: crate::proxy::context::RoutePattern::NotMatched,
         req_id: "test-req".parse().unwrap(),
         span: crate::proxy::context::TracingSpan::Disabled,
+        pool_permit: None,
         circuit_breaker_permit: None,
         runtime_state: None,
     };
@@ -213,7 +219,8 @@ fn upstream(name: &str, id: u16, port: u16) -> Upstream {
         .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Disabled)
         .add_endpoint(Endpoint {
@@ -257,7 +264,8 @@ fn mtls_upstream(
         .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
@@ -285,8 +293,12 @@ async fn request_filter_selects_weighted_destination() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Exact {
-                path: Path("/api".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Exact {
+                    path: Path("/api".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -378,8 +390,12 @@ async fn request_filter_applies_rewrite_policy() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Prefix {
-                path: Path("/api".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Prefix {
+                    path: Path("/api".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -441,8 +457,12 @@ async fn request_filter_skips_selection_when_no_destinations() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Exact {
-                path: Path("/api".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Exact {
+                    path: Path("/api".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -492,7 +512,8 @@ async fn upstream_peer_defaults_sni() {
         .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Full,
@@ -547,7 +568,8 @@ async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
         .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Full,
@@ -654,8 +676,12 @@ async fn logging_handles_disabled_access_log() {
 #[test]
 fn test_calculate_path_rewrite() {
     let route_prefix = pavis_core::Route {
-        matcher: PathMatch::Prefix {
-            path: Path("/api".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Prefix {
+                path: Path("/api".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
@@ -683,8 +709,12 @@ fn test_calculate_path_rewrite() {
     assert_eq!(uri.query(), None);
 
     let route_exact = pavis_core::Route {
-        matcher: PathMatch::Exact {
-            path: Path("/api".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Exact {
+                path: Path("/api".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
@@ -709,8 +739,12 @@ fn test_calculate_path_rewrite() {
     assert!(calculate_path_rewrite(&route_exact, "/api/foo", None).is_none());
 
     let route_regex = pavis_core::Route {
-        matcher: PathMatch::Regex {
-            path: Path("/api/.*".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Regex {
+                path: Path("/api/.*".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
@@ -734,8 +768,12 @@ fn test_calculate_path_rewrite() {
 #[test]
 fn test_route_path_helper() {
     let r1 = pavis_core::Route {
-        matcher: PathMatch::Prefix {
-            path: Path("/p".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Prefix {
+                path: Path("/p".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
@@ -751,8 +789,12 @@ fn test_route_path_helper() {
     assert_eq!(route_path(&r1), "/p");
 
     let r2 = pavis_core::Route {
-        matcher: PathMatch::Exact {
-            path: Path("/e".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Exact {
+                path: Path("/e".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
@@ -768,8 +810,12 @@ fn test_route_path_helper() {
     assert_eq!(route_path(&r2), "/e");
 
     let r3 = pavis_core::Route {
-        matcher: PathMatch::Regex {
-            path: Path("/r".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Regex {
+                path: Path("/r".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
@@ -843,7 +889,8 @@ async fn upstream_peer_fails_when_no_endpoints() {
         .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Disabled)
         .build()
@@ -869,6 +916,136 @@ async fn upstream_peer_fails_when_no_endpoints() {
             .to_string()
             .contains("Upstream has no endpoints")
     );
+}
+
+#[tokio::test]
+async fn upstream_peer_returns_503_when_pool_full() {
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("limited".to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::Random)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
+            idle: IdleTimeout::Disabled,
+            connect: ConnectTimeout::Disabled,
+            max: ConnectionLimit(NonZeroU32::new(1).unwrap()),
+            queue: PoolQueue {
+                capacity: 0,
+                timeout_ms: 0,
+            },
+        })
+        .tls(TlsPolicy::Disabled)
+        .add_endpoint(Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(8001).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        })
+        .build()
+        .expect("upstream");
+    let manager = Manager::new(&[upstream]).expect("manager");
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            config: RuntimeState::default().config,
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: manager,
+        })),
+        telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
+    };
+
+    let (mut session_one, _client_one) =
+        session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx_one = proxy.new_ctx();
+    pin_runtime_state(&mut ctx_one, &proxy);
+    ctx_one.upstream_name = Some(UpstreamName("limited".to_string()));
+    proxy
+        .upstream_peer(&mut session_one, &mut ctx_one)
+        .await
+        .expect("first peer");
+
+    let (mut session_two, _client_two) =
+        session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx_two = proxy.new_ctx();
+    pin_runtime_state(&mut ctx_two, &proxy);
+    ctx_two.upstream_name = Some(UpstreamName("limited".to_string()));
+    let err = proxy
+        .upstream_peer(&mut session_two, &mut ctx_two)
+        .await
+        .expect_err("pool full");
+    assert!(
+        err.to_string()
+            .contains("ERR_UPSTREAM_POOL_FULL: connection pool is full")
+    );
+    ctx_one.pool_permit.take();
+    ctx_one.circuit_breaker_permit.take();
+}
+
+#[tokio::test]
+async fn upstream_peer_returns_503_when_pool_wait_times_out() {
+    let upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("queued".to_string()))
+        .discovery(Discovery::Static)
+        .balancer(LoadBalancer::Random)
+        .protocol(HttpVersion::H1)
+        .pool(Pool {
+            idle: IdleTimeout::Disabled,
+            connect: ConnectTimeout::Disabled,
+            max: ConnectionLimit(NonZeroU32::new(1).unwrap()),
+            queue: PoolQueue {
+                capacity: 1,
+                timeout_ms: 25,
+            },
+        })
+        .tls(TlsPolicy::Disabled)
+        .add_endpoint(Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(8002).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        })
+        .build()
+        .expect("upstream");
+    let manager = Manager::new(&[upstream]).expect("manager");
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
+            config: RuntimeState::default().config,
+            router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
+            upstream_manager: manager,
+        })),
+        telemetry: test_telemetry(),
+        ca_store: test_ca_store(),
+    };
+
+    let (mut session_one, _client_one) =
+        session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx_one = proxy.new_ctx();
+    pin_runtime_state(&mut ctx_one, &proxy);
+    ctx_one.upstream_name = Some(UpstreamName("queued".to_string()));
+    proxy
+        .upstream_peer(&mut session_one, &mut ctx_one)
+        .await
+        .expect("first peer");
+
+    let (mut session_two, _client_two) =
+        session_for_request(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+    let mut ctx_two = proxy.new_ctx();
+    pin_runtime_state(&mut ctx_two, &proxy);
+    ctx_two.upstream_name = Some(UpstreamName("queued".to_string()));
+    let err = proxy
+        .upstream_peer(&mut session_two, &mut ctx_two)
+        .await
+        .expect_err("pool timeout");
+    assert!(
+        err.to_string()
+            .contains("ERR_UPSTREAM_POOL_FULL: connection pool wait timed out")
+    );
+    ctx_one.pool_permit.take();
+    ctx_one.circuit_breaker_permit.take();
 }
 
 #[tokio::test]
@@ -936,8 +1113,12 @@ async fn upstream_peer_uses_pinned_state_over_latest() {
 #[test]
 fn test_calculate_path_rewrite_unmatched_prefix() {
     let route = pavis_core::Route {
-        matcher: PathMatch::Prefix {
-            path: Path("/api".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Prefix {
+                path: Path("/api".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
@@ -981,8 +1162,12 @@ async fn request_filter_handles_redirect_action() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Exact {
-                path: Path("/old".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Exact {
+                    path: Path("/old".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -1034,8 +1219,12 @@ async fn request_filter_handles_direct_action() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Exact {
-                path: Path("/health".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Exact {
+                    path: Path("/health".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -1088,8 +1277,12 @@ async fn request_filter_redirect_with_different_status_codes() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Prefix {
-                path: Path("/temp".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Prefix {
+                    path: Path("/temp".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -1140,8 +1333,12 @@ async fn request_filter_direct_with_custom_status() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Prefix {
-                path: Path("/gone".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Prefix {
+                    path: Path("/gone".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -1189,8 +1386,12 @@ async fn request_filter_direct_with_custom_status() {
 #[test]
 fn test_calculate_path_rewrite_preserves_query_string() {
     let route = pavis_core::Route {
-        matcher: PathMatch::Prefix {
-            path: Path("/api/v1".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Prefix {
+                path: Path("/api/v1".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
@@ -1356,8 +1557,12 @@ async fn test_request_filter_direct_response_with_headers() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Exact {
-                path: Path("/direct".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Exact {
+                    path: Path("/direct".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -1413,8 +1618,12 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Prefix {
-                path: Path("/old-api".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Prefix {
+                    path: Path("/old-api".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -1474,7 +1683,8 @@ async fn upstream_peer_dns_supported() {
         .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Disabled)
         .add_endpoint(Endpoint {
@@ -1556,7 +1766,8 @@ async fn upstream_peer_sni_fallback_warning() {
         .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
@@ -1607,7 +1818,8 @@ async fn upstream_peer_sni_override_prevents_fallback() {
         .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
@@ -1660,7 +1872,8 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
         .pool(Pool {
             idle: IdleTimeout::Disabled,
             connect: ConnectTimeout::Disabled,
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
@@ -1702,8 +1915,12 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
 #[test]
 fn test_calculate_path_rewrite_invalid_uri() {
     let route = pavis_core::Route {
-        matcher: PathMatch::Prefix {
-            path: Path("/".to_string()),
+        matcher: RouteMatcher {
+            path: PathMatch::Prefix {
+                path: Path("/".to_string()),
+            },
+            method: MethodPredicate::Any,
+            headers: HeaderPredicates::None,
         },
         timeout: Timeout::Disabled,
         retry: RetryPolicy::Disabled,
@@ -1764,8 +1981,12 @@ async fn request_filter_denies_when_principal_not_any() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Exact {
-                path: Path("/secure".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Exact {
+                    path: Path("/secure".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,
@@ -1817,8 +2038,12 @@ async fn request_filter_allows_with_matching_identity() {
     let routes = vec![VirtualHost {
         host: Host("*".to_string()),
         paths: vec![pavis_core::Route {
-            matcher: PathMatch::Exact {
-                path: Path("/secure".to_string()),
+            matcher: RouteMatcher {
+                path: PathMatch::Exact {
+                    path: Path("/secure".to_string()),
+                },
+                method: MethodPredicate::Any,
+                headers: HeaderPredicates::None,
             },
             timeout: Timeout::Disabled,
             retry: RetryPolicy::Disabled,

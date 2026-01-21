@@ -3,10 +3,10 @@ mod common;
 use common::base_config;
 use pavis::router::Router;
 use pavis_core::{
-    ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint, EndpointAddr, Host,
-    HttpVersion, IdleTimeout, LoadBalancer, Path, PathMatch, Pool, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, RouteAction, Timeout, Upstream, UpstreamBuilder, UpstreamId,
-    UpstreamName, VirtualHost, Weight,
+    ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint, EndpointAddr,
+    HeaderPredicates, Host, HttpVersion, IdleTimeout, LoadBalancer, MethodPredicate, Path,
+    PathMatch, Pool, RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction, RouteMatcher,
+    Timeout, Upstream, UpstreamBuilder, UpstreamId, UpstreamName, VirtualHost, Weight,
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU16, NonZeroU32};
@@ -21,7 +21,8 @@ fn upstream(name: &str, id: u16, port: u16) -> Upstream {
         .pool(Pool {
             idle: IdleTimeout::Enabled(Duration(NonZeroU32::new(60_000).unwrap())),
             connect: ConnectTimeout::Enabled(Duration(NonZeroU32::new(5_000).unwrap())),
-            max: ConnectionLimit::Unlimited,
+            max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+            ..Pool::default()
         })
         .tls(pavis_core::TlsPolicy::Disabled)
         .add_endpoint(Endpoint {
@@ -33,6 +34,10 @@ fn upstream(name: &str, id: u16, port: u16) -> Upstream {
         })
         .build()
         .expect("upstream")
+}
+
+fn request_header(method: &str) -> pingora::http::RequestHeader {
+    pingora::http::RequestHeader::build(method, b"/", None).expect("request header")
 }
 
 #[test]
@@ -47,8 +52,12 @@ fn test_routing_vhost_precedence() {
         VirtualHost {
             host: Host("*".to_string()),
             paths: vec![pavis_core::Route {
-                matcher: PathMatch::Exact {
-                    path: Path("/".to_string()),
+                matcher: RouteMatcher {
+                    path: PathMatch::Exact {
+                        path: Path("/".to_string()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
@@ -68,8 +77,12 @@ fn test_routing_vhost_precedence() {
         VirtualHost {
             host: Host("api.com".to_string()),
             paths: vec![pavis_core::Route {
-                matcher: PathMatch::Exact {
-                    path: Path("/".to_string()),
+                matcher: RouteMatcher {
+                    path: PathMatch::Exact {
+                        path: Path("/".to_string()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
@@ -89,8 +102,12 @@ fn test_routing_vhost_precedence() {
         VirtualHost {
             host: Host("web.com".to_string()),
             paths: vec![pavis_core::Route {
-                matcher: PathMatch::Exact {
-                    path: Path("/".to_string()),
+                matcher: RouteMatcher {
+                    path: PathMatch::Exact {
+                        path: Path("/".to_string()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
@@ -110,19 +127,23 @@ fn test_routing_vhost_precedence() {
     ];
 
     let router = Router::new(config.routes).expect("Failed to create router");
+    let req = request_header("GET");
 
     let (vhost, _route) = router
-        .match_request(Some("api.com"), "/")
+        .match_request(Some("api.com"), "/", "GET", &req)
+        .into_option()
         .expect("api.com should match");
     assert_eq!(vhost.host.0, "api.com");
 
     let (vhost, _route) = router
-        .match_request(Some("web.com"), "/")
+        .match_request(Some("web.com"), "/", "GET", &req)
+        .into_option()
         .expect("web.com should match");
     assert_eq!(vhost.host.0, "web.com");
 
     let (vhost, _route) = router
-        .match_request(Some("unknown.com"), "/")
+        .match_request(Some("unknown.com"), "/", "GET", &req)
+        .into_option()
         .expect("wildcard should match");
     assert_eq!(vhost.host.0, "*");
 }

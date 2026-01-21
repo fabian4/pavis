@@ -132,6 +132,7 @@ pub struct RouterContext {
     pub route_pattern: RoutePattern,
     pub req_id: RequestId,
     pub span: TracingSpan,
+    pub pool_permit: Option<OwnedSemaphorePermit>,
     pub circuit_breaker_permit: Option<OwnedSemaphorePermit>,
     /// Pinned configuration snapshot for this request.
     /// Captured in `request_filter` to ensure atomicity across routing and upstream selection.
@@ -228,6 +229,7 @@ mod tests {
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-123".parse().unwrap(),
             span: TracingSpan::Disabled,
+            pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
         };
@@ -270,6 +272,7 @@ mod tests {
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
+            pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
         };
@@ -297,6 +300,7 @@ mod tests {
             },
             req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
+            pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
         };
@@ -329,6 +333,7 @@ mod tests {
             route_pattern: RoutePattern::NotMatched,
             req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
+            pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
         };

@@ -2,7 +2,7 @@ use crate::proxy::context::{RequestId, RouterContext, TracingSpan};
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
 use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
-use crate::upstream::cluster::{CircuitBreakerRejection, UpstreamOutcome};
+use crate::upstream::cluster::{CircuitBreakerRejection, PoolRejection, UpstreamOutcome};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use http::Uri;
@@ -157,7 +157,7 @@ fn calculate_path_rewrite(
     match &route.rewrite.path {
         pavis_core::RewritePath::Disabled => None,
         pavis_core::RewritePath::Prefix { from: _, to } => {
-            let new_path = match &route.matcher {
+            let new_path = match &route.matcher.path {
                 PathMatch::Prefix { path } => {
                     uri_path.strip_prefix(path.0.as_str()).map(|suffix| {
                         let mut path = String::with_capacity(to.0.len() + suffix.len());
@@ -206,7 +206,7 @@ fn calculate_path_rewrite(
                     }
                 }
                 None => {
-                    if matches!(route.matcher, PathMatch::Regex { .. }) {
+                    if matches!(route.matcher.path, PathMatch::Regex { .. }) {
                         tracing::warn!(
                             route = %route_path(route),
                             "Skipping path rewrite for regex match"
@@ -347,6 +347,7 @@ impl ProxyHttp for Proxy {
             route_pattern: crate::proxy::context::RoutePattern::NotMatched,
             req_id: generate_request_id(),
             span: crate::proxy::context::TracingSpan::Disabled,
+            pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
         }
@@ -386,6 +387,31 @@ impl ProxyHttp for Proxy {
         let cluster = match state.upstream_manager.get(upstream_name.0.as_str()) {
             Some(u) => u,
             None => return Error::e_explain(InternalError, "Upstream not found in config"),
+        };
+
+        let pool_permit = match cluster.acquire_pool_permit().await {
+            Ok(permit) => permit,
+            Err(PoolRejection::QueueFull) => {
+                tracing::info!(upstream = %upstream_name.0, "Upstream pool queue full");
+                return Error::e_explain(
+                    ErrorType::HTTPStatus(503),
+                    "ERR_UPSTREAM_POOL_FULL: connection pool is full",
+                );
+            }
+            Err(PoolRejection::QueueTimeout) => {
+                tracing::info!(
+                    upstream = %upstream_name.0,
+                    "Upstream pool queue wait timed out"
+                );
+                return Error::e_explain(
+                    ErrorType::HTTPStatus(503),
+                    "ERR_UPSTREAM_POOL_FULL: connection pool wait timed out",
+                );
+            }
+            Err(PoolRejection::Closed) => {
+                tracing::error!(upstream = %upstream_name.0, "Upstream pool closed");
+                return Error::e_explain(InternalError, "Upstream pool unavailable");
+            }
         };
 
         let permit = match cluster.acquire_breaker_permit().await {
@@ -582,6 +608,7 @@ impl ProxyHttp for Proxy {
 
         // Track upstream timing
         ctx.start_upstream();
+        ctx.pool_permit = pool_permit;
 
         Ok(Box::new(peer))
     }
@@ -633,7 +660,18 @@ impl ProxyHttp for Proxy {
             "incoming request"
         );
 
-        if let Some((vhost, route)) = state.router.match_request(host_header, uri_path) {
+        let verdict = state.router.match_request(
+            host_header,
+            uri_path,
+            req_header.method.as_str(),
+            req_header,
+        );
+
+        if let Some(metrics) = &self.telemetry.metrics {
+            metrics.record_route_match(&verdict);
+        }
+
+        if let Some((vhost, route)) = verdict.selection {
             tracing::trace!(host = %vhost.host.0, path = %route_path(route), "matched route");
 
             ctx.route_pattern = crate::proxy::context::RoutePattern::Matched {
@@ -929,6 +967,7 @@ impl ProxyHttp for Proxy {
             cluster.record_outcome(endpoint, outcome);
         }
 
+        ctx.pool_permit.take();
         ctx.circuit_breaker_permit.take();
 
         if let TracingSpan::Active(ref span) = ctx.span
@@ -964,7 +1003,7 @@ mod tests {
 }
 
 fn route_path(route: &pavis_core::Route) -> &str {
-    match &route.matcher {
+    match &route.matcher.path {
         PathMatch::Prefix { path } => path.0.as_str(),
         PathMatch::Exact { path } => path.0.as_str(),
         PathMatch::Regex { path } => path.0.as_str(),

@@ -361,6 +361,7 @@ mod tests {
             },
             req_id: "req-1".parse().unwrap(),
             span: TracingSpan::Disabled,
+            pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
         };

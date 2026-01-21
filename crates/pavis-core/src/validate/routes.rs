@@ -17,7 +17,7 @@ pub(super) fn validate_routes(
     for vhost in routes {
         let mut seen_routes: HashSet<(&str, &str)> = HashSet::new();
         for route in &vhost.paths {
-            let (match_type, path) = match &route.matcher {
+            let (match_type, path) = match &route.matcher.path {
                 PathMatch::Prefix { path } => ("prefix", path),
                 PathMatch::Exact { path } => ("exact", path),
                 PathMatch::Regex { path } => ("regex", path),
@@ -142,7 +142,7 @@ fn validate_action(
 }
 
 fn route_path(route: &Route) -> String {
-    match &route.matcher {
+    match &route.matcher.path {
         PathMatch::Prefix { path } => path.0.clone(),
         PathMatch::Exact { path } => path.0.clone(),
         PathMatch::Regex { path } => path.0.clone(),

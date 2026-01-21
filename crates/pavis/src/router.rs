@@ -7,11 +7,12 @@
 //! 3. **Read-Only**: The router state is immutable after initialization.
 
 use anyhow::{Context, Result};
-use pavis_core::{PathMatch, Route, VirtualHost};
+use pavis_core::{HeaderPredicates, MethodPredicate, PathMatch, VirtualHost};
 use regex::Regex;
 use std::collections::HashMap;
 
 pub mod matcher;
+pub use matcher::{MatchVerdict, PredicateStats};
 
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledRoute {
@@ -46,23 +47,19 @@ impl Router {
             let mut current_map: Option<HashMap<String, CompiledRoute>> = None;
 
             for (index, route) in vhost.paths.iter().enumerate() {
-                match &route.matcher {
-                    PathMatch::Exact { path } => {
+                // Routes with method or header predicates MUST use Linear zone for sequential matching
+                let has_predicates = !matches!(route.matcher.method, MethodPredicate::Any)
+                    || !matches!(route.matcher.headers, HeaderPredicates::None);
+
+                match &route.matcher.path {
+                    PathMatch::Exact { path } if !has_predicates => {
                         // Flush linear if exists
                         if let Some(linear) = current_linear.take() {
                             zones.push(RouteZone::Linear(linear));
                         }
-                        // Add to map
+                        // Add to map (only for routes without method/header predicates)
                         let compiled = CompiledRoute { index, regex: None };
                         if let Some(map) = &mut current_map {
-                            // If key exists, we must NOT overwrite it because the FIRST match wins.
-                            // However, if we are in the SAME map zone, it means there are no intervening
-                            // regex/prefix routes.
-                            // So if we see duplicate Exact paths in sequence:
-                            // 1. Exact /a -> A
-                            // 2. Exact /a -> B
-                            // The map will store A (first insert wins).
-                            // This preserves the "First Match" semantics for Exact matches in a block.
                             map.entry(path.0.clone()).or_insert(compiled);
                         } else {
                             let mut map = HashMap::new();
@@ -70,13 +67,15 @@ impl Router {
                             current_map = Some(map);
                         }
                     }
-                    PathMatch::Prefix { .. } | PathMatch::Regex { .. } => {
+                    PathMatch::Exact { .. }
+                    | PathMatch::Prefix { .. }
+                    | PathMatch::Regex { .. } => {
                         // Flush map if exists
                         if let Some(map) = current_map.take() {
                             zones.push(RouteZone::ExactMap(map));
                         }
-                        // Add to linear
-                        let regex = match &route.matcher {
+                        // Add to linear (includes Exact routes with predicates)
+                        let regex = match &route.matcher.path {
                             PathMatch::Regex { path } => {
                                 Some(Regex::new(&path.0).with_context(|| {
                                     format!("Failed to compile regex for path: {}", path.0)
@@ -128,8 +127,10 @@ impl Router {
         &'a self,
         host_header: Option<&str>,
         uri_path: &str,
-    ) -> Option<(&'a VirtualHost, &'a Route)> {
-        matcher::match_request(self, host_header, uri_path)
+        method: &str,
+        headers: &pingora::http::RequestHeader,
+    ) -> MatchVerdict<'a> {
+        matcher::match_request(self, host_header, uri_path, method, headers)
     }
 }
 
@@ -137,10 +138,15 @@ impl Router {
 mod tests {
     use super::*;
     use pavis_core::{
-        Destination, HeadersPolicy, Host, Path, PathMatch, RetryPolicy, Rewrite, RewriteHost,
-        RewritePath, RouteAction, Timeout, UpstreamName, Weight,
+        Destination, HeaderPredicates, HeadersPolicy, Host, MethodPredicate, Path, PathMatch,
+        RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction, RouteMatcher, Timeout,
+        UpstreamName, Weight,
     };
     use std::num::NonZeroU16;
+
+    fn request_header(method: &str) -> pingora::http::RequestHeader {
+        pingora::http::RequestHeader::build(method, b"/", None).expect("request header")
+    }
 
     fn create_routes() -> Vec<VirtualHost> {
         vec![
@@ -148,8 +154,12 @@ mod tests {
                 host: Host("example.com".to_string()),
                 paths: vec![
                     Route {
-                        matcher: PathMatch::Exact {
-                            path: Path("/exact".to_string()),
+                        matcher: RouteMatcher {
+                            path: PathMatch::Exact {
+                                path: Path("/exact".to_string()),
+                            },
+                            method: MethodPredicate::Any,
+                            headers: HeaderPredicates::None,
                         },
                         timeout: Timeout::Disabled,
                         retry: RetryPolicy::Disabled,
@@ -166,8 +176,12 @@ mod tests {
                         }]),
                     },
                     Route {
-                        matcher: PathMatch::Prefix {
-                            path: Path("/api".to_string()),
+                        matcher: RouteMatcher {
+                            path: PathMatch::Prefix {
+                                path: Path("/api".to_string()),
+                            },
+                            method: MethodPredicate::Any,
+                            headers: HeaderPredicates::None,
                         },
                         timeout: Timeout::Disabled,
                         retry: RetryPolicy::Disabled,
@@ -188,8 +202,12 @@ mod tests {
             VirtualHost {
                 host: Host("*".to_string()),
                 paths: vec![Route {
-                    matcher: PathMatch::Prefix {
-                        path: Path("/public".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Prefix {
+                            path: Path("/public".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,
@@ -214,8 +232,12 @@ mod tests {
         let routes = vec![VirtualHost {
             host: Host("*".to_string()),
             paths: vec![Route {
-                matcher: PathMatch::Regex {
-                    path: Path("[unclosed".to_string()),
+                matcher: RouteMatcher {
+                    path: PathMatch::Regex {
+                        path: Path("[unclosed".to_string()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
@@ -236,11 +258,13 @@ mod tests {
     #[test]
     fn test_find_route_exact_match() {
         let router = Router::new(create_routes()).unwrap();
+        let req = request_header("GET");
         let (vhost, route) = router
-            .match_request(Some("example.com"), "/exact")
+            .match_request(Some("example.com"), "/exact", "GET", &req)
+            .into_option()
             .expect("Should match");
         assert_eq!(vhost.host.0, "example.com");
-        match &route.matcher {
+        match &route.matcher.path {
             PathMatch::Exact { path } => assert_eq!(path.0, "/exact"),
             _ => panic!("expected exact match"),
         }
@@ -249,11 +273,13 @@ mod tests {
     #[test]
     fn test_find_route_prefix_match() {
         let router = Router::new(create_routes()).unwrap();
+        let req = request_header("GET");
         let (vhost, route) = router
-            .match_request(Some("example.com"), "/api/v1/users")
+            .match_request(Some("example.com"), "/api/v1/users", "GET", &req)
+            .into_option()
             .expect("Should match");
         assert_eq!(vhost.host.0, "example.com");
-        match &route.matcher {
+        match &route.matcher.path {
             PathMatch::Prefix { path } => assert_eq!(path.0, "/api"),
             _ => panic!("expected prefix match"),
         }
@@ -262,11 +288,13 @@ mod tests {
     #[test]
     fn test_find_route_wildcard_host() {
         let router = Router::new(create_routes()).unwrap();
+        let req = request_header("GET");
         let (vhost, route) = router
-            .match_request(Some("any.com"), "/public/stuff")
+            .match_request(Some("any.com"), "/public/stuff", "GET", &req)
+            .into_option()
             .expect("Should match");
         assert_eq!(vhost.host.0, "*");
-        match &route.matcher {
+        match &route.matcher.path {
             PathMatch::Prefix { path } => assert_eq!(path.0, "/public"),
             _ => panic!("expected prefix match"),
         }
@@ -275,15 +303,17 @@ mod tests {
     #[test]
     fn test_find_route_no_match() {
         let router = Router::new(create_routes()).unwrap();
-        let result = router.match_request(Some("example.com"), "/notfound");
-        assert!(result.is_none());
+        let req = request_header("GET");
+        let result = router.match_request(Some("example.com"), "/notfound", "GET", &req);
+        assert!(result.into_option().is_none());
     }
 
     #[test]
     fn test_find_route_wrong_host() {
         let router = Router::new(create_routes()).unwrap();
-        let result = router.match_request(Some("other.com"), "/exact");
-        assert!(result.is_none());
+        let req = request_header("GET");
+        let result = router.match_request(Some("other.com"), "/exact", "GET", &req);
+        assert!(result.into_option().is_none());
     }
 
     #[test]
@@ -291,8 +321,12 @@ mod tests {
         let routes = vec![VirtualHost {
             host: Host("*".to_string()),
             paths: vec![Route {
-                matcher: PathMatch::Regex {
-                    path: Path(r"^/api/v[0-9]+/users/\d+$".to_string()),
+                matcher: RouteMatcher {
+                    path: PathMatch::Regex {
+                        path: Path(r"^/api/v[0-9]+/users/\d+$".to_string()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
                 },
                 timeout: Timeout::Disabled,
                 retry: RetryPolicy::Disabled,
@@ -311,20 +345,21 @@ mod tests {
         }];
 
         let router = Router::new(routes).unwrap();
+        let req = request_header("GET");
 
-        let result = router.match_request(None, "/api/v1/users/123");
-        assert!(result.is_some());
-        let (_, route) = result.unwrap();
-        matches!(route.matcher, PathMatch::Regex { .. });
+        let result = router.match_request(None, "/api/v1/users/123", "GET", &req);
+        assert!(result.selection.is_some());
+        let (_, route) = result.into_option().unwrap();
+        matches!(route.matcher.path, PathMatch::Regex { .. });
 
-        let result = router.match_request(None, "/api/v2/users/456");
-        assert!(result.is_some());
+        let result = router.match_request(None, "/api/v2/users/456", "GET", &req);
+        assert!(result.selection.is_some());
 
-        let result = router.match_request(None, "/api/v1/users/");
-        assert!(result.is_none());
+        let result = router.match_request(None, "/api/v1/users/", "GET", &req);
+        assert!(result.into_option().is_none());
 
-        let result = router.match_request(None, "/api/v1/users/abc");
-        assert!(result.is_none());
+        let result = router.match_request(None, "/api/v1/users/abc", "GET", &req);
+        assert!(result.into_option().is_none());
     }
 
     #[test]
@@ -333,8 +368,12 @@ mod tests {
             host: Host("*".to_string()),
             paths: vec![
                 Route {
-                    matcher: PathMatch::Prefix {
-                        path: Path("/app".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Prefix {
+                            path: Path("/app".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,
@@ -351,8 +390,12 @@ mod tests {
                     }]),
                 },
                 Route {
-                    matcher: PathMatch::Exact {
-                        path: Path("/app".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Exact {
+                            path: Path("/app".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,
@@ -372,8 +415,12 @@ mod tests {
         }];
 
         let router = Router::new(routes).unwrap();
-        let (_, route) = router.match_request(None, "/app").expect("match");
-        matches!(route.matcher, PathMatch::Prefix { .. });
+        let req = request_header("GET");
+        let (_, route) = router
+            .match_request(None, "/app", "GET", &req)
+            .into_option()
+            .expect("match");
+        matches!(route.matcher.path, PathMatch::Prefix { .. });
     }
 
     #[test]
@@ -383,8 +430,12 @@ mod tests {
             paths: vec![
                 // Zone 1: Linear (Prefix)
                 Route {
-                    matcher: PathMatch::Prefix {
-                        path: Path("/a".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Prefix {
+                            path: Path("/a".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,
@@ -399,8 +450,12 @@ mod tests {
                 },
                 // Zone 2: ExactMap (consecutive exacts)
                 Route {
-                    matcher: PathMatch::Exact {
-                        path: Path("/b".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Exact {
+                            path: Path("/b".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,
@@ -417,8 +472,12 @@ mod tests {
                     }]),
                 },
                 Route {
-                    matcher: PathMatch::Exact {
-                        path: Path("/b".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Exact {
+                            path: Path("/b".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,
@@ -438,9 +497,13 @@ mod tests {
         }];
 
         let router = Router::new(routes).unwrap();
+        let req = request_header("GET");
         // Check zones structure implicitly by matching
         // /b should match the FIRST exact match in the map block
-        let (_, route) = router.match_request(None, "/b").expect("match");
+        let (_, route) = router
+            .match_request(None, "/b", "GET", &req)
+            .into_option()
+            .expect("match");
         match &route.action {
             RouteAction::Forward(destinations) => {
                 assert_eq!(destinations[0].upstream.0, "b1");
@@ -449,8 +512,11 @@ mod tests {
         }
 
         // /a should match the prefix
-        let (_, route) = router.match_request(None, "/a/foo").expect("match");
-        match &route.matcher {
+        let (_, route) = router
+            .match_request(None, "/a/foo", "GET", &req)
+            .into_option()
+            .expect("match");
+        match &route.matcher.path {
             PathMatch::Prefix { path } => assert_eq!(path.0, "/a"),
             _ => panic!("expected prefix"),
         }

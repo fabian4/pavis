@@ -44,12 +44,39 @@ pub enum RouteAction {
     },
 }
 
+/// Route matching configuration supporting path, method, and header predicates.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct Matcher {
+    /// Path matching strategy (required).
+    pub path: PathMatcher,
+    /// HTTP method filter (optional, defaults to Any).
+    pub method: Option<String>,
+    /// Header predicates (optional, defaults to no header matching).
+    pub headers: Option<Vec<HeaderPredicate>>,
+}
+
+/// Path matching strategy.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum Matcher {
+pub enum PathMatcher {
     Prefix { path: String },
     Exact { path: String },
     Regex { path: String },
+}
+
+/// Header matching predicate.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct HeaderPredicate {
+    /// Header name (case-insensitive per HTTP spec).
+    pub name: String,
+    /// Header value to match (optional, defaults to presence check).
+    pub value: Option<String>,
+    /// If true, treat value as regex pattern (default: false).
+    #[serde(default)]
+    pub regex: bool,
+    /// If true, header must NOT be present (default: false).
+    #[serde(default)]
+    pub absent: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

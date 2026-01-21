@@ -1,3 +1,4 @@
+use crate::router::MatchVerdict;
 use async_trait::async_trait;
 use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -129,6 +130,38 @@ pub struct MetricsHandle {
 }
 
 impl MetricsHandle {
+    pub fn record_route_match(&self, verdict: &MatchVerdict<'_>) {
+        let result = if verdict.selection.is_some() {
+            "matched"
+        } else {
+            "missed"
+        };
+        counter!("pavis_route_match_attempts_total", "result" => result).increment(1);
+
+        let stats = &verdict.stats;
+        if stats.path_misses > 0 {
+            counter!(
+                "pavis_route_match_predicate_failures_total",
+                "predicate" => "path"
+            )
+            .increment(stats.path_misses);
+        }
+        if stats.method_misses > 0 {
+            counter!(
+                "pavis_route_match_predicate_failures_total",
+                "predicate" => "method"
+            )
+            .increment(stats.method_misses);
+        }
+        if stats.header_misses > 0 {
+            counter!(
+                "pavis_route_match_predicate_failures_total",
+                "predicate" => "headers"
+            )
+            .increment(stats.header_misses);
+        }
+    }
+
     pub fn record_request(
         &self,
         method: &str,

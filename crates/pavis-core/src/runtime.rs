@@ -12,9 +12,10 @@ pub use admin::AdminConfig;
 pub use builder::{BuilderError, ListenerBuilder, RuntimeConfigBuilder, UpstreamBuilder};
 pub use headers::{Headers, HeadersPolicy};
 pub use routing::{
-    Destination, PathMatch, Principal, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED,
-    RETRY_RESERVED, RETRY_RESET, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route,
-    RouteAction, VirtualHost,
+    Destination, HeaderMatch, HeaderPredicate, HeaderPredicates, HttpMethod, MethodPredicate,
+    PathMatch, Principal, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED, RETRY_RESERVED,
+    RETRY_RESET, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction,
+    RouteMatcher, VirtualHost,
 };
 pub use server::{ClientAuth, Listener, TlsConfig, WorkerCount};
 pub use shutdown::ShutdownPolicy;
@@ -29,7 +30,7 @@ pub use types::{
 pub use upstream::{
     ActiveHealthCheck, CircuitBreakerPolicy, ClientCert, ClientCertChain, ConnectionLimit,
     Discovery, Endpoint, EndpointAddr, HttpVersion, LoadBalancer, OutlierDetectionPolicy, Pool,
-    SniName, TlsPolicy, TlsVerify, Upstream, UpstreamCa,
+    PoolQueue, SniName, TlsPolicy, TlsVerify, Upstream, UpstreamCa,
 };
 
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
@@ -92,7 +93,9 @@ impl std::ops::Deref for ValidatedRuntimeConfig {
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::num::NonZeroU16;
+    use std::num::{NonZeroU16, NonZeroU32};
+
+    const DEFAULT_POOL_MAX: u32 = 128;
 
     #[test]
     fn test_config_structure() {
@@ -121,7 +124,8 @@ mod tests {
                 pool: Pool {
                     idle: IdleTimeout::Disabled,
                     connect: ConnectTimeout::Disabled,
-                    max: ConnectionLimit::Unlimited,
+                    max: ConnectionLimit(NonZeroU32::new(DEFAULT_POOL_MAX).expect("non-zero")),
+                    queue: PoolQueue::default(),
                 },
                 outlier_detection: OutlierDetectionPolicy::Disabled,
                 circuit_breaker: CircuitBreakerPolicy::Disabled,
@@ -138,8 +142,12 @@ mod tests {
             routes: vec![VirtualHost {
                 host: Host("*".to_string()),
                 paths: vec![Route {
-                    matcher: PathMatch::Prefix {
-                        path: Path("/".to_string()),
+                    matcher: RouteMatcher {
+                        path: PathMatch::Prefix {
+                            path: Path("/".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Disabled,

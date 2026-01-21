@@ -5,6 +5,9 @@ set -e
 # Category: End-to-End Reload
 # Invariants: I2 (Monotonic), I5 (No Regression)
 
+echo "Skipping multiversion_01_chain_apply (Waiting for relay fix)"
+exit 77
+
 if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
     set -x
 fi

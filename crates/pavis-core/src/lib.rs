@@ -1,6 +1,8 @@
+pub mod error;
 pub mod runtime;
 pub mod validate;
 
+pub use error::{ErrorCode, ErrorContext, FieldPathBuilder, PavisError};
 pub use runtime::*;
 pub use validate::{CoreValidationError, CoreValidationResult, validate_runtime};
 

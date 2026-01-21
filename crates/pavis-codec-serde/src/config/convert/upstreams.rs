@@ -4,15 +4,19 @@ use std::num::{NonZeroU16, NonZeroU32};
 
 use pavis_core::{
     ActiveHealthCheck, CircuitBreakerPolicy, ClientCert, ClientCertChain, ConnectTimeout,
-    ConsecutiveErrors, Discovery, EndpointAddr, MaxConnections, MaxPendingRequests,
-    OutlierDetectionPolicy, Path, SniName, TlsVerify, UpstreamBuilder, UpstreamCa, UpstreamId,
-    UpstreamName,
+    ConsecutiveErrors, Discovery, EndpointAddr, ErrorCode, FieldPathBuilder, MaxConnections,
+    MaxPendingRequests, OutlierDetectionPolicy, Path, PavisError, SniName, TlsVerify,
+    UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName,
 };
 
 use crate::config::types::{
     ClientCertChainMode, ClientCertConfig, Endpoint, OutlierDetection, SniMode, Upstream,
     UpstreamTlsConfig,
 };
+
+const DEFAULT_POOL_MAX: u32 = 128;
+const DEFAULT_POOL_QUEUE_CAPACITY: u32 = 0;
+const DEFAULT_POOL_QUEUE_TIMEOUT_MS: u32 = 0;
 
 pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Upstream>> {
     let mut runtime_upstreams = Vec::new();
@@ -63,16 +67,31 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
                 .connect
                 .unwrap_or_else(default_connection_timeout),
         )?;
-        let max = match pool_config.max {
-            None | Some(0) => pavis_core::ConnectionLimit::Unlimited,
-            Some(value) => {
-                let value = NonZeroU32::new(value)
-                    .ok_or_else(|| anyhow::anyhow!("pool.max must be > 0"))?;
-                pavis_core::ConnectionLimit::Limited(value)
-            }
-        };
+        let max = materialize_pool_max(pool_config.max, &u.name, index)?;
+        let queue_capacity = materialize_queue_value(
+            pool_config.queue_capacity,
+            DEFAULT_POOL_QUEUE_CAPACITY,
+            "queue_capacity",
+            &u.name,
+            index,
+        )?;
+        let queue_timeout_ms = materialize_queue_value(
+            pool_config.queue_timeout_ms,
+            DEFAULT_POOL_QUEUE_TIMEOUT_MS,
+            "queue_timeout_ms",
+            &u.name,
+            index,
+        )?;
 
-        let pool = pavis_core::Pool { idle, connect, max };
+        let pool = pavis_core::Pool {
+            idle,
+            connect,
+            max: pavis_core::ConnectionLimit(max),
+            queue: pavis_core::PoolQueue {
+                capacity: queue_capacity,
+                timeout_ms: queue_timeout_ms,
+            },
+        };
 
         let tls = match u.tls {
             None => pavis_core::TlsPolicy::Disabled,
@@ -332,15 +351,9 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Result<Vec<U
             connect: Some(std::time::Duration::from_millis(connect_timeout_ms(
                 &u.pool.connect,
             ))),
-            max: match u.pool.max {
-                pavis_core::ConnectionLimit::Unlimited => None,
-                pavis_core::ConnectionLimit::Limited(value) => Some(value.get()),
-                #[allow(unreachable_patterns)]
-                _ => {
-                    // Sensible default: treat as unlimited if variant is unknown
-                    None
-                }
-            },
+            max: Some(u.pool.max.0.get() as i64),
+            queue_capacity: Some(u.pool.queue.capacity as i64),
+            queue_timeout_ms: Some(u.pool.queue.timeout_ms as i64),
         });
 
         let tls = match u.tls {
@@ -477,6 +490,8 @@ fn default_pool_config() -> crate::config::types::ConnectionPoolConfig {
         idle: Some(default_idle_timeout()),
         connect: Some(default_connection_timeout()),
         max: None,
+        queue_capacity: None,
+        queue_timeout_ms: None,
     }
 }
 
@@ -530,6 +545,98 @@ fn connect_timeout_ms(timeout: &pavis_core::ConnectTimeout) -> u64 {
         pavis_core::ConnectTimeout::Enabled(d) => d.0.get() as u64,
         _ => 0,
     }
+}
+
+fn materialize_pool_max(
+    value: Option<i64>,
+    upstream_name: &str,
+    index: usize,
+) -> anyhow::Result<NonZeroU32> {
+    let width = match value {
+        None => return Ok(NonZeroU32::new(DEFAULT_POOL_MAX).expect("default max nonzero")),
+        Some(raw) => raw,
+    };
+    if width < 1 {
+        return Err(invalid_config_error(
+            format!("upstream '{}' pool.max must be >= 1", upstream_name),
+            Some(upstream_pool_field_path(index, "max")),
+            Some("min_value=1"),
+        ));
+    }
+    let max_value = u32::try_from(width).map_err(|_| {
+        invalid_config_error(
+            format!("upstream '{}' pool.max exceeds u32::MAX", upstream_name),
+            Some(upstream_pool_field_path(index, "max")),
+            Some("max_value=u32::MAX"),
+        )
+    })?;
+    NonZeroU32::new(max_value).ok_or_else(|| {
+        invalid_config_error(
+            format!("upstream '{}' pool.max must be >= 1", upstream_name),
+            Some(upstream_pool_field_path(index, "max")),
+            Some("min_value=1"),
+        )
+    })
+}
+
+fn materialize_queue_value(
+    value: Option<i64>,
+    default: u32,
+    field: &str,
+    upstream_name: &str,
+    index: usize,
+) -> anyhow::Result<u32> {
+    let raw = match value {
+        None => return Ok(default),
+        Some(raw) => raw,
+    };
+    if raw < 0 {
+        return Err(invalid_config_error(
+            format!("upstream '{}' pool.{} must be >= 0", upstream_name, field),
+            Some(upstream_pool_field_path(index, field)),
+            Some("min_value=0"),
+        ));
+    }
+    u32::try_from(raw).map_err(|_| {
+        invalid_config_error(
+            format!(
+                "upstream '{}' pool.{} exceeds u32::MAX",
+                upstream_name, field
+            ),
+            Some(upstream_pool_field_path(index, field)),
+            Some("max_value=u32::MAX"),
+        )
+    })
+}
+
+fn upstream_field_path(index: usize) -> FieldPathBuilder {
+    FieldPathBuilder::new().root("upstreams").index(index)
+}
+
+fn upstream_pool_field_path(index: usize, field: &str) -> String {
+    upstream_field_path(index)
+        .field("pool")
+        .field(field)
+        .finish()
+}
+
+fn invalid_config_error(
+    message: impl Into<String>,
+    field_path: Option<String>,
+    constraint: Option<&str>,
+) -> anyhow::Error {
+    let err = PavisError::new(ErrorCode::InvalidConfig, message);
+    let err = err.with_context(|ctx| {
+        let mut ctx = ctx;
+        if let Some(path) = field_path {
+            ctx = ctx.with_field_path(path);
+        }
+        if let Some(code) = constraint {
+            ctx = ctx.with_constraint(code.to_string());
+        }
+        ctx
+    });
+    anyhow::Error::new(err)
 }
 
 #[cfg(test)]
@@ -604,6 +711,8 @@ mod tests {
                 idle: None,
                 connect: None,
                 max: None,
+                queue_capacity: None,
+                queue_timeout_ms: None,
             }),
             tls: None,
             circuit_breaker: None,
@@ -615,7 +724,7 @@ mod tests {
         let pool = &runtime[0].pool;
         assert!(matches!(pool.idle, IdleTimeout::Enabled(_))); // Default 60s
         assert!(matches!(pool.connect, ConnectTimeout::Enabled(_))); // Default 5s
-        assert!(matches!(pool.max, ConnectionLimit::Unlimited));
+        assert_eq!(pool.max.0.get(), DEFAULT_POOL_MAX); // Default pool max
     }
 
     #[test]
@@ -630,6 +739,8 @@ mod tests {
                 idle: None,
                 connect: None,
                 max: Some(0), // becomes Unlimited but let's test explicit > 0
+                queue_capacity: None,
+                queue_timeout_ms: None,
             }),
             tls: None,
             circuit_breaker: None,
@@ -637,11 +748,93 @@ mod tests {
             health_check: None,
             endpoints: vec![],
         }];
-        let runtime = to_runtime(config).unwrap();
-        assert!(matches!(
-            runtime[0].pool.max,
-            pavis_core::ConnectionLimit::Unlimited
-        ));
+        let err = to_runtime(config).expect_err("expected error");
+        assert!(err.to_string().contains("pool.max must be >= 1"));
+    }
+
+    // P0 Feature #2: Pool Validation Tests
+    // These tests verify pool.max validation per verification plan requirements.
+
+    /// Test: pool.max = 1 is accepted (minimum valid value).
+    #[test]
+    fn to_runtime_accepts_pool_max_1() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: Some(ConnectionPoolConfig {
+                idle: None,
+                connect: None,
+                max: Some(1),
+                queue_capacity: None,
+                queue_timeout_ms: None,
+            }),
+            tls: None,
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![],
+        }];
+        let runtime = to_runtime(config).expect("pool.max=1 should be valid");
+        assert_eq!(runtime[0].pool.max.0.get(), 1);
+    }
+
+    /// Test: pool.max = 1000 is accepted (large valid value).
+    #[test]
+    fn to_runtime_accepts_pool_max_1000() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: Some(ConnectionPoolConfig {
+                idle: None,
+                connect: None,
+                max: Some(1000),
+                queue_capacity: None,
+                queue_timeout_ms: None,
+            }),
+            tls: None,
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![],
+        }];
+        let runtime = to_runtime(config).expect("pool.max=1000 should be valid");
+        assert_eq!(runtime[0].pool.max.0.get(), 1000);
+    }
+
+    /// Test: pool.max = -5 is rejected with ERR_INVALID_CONFIG.
+    #[test]
+    fn to_runtime_rejects_negative_pool_max() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: Some(ConnectionPoolConfig {
+                idle: None,
+                connect: None,
+                max: Some(-5),
+                queue_capacity: None,
+                queue_timeout_ms: None,
+            }),
+            tls: None,
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![],
+        }];
+        let err = to_runtime(config).expect_err("negative pool.max should be rejected");
+        let err_str = err.to_string();
+        assert!(err_str.contains("pool.max must be >= 1"));
+        // Verify it's an ERR_INVALID_CONFIG with proper field path
+        // The error should contain the field path in the format "upstreams[0].pool.max"
+        assert!(err_str.contains("pool.max") || err_str.contains("upstreams"));
     }
 
     #[test]
@@ -897,7 +1090,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(pavis_core::Endpoint {
@@ -973,6 +1167,103 @@ mod tests {
             err.to_string()
                 .contains("health_check thresholds are not supported")
         );
+    }
+
+    #[test]
+    fn to_runtime_rejects_negative_queue_capacity() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: Some(ConnectionPoolConfig {
+                idle: None,
+                connect: None,
+                max: Some(10),
+                queue_capacity: Some(-1),
+                queue_timeout_ms: Some(100),
+            }),
+            tls: None,
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                address: "127.0.0.1".to_string(),
+                port: 8080,
+                weight: None,
+            }],
+        }];
+        let err = to_runtime(config).expect_err("expected error");
+        assert!(err.to_string().contains("pool.queue_capacity must be >= 0"));
+    }
+
+    #[test]
+    fn to_runtime_rejects_negative_queue_timeout() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: Some(ConnectionPoolConfig {
+                idle: None,
+                connect: None,
+                max: Some(10),
+                queue_capacity: Some(1),
+                queue_timeout_ms: Some(-50),
+            }),
+            tls: None,
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                address: "127.0.0.1".to_string(),
+                port: 8080,
+                weight: None,
+            }],
+        }];
+        let err = to_runtime(config).expect_err("expected error");
+        assert!(
+            err.to_string()
+                .contains("pool.queue_timeout_ms must be >= 0")
+        );
+    }
+
+    #[test]
+    fn to_runtime_materializes_pool_defaults() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: Some(ConnectionPoolConfig {
+                idle: None,
+                connect: None,
+                max: None,
+                queue_capacity: None,
+                queue_timeout_ms: None,
+            }),
+            tls: None,
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![Endpoint {
+                address: "127.0.0.1".to_string(),
+                port: 8080,
+                weight: None,
+            }],
+        }];
+        let runtime = to_runtime(config).expect("runtime");
+        let pool = &runtime[0].pool;
+        match pool.max {
+            ConnectionLimit(limit) => {
+                assert_eq!(limit.get(), super::DEFAULT_POOL_MAX);
+            }
+        }
+        assert_eq!(pool.queue.capacity, super::DEFAULT_POOL_QUEUE_CAPACITY);
+        assert_eq!(pool.queue.timeout_ms, super::DEFAULT_POOL_QUEUE_TIMEOUT_MS);
     }
 
     #[test]
@@ -1133,7 +1424,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Enabled {
                 verify: TlsVerify::Disabled,
@@ -1169,7 +1461,7 @@ mod tests {
         assert!(!tls.verify_hostname.unwrap());
 
         // 3. Pool::Limited
-        upstream.pool.max = ConnectionLimit::Limited(NonZeroU32::new(100).unwrap());
+        upstream.pool.max = ConnectionLimit(NonZeroU32::new(100).unwrap());
         let serde = from_runtime(vec![upstream.clone()]).expect("from_runtime");
         assert_eq!(serde[0].pool.as_ref().unwrap().max, Some(100));
     }

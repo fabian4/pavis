@@ -54,8 +54,8 @@ upstreams:
 routes:
   - host: "example.com"
     paths:
-      - matcher: !prefix
-          path: "/"
+      - matcher:
+          path: !prefix { path: "/" }
         destinations:
           - upstream: "backend"
             weight: 1
@@ -167,8 +167,8 @@ upstreams:
 routes:
   - host: "example.com"
     paths:
-      - matcher: !prefix
-          path: "/"
+      - matcher:
+          path: !prefix { path: "/" }
         destinations:
           - upstream: "missing"
             weight: 1

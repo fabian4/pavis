@@ -1,5 +1,6 @@
 use super::load_balance;
 use arc_swap::ArcSwap;
+use metrics::{counter, gauge};
 use pavis_core::{
     ActiveHealthCheck, CircuitBreakerPolicy, Endpoint, EndpointAddr, OutlierDetectionPolicy,
     Upstream,
@@ -7,11 +8,11 @@ use pavis_core::{
 use pingora::protocols::tls::CaType;
 use pingora::utils::tls::CertKey;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::atomic::AtomicUsize;
-use std::time::Instant;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::time::timeout;
 
 #[repr(align(64))]
 #[derive(Debug)]
@@ -44,6 +45,12 @@ impl EndpointKey {
     }
 }
 
+const METRIC_POOL_QUEUE_CAPACITY: &str = "pavis_upstream_pool_queue_capacity";
+const METRIC_POOL_QUEUE_DEPTH: &str = "pavis_upstream_pool_queue_depth";
+const METRIC_POOL_REJECTIONS: &str = "pavis_upstream_pool_rejections_total";
+const REASON_QUEUE_FULL: &str = "queue_full";
+const REASON_QUEUE_TIMEOUT: &str = "queue_timeout";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActiveHealth {
     Healthy,
@@ -65,6 +72,115 @@ impl Default for EndpointStatus {
             active_health: ActiveHealth::Healthy,
         }
     }
+}
+
+#[derive(Debug)]
+pub enum PoolRejection {
+    QueueFull,
+    QueueTimeout,
+    Closed,
+}
+
+#[derive(Debug)]
+struct PoolController {
+    upstream: Arc<str>,
+    limiter: PoolLimiter,
+}
+
+/// Pool limiter with semaphore-based connection gating.
+/// All pools are now limited per P0 plan (no unlimited variant).
+#[derive(Debug)]
+struct PoolLimiter {
+    permits: Arc<Semaphore>,
+    queue_capacity: u32,
+    queue_timeout: Duration,
+    queued: AtomicU32,
+}
+
+impl PoolController {
+    fn new(config: &Upstream) -> Self {
+        let upstream = Arc::<str>::from(config.name.0.clone());
+        record_queue_capacity_metric(upstream.as_ref(), config.pool.queue.capacity);
+        record_queue_depth_metric(upstream.as_ref(), 0);
+
+        let limit = config.pool.max.0;
+        let permits = Arc::new(Semaphore::new(limit.get() as usize));
+        let limiter = PoolLimiter {
+            permits,
+            queue_capacity: config.pool.queue.capacity,
+            queue_timeout: Duration::from_millis(config.pool.queue.timeout_ms as u64),
+            queued: AtomicU32::new(0),
+        };
+
+        Self { upstream, limiter }
+    }
+
+    async fn acquire(&self) -> Result<OwnedSemaphorePermit, PoolRejection> {
+        self.limiter.acquire(self.upstream.as_ref()).await
+    }
+
+    fn record_rejection(upstream: &str, reason: &'static str) {
+        let upstream = upstream.to_string();
+        counter!(METRIC_POOL_REJECTIONS, "upstream" => upstream, "reason" => reason).increment(1);
+    }
+}
+
+impl PoolLimiter {
+    async fn acquire(&self, upstream: &str) -> Result<OwnedSemaphorePermit, PoolRejection> {
+        if let Ok(permit) = self.permits.clone().try_acquire_owned() {
+            return Ok(permit);
+        }
+
+        if self.queue_capacity == 0 {
+            PoolController::record_rejection(upstream, REASON_QUEUE_FULL);
+            return Err(PoolRejection::QueueFull);
+        }
+
+        if self.queue_timeout.is_zero() {
+            PoolController::record_rejection(upstream, REASON_QUEUE_TIMEOUT);
+            return Err(PoolRejection::QueueTimeout);
+        }
+
+        let queued_before = self.queued.fetch_add(1, Ordering::SeqCst);
+        if queued_before >= self.queue_capacity {
+            self.queued.fetch_sub(1, Ordering::SeqCst);
+            PoolController::record_rejection(upstream, REASON_QUEUE_FULL);
+            return Err(PoolRejection::QueueFull);
+        }
+        record_queue_depth_metric(upstream, queued_before + 1);
+
+        let result = timeout(self.queue_timeout, self.permits.clone().acquire_owned()).await;
+        match result {
+            Ok(Ok(permit)) => {
+                self.finish_queue_wait(upstream);
+                Ok(permit)
+            }
+            Ok(Err(_)) => {
+                self.finish_queue_wait(upstream);
+                Err(PoolRejection::Closed)
+            }
+            Err(_) => {
+                self.finish_queue_wait(upstream);
+                PoolController::record_rejection(upstream, REASON_QUEUE_TIMEOUT);
+                Err(PoolRejection::QueueTimeout)
+            }
+        }
+    }
+
+    fn finish_queue_wait(&self, upstream: &str) {
+        let remaining = self.queued.fetch_sub(1, Ordering::SeqCst).saturating_sub(1);
+        record_queue_depth_metric(upstream, remaining);
+    }
+}
+
+fn record_queue_capacity_metric(upstream: &str, capacity: u32) {
+    let upstream = upstream.to_string();
+    gauge!(METRIC_POOL_QUEUE_CAPACITY, "upstream" => upstream).set(capacity as f64);
+}
+
+fn record_queue_depth_metric(upstream: &str, depth: u32) {
+    let upstream = upstream.to_string();
+    gauge!(METRIC_POOL_QUEUE_DEPTH, "upstream" => upstream).set(depth as f64);
 }
 
 #[derive(Debug)]
@@ -206,6 +322,7 @@ pub struct Cluster {
     pub(crate) rr_counter: AlignedCounter,
     state: ArcSwap<ClusterState>,
     health: Mutex<HealthState>,
+    pool: PoolController,
     breaker: CircuitBreaker,
     client_cert_key: Option<Arc<CertKey>>,
     ca_bundle: Option<Arc<CaType>>,
@@ -229,6 +346,7 @@ impl Cluster {
             cumulative_weights,
             total_weight,
         };
+        let pool = PoolController::new(&config);
         let breaker = match config.circuit_breaker {
             CircuitBreakerPolicy::Disabled => CircuitBreaker::Disabled,
             CircuitBreakerPolicy::Enabled {
@@ -248,6 +366,7 @@ impl Cluster {
             rr_counter: AlignedCounter(AtomicUsize::new(0)),
             state: ArcSwap::from_pointee(state),
             health: Mutex::new(health),
+            pool,
             breaker,
             client_cert_key,
             ca_bundle,
@@ -260,6 +379,10 @@ impl Cluster {
 
     pub fn ca_bundle(&self) -> Option<Arc<CaType>> {
         self.ca_bundle.clone()
+    }
+
+    pub async fn acquire_pool_permit(&self) -> Result<Option<OwnedSemaphorePermit>, PoolRejection> {
+        self.pool.acquire().await.map(Some)
     }
 
     pub fn select_endpoint(&self) -> Option<Endpoint> {
@@ -386,12 +509,12 @@ fn build_state_parts(endpoints: Vec<Endpoint>) -> (Vec<Endpoint>, Vec<u32>, u32)
 
 #[cfg(test)]
 mod tests {
-    use super::Cluster;
+    use super::{Cluster, PoolRejection};
     use pavis_core::{
         ActiveHealthCheck, CircuitBreakerPolicy, ConnectTimeout, ConnectionLimit,
         ConsecutiveErrors, Discovery, Duration, Endpoint, EndpointAddr, HttpVersion, IdleTimeout,
-        LoadBalancer, MaxConnections, MaxPendingRequests, OutlierDetectionPolicy, Pool, Port,
-        TlsPolicy, UpstreamBuilder, UpstreamId, UpstreamName, Weight,
+        LoadBalancer, MaxConnections, MaxPendingRequests, OutlierDetectionPolicy, Pool, PoolQueue,
+        Port, TlsPolicy, UpstreamBuilder, UpstreamId, UpstreamName, Weight,
     };
     use std::net::{IpAddr, Ipv4Addr};
     use std::num::NonZeroU16;
@@ -435,7 +558,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8080, 3))
@@ -466,7 +590,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 8081, 1))
@@ -501,7 +626,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 80, 1))
@@ -540,7 +666,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .outlier_detection(OutlierDetectionPolicy::Enabled {
                 consecutive_errors: ConsecutiveErrors(NonZeroU32::new(2).unwrap()),
@@ -575,7 +702,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .outlier_detection(OutlierDetectionPolicy::Disabled)
             .circuit_breaker(CircuitBreakerPolicy::Enabled {
@@ -608,6 +736,72 @@ mod tests {
         pending.abort();
     }
 
+    #[tokio::test]
+    async fn pool_rejects_when_queue_disabled() {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("pool-limit".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .pool(Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit(NonZeroU32::new(1).unwrap()),
+                queue: PoolQueue {
+                    capacity: 0,
+                    timeout_ms: 0,
+                },
+            })
+            .tls(TlsPolicy::Disabled)
+            .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 9000, 1))
+            .build()
+            .expect("upstream");
+
+        let cluster = Cluster::new(upstream);
+        let permit = cluster
+            .acquire_pool_permit()
+            .await
+            .expect("pool result")
+            .expect("permit");
+        let second = cluster.acquire_pool_permit().await;
+        assert!(matches!(second, Err(PoolRejection::QueueFull)));
+        drop(permit);
+    }
+
+    #[tokio::test]
+    async fn pool_waiter_times_out_when_no_slot_opens() {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("pool-timeout".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .pool(Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit(NonZeroU32::new(1).unwrap()),
+                queue: PoolQueue {
+                    capacity: 1,
+                    timeout_ms: 50,
+                },
+            })
+            .tls(TlsPolicy::Disabled)
+            .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 9001, 1))
+            .build()
+            .expect("upstream");
+
+        let cluster = Cluster::new(upstream);
+        let permit = cluster
+            .acquire_pool_permit()
+            .await
+            .expect("pool result")
+            .expect("permit");
+        let second = cluster.acquire_pool_permit().await;
+        assert!(matches!(second, Err(PoolRejection::QueueTimeout)));
+        drop(permit);
+    }
+
     #[test]
     fn test_cluster_update_endpoints() {
         let u = UpstreamBuilder::new()
@@ -619,7 +813,8 @@ mod tests {
             .pool(Pool {
                 idle: IdleTimeout::Disabled,
                 connect: ConnectTimeout::Disabled,
-                max: ConnectionLimit::Unlimited,
+                max: ConnectionLimit(NonZeroU32::new(128).unwrap()),
+                ..Pool::default()
             })
             .tls(TlsPolicy::Disabled)
             .build()
