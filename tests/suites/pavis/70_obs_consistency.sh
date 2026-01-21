@@ -43,9 +43,11 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix { path: "/echo" }
+      - matcher:
+          path: !prefix { path: "/echo" }
         destinations: [{ upstream: "backend-consistent", weight: 1 }]
-      - matcher: !prefix { path: "/consistent" }
+      - matcher:
+          path: !prefix { path: "/consistent" }
         destinations: [{ upstream: "backend-consistent", weight: 1 }]
 EOF
 gen_pvs "$TEST_TMP/config_v1.yaml" "$TEST_TMP/config_v1.pvs"
@@ -69,11 +71,14 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix { path: "/echo" }
+      - matcher:
+          path: !prefix { path: "/echo" }
         destinations: [{ upstream: "backend-consistent", weight: 1 }]
-      - matcher: !prefix { path: "/consistent" }
+      - matcher:
+          path: !prefix { path: "/consistent" }
         destinations: [{ upstream: "backend-consistent", weight: 1 }]
-      - matcher: !prefix { path: "/noop" }
+      - matcher:
+          path: !prefix { path: "/noop" }
         destinations: [{ upstream: "backend-consistent", weight: 1 }]
 EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"

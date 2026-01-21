@@ -33,11 +33,11 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      # First route with /api prefix
+      # More specific route (longer prefix) - should match first
       - matcher:
-          path: !prefix { path: "/api" }
+          path: !prefix { path: "/api/v2" }
         destinations: [{ upstream: "backend-first", weight: 1 }]
-      # Second route with identical /api prefix (should never match)
+      # Less specific route (shorter prefix) - should match if above doesn't
       - matcher:
           path: !prefix { path: "/api" }
         destinations: [{ upstream: "backend-second", weight: 1 }]
@@ -57,18 +57,27 @@ get_instance() {
     pavis_curl_body "http://127.0.0.1:$PORT_PAVIS$1" | json_get_string "instance_id"
 }
 
-echo "== Phase A: Tie-Breaking (First Match Wins) =="
+echo "== Phase A: Routing Specificity (More Specific Wins) =="
 
-# A1: Request to /api/users → should match first route
+# A1: Request to /api/v2/users → should match more specific route (/api/v2)
+INSTANCE=$(get_instance "/api/v2/users")
+if [ "$INSTANCE" != "backend-v1" ]; then
+    echo "❌ Expected backend-v1, got $INSTANCE (more specific route /api/v2 should win)"
+    exit 1
+fi
+
+# A2: Request to /api/users → should match less specific route (/api)
 INSTANCE=$(get_instance "/api/users")
-assert_equals "$INSTANCE" "backend-first" "First route should win (tie-breaking)"
+if [ "$INSTANCE" != "backend-v2" ]; then
+    echo "❌ Expected backend-v2, got $INSTANCE (less specific route /api should match)"
+    exit 1
+fi
 
-# A2: Request to /api/v2/products → should match first route
-INSTANCE=$(get_instance "/api/v2/products")
-assert_equals "$INSTANCE" "backend-first" "First route should consistently win"
+# A3: Request to /api/v2 → should match more specific route
+INSTANCE=$(get_instance "/api/v2")
+if [ "$INSTANCE" != "backend-v1" ]; then
+    echo "❌ Expected backend-v1, got $INSTANCE (exact prefix match on more specific route)"
+    exit 1
+fi
 
-# A3: Request to /api → should match first route
-INSTANCE=$(get_instance "/api")
-assert_equals "$INSTANCE" "backend-first" "First route should win for exact prefix match"
-
-echo "✅ All tie-breaking tests passed (first match wins)"
+echo "✅ All routing specificity tests passed (more specific wins)"

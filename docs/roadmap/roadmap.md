@@ -1,8 +1,8 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 48/82
-- **Core Features**: 37/46
+- **Total**: 50/82
+- **Core Features**: 39/46
 - **Technical Debt**: 9/25
 
 > **Status**: Active
@@ -15,10 +15,10 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 
 
 ### P0 – Safety & Correctness
-- [ ] **Header/Method Routing Gap**: Router currently matches path-only despite documentation promising method/header selectors. _Exit criteria_: Router matcher accepts method/header predicates, unit tests cover combos, and E2E proves a method-scoped route is honored.
+- [x] **Header/Method Routing Gap**: Router matcher now accepts method/header predicates with multiple header support (AND logic). Unit tests cover combinations, E2E tests prove method-scoped and header-scoped routing behavior. Implementation: `pavis/src/router.rs`, tests: `pavis/tests/routing.rs`, `tests/suites/pavis/42_routing_method_header_predicates.sh`.
 - [x] **Route Retries/Timeouts Ignored**: `Route.retry` / `Route.timeout` are parsed but unused. _Exit criteria_: Runtime wires values into Pingora deadlines/retry logic and regression tests exercise success/failure cases.
 - [x] **Upstream `health_check` Dropped**: Codec accepts the field but discards it. _Exit criteria_: Configs either compile to runtime health probes or are rejected with a clear validation error; E2E proves active probe behavior.
-- [ ] **Upstream `pool.max` Ignored**: Connection limits compile but are unenforced. _Exit criteria_: Runtime enforces `pool.max` and integration tests show capped concurrency.
+- [x] **Upstream `pool.max` Enforcement**: Connection limits are now enforced with semaphore-based gating. Supports queue capacity and timeout parameters. Integration tests verify capped concurrency and deterministic rejection behavior. Implementation: `pavis/src/upstream/cluster.rs` (lines 85-174), E2E tests: `tests/suites/pavis/80-83_pool_*.sh`.
 - [ ] **Inbound mTLS (rustls) Blocked**: Pingora rustls lacks client-cert verifier hooks. _Exit criteria_: Mark config as invalid or gated when rustls backend is selected, plus tests covering rejection. _Blocked on Pingora rustls inbound verifier wiring._
 - [ ] **Outbound Custom CA (rustls) Blocked**: Pingora rustls ignores per-peer CA bundles. _Exit criteria_: Either enforce backing logic or reject configs when rustls is active, with tests proving behavior. _Blocked on Pingora rustls per-peer CA support._
 

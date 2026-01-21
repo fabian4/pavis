@@ -25,33 +25,38 @@ PORT_UPSTREAM=$(get_free_port)
 run_mock_relay "$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
 
-# Start mock upstream with 3-second delay per request
-cat > "$TEST_TMP/upstream_server.py" <<'PYEOF'
-#!/usr/bin/env python3
-import sys
-import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+# Start mock upstream with 2-second delay per request
+cat <<EOF > "$TEST_TMP/upstream_config.json"
+{
+  "instance_id": "slow-backend",
+  "delay_ms": 2000
+}
+EOF
 
-class SlowHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        time.sleep(3)  # 3 second delay (longer for metric polling)
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(b'{"status":"ok","delay":3000}')
-    
-    def log_message(self, format, *args):
-        pass  # Suppress logs
+if [ "$TEST_MODE" == "binary" ]; then
+    RUST_LOG=debug "$PAVIS_UPSTREAM_BIN" \
+        --port "$PORT_UPSTREAM" \
+        --config "$TEST_TMP/upstream_config.json" \
+        > "$TEST_TMP/logs/upstream_slow.log" 2>&1 &
+    record_pid $! "upstream_slow"
+else
+    docker_args=(
+        run -d --rm
+        --user "$(id -u):$(id -g)"
+        --network host
+        -e RUST_LOG=debug
+        -v "$TEST_TMP:$TEST_TMP:rw"
+    )
+    container_id=$(docker "${docker_args[@]}" "$UPSTREAM_IMAGE" \
+        --port "$PORT_UPSTREAM" \
+        --config "$TEST_TMP/upstream_config.json")
+    record_container "$container_id" "upstream_slow"
+    docker logs -f "$container_id" > "$TEST_TMP/logs/upstream_slow.log" 2>&1 &
+fi
 
-if __name__ == '__main__':
-    port = int(sys.argv[1])
-    server = HTTPServer(('127.0.0.1', port), SlowHandler)
-    server.serve_forever()
-PYEOF
-chmod +x "$TEST_TMP/upstream_server.py"
-python3 "$TEST_TMP/upstream_server.py" "$PORT_UPSTREAM" &
-UPSTREAM_PID=$!
-sleep 1
+wait_for_port "$PORT_UPSTREAM" 5
+echo "✓ Slow upstream started on port $PORT_UPSTREAM"
+
 
 cat <<-EOF > "$TEST_TMP/config.yaml"
 listeners:
@@ -87,7 +92,10 @@ echo "Initial stats: $STATS"
 # Phase A2: Send 5 concurrent requests (fill pool exactly)
 echo "A2: Sending 5 concurrent requests to fill pool"
 for _ in {1..5}; do
-    curl -s -o /dev/null "http://127.0.0.1:$PORT_PAVIS/test" &
+    curl -s -o /dev/null \
+        --connect-timeout 5 \
+        --max-time 10 \
+        "http://127.0.0.1:$PORT_PAVIS/test" &
 done
 
 # Phase A3: Poll metrics during execution (every 500ms for 2 seconds)
@@ -104,7 +112,14 @@ wait
 
 # Phase A4: Verify final state (pool empty again)
 echo "A4: Checking final pool state (should be empty after completion)"
-sleep 1
+sleep 2
+# Wait for upstream to be ready
+for _ in {1..10}; do
+    if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT_UPSTREAM/" 2>/dev/null | grep -q "200"; then
+        break
+    fi
+    sleep 0.5
+done
 STATS=$(curl -s "http://127.0.0.1:$PORT_PAVIS/stats" 2>/dev/null || echo "{}")
 echo "Final stats: $STATS"
 
@@ -112,7 +127,5 @@ echo "✅ Metric tracking test completed"
 echo "   Note: Metric values logged for manual verification"
 echo "   Expected lifecycle: pool_size 0 → 5 → 0"
 
-# Cleanup upstream server
-kill $UPSTREAM_PID 2>/dev/null || true
 
 echo "✅ Pool metric tracking test passed"

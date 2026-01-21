@@ -1,157 +1,44 @@
-# Feature Verification Implementation Plan (P0/P1/P2)
+# Feature Verification Implementation Plan
 
-This plan expands the P0/P1/P2 items into concrete engineering steps with explicit
-contracts, layer ownership, and deterministic test expectations.
-
-**Milestone Scope**: This revision focuses on core routing and connection pool enforcement.
-Backend-specific validation gates and capability matrices are deferred to future milestones.
-**P2 items (7, 8) are deferred to future milestones and not implemented here.**
-
----
-
-## Error Taxonomy
-
-All validation and runtime errors MUST use structured error codes with typed fields.
-Tests MUST assert on error codes and fields first, error messages secondarily.
-
-### Error Code Structure
-
-```rust
-// Example structure (not implementation)
-struct PavisError {
-    code: ErrorCode,        // Stable enum variant
-    context: ErrorContext,  // Structured fields
-    message: String,        // Human-readable (unstable)
-}
-
-enum ErrorCode {
-    ERR_UNSUPPORTED_FEATURE,
-    ERR_INVALID_CONFIG,
-    ERR_VALIDATION_FAILED,
-    ERR_BACKEND_INCOMPATIBLE,
-    ERR_UPSTREAM_POOL_FULL,
-    // ...
-}
-
-struct ErrorContext {
-    feature: Option<String>,
-    backend: Option<String>,
-    field_path: Option<String>,
-    constraint: Option<String>,
-    upstream: Option<String>,
-    // ...
-}
-```
-
-### Field Path Canonical Format
-
-All error contexts MUST use a single canonical `field_path` syntax for referring to config fields.
-
-**Canonical Format Rules**:
-- Array indices: `routes[0]`, `upstreams[2]`
-- Nested fields: `routes[0].match.method`, `upstreams[0].pool.max`
-- Map keys (quoted): `routes[0].match.headers["x-tenant"]`, `upstreams[0].metadata["region"]`
-- Header names in field paths: always lowercase, quoted: `routes[0].match.headers["accept"]`
-
-**Examples**:
-```
-routes[0].match.method              // method field
-routes[0].match.headers["x-tenant"] // header predicate
-upstreams[0].pool.max               // pool max field
-upstreams[0].tls.ca_bundle          // TLS CA bundle
-listeners[0].bind_address           // listener address
-```
-
-**Requirements**:
-- Codec, core, and runtime MUST emit `field_path` in this canonical format.
-- Internal Rust struct field names (e.g., `bind_addr`, `max_connections`) are FORBIDDEN in `field_path`.
-- Use user-facing config field names exactly as they appear in source config files.
-- Tests MUST assert exact `field_path` strings using this format.
-
-### Test Assertions
-
-```rust
-// ✅ GOOD: Assert on stable code + fields
-assert_eq!(error.code, ErrorCode::ERR_INVALID_CONFIG);
-assert_eq!(error.context.field_path, Some("routes[0].match.method"));
-assert_eq!(error.context.constraint, Some("valid_http_method"));
-
-// ✅ GOOD: Header field path (lowercase, quoted)
-assert_eq!(error.context.field_path, Some("routes[0].match.headers[\"x-tenant\"]"));
-
-// ❌ BAD: Internal Rust field name
-assert_eq!(error.context.field_path, Some("routes[0].matcher.http_method"));
-
-// ⚠️ SECONDARY: Message can change
-assert!(error.message.contains("invalid method"));
-```
+> **Status**: This document tracks deferred P0/P1/P2 items that have **not yet been implemented**.
+>
+> **Completed**: The following P0 features are now **fully implemented** and documented in the main roadmap:
+> - ✅ **Header/Method Routing Gap** (P0 Item #1) - Method and header predicates with multiple header support
+> - ✅ **Upstream pool.max Enforcement** (P0 Item #2) - Connection caps with queue management
+>
+> See `docs/roadmap/roadmap.md` for the complete feature status.
 
 ---
 
-## E2E Case Integration and Documentation Maintenance
+## Error Taxonomy (Implemented ✅)
+
+All validation and runtime errors use structured error codes with typed fields as implemented in `pavis-core/src/error.rs`.
+
+**Implementation Reference**:
+- Error codes: `pavis-core/src/error.rs` (lines 5-24)
+- Field path builder: `pavis-core/src/error.rs` (lines 63-118)
+- Canonical format enforced across codec, core, and runtime layers
+
+---
+
+## E2E Case Integration and Documentation Maintenance (Implemented ✅)
 
 ### Integration-First Policy
 
-When adding E2E test coverage, prefer integrating verification into existing cases over creating new ones.
+E2E test coverage follows the integration-first approach as documented.
 
-**Integration Decision Tree**:
-1. **First**: Identify existing E2E case that exercises the relevant dimension (routing selection, upstream pool behavior, TLS handshake, etc.).
-2. **Attempt**: Extend the existing case with additional assertions or request variations.
-3. **Guard**: Verify extension does not break the case's original invariant or introduce flakiness.
-4. **Fallback**: If integration is not feasible (conflicting invariants, excessive complexity, cross-test interference), create a new case.
-
-### Requirements for New E2E Cases
-
-When creating a new E2E case is necessary, it MUST include:
-
-1. **Invariant Name and Rationale**:
-   - Clear, concise invariant statement (e.g., "pool.max enforces per-peer connection cap").
-   - Explicit reason why it cannot fit an existing case (e.g., "existing routing cases do not exercise concurrent connection limits").
-
-2. **Deterministic Verdict Signals**:
-   - Metric counters/gauges to assert (e.g., `pavis_upstream_pool_size <= pool.max`).
-   - Log patterns to verify (e.g., "Upstream pool full" warning message).
-   - Error codes/fields for rejection scenarios.
-   - No assertions on throughput, latency percentiles, or timing-sensitive thresholds.
-
-3. **No-Flake Assertion Strategy**:
-   - State-based assertions: metric values, error codes, response status.
-   - Avoid timing-based assertions (e.g., "request completes within 100ms").
-   - Use controlled failure injection (mock upstreams with deterministic delays/responses).
-   - Explicit synchronization points (wait for metric to reach expected value, not fixed sleep).
-
-4. **Cleanup and Isolation**:
-   - Explicit cleanup steps to reset runtime state (if needed).
-   - Isolation requirements: dedicated upstream, unique route paths, non-overlapping ports.
-   - Document any shared resources and synchronization mechanisms.
-
-### Documentation Maintenance Requirements
-
-When E2E tests are added or modified:
-
-1. **Suite Design Documentation**:
-   - Update E2E suite design doc (e.g., `tests/e2e/README.md` or `docs/testing/e2e-suite.md`) to list the case and its invariant.
-   - Include case ID/name, invariant statement, dimensions exercised, and verdict signals.
-
-2. **Plan Documentation**:
-   - Update this plan's test list to reference the case ID/name (e.g., "E2E case `routing_method_header_compound`").
-   - Ensure test count in summary matches actual implemented cases.
-
-3. **Case Extension Documentation**:
-   - If an existing case is extended, update its inline documentation (test file comments) to include the new verification dimension.
-   - List all invariants/dimensions the case now covers.
-
-4. **Single Source of Truth**:
-   - Documentation MUST be the authoritative reference for what each case proves.
-   - Code comments MUST reference the documented invariant, not duplicate it.
+**Implementation Reference**:
+- Routing E2E tests: `tests/suites/pavis/42_routing_method_header_predicates.sh`, `43_routing_tie_breaking.sh`
+- Pool E2E tests: `tests/suites/pavis/80_pool_hard_limit.sh` through `83_pool_metric_tracking.sh`
+- Integration tests: `crates/pavis-codec-serde/tests/codec_integration.rs` (lines 237-564)
 
 ---
 
-## P0 – Safety & Correctness (Active Implementation)
+## Deferred Items (Roadmap TODO)
 
-### 1) Header/Method Routing Gap
+The following items are intentionally deferred to future milestones and are NOT implemented.
 
-**Goal**: matcher supports method/header predicates in addition to path/host.
+### 3) Inbound mTLS (rustls) Blocked [DEFERRED]
 
 #### Contract
 
@@ -284,11 +171,6 @@ Prefer integrating these verifications into existing routing E2E cases where fea
    - All requests → first route in config order wins.
    - Assert: exact upstream target (e.g., "upstream-A" not "upstream-B").
 
----
-
-### 2) Upstream pool.max Ignored
-
-**Goal**: enforce connection caps from config.
 
 #### Contract
 
@@ -432,13 +314,6 @@ Prefer integrating these verifications into existing upstream connection cases w
    - Wait for completion: `pavis_upstream_pool_size` returns to 0.
    - Rationale: Verify gauge accuracy and lifecycle tracking.
 
----
-
-## Roadmap TODO (Deferred to Future Milestones)
-
-The following items are intentionally skipped in this milestone and will be implemented later.
-
-### 3) Inbound mTLS (rustls) Blocked [SKIPPED]
 
 **Intent**: Reject unsupported inbound mTLS configurations when rustls backend is selected.
 
@@ -453,7 +328,7 @@ The following items are intentionally skipped in this milestone and will be impl
 
 ---
 
-### 4) Outbound Custom CA (rustls) Blocked [SKIPPED]
+### 4) Outbound Custom CA (rustls) Blocked [DEFERRED]
 
 **Intent**: Reject unsupported per-peer CA bundles when rustls backend is selected.
 
@@ -468,7 +343,7 @@ The following items are intentionally skipped in this milestone and will be impl
 
 ---
 
-### 6) Validation Suite for Ignored Fields [SKIPPED]
+### 6) Validation Suite for Ignored Fields [DEFERRED]
 
 **Intent**: Ensure configs that are parsed but ignored/blocked fail fast with precise structured errors.
 
@@ -561,98 +436,12 @@ After implementing each feature:
 
 ---
 
-## Remaining Scope Summary
+## Summary of Deferred Work
 
-This milestone focuses on two core P0 items that establish routing and connection pool enforcement foundations. **P2 items (7, 8) are deferred and not in scope.**
+The following items remain for future implementation:
 
-### Active Implementation Items
-
-#### 1) Header/Method Routing Gap
-
-**Contract (Key Points)**:
-- Routes match when ALL predicates satisfied (host AND path AND method AND headers).
-- **Multiple header predicates allowed** (AND across predicates); single method predicate (P0 limit).
-- Evaluation order: host → path → method → headers (short-circuit).
-- Method: case-sensitive exact match; Header name: case-insensitive; Header value: case-sensitive.
-- Multi-value headers: match if ANY value matches (OR within header).
-- Tie-breaking: first matching route in config order wins.
-
-**Layer Ownership**:
-- Codec: parse, validate, materialize wildcards, reject malformed predicates (use canonical field paths).
-- Core: define matcher model with explicit enums, support Vec<HeaderMatcher>, document evaluation semantics.
-- Runtime: execute predicates in order (AND across headers), no inference, deterministic route selection.
-
-**Deterministic Verdict Signals**:
-- Metrics: `pavis_route_match_attempts_total{result}`, `pavis_route_match_predicate_failures_total{predicate_type}`.
-- Logs: trace-level rejection reasons with exact predicate mismatch details.
-- Test verdict: assert exact upstream target (not just status code).
-
-**Minimal Test Set**:
-- **Unit**: 11 tests covering single/compound predicates, multiple headers (AND), evaluation order, case sensitivity, empty vs missing headers.
-- **Integration**: 5 tests covering codec parsing, error code validation, multiple header predicates.
-- **E2E**: 6 tests covering method/header routing, multiple header predicates (AND), multi-value headers (OR within), compound predicates, tie-breaking.
-
-**Flake Avoidance**: No throughput/latency assertions; use deterministic status codes, metric counters, upstream targets.
-
----
-
-#### 2) Upstream pool.max Ignored
-
-**Contract (Key Points)**:
-- `pool.max` = max concurrent connections per upstream peer (not global, not per-worker).
-- **Core Invariant**: active connections MUST NEVER exceed `pool.max`.
-- Valid range: `1..=u32::MAX`.
-- Queue params: `pool.queue_capacity` (0+ requests), `pool.queue_timeout_ms` (0+ ms).
-- Limit reached: enqueue if queue available, else 503 with `ERR_UPSTREAM_POOL_FULL`.
-- Default: codec materializes explicit defaults if unspecified.
-
-**Layer Ownership**:
-- Codec: parse, validate `pool.max >= 1` and queue params, materialize defaults, reject invalid values (use canonical field paths).
-- Core: store as non-Option fields (e.g., `NonZeroU32`), document per-peer scope and queue semantics.
-- Runtime: enforce hard limit (semaphore if Pingora lacks concurrency cap), implement queue, emit metrics on active/queued/rejected.
-
-**Pingora Mapping**:
-- Identify exact Pingora API for concurrent connection caps (not idle limits).
-- If unavailable: add explicit semaphore gating layer (document in implementation notes).
-- Verify `pavis_upstream_pool_size` reflects concurrent connections (not idle).
-
-**Deterministic Verdict Signals**:
-- Metrics: `pavis_upstream_pool_size{upstream}` (gauge, MUST NOT exceed pool.max), `pavis_upstream_pool_limit`, `pavis_upstream_pool_queue_depth`, `pavis_upstream_pool_rejections_total{reason}`.
-- Logs: warn-level pool full messages with exact limit/active/queued counts.
-- Test verdict: gauge invariant (size <= max), rejection counter increments, deterministic 200 vs 503 counts based on queue params.
-
-**Minimal Test Set**:
-- **Unit**: 7 tests covering valid values, zero/negative rejection, default materialization, queue param validation.
-- **Integration**: 2 tests covering non-Option field wiring.
-- **E2E**: 4 tests covering hard limit (no queue), queue behavior, high limit (no false rejects), metric accuracy.
-
-**Flake Avoidance**: No throughput/latency assertions; use deterministic queue params, poll metrics for invariant, assert exact counts based on config.
-
----
-
-### Error Taxonomy (Cross-Cutting)
-
-**Structured Error Codes**:
-- `ERR_INVALID_CONFIG`: malformed config (invalid method, empty header name, pool.max < 1, queue params < 0).
-- `ERR_UPSTREAM_POOL_FULL`: runtime pool limit reached (503 response, queue full or timeout).
-
-**Field Path Canonical Format**:
-- `routes[N].match.method`, `routes[N].match.headers["x-tenant"]`, `upstreams[N].pool.max`, `upstreams[N].pool.queue_capacity`.
-- Use user-facing config field names, not internal Rust names.
-
-**Test Strategy**:
-- Assert error code + context fields first (stable contract).
-- Assert field_path in canonical format.
-- Assert message content secondarily (unstable, can change).
-
----
-
-### Deferred Items (Roadmap TODOs)
-
-- **Item 3**: Inbound mTLS (rustls) rejection gate → future TLS hardening milestone.
-- **Item 4**: Outbound Custom CA (rustls) rejection gate → future TLS hardening milestone.
-- **Item 6**: Validation suite for ignored fields → implemented with items 3/4 in future milestone.
-- **Item 7**: Header/Method Routing Enhancements (P2) → future routing milestone.
-- **Item 8**: Route Retries/Timeouts (P2) → future resilience milestone.
-
-**No backend capability matrix, validation suite infrastructure, or P2 features in this milestone.**
+- **Item 3**: Inbound mTLS (rustls) rejection gate
+- **Item 4**: Outbound Custom CA (rustls) rejection gate
+- **Item 6**: Validation suite for ignored fields
+- **Item 7**: Header/Method Routing Enhancements (P2)
+- **Item 8**: Route Retries/Timeouts Full Policy (P2)

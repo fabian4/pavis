@@ -35,8 +35,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix
-          path: "/echo"
+      - matcher:
+          path: !prefix { path: "/echo" }
         destinations:
           - upstream: "backend"
             weight: 1
@@ -78,7 +78,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix { path: "/echo" }
+      - matcher:
+          path: !prefix { path: "/echo" }
         destinations: [{ upstream: "backend-v2", weight: 1 }]
 admin:
   enabled: true

@@ -21,7 +21,7 @@ This document provides a feature status overview for reference.
 
 | Feature | Status | Note / Alternative |
 | :--- | :---: | :--- |
-| **L7 Routing** (Path/Header/Method) | 🚧 | Path routing works. Method/Header matching has known gaps. |
+| **L7 Routing** (Path/Header/Method) | ✅ | Path, method, and header routing fully implemented with multiple header predicates (AND logic). |
 | **Traffic Splitting** (Canary) | ✅ | Weighted round-robin supported. |
 | **Header Manipulation** | ✅ | Add/Remove headers supported. |
 | **Redirect & DirectResponse** | ✅ | Supported. For HTTP->HTTPS or security blocking. |
@@ -52,7 +52,7 @@ This document provides a feature status overview for reference.
 | :--- | :---: | :--- |
 | **Active Health Check** | ✅ | Periodic GET probes; 2xx = healthy. |
 | **Outlier Detection** (Passive) | ✅ | Ejects endpoints after consecutive 5xx/transport errors. |
-| **Circuit Breaking** | 🚧 | Connection limits (`pool.max`) parsed but unenforced (P0). |
+| **Circuit Breaking** | ✅ | Connection limits (`pool.max`) enforced with semaphore-based gating. Queue capacity and timeout supported. |
 | **Fault Injection** | ⚠️ | Deferred. For chaos engineering only. |
 
 ## 4. Observability

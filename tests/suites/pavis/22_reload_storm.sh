@@ -39,7 +39,8 @@ write_config() {
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        response_headers:
 	          set_headers: [["X-Pavis-Version", "v${version}"]]
 	        destinations:

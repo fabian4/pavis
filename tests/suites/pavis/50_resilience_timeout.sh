@@ -33,7 +33,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix { path: "/" }
+      - matcher:
+          path: !prefix { path: "/" }
         timeout: "500ms"
         destinations: [{ upstream: "backend", weight: 1 }]
 EOF
@@ -59,7 +60,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix { path: "/" }
+      - matcher:
+          path: !prefix { path: "/" }
         timeout: "50ms"
         destinations: [{ upstream: "backend", weight: 1 }]
 EOF

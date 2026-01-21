@@ -26,32 +26,36 @@ run_mock_relay "$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
 
 # Start mock upstream with 2-second delay per request
-cat > "$TEST_TMP/upstream_server.py" <<'PYEOF'
-#!/usr/bin/env python3
-import sys
-import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+cat <<EOF > "$TEST_TMP/upstream_config.json"
+{
+  "instance_id": "slow-backend",
+  "delay_ms": 2000
+}
+EOF
 
-class SlowHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        time.sleep(2)  # 2 second delay
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(b'{"status":"ok","delay":2000}')
-    
-    def log_message(self, format, *args):
-        pass  # Suppress logs
+if [ "$TEST_MODE" == "binary" ]; then
+    RUST_LOG=debug "$PAVIS_UPSTREAM_BIN" \
+        --port "$PORT_UPSTREAM" \
+        --config "$TEST_TMP/upstream_config.json" \
+        > "$TEST_TMP/logs/upstream_slow.log" 2>&1 &
+    record_pid $! "upstream_slow"
+else
+    docker_args=(
+        run -d --rm
+        --user "$(id -u):$(id -g)"
+        --network host
+        -e RUST_LOG=debug
+        -v "$TEST_TMP:$TEST_TMP:rw"
+    )
+    container_id=$(docker "${docker_args[@]}" "$UPSTREAM_IMAGE" \
+        --port "$PORT_UPSTREAM" \
+        --config "$TEST_TMP/upstream_config.json")
+    record_container "$container_id" "upstream_slow"
+    docker logs -f "$container_id" > "$TEST_TMP/logs/upstream_slow.log" 2>&1 &
+fi
 
-if __name__ == '__main__':
-    port = int(sys.argv[1])
-    server = HTTPServer(('127.0.0.1', port), SlowHandler)
-    server.serve_forever()
-PYEOF
-chmod +x "$TEST_TMP/upstream_server.py"
-python3 "$TEST_TMP/upstream_server.py" "$PORT_UPSTREAM" &
-UPSTREAM_PID=$!
-sleep 1
+wait_for_port "$PORT_UPSTREAM" 5
+echo "✓ Slow upstream started on port $PORT_UPSTREAM"
 
 cat <<-EOF > "$TEST_TMP/config.yaml"
 listeners:
@@ -85,7 +89,10 @@ REJECTED=0
 
 for _ in {1..10}; do
     (
-        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT_PAVIS/test" 2>/dev/null || echo "000")
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 5 \
+            --max-time 10 \
+            "http://127.0.0.1:$PORT_PAVIS/test" 2>/dev/null || echo "000")
         echo "$STATUS" >> "$TEST_TMP/responses.txt"
     ) &
 done
@@ -114,8 +121,5 @@ if [ "$REJECTED" -ne 0 ]; then
 fi
 
 echo "✅ High pool limit verified: all 10 requests succeeded, no false rejections"
-
-# Cleanup upstream server
-kill $UPSTREAM_PID 2>/dev/null || true
 
 echo "✅ Pool high limit test passed (no false rejections)"

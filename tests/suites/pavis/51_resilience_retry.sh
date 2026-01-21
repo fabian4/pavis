@@ -38,7 +38,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix { path: "/" }
+      - matcher:
+          path: !prefix { path: "/" }
         retry:
           attempts: 2
           per_try_timeout: "200ms"

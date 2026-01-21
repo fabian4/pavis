@@ -39,7 +39,8 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1
@@ -132,7 +133,8 @@ cat <<-EOF > "$TEST_TMP/config_missing_upstream.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        destinations:
 	          - upstream: "missing-upstream"
 	            weight: 1
@@ -152,7 +154,8 @@ cat <<-EOF > "$TEST_TMP/config_invalid_regex.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !regex { path: "[" }
+	      - matcher:
+	          path: !regex { path: "[" }
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1
@@ -175,7 +178,8 @@ cat <<-EOF > "$TEST_TMP/config_bad_circuit_breaker.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1
@@ -198,7 +202,8 @@ cat <<-EOF > "$TEST_TMP/config_bad_outlier.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1
@@ -226,7 +231,8 @@ cat <<-EOF > "$TEST_TMP/config_bad_health_check.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1
@@ -254,7 +260,8 @@ cat <<-EOF > "$TEST_TMP/config_missing_ca.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1

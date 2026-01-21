@@ -62,8 +62,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix
-          path: "/"
+      - matcher:
+          path: !prefix { path: "/" }
         destinations:
           - upstream: "slow-backend"
             weight: 1

@@ -41,7 +41,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix { path: "/" }
+      - matcher:
+          path: !prefix { path: "/" }
         destinations:
           - upstream: "backend"
             weight: 1
@@ -70,7 +71,8 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix { path: "/" }
+      - matcher:
+          path: !prefix { path: "/" }
         destinations:
           - upstream: "backend"
             weight: 1

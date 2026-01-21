@@ -36,7 +36,8 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        response_headers:
 	          set_headers: [["X-Pavis-Version", "v1"]]
 	        destinations:
@@ -61,7 +62,8 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        response_headers:
 	          set_headers: [["X-Pavis-Version", "v2"]]
 	        destinations:

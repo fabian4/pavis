@@ -34,13 +34,13 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !prefix
-          path: "/api"
+      - matcher:
+          path: !prefix { path: "/api" }
         destinations:
           - upstream: "backend1"
             weight: 1
-      - matcher: !prefix
-          path: "/v2"
+      - matcher:
+          path: !prefix { path: "/v2" }
         destinations:
           - upstream: "backend2"
             weight: 1

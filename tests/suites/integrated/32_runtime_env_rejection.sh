@@ -47,7 +47,8 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        destinations:
 	          - upstream: "backend"
 	            weight: 1
@@ -82,7 +83,8 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	routes:
 	  - host: "*"
 	    paths:
-	      - matcher: !prefix { path: "/" }
+	      - matcher:
+	          path: !prefix { path: "/" }
 	        destinations:
 	          - upstream: "backend-v2"
 	            weight: 1

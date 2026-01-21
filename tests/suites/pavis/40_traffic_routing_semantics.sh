@@ -32,13 +32,17 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !exact { path: "/exact" }
+      - matcher:
+          path: !exact { path: "/exact" }
         destinations: [{ upstream: "backend-v2", weight: 1 }]
-      - matcher: !prefix { path: "/prefix" }
+      - matcher:
+          path: !prefix { path: "/prefix" }
         destinations: [{ upstream: "backend-v1", weight: 1 }]
-      - matcher: !regex { path: '^/regex/[0-9]+$' }
+      - matcher:
+          path: !regex { path: '^/regex/[0-9]+$' }
         destinations: [{ upstream: "backend-v2", weight: 1 }]
-      - matcher: !prefix { path: "/headers" }
+      - matcher:
+          path: !prefix { path: "/headers" }
         request_headers:
           set_headers:
             - ["X-Request-Set", "pavis-set"]
@@ -54,17 +58,21 @@ routes:
           remove_headers:
             - "X-Internal-Header"
         destinations: [{ upstream: "backend-v1", weight: 1 }]
-      - matcher: !exact { path: "/redirect-me" }
+      - matcher:
+          path: !exact { path: "/redirect-me" }
         status: 301
         location: "http://example.com/new-location"
-      - matcher: !exact { path: "/direct-me" }
+      - matcher:
+          path: !exact { path: "/direct-me" }
         status: 200
         body: "Custom Static Response"
-      - matcher: !prefix { path: "/" }
+      - matcher:
+          path: !prefix { path: "/" }
         destinations: [{ upstream: "backend-v1", weight: 1 }]
   - host: "rewrite.test"
     paths:
-      - matcher: !prefix { path: "/service-a" }
+      - matcher:
+          path: !prefix { path: "/service-a" }
         rewrite:
           path: ""
           host: "rewritten.internal"
