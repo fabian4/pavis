@@ -89,6 +89,7 @@ impl Service for ConfigAgentWorker {
                         }
                         Ok(PollOutcome::Rejected) => {
                             attempt = 0;
+                            self.agent.clear_last_rejected_etag();
                             tokio::time::sleep(Duration::from_secs(5)).await;
                         }
                         Err(err) => {

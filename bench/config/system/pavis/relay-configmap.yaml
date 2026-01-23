@@ -78,12 +78,12 @@ data:
     routes:
       - host: "*"
         paths:
-          - matcher: !exact
-              path: "/health"
+          - matcher:
+              exact: "/health"
             status: 200
             body: "OK"
-          - matcher: !prefix
-              path: "/"
+          - matcher:
+              prefix: "/"
             destinations:
               - upstream: "backend"
                 weight: 100
