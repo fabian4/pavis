@@ -108,6 +108,14 @@ The Relay serves as the authoritative source of truth for configuration versions
 *   **Checksum Validation**: Clients **MUST** verify the integrity of downloaded artifacts using the SHA256 checksum provided by the Relay.
 *   **Change Detection**: Clients **SHOULD** use artifact checksums (not just version numbers) to detect changes, avoiding race conditions during long-polling.
 
+### 5.4 Runtime Polling Contract
+
+*   **Canonical ETag Format**: All Relay responses **MUST** use strong ETags formatted as `sha256:<lowercase-hex>`. Weak tags (`W/…`) are explicitly rejected by the runtime.
+*   **Latest-Only Fetch**: The Config Agent only downloads the artifact referenced by the Relay's latest ETag. Intermediate versions are never replayed; the Relay is responsible for monotonic integrity.
+*   **Applied vs. Rejected Cache**: The runtime tracks both the last applied ETag and the last rejected ETag. Conditional requests (`If-None-Match`) prefer the rejected value to prevent repeated 200 responses for known-bad artifacts.
+*   **Rejection Handling**: A validation failure records the offending ETag as "rejected" and keeps serving the Last Known Good artifact. Subsequent polls **MUST** receive 304/204 from the Relay while that ETag is current. Returning 200 for a rejected ETag is logged as a Relay contract violation and ignored.
+*   **Backoff Semantics**: Long-poll mode (`wait_ms > 0`) is used only after at least one ETag is known. `Rejected` outcomes trigger a fixed short sleep without contaminating the network backoff counter; network failures continue to honor exponential backoff.
+
 ## 6. Operational Contracts
 
 ### 6.1 Signal Handling

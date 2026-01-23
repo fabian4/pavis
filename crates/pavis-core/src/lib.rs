@@ -41,6 +41,8 @@ mod tests {
             routes: Vec::new(),
             shutdown: super::ShutdownPolicy::Disabled,
             admin: super::AdminConfig::Disabled,
+            features: super::RoutingFeatures::default(),
+            required_capabilities: Vec::new(),
         };
     }
 }

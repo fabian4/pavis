@@ -23,8 +23,9 @@ routes:
           remove_headers: ["x-remove"]
         retry:
           attempts: 2
-          per_try_timeout: "250ms"
-          retry_on: ["5xx", "connect_failure"]
+          per_try: "250ms"
+          retry_on: ["status_code", "connect_error"]
+          retryable_status_codes: [502, 503, 504]
         destinations:
           - upstream: "backend"
             weight: 1

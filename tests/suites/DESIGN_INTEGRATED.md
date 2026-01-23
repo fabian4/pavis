@@ -269,6 +269,28 @@ All options are pure semantic errors detectable at load time without external st
 
 ---
 
+### `50_multiversion_chain`
+
+**Category**: End-to-End Reload
+**Contracts**: I2 (Monotonic), I5 (Deployment Parity)
+**Maturity**: L3
+
+**Scenario**:
+1. Start relay and pavis with V1.
+2. Rapidly publish V2, V3, and V4 in a chain.
+3. Monitor runtime version via metrics to ensure it applies all versions in monotonic order without skipping or regressing.
+
+**Oracle**:
+- `pavis_config_version` metric sampled during storm.
+
+**Assertions**:
+- Runtime version sequence observed: `1 -> 2 -> 3 -> 4`.
+- No version regressions or crashes.
+
+**Assessment**: PASS. Verified monotonic application of rapid configuration updates.
+
+---
+
 ## Implementation Principles
 
 - **Runner Managed Lifecycle**: Component lifecycle managed by `run.sh`; test cases use `run_pavis` / `run_relay` / `run_mock_relay`.

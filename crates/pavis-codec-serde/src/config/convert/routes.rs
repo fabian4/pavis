@@ -4,8 +4,9 @@ use pavis_core::{ErrorCode, FieldPathBuilder, PavisError, RouteAction as CoreRou
 use std::num::{NonZeroU16, NonZeroU32};
 
 use crate::config::types::{
-    HeaderOperations, HeaderPredicate, Matcher, PathMatcher, PrincipalConfig, RetryPolicy,
-    RewritePolicy, Route, RouteAction as CodecRouteAction, VirtualHost, WeightedDestination,
+    HeaderMatcherDTO, HeaderOperations, HeaderPredicate, HeaderPredicateLegacy, Matcher,
+    PathMatcher, PrincipalConfig, RetryPolicy, RewritePolicy, Route,
+    RouteAction as CodecRouteAction, VirtualHost, WeightedDestination,
 };
 
 pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::VirtualHost>> {
@@ -56,26 +57,7 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
             };
 
             let retry = if let Some(r) = p.retry {
-                let attempts = NonZeroU16::new(
-                    u16::try_from(r.attempts)
-                        .map_err(|_| anyhow::anyhow!("retry.attempts exceeds u16::MAX"))?,
-                )
-                .ok_or_else(|| anyhow::anyhow!("retry.attempts must be > 0"))?;
-
-                let per_try_ms = u32::try_from(r.per_try_timeout.as_millis())
-                    .map_err(|_| anyhow::anyhow!("retry.per_try_timeout exceeds u32::MAX ms"))?;
-                let per_try = if let Some(ms) = NonZeroU32::new(per_try_ms) {
-                    pavis_core::TryTimeout::Enabled(pavis_core::Duration(ms))
-                } else {
-                    pavis_core::TryTimeout::Disabled
-                };
-
-                let on = parse_retry_flags(&r.retry_on)?;
-                pavis_core::RetryPolicy::Enabled {
-                    attempts,
-                    per_try,
-                    on,
-                }
+                convert_retry_policy(r, &timeout, vh_index, path_index)?
             } else {
                 pavis_core::RetryPolicy::Disabled
             };
@@ -110,12 +92,14 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 Matcher {
                     path: PathMatcher::Prefix { path },
                     method,
+                    methods,
                     headers,
                 } => to_runtime_matcher(
                     pavis_core::PathMatch::Prefix {
                         path: pavis_core::Path(path),
                     },
                     method,
+                    methods,
                     headers,
                     vh_index,
                     path_index,
@@ -123,12 +107,14 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 Matcher {
                     path: PathMatcher::Exact { path },
                     method,
+                    methods,
                     headers,
                 } => to_runtime_matcher(
                     pavis_core::PathMatch::Exact {
                         path: pavis_core::Path(path),
                     },
                     method,
+                    methods,
                     headers,
                     vh_index,
                     path_index,
@@ -136,12 +122,14 @@ pub(super) fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<pavis_core::Vir
                 Matcher {
                     path: PathMatcher::Regex { path },
                     method,
+                    methods,
                     headers,
                 } => to_runtime_matcher(
                     pavis_core::PathMatch::Regex {
                         path: pavis_core::Path(path),
                     },
                     method,
+                    methods,
                     headers,
                     vh_index,
                     path_index,
@@ -229,20 +217,62 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Result<Vec<V
             let retry = match p.retry {
                 pavis_core::RetryPolicy::Disabled => None,
                 pavis_core::RetryPolicy::Enabled {
-                    attempts,
+                    max_attempts,
                     per_try,
-                    on,
+                    retryable_reasons,
+                    retryable_status_codes,
+                    backoff,
+                    retry_non_idempotent,
+                    fail_on_non_replayable_retry,
+                    max_request_body_buffer_bytes,
                 } => {
-                    let per_try_timeout = match per_try {
-                        pavis_core::TryTimeout::Enabled(d) => {
-                            std::time::Duration::from_millis(d.0.get() as u64)
+                    use crate::config::types::BackoffStrategyDTO;
+
+                    let reasons: Vec<String> = retryable_reasons
+                        .iter()
+                        .map(|r| match r {
+                            pavis_core::RetryReason::StatusCode => "status_code".to_string(),
+                            pavis_core::RetryReason::ConnectTimeout => {
+                                "connect_timeout".to_string()
+                            }
+                            pavis_core::RetryReason::ReadTimeout => "read_timeout".to_string(),
+                            pavis_core::RetryReason::PerTryTimeout => "per_try_timeout".to_string(),
+                            pavis_core::RetryReason::PoolFull => "pool_full".to_string(),
+                            pavis_core::RetryReason::ConnectError => "connect_error".to_string(),
+                        })
+                        .collect();
+
+                    let codes = retryable_status_codes.as_ref().map(|c| c.codes.clone());
+
+                    let backoff_dto = match backoff {
+                        pavis_core::BackoffStrategy::Fixed { base_ms } => {
+                            BackoffStrategyDTO::Fixed { base_ms }
                         }
-                        _ => std::time::Duration::from_millis(0),
+                        pavis_core::BackoffStrategy::Linear { base_ms } => {
+                            BackoffStrategyDTO::Linear { base_ms }
+                        }
+                        pavis_core::BackoffStrategy::Exponential { base_ms, max_ms } => {
+                            BackoffStrategyDTO::Exponential { base_ms, max_ms }
+                        }
+                        _ => BackoffStrategyDTO::Fixed { base_ms: 100 },
                     };
+
+                    let per_try_dto = match per_try {
+                        pavis_core::TryTimeout::Enabled(d) => {
+                            Some(std::time::Duration::from_millis(d.0.get() as u64))
+                        }
+                        _ => None,
+                    };
+
                     Some(RetryPolicy {
-                        attempts: attempts.get() as usize,
-                        per_try_timeout,
-                        retry_on: retry_flags_to_values(on),
+                        max_attempts: max_attempts.get(),
+                        retryable_reasons: reasons,
+                        retryable_status_codes: codes,
+                        backoff: backoff_dto,
+                        retry_non_idempotent,
+                        fail_on_non_replayable_retry,
+                        max_request_body_buffer_bytes,
+                        per_try: per_try_dto,
                     })
                 }
                 #[allow(unreachable_patterns)]
@@ -274,16 +304,19 @@ pub(super) fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Result<Vec<V
                 pavis_core::PathMatch::Prefix { path } => Matcher {
                     path: PathMatcher::Prefix { path: path.0 },
                     method: from_runtime_method(&p.matcher.method),
+                    methods: from_runtime_methods(&p.matcher.method),
                     headers: from_runtime_headers_predicates(&p.matcher.headers),
                 },
                 pavis_core::PathMatch::Exact { path } => Matcher {
                     path: PathMatcher::Exact { path: path.0 },
                     method: from_runtime_method(&p.matcher.method),
+                    methods: from_runtime_methods(&p.matcher.method),
                     headers: from_runtime_headers_predicates(&p.matcher.headers),
                 },
                 pavis_core::PathMatch::Regex { path } => Matcher {
                     path: PathMatcher::Regex { path: path.0 },
                     method: from_runtime_method(&p.matcher.method),
+                    methods: from_runtime_methods(&p.matcher.method),
                     headers: from_runtime_headers_predicates(&p.matcher.headers),
                 },
                 #[allow(unreachable_patterns)]
@@ -331,6 +364,7 @@ fn default_matcher() -> Matcher {
             path: "/".to_string(),
         },
         method: None,
+        methods: None,
         headers: None,
     }
 }
@@ -347,6 +381,7 @@ fn matcher_path(matcher: &Matcher) -> String {
 fn to_runtime_matcher(
     path: pavis_core::PathMatch,
     method: Option<String>,
+    methods: Option<Vec<String>>,
     headers: Option<Vec<HeaderPredicate>>,
     vhost_index: usize,
     path_index: usize,
@@ -354,12 +389,19 @@ fn to_runtime_matcher(
     let method_field_path = route_method_field_path(vhost_index, path_index);
 
     // Materialize method predicate (default: Any)
-    let method = match method {
-        None => pavis_core::MethodPredicate::Any,
-        Some(m) => {
-            let http_method = parse_http_method(&m, method_field_path.clone())?;
-            pavis_core::MethodPredicate::Specific(http_method)
+    // Priority: methods (List) > method (Specific) > Any
+    let method = if let Some(list) = methods {
+        let mut core_list = Vec::with_capacity(list.len());
+        for (i, m) in list.into_iter().enumerate() {
+            let path = format!("{}[{}]", method_field_path, i);
+            core_list.push(parse_http_method(&m, path)?);
         }
+        pavis_core::MethodPredicate::List(core_list)
+    } else if let Some(m) = method {
+        let http_method = parse_http_method(&m, method_field_path)?;
+        pavis_core::MethodPredicate::Specific(http_method)
+    } else {
+        pavis_core::MethodPredicate::Any
     };
 
     // Materialize header predicates (default: None)
@@ -466,11 +508,72 @@ fn to_runtime_header_predicate(
     path_index: usize,
     header_index: usize,
 ) -> Result<pavis_core::HeaderPredicate> {
-    let canonical_name = pred.name.to_ascii_lowercase();
-    let header_path =
-        header_field_path(vhost_index, path_index, Some(&canonical_name), header_index);
+    match pred {
+        HeaderPredicate::V1(legacy) => {
+            to_runtime_header_predicate_legacy(legacy, vhost_index, path_index, header_index)
+        }
+        HeaderPredicate::V2(dto) => {
+            to_runtime_header_predicate_dto(dto, vhost_index, path_index, header_index)
+        }
+    }
+}
 
-    if pred.name.is_empty() {
+fn to_runtime_header_predicate_dto(
+    pred: HeaderMatcherDTO,
+    vhost_index: usize,
+    path_index: usize,
+    header_index: usize,
+) -> Result<pavis_core::HeaderPredicate> {
+    let (name, matcher) = match pred {
+        HeaderMatcherDTO::Exact { name, value } => (
+            name,
+            pavis_core::HeaderMatch::Exact(CompactString::new(value)),
+        ),
+        HeaderMatcherDTO::Prefix { name, prefix } => (
+            name,
+            pavis_core::HeaderMatch::Prefix(CompactString::new(prefix)),
+        ),
+        HeaderMatcherDTO::Regex { name, pattern } => {
+            // Validate regex
+            let header_path = header_field_path(vhost_index, path_index, Some(&name), header_index);
+            if pattern.len() > 256 {
+                return Err(invalid_config_error(
+                    format!("regex pattern for header '{}' exceeds 256 bytes", name),
+                    Some(header_path.clone()),
+                    Some("regex_pattern_too_long"),
+                ));
+            }
+            regex::Regex::new(&pattern).map_err(|e| {
+                invalid_config_error(
+                    format!("invalid regex pattern for header '{}': {}", name, e),
+                    Some(header_path),
+                    Some("regex_invalid_syntax"),
+                )
+            })?;
+            (
+                name,
+                pavis_core::HeaderMatch::Regex(CompactString::new(pattern)),
+            )
+        }
+        HeaderMatcherDTO::Present { name } => (name, pavis_core::HeaderMatch::Present),
+        HeaderMatcherDTO::Absent { name } => (name, pavis_core::HeaderMatch::Absent),
+    };
+
+    validate_header_name(&name, vhost_index, path_index, header_index)?;
+
+    Ok(pavis_core::HeaderPredicate {
+        name: CompactString::new(name.to_ascii_lowercase()),
+        matcher,
+    })
+}
+
+fn validate_header_name(
+    name: &str,
+    vhost_index: usize,
+    path_index: usize,
+    header_index: usize,
+) -> Result<()> {
+    if name.is_empty() {
         return Err(invalid_config_error(
             "header predicate name cannot be empty",
             Some(header_field_path(
@@ -482,29 +585,45 @@ fn to_runtime_header_predicate(
             Some("header_name_non_empty"),
         ));
     }
-
-    // Validate header name (RFC 7230 token rules - basic check)
-    if !pred
-        .name
+    if !name
         .chars()
         .all(|c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         return Err(invalid_config_error(
             format!(
                 "invalid header name '{}' (must contain only alphanumeric, -, or _)",
-                pred.name
+                name
             ),
-            Some(header_path.clone()),
+            Some(header_field_path(
+                vhost_index,
+                path_index,
+                Some(name),
+                header_index,
+            )),
             Some("header_name_invalid"),
         ));
     }
+    Ok(())
+}
+
+fn to_runtime_header_predicate_legacy(
+    pred: HeaderPredicateLegacy,
+    vhost_index: usize,
+    path_index: usize,
+    header_index: usize,
+) -> Result<pavis_core::HeaderPredicate> {
+    let canonical_name = pred.name.to_ascii_lowercase();
+    let header_path =
+        header_field_path(vhost_index, path_index, Some(&canonical_name), header_index);
+
+    validate_header_name(&pred.name, vhost_index, path_index, header_index)?;
 
     let matcher = if pred.absent {
         // Absent takes precedence
-        if pred.value.is_some() || pred.regex {
+        if pred.value.is_some() || pred.regex || pred.prefix {
             return Err(invalid_config_error(
                 format!(
-                    "header predicate '{}': absent=true is incompatible with value or regex",
+                    "header predicate '{}': absent=true is incompatible with value, regex, or prefix",
                     pred.name
                 ),
                 Some(header_path.clone()),
@@ -513,11 +632,21 @@ fn to_runtime_header_predicate(
         }
         pavis_core::HeaderMatch::Absent
     } else {
-        match (&pred.value, pred.regex) {
-            (None, false) => pavis_core::HeaderMatch::Present,
-            (Some(val), false) => pavis_core::HeaderMatch::Exact(CompactString::new(val)),
-            (Some(pattern), true) => {
-                // Validate regex pattern syntax at codec time
+        match (&pred.value, pred.regex, pred.prefix) {
+            (None, false, false) => pavis_core::HeaderMatch::Present,
+            (Some(val), false, false) => pavis_core::HeaderMatch::Exact(CompactString::new(val)),
+            (Some(prefix_val), false, true) => {
+                pavis_core::HeaderMatch::Prefix(CompactString::new(prefix_val))
+            }
+            (Some(pattern), true, false) => {
+                // Validate regex pattern syntax at codec time (static validation only - no compilation)
+                if pattern.len() > 256 {
+                    return Err(invalid_config_error(
+                        format!("regex pattern for header '{}' exceeds 256 bytes", pred.name),
+                        Some(header_path.clone()),
+                        Some("regex_pattern_too_long"),
+                    ));
+                }
                 regex::Regex::new(pattern).map_err(|e| {
                     invalid_config_error(
                         format!("invalid regex pattern for header '{}': {}", pred.name, e),
@@ -527,7 +656,7 @@ fn to_runtime_header_predicate(
                 })?;
                 pavis_core::HeaderMatch::Regex(CompactString::new(pattern))
             }
-            (None, true) => {
+            (None, true, _) => {
                 return Err(invalid_config_error(
                     format!(
                         "header predicate '{}': regex=true requires a value",
@@ -535,6 +664,26 @@ fn to_runtime_header_predicate(
                     ),
                     Some(header_path.clone()),
                     Some("regex_requires_value"),
+                ));
+            }
+            (None, _, true) => {
+                return Err(invalid_config_error(
+                    format!(
+                        "header predicate '{}': prefix=true requires a value",
+                        pred.name
+                    ),
+                    Some(header_path.clone()),
+                    Some("prefix_requires_value"),
+                ));
+            }
+            (Some(_), true, true) => {
+                return Err(invalid_config_error(
+                    format!(
+                        "header predicate '{}': regex and prefix are mutually exclusive",
+                        pred.name
+                    ),
+                    Some(header_path.clone()),
+                    Some("regex_prefix_exclusive"),
                 ));
             }
         }
@@ -551,7 +700,18 @@ fn from_runtime_method(method: &pavis_core::MethodPredicate) -> Option<String> {
     match method {
         pavis_core::MethodPredicate::Any => None,
         pavis_core::MethodPredicate::Specific(m) => Some(m.as_str().to_string()),
+        pavis_core::MethodPredicate::List(_) => None,
         #[allow(unreachable_patterns)]
+        _ => None,
+    }
+}
+
+/// Convert core method predicate to DTO list (None if not List).
+fn from_runtime_methods(method: &pavis_core::MethodPredicate) -> Option<Vec<String>> {
+    match method {
+        pavis_core::MethodPredicate::List(list) => {
+            Some(list.iter().map(|m| m.as_str().to_string()).collect())
+        }
         _ => None,
     }
 }
@@ -573,39 +733,52 @@ fn from_runtime_headers_predicates(
 
 /// Convert core header predicate to DTO.
 fn from_runtime_header_predicate(pred: &pavis_core::HeaderPredicate) -> HeaderPredicate {
-    match &pred.matcher {
-        pavis_core::HeaderMatch::Present => HeaderPredicate {
+    let legacy = match &pred.matcher {
+        pavis_core::HeaderMatch::Present => HeaderPredicateLegacy {
             name: pred.name.to_string(),
             value: None,
             regex: false,
+            prefix: false,
             absent: false,
         },
-        pavis_core::HeaderMatch::Exact(val) => HeaderPredicate {
+        pavis_core::HeaderMatch::Exact(val) => HeaderPredicateLegacy {
             name: pred.name.to_string(),
             value: Some(val.to_string()),
             regex: false,
+            prefix: false,
             absent: false,
         },
-        pavis_core::HeaderMatch::Regex(pattern) => HeaderPredicate {
+        pavis_core::HeaderMatch::Prefix(prefix_val) => HeaderPredicateLegacy {
+            name: pred.name.to_string(),
+            value: Some(prefix_val.to_string()),
+            regex: false,
+            prefix: true,
+            absent: false,
+        },
+        pavis_core::HeaderMatch::Regex(pattern) => HeaderPredicateLegacy {
             name: pred.name.to_string(),
             value: Some(pattern.to_string()),
             regex: true,
+            prefix: false,
             absent: false,
         },
-        pavis_core::HeaderMatch::Absent => HeaderPredicate {
+        pavis_core::HeaderMatch::Absent => HeaderPredicateLegacy {
             name: pred.name.to_string(),
             value: None,
             regex: false,
+            prefix: false,
             absent: true,
         },
         #[allow(unreachable_patterns)]
-        _ => HeaderPredicate {
+        _ => HeaderPredicateLegacy {
             name: pred.name.to_string(),
             value: None,
             regex: false,
+            prefix: false,
             absent: false,
         },
-    }
+    };
+    HeaderPredicate::V1(legacy)
 }
 
 fn to_runtime_headers(h: Option<HeaderOperations>) -> pavis_core::HeadersPolicy {
@@ -638,23 +811,132 @@ fn to_runtime_headers(h: Option<HeaderOperations>) -> pavis_core::HeadersPolicy 
     }
 }
 
-fn parse_retry_flags(values: &[serde_json::Value]) -> Result<pavis_core::RetryFlags> {
-    let mut flags = 0u8;
-    for v in values {
-        let s = v
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("retry.retry_on entries must be strings"))?;
-        match s {
-            "5xx" | "five_xx" => flags |= pavis_core::RETRY_FIVE_XX,
-            "connect_failure" => flags |= pavis_core::RETRY_CONNECT_FAILURE,
-            "reset" => flags |= pavis_core::RETRY_RESET,
-            "refused" => flags |= pavis_core::RETRY_REFUSED,
-            other => {
-                return Err(anyhow::anyhow!("unsupported retry condition: {}", other));
-            }
-        }
+/// Convert retry policy DTO to core type with full P2 validation
+fn convert_retry_policy(
+    dto: RetryPolicy,
+    route_timeout: &pavis_core::Timeout,
+    vh_index: usize,
+    path_index: usize,
+) -> Result<pavis_core::RetryPolicy> {
+    use crate::config::types::BackoffStrategyDTO;
+
+    let field_path_base = format!("routes[{}].paths[{}].retry", vh_index, path_index);
+
+    // Validate max_attempts range: 1..=10
+    if dto.max_attempts == 0 {
+        return Err(invalid_config_error(
+            "max_attempts must be >= 1",
+            Some(format!("{}.max_attempts", field_path_base)),
+            Some("min_value=1"),
+        ));
     }
-    Ok(pavis_core::RetryFlags(flags))
+    if dto.max_attempts > 10 {
+        return Err(invalid_config_error(
+            format!("max_attempts {} exceeds maximum of 10", dto.max_attempts),
+            Some(format!("{}.max_attempts", field_path_base)),
+            Some("max_value=10"),
+        ));
+    }
+
+    let max_attempts = NonZeroU16::new(dto.max_attempts)
+        .ok_or_else(|| anyhow::anyhow!("max_attempts must be > 0"))?;
+
+    // Parse retryable reasons
+    let mut retryable_reasons = Vec::new();
+    for reason_str in &dto.retryable_reasons {
+        let reason = match reason_str.as_str() {
+            "status_code" => pavis_core::RetryReason::StatusCode,
+            "connect_timeout" => pavis_core::RetryReason::ConnectTimeout,
+            "read_timeout" => pavis_core::RetryReason::ReadTimeout,
+            "per_try_timeout" => pavis_core::RetryReason::PerTryTimeout,
+            "pool_full" => pavis_core::RetryReason::PoolFull,
+            "connect_error" => pavis_core::RetryReason::ConnectError,
+            unknown => {
+                return Err(invalid_config_error(
+                    format!("unknown retryable reason: '{}'", unknown),
+                    Some(format!("{}.retryable_reasons", field_path_base)),
+                    Some("valid_retry_reason"),
+                ));
+            }
+        };
+        retryable_reasons.push(reason);
+    }
+
+    // Validate retryable_status_codes is present when status_code is in retryable_reasons
+    let has_status_code_reason = retryable_reasons
+        .iter()
+        .any(|r| matches!(r, pavis_core::RetryReason::StatusCode));
+
+    let retryable_status_codes = if has_status_code_reason {
+        match dto.retryable_status_codes {
+            None => {
+                return Err(invalid_config_error(
+                    "retryable_status_codes is required when 'status_code' is in retryable_reasons",
+                    Some(format!("{}.retryable_status_codes", field_path_base)),
+                    Some("required_when_status_code_retryable"),
+                ));
+            }
+            Some(codes) if codes.is_empty() => {
+                return Err(invalid_config_error(
+                    "retryable_status_codes cannot be empty when 'status_code' is in retryable_reasons",
+                    Some(format!("{}.retryable_status_codes", field_path_base)),
+                    Some("required_when_status_code_retryable"),
+                ));
+            }
+            Some(codes) => Some(pavis_core::RetryableStatusCodes { codes }),
+        }
+    } else {
+        dto.retryable_status_codes
+            .map(|codes| pavis_core::RetryableStatusCodes { codes })
+    };
+
+    // Convert backoff strategy
+    let backoff = match dto.backoff {
+        BackoffStrategyDTO::Fixed { base_ms } => pavis_core::BackoffStrategy::Fixed { base_ms },
+        BackoffStrategyDTO::Linear { base_ms } => pavis_core::BackoffStrategy::Linear { base_ms },
+        BackoffStrategyDTO::Exponential { base_ms, max_ms } => {
+            pavis_core::BackoffStrategy::Exponential { base_ms, max_ms }
+        }
+    };
+
+    let per_try = match dto.per_try {
+        Some(d) => {
+            let per_try_ms = d.as_millis() as u32;
+            let request_timeout_ms = match route_timeout {
+                pavis_core::Timeout::Enabled(d) => d.0.get(),
+                pavis_core::Timeout::Disabled => 60000, // Default 60s
+                #[allow(unreachable_patterns)]
+                _ => 60000,
+            };
+
+            if per_try_ms > request_timeout_ms {
+                return Err(invalid_config_error(
+                    format!(
+                        "per_try timeout ({}ms) exceeds overall route timeout ({}ms)",
+                        per_try_ms, request_timeout_ms
+                    ),
+                    Some(format!("{}.per_try", field_path_base)),
+                    Some("per_try_timeout_lte_request_timeout"),
+                ));
+            }
+
+            pavis_core::TryTimeout::Enabled(pavis_core::Duration(
+                std::num::NonZeroU32::new(per_try_ms).unwrap_or(std::num::NonZeroU32::MIN),
+            ))
+        }
+        None => pavis_core::TryTimeout::Inherit,
+    };
+
+    Ok(pavis_core::RetryPolicy::Enabled {
+        max_attempts,
+        per_try,
+        retryable_reasons,
+        retryable_status_codes,
+        backoff,
+        retry_non_idempotent: dto.retry_non_idempotent,
+        fail_on_non_replayable_retry: dto.fail_on_non_replayable_retry,
+        max_request_body_buffer_bytes: dto.max_request_body_buffer_bytes,
+    })
 }
 
 fn from_runtime_headers(h: &pavis_core::HeadersPolicy) -> Option<HeaderOperations> {
@@ -683,30 +965,12 @@ fn from_runtime_headers(h: &pavis_core::HeadersPolicy) -> Option<HeaderOperation
     }
 }
 
-pub(crate) fn retry_flags_to_values(flags: pavis_core::RetryFlags) -> Vec<serde_json::Value> {
-    let mut values = Vec::new();
-    let bits = flags.0;
-    if bits & pavis_core::RETRY_FIVE_XX != 0 {
-        values.push(serde_json::Value::String("5xx".to_string()));
-    }
-    if bits & pavis_core::RETRY_CONNECT_FAILURE != 0 {
-        values.push(serde_json::Value::String("connect_failure".to_string()));
-    }
-    if bits & pavis_core::RETRY_RESET != 0 {
-        values.push(serde_json::Value::String("reset".to_string()));
-    }
-    if bits & pavis_core::RETRY_REFUSED != 0 {
-        values.push(serde_json::Value::String("refused".to_string()));
-    }
-    values
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::types::{
-        Matcher, PathMatcher, RetryPolicy, Route, RouteAction as CodecRouteAction, VirtualHost,
-        WeightedDestination,
+        BackoffStrategyDTO, Matcher, PathMatcher, RetryPolicy, Route,
+        RouteAction as CodecRouteAction, VirtualHost, WeightedDestination,
     };
     use std::time::Duration;
 
@@ -720,6 +984,7 @@ mod tests {
                         path: "/".to_string(),
                     },
                     method: None,
+                    methods: None,
                     headers: None,
                 }),
                 timeout: None,
@@ -748,6 +1013,7 @@ mod tests {
                         path: "/".to_string(),
                     },
                     method: None,
+                    methods: None,
                     headers: None,
                 }),
                 timeout: None,
@@ -821,6 +1087,7 @@ mod tests {
                         path: "/".to_string(),
                     },
                     method: None,
+                    methods: None,
                     headers: None,
                 }),
                 timeout: Some(Duration::from_millis(u64::MAX)), // Exceeds u32
@@ -848,13 +1115,19 @@ mod tests {
                         path: "/".to_string(),
                     },
                     method: None,
+                    methods: None,
                     headers: None,
                 }),
                 timeout: None,
                 retry: Some(RetryPolicy {
-                    attempts: 0, // Invalid
-                    per_try_timeout: Duration::from_secs(1),
-                    retry_on: vec![],
+                    max_attempts: 0, // Invalid - should trigger error
+                    retryable_reasons: vec![],
+                    retryable_status_codes: None,
+                    backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+                    retry_non_idempotent: false,
+                    fail_on_non_replayable_retry: false,
+                    max_request_body_buffer_bytes: 1_048_576,
+                    per_try: Some(Duration::from_secs(1)),
                 }),
                 request_headers: None,
                 response_headers: None,
@@ -866,7 +1139,7 @@ mod tests {
             }],
         };
         let err = to_runtime(vec![vhost]).unwrap_err();
-        assert!(err.to_string().contains("retry.attempts must be > 0"));
+        assert!(err.to_string().contains("max_attempts must be >= 1"));
 
         // Test attempts overflow
         let vhost = VirtualHost {
@@ -875,9 +1148,14 @@ mod tests {
                 matcher: None,
                 timeout: None,
                 retry: Some(RetryPolicy {
-                    attempts: 70000,
-                    per_try_timeout: Duration::from_secs(1),
-                    retry_on: vec![],
+                    max_attempts: 11, // Exceeds max of 10
+                    retryable_reasons: vec![],
+                    retryable_status_codes: None,
+                    backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+                    retry_non_idempotent: false,
+                    fail_on_non_replayable_retry: false,
+                    max_request_body_buffer_bytes: 1_048_576,
+                    per_try: Some(Duration::from_secs(1)),
                 }),
                 request_headers: None,
                 response_headers: None,
@@ -889,7 +1167,7 @@ mod tests {
             }],
         };
         let err = to_runtime(vec![vhost]).unwrap_err();
-        assert!(err.to_string().contains("retry.attempts exceeds u16::MAX"));
+        assert!(err.to_string().contains("exceeds maximum of 10"));
     }
 
     #[test]
@@ -907,11 +1185,19 @@ mod tests {
                 },
                 timeout: Timeout::Enabled(pavis_core::Duration(NonZeroU32::new(5000).unwrap())),
                 retry: RetryPolicy::Enabled {
-                    attempts: NonZeroU16::new(3).unwrap(),
-                    per_try: TryTimeout::Enabled(pavis_core::Duration(
-                        NonZeroU32::new(1000).unwrap(),
-                    )),
-                    on: RetryFlags(RETRY_FIVE_XX),
+                    max_attempts: NonZeroU16::new(3).unwrap(),
+                    per_try: pavis_core::TryTimeout::Inherit,
+                    retryable_reasons: vec![pavis_core::RetryReason::StatusCode],
+                    retryable_status_codes: Some(pavis_core::RetryableStatusCodes {
+                        codes: vec![502, 503, 504],
+                    }),
+                    backoff: pavis_core::BackoffStrategy::Exponential {
+                        base_ms: 100,
+                        max_ms: 5000,
+                    },
+                    retry_non_idempotent: false,
+                    fail_on_non_replayable_retry: false,
+                    max_request_body_buffer_bytes: 1_048_576,
                 },
                 request_headers: HeadersPolicy::Disabled.into(),
                 response_headers: HeadersPolicy::Disabled.into(),
@@ -929,7 +1215,7 @@ mod tests {
         let serde_vhost = from_runtime(vec![runtime_vhost]).expect("from_runtime");
         let route = &serde_vhost[0].paths[0];
         assert_eq!(route.timeout, Some(std::time::Duration::from_secs(5)));
-        assert_eq!(route.retry.as_ref().unwrap().attempts, 3);
+        assert_eq!(route.retry.as_ref().unwrap().max_attempts, 3);
         assert_eq!(
             route.principal.as_ref().unwrap(),
             &PrincipalConfig::Authenticated {
@@ -973,6 +1259,7 @@ mod tests {
                             path: "/secure".to_string(),
                         },
                         method: None,
+                        methods: None,
                         headers: None,
                     }),
                     timeout: None,
@@ -995,6 +1282,7 @@ mod tests {
                             path: "^/admin/.*".to_string(),
                         },
                         method: None,
+                        methods: None,
                         headers: None,
                     }),
                     timeout: None,
@@ -1083,31 +1371,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_retry_flags_handles_variants() {
-        let flags = parse_retry_flags(&[
-            serde_json::Value::String("5xx".to_string()),
-            serde_json::Value::String("connect_failure".to_string()),
-            serde_json::Value::String("reset".to_string()),
-            serde_json::Value::String("refused".to_string()),
-        ])
-        .unwrap();
-        assert_eq!(
-            flags.0,
-            pavis_core::RETRY_FIVE_XX
-                | pavis_core::RETRY_CONNECT_FAILURE
-                | pavis_core::RETRY_RESET
-                | pavis_core::RETRY_REFUSED
-        );
-
-        let err =
-            parse_retry_flags(&[serde_json::Value::String("unknown".to_string())]).unwrap_err();
-        assert!(err.to_string().contains("unsupported retry condition"));
-
-        let err = parse_retry_flags(&[serde_json::Value::Bool(true)]).unwrap_err();
-        assert!(err.to_string().contains("must be strings"));
-    }
-
-    #[test]
     fn from_runtime_headers_round_trip() {
         let headers = pavis_core::Headers {
             set_headers: vec![(
@@ -1167,5 +1430,74 @@ mod tests {
             pavis_core::RewriteHost::Literal { host } => assert_eq!(host.0, "new.host"),
             _ => panic!("expected host rewrite"),
         }
+    }
+
+    #[test]
+    fn test_retry_status_code_validation() {
+        use crate::config::types::{BackoffStrategyDTO, Route, RouteAction, VirtualHost};
+
+        // 1. Missing retryable_status_codes when status_code reason present
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: Some(RetryPolicy {
+                    max_attempts: 3,
+                    retryable_reasons: vec!["status_code".to_string()],
+                    retryable_status_codes: None,
+                    backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+                    retry_non_idempotent: false,
+                    fail_on_non_replayable_retry: false,
+                    max_request_body_buffer_bytes: 1024,
+                    per_try: None,
+                }),
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: RouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("retryable_status_codes is required")
+        );
+
+        // 2. Empty retryable_status_codes when status_code reason present
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: Some(RetryPolicy {
+                    max_attempts: 3,
+                    retryable_reasons: vec!["status_code".to_string()],
+                    retryable_status_codes: Some(vec![]),
+                    backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+                    retry_non_idempotent: false,
+                    fail_on_non_replayable_retry: false,
+                    max_request_body_buffer_bytes: 1024,
+                    per_try: None,
+                }),
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: RouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("retryable_status_codes cannot be empty")
+        );
     }
 }

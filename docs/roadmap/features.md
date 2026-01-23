@@ -21,12 +21,12 @@ This document provides a feature status overview for reference.
 
 | Feature | Status | Note / Alternative |
 | :--- | :---: | :--- |
-| **L7 Routing** (Path/Header/Method) | ✅ | Path, method, and header routing fully implemented with multiple header predicates (AND logic). |
+| **L7 Routing** (Path/Header/Method) | ✅ | Advanced routing with multi-method predicates (`methods: ["GET", "POST"]`), header operators (exact/prefix/regex/present/absent), compound AND logic for multiple headers. OR/NOT predicates deferred. |
 | **Traffic Splitting** (Canary) | ✅ | Weighted round-robin supported. |
 | **Header Manipulation** | ✅ | Add/Remove headers supported. |
 | **Redirect & DirectResponse** | ✅ | Supported. For HTTP->HTTPS or security blocking. |
 | **Rewrite** (Host/Path) | ✅ | Prefix & Host literal supported. (No Regex rewrite). |
-| **Retries & Timeouts** | ✅ | Route-level retries and per-try timeouts are enforced. |
+| **Retries & Timeouts** | ✅ | Full P2 retry policy implemented: backoff strategies (fixed, linear, exponential), retryable reasons filtering (status_code, connect_timeout, read_timeout, per_try_timeout, pool_full, connect_error), idempotency constraints, request body buffering for replay. Verified with E2E tests covering success, exhaustion, budget enforcement, and replayability. |
 | **Traffic Mirroring** (Shadowing) | ⚠️ | Deferred. Not critical for MVP. |
 | **Global Rate Limiting** | ❌ | **Dropped**. Too heavy (requires ext Redis/gRPC). Use Ingress. |
 | **Local Rate Limiting** | ⚠️ | Deferred. |

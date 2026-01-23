@@ -91,11 +91,13 @@ echo "Initial stats: $STATS"
 
 # Phase A2: Send 5 concurrent requests (fill pool exactly)
 echo "A2: Sending 5 concurrent requests to fill pool"
+PIDS=""
 for _ in {1..5}; do
     curl -s -o /dev/null \
         --connect-timeout 5 \
         --max-time 10 \
         "http://127.0.0.1:$PORT_PAVIS/test" &
+    PIDS="$PIDS $!"
 done
 
 # Phase A3: Poll metrics during execution (every 500ms for 2 seconds)
@@ -108,7 +110,7 @@ for poll in {1..4}; do
 done
 
 # Wait for all requests to complete
-wait
+wait $PIDS
 
 # Phase A4: Verify final state (pool empty again)
 echo "A4: Checking final pool state (should be empty after completion)"

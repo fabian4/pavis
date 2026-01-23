@@ -1,10 +1,13 @@
 mod admin;
+mod predicates;
 mod routes;
 mod server;
 mod telemetry;
 mod upstreams;
 
 use anyhow::Result;
+
+pub use predicates::desugar_p0_headers;
 
 use super::types::{SerdeConfig, StructurallyConfig};
 
@@ -18,6 +21,7 @@ pub fn structural(src: SerdeConfig) -> StructurallyConfig {
         routes: src.routes.unwrap_or_default(),
         shutdown: src.shutdown.unwrap_or_default(),
         admin: src.admin.unwrap_or_default(),
+        features: src.features.unwrap_or_default(),
     }
 }
 
@@ -35,11 +39,18 @@ impl TryFrom<StructurallyConfig> for pavis_core::RuntimeConfig {
         let routes = routes::to_runtime(src.routes)?;
         let shutdown = admin::shutdown_to_runtime(src.shutdown)?;
         let admin = admin::admin_to_runtime(src.admin)?;
+        let features = features_to_runtime(src.features)?;
+
+        let mut required_capabilities = Vec::new();
+        if has_advanced_matchers(&routes) {
+            required_capabilities.push("advanced_matchers".to_string());
+        }
 
         let mut builder = pavis_core::RuntimeConfigBuilder::new()
             .telemetry(telemetry)
             .shutdown(shutdown)
-            .admin(admin);
+            .admin(admin)
+            .features(features);
         for listener in listeners {
             builder = builder.add_listener(listener);
         }
@@ -49,8 +60,67 @@ impl TryFrom<StructurallyConfig> for pavis_core::RuntimeConfig {
         for route in routes {
             builder = builder.add_route(route);
         }
+
+        for cap in required_capabilities {
+            builder = builder.add_required_capability(cap);
+        }
+
         builder.build().map_err(|err| anyhow::anyhow!(err))
     }
+}
+
+fn features_to_runtime(src: super::types::RoutingFeatures) -> Result<pavis_core::RoutingFeatures> {
+    let mut regex_limits = pavis_core::RegexLimits::default();
+
+    if let Some(v) = src.routing.regex_limits.pattern_max_bytes {
+        regex_limits.pattern_max_bytes = v;
+    }
+    if let Some(v) = src.routing.regex_limits.size_limit_bytes {
+        regex_limits.size_limit_bytes = v;
+    }
+    if let Some(v) = src.routing.regex_limits.input_max_bytes {
+        regex_limits.input_max_bytes = v;
+    }
+    if let Some(v) = src.routing.regex_limits.max_regex_per_route {
+        regex_limits.max_regex_per_route = v;
+    }
+    if let Some(v) = src.routing.regex_limits.max_regex_per_config {
+        regex_limits.max_regex_per_config = v;
+    }
+
+    Ok(pavis_core::RoutingFeatures {
+        advanced_matchers: src.routing.advanced_matchers,
+        regex_limits,
+    })
+}
+
+fn has_advanced_matchers(routes: &[pavis_core::VirtualHost]) -> bool {
+    use pavis_core::{HeaderMatch, HeaderPredicates, MethodPredicate};
+
+    for vhost in routes {
+        for route in &vhost.paths {
+            // Check method
+            if matches!(route.matcher.method, MethodPredicate::List(_)) {
+                return true;
+            }
+
+            // Check headers
+            if let HeaderPredicates::Some(preds) = &route.matcher.headers {
+                for pred in preds {
+                    match &pred.matcher {
+                        HeaderMatch::Exact(_) => {} // P0
+                        HeaderMatch::Present
+                        | HeaderMatch::Prefix(_)
+                        | HeaderMatch::Regex(_)
+                        | HeaderMatch::Absent => return true, // P2
+                        #[allow(unreachable_patterns)]
+                        _ => return true,
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 impl TryFrom<pavis_core::RuntimeConfig> for SerdeConfig {
@@ -69,7 +139,23 @@ impl TryFrom<pavis_core::RuntimeConfig> for SerdeConfig {
             routes: Some(routes::from_runtime(binary.routes)?),
             shutdown: Some(admin::shutdown_from_runtime(binary.shutdown)),
             admin: Some(admin::admin_from_runtime(binary.admin)),
+            features: Some(features_from_runtime(binary.features)),
         })
+    }
+}
+
+fn features_from_runtime(binary: pavis_core::RoutingFeatures) -> super::types::RoutingFeatures {
+    super::types::RoutingFeatures {
+        routing: super::types::RoutingFeatureConfig {
+            advanced_matchers: binary.advanced_matchers,
+            regex_limits: super::types::RegexLimits {
+                pattern_max_bytes: Some(binary.regex_limits.pattern_max_bytes),
+                size_limit_bytes: Some(binary.regex_limits.size_limit_bytes),
+                input_max_bytes: Some(binary.regex_limits.input_max_bytes),
+                max_regex_per_route: Some(binary.regex_limits.max_regex_per_route),
+                max_regex_per_config: Some(binary.regex_limits.max_regex_per_config),
+            },
+        },
     }
 }
 
@@ -80,11 +166,10 @@ mod tests {
     use pavis_core::{
         AccessLogPolicy, ConnectTimeout, ConnectionLimit, Destination, Duration, Endpoint,
         EndpointAddr, HeaderPredicates, Host, HttpVersion, IdleTimeout, ListenerName, LoadBalancer,
-        LogLevel, MethodPredicate, Metrics, Path, PathMatch, Pool, Port, RETRY_CONNECT_FAILURE,
-        RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction,
-        RouteMatcher, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy, TlsVerify,
-        TracingPolicy, TracingProvider, TryTimeout, UpstreamId, UpstreamName, VirtualHost, Weight,
-        WorkerCount,
+        LogLevel, MethodPredicate, Metrics, Path, PathMatch, Pool, Port, RetryPolicy, Rewrite,
+        RewriteHost, RewritePath, RouteAction, RouteMatcher, ServiceName, Telemetry, Timeout,
+        TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, UpstreamId, UpstreamName,
+        VirtualHost, Weight, WorkerCount,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::{NonZeroU16, NonZeroU32};
@@ -118,8 +203,9 @@ routes:
           remove_headers: ["x-remove"]
         retry:
           attempts: 2
-          per_try_timeout: "250ms"
-          retry_on: ["5xx", "connect_failure"]
+          per_try: "250ms"
+          retry_on: ["status_code", "connect_timeout"]
+          retryable_status_codes: [502, 503, 504]
         destinations:
           - upstream: "backend"
             weight: 1
@@ -156,17 +242,21 @@ routes:
         }
         match &route.retry {
             RetryPolicy::Enabled {
-                attempts,
-                per_try,
-                on,
+                max_attempts,
+                per_try: _,
+                retryable_reasons,
+                retryable_status_codes,
+                backoff: _,
+                retry_non_idempotent,
+                fail_on_non_replayable_retry,
+                max_request_body_buffer_bytes,
             } => {
-                assert_eq!(attempts.get(), 2);
-                match per_try {
-                    TryTimeout::Enabled(d) => assert_eq!(d.0.get(), 250),
-                    _ => panic!("per_try timeout not populated"),
-                }
-                assert_eq!(on.0 & RETRY_FIVE_XX, RETRY_FIVE_XX);
-                assert_eq!(on.0 & RETRY_CONNECT_FAILURE, RETRY_CONNECT_FAILURE);
+                assert_eq!(max_attempts.get(), 2);
+                assert!(!retryable_reasons.is_empty());
+                assert!(retryable_status_codes.is_some());
+                assert!(!retry_non_idempotent);
+                assert!(!fail_on_non_replayable_retry);
+                assert_eq!(*max_request_body_buffer_bytes, 1_048_576);
             }
             RetryPolicy::Disabled => panic!("retry policy not enabled"),
             &_ => panic!("unknown retry policy"),
@@ -257,10 +347,20 @@ routes:
                         headers: HeaderPredicates::None,
                     },
                     timeout: Timeout::Enabled(Duration(NonZeroU32::new(1500).unwrap())),
-                    retry: RetryPolicy::Enabled {
-                        attempts: NonZeroU16::new(3).unwrap(),
-                        per_try: TryTimeout::Enabled(Duration(NonZeroU32::new(500).unwrap())),
-                        on: RetryFlags(RETRY_FIVE_XX),
+                    retry: pavis_core::RetryPolicy::Enabled {
+                        max_attempts: NonZeroU16::new(3).unwrap(),
+                        per_try: pavis_core::TryTimeout::Inherit,
+                        retryable_reasons: vec![pavis_core::RetryReason::StatusCode],
+                        retryable_status_codes: Some(pavis_core::RetryableStatusCodes {
+                            codes: vec![502, 503, 504],
+                        }),
+                        backoff: pavis_core::BackoffStrategy::Exponential {
+                            base_ms: 100,
+                            max_ms: 5000,
+                        },
+                        retry_non_idempotent: false,
+                        fail_on_non_replayable_retry: false,
+                        max_request_body_buffer_bytes: 1_048_576,
                     },
                     request_headers: pavis_core::HeadersPolicy::Disabled.into(),
                     response_headers: pavis_core::HeadersPolicy::Disabled.into(),

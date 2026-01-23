@@ -336,6 +336,24 @@ Is behavior documented in spec/protocol?
 
 - **After any Rust code change: run `make ci-local`.**
 
+### Script Execution
+
+- **NEVER use `chmod +x` to make scripts executable**. Instead, run scripts directly with the interpreter:
+  - ✅ **CORRECT**: `bash script.sh` or `sh script.sh`
+  - ❌ **WRONG**: `chmod +x script.sh && ./script.sh`
+
+### E2E Test Execution
+
+- **Always use `make` commands to run E2E tests**. Never invoke test scripts directly.
+- **Run single tests when appropriate** to save time during iterative development:
+  - Full suite: `make e2e` (runs all E2E tests in binary mode)
+  - Single pavis test: `make e2e-pavis CASE=42_routing_method_header_predicates.sh`
+  - Single relay test: `make e2e-relay CASE=10_bootstrap.sh`
+  - Single integrated test: `make e2e-integrated CASE=100_proxy_relay_integration.sh`
+  - Docker mode: `make e2e-pavis-docker CASE=42_routing_method_header_predicates.sh`
+  - Example: If you modify routing logic, run `make e2e-pavis CASE=42_routing_method_header_predicates.sh` instead of the full suite
+  - **IMPORTANT**: Use the full test filename with `.sh` extension, not just the number
+
 ## Benchmarking
 
 | Item        | Value                                |

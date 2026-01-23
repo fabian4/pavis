@@ -10,16 +10,17 @@ use crate::upstream::routes::{SharedState, TransportMeta, router};
 use crate::upstream::tls::{self, TlsConfigPaths};
 
 pub async fn run(args: UpstreamArgs) -> Result<()> {
-    // Load config file to extract delay_ms if provided
-    let delay_ms = if let Some(config_path) = &args.config {
+    // Load config file to extract delay_ms and failure_sequence if provided
+    let (delay_ms, failure_sequence) = if let Some(config_path) = &args.config {
         let content = std::fs::read_to_string(config_path)?;
         let config: crate::common::cli::UpstreamConfigFile = serde_json::from_str(&content)?;
-        config.delay_ms
+        (config.delay_ms, config.failure_sequence)
     } else {
-        None
+        (None, None)
     };
 
-    let shared_state = SharedState::with_delay(args.instance_id.clone(), delay_ms);
+    let shared_state =
+        SharedState::with_config(args.instance_id.clone(), delay_ms, failure_sequence);
 
     let http_addr = SocketAddr::new(args.bind_addr, args.http_port);
     let https_addr = SocketAddr::new(args.bind_addr, args.https_port);

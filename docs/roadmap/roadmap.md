@@ -27,8 +27,8 @@ This roadmap distinguishes between **Delivery Phases** (user-visible capabilitie
 - [ ] **Validation Suite for Ignored Fields**: Ensure configs hitting “parsed but ignored / blocked” paths fail fast. _Exit criteria_: New E2E validation suite in the ingest pipeline asserting rejection with precise error messages.
 
 ### P2 – Feature Candidates
-- [ ] **Header/Method Routing Enhancements**: Extend matcher expressiveness for host+path+method+header logic. _Exit criteria_: Feature flag or GA release with router + codec support plus E2E proving behavior.
-- [ ] **Route Retries/Timeouts Implementation**: Full wiring of policy (including per-try budgets). _Exit criteria_: Integration tests demonstrating retry backoff and timeout enforcement.
+- [x] **Header/Method Routing Enhancements**: Advanced matcher support including multi-method predicates (`methods: ["GET", "POST"]`), header operators (exact/prefix/regex/present/absent), compound AND logic for multiple headers. OR/NOT predicates deferred. Implementation: `crates/pavis-core/src/runtime/routing.rs`, `crates/pavis-codec-serde/src/config/convert/routes.rs`, `crates/pavis/src/router/matcher.rs`, `crates/pavis/src/regex_validator.rs`. Tests: Unit tests in `matcher.rs`, E2E test `tests/suites/pavis/42_routing_method_header_predicates.sh`.
+- [x] **Route Retries/Timeouts Implementation**: Full P2 retry policy with backoff strategies (fixed, linear, exponential), retryable reasons filtering, idempotency constraints, and request body buffering. Implementation: `pavis-core/src/runtime/retry.rs`, `pavis-codec-serde/src/config/convert/routes.rs`, `pavis/src/retry.rs`. Tests: `pavis-core/src/runtime/retry.rs` (11 tests), `pavis-codec-serde/tests/retry_policy_tests.rs` (12 tests), `tests/suites/pavis/93-96_retry_*.sh`. Status: Complete.
 - [x] **Active Health / Circuit / Outlier Stack**: Implement probes, breaker enforcement, and passive ejection. _Exit criteria_: Resilience suite covering healthy/unhealthy transitions and breaker trips.
 
 **Architectural Constraint: Frozen Data Plane**

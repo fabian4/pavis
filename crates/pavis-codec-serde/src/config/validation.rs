@@ -14,18 +14,16 @@ pub fn validate(config: &mut SerdeConfig) -> Result<()> {
         // It's technically allowed to have no upstreams, but let's warn or check consistency.
     }
 
-    // 2. Retry Policy Validation (String -> Duration parsing check is already handled by humantime-serde in types.rs for deserialization,
-    // but we can add extra checks if needed. Actually, per_try_timeout is already Duration in types.rs)
+    // 2. Retry Policy Validation
     if let Some(routes) = &config.routes {
         for vhost in routes {
             for route in &vhost.paths {
                 if let Some(retry) = &route.retry {
-                    // Validate retry_on conditions are strings (serde_json::Value)
-                    for cond in &retry.retry_on {
-                        if !cond.is_string() {
+                    // Validate retryable_reasons are valid strings
+                    for reason in &retry.retryable_reasons {
+                        if reason.is_empty() {
                             return Err(anyhow::anyhow!(
-                                "Retry condition must be a string, found: {:?}",
-                                cond
+                                "Retry retryable_reasons cannot contain empty strings"
                             ));
                         }
                     }
@@ -124,7 +122,6 @@ fn validate_phase6_policies(config: &SerdeConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use std::time::Duration;
 
     #[test]
@@ -141,13 +138,19 @@ mod tests {
                             path: "/".to_string(),
                         },
                         method: None,
+                        methods: None,
                         headers: None,
                     }),
                     timeout: None,
                     retry: Some(RetryPolicy {
-                        attempts: 1,
-                        per_try_timeout: Duration::from_secs(1),
-                        retry_on: vec![json!("5xx")],
+                        max_attempts: 1,
+                        retryable_reasons: vec!["status_code".to_string()],
+                        retryable_status_codes: Some(vec![500, 502, 503, 504]),
+                        backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+                        retry_non_idempotent: false,
+                        fail_on_non_replayable_retry: false,
+                        max_request_body_buffer_bytes: 1_048_576,
+                        per_try: Some(Duration::from_secs(1)),
                     }),
                     request_headers: None,
                     response_headers: None,
@@ -160,6 +163,7 @@ mod tests {
             }]),
             shutdown: None,
             admin: None,
+            features: None,
         };
         assert!(validate(&mut config).is_ok());
     }
@@ -178,13 +182,19 @@ mod tests {
                             path: "/".to_string(),
                         },
                         method: None,
+                        methods: None,
                         headers: None,
                     }),
                     timeout: None,
                     retry: Some(RetryPolicy {
-                        attempts: 1,
-                        per_try_timeout: Duration::from_secs(1),
-                        retry_on: vec![json!(500)], // Number not allowed
+                        max_attempts: 1,
+                        retryable_reasons: vec!["".to_string()], // Empty string not allowed
+                        retryable_status_codes: Some(vec![500]),
+                        backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+                        retry_non_idempotent: false,
+                        fail_on_non_replayable_retry: false,
+                        max_request_body_buffer_bytes: 1_048_576,
+                        per_try: Some(Duration::from_secs(1)),
                     }),
                     request_headers: None,
                     response_headers: None,
@@ -197,6 +207,7 @@ mod tests {
             }]),
             shutdown: None,
             admin: None,
+            features: None,
         };
         assert!(validate(&mut config).is_err());
     }

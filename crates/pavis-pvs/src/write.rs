@@ -4,17 +4,12 @@ use crate::header::{
     compute_checksum,
 };
 use pavis_core::RuntimeConfig;
-use rkyv::ser::Serializer;
-use rkyv::ser::serializers::AllocSerializer;
 use std::fs;
 use std::path::Path;
 
 pub fn encode(config: &RuntimeConfig) -> PvsResult<Vec<u8>> {
-    let mut serializer = AllocSerializer::<1024>::default();
-    serializer
-        .serialize_value(config)
+    let rkyv_bytes = rkyv::to_bytes::<rancor::Error>(config)
         .map_err(|e| PvsError::Serialization(format!("{:?}", e)))?;
-    let rkyv_bytes = serializer.into_serializer().into_inner();
 
     let checksum = compute_checksum(&rkyv_bytes);
 

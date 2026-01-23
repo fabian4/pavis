@@ -1,3 +1,4 @@
+use crate::regex_validator::validate_and_compile_regexes;
 use crate::router::Router;
 use crate::upstream::Manager;
 use arc_swap::ArcSwap;
@@ -15,7 +16,16 @@ pub struct RuntimeState {
 
 impl RuntimeState {
     pub fn from_config(config: &ValidatedRuntimeConfig) -> anyhow::Result<Self> {
-        let router = Arc::new(Router::new(config.routes.clone())?);
+        // P2: Enforce regex limits and pre-compile patterns
+        let regex_limits = config.features.regex_limits.clone();
+        let regex_cache = validate_and_compile_regexes(config, &regex_limits)
+            .map_err(|e| anyhow::anyhow!("Regex validation failed: {}", e))?;
+
+        let router = Arc::new(Router::with_regex(
+            config.routes.clone(),
+            regex_cache,
+            regex_limits,
+        )?);
         let upstream_manager = Manager::new(&config.upstreams)?;
         Ok(Self {
             config: config.clone(),

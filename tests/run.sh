@@ -11,6 +11,10 @@ export PROJECT_ROOT
 RUN_ID=${RUN_ID:-$(date +%s)}
 export RUN_ID
 
+# E2E test timeout (in seconds) - default 2 minutes per test case
+CASE_TIMEOUT=${CASE_TIMEOUT:-120}
+export CASE_TIMEOUT
+
 # Source libraries from tests/scripts
 # shellcheck source=tests/scripts/log.sh
 source "$SCRIPT_DIR/scripts/log.sh"
@@ -37,14 +41,15 @@ run_case() {
 
     local t_start
     t_start=$(get_time)
-    
-    # Run the test case, buffering output
+
+    # Run the test case with timeout, buffering output
+    # timeout will kill the entire process group (-k) if it exceeds CASE_TIMEOUT
     set +e
     if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
-        bash "$script_path" | tee "$case_log" 2>&1
+        timeout --kill-after=5s "${CASE_TIMEOUT}s" bash "$script_path" | tee "$case_log" 2>&1
         local status=${PIPESTATUS[0]}
     else
-        bash "$script_path" > "$case_log" 2>&1
+        timeout --kill-after=5s "${CASE_TIMEOUT}s" bash "$script_path" > "$case_log" 2>&1
         local status=$?
     fi
     set -e
@@ -53,7 +58,7 @@ run_case() {
     local duration
     t_end=$(get_time)
     duration=$(awk -v end="$t_end" -v start="$t_start" 'BEGIN { printf "%.2f", (end - start) }')
-    
+
     # Format the line
     local suite_upper
     suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
@@ -63,23 +68,33 @@ run_case() {
     if [ "$status" -eq 0 ]; then
         printf "✅ PASS  (%ss)\n" "$duration"
         PASSED_CASES=$((PASSED_CASES + 1))
+    elif [ "$status" -eq 124 ]; then
+        # Timeout occurred - 124 is the standard exit code from timeout command
+        printf "⏱️  TIMEOUT (%ss, limit: %ss)\n" "$duration" "$CASE_TIMEOUT"
+        FAILED_CASES=$((FAILED_CASES + 1))
+
+        log_group "⏱️  Timeout Details: $suite/$CASE_NAME"
+        echo "Test case exceeded timeout limit of ${CASE_TIMEOUT}s"
+        echo "Last output before timeout:"
+        tail -n 50 "$case_log"
+        log_endgroup
     elif [ "$status" -eq 77 ]; then # Standard SKIP code
-        printf "⏭️ SKIP  (%ss)\n" "$duration"
+        printf "⏭️  SKIP  (%ss)\n" "$duration"
         SKIPPED_CASES=$((SKIPPED_CASES + 1))
     else
         printf "❌ FAIL  (%ss)\n" "$duration"
         FAILED_CASES=$((FAILED_CASES + 1))
-        
+
         log_group "❌ Failure Details: $suite/$CASE_NAME"
         cat "$case_log"
         log_endgroup
     fi
-    
+
     # Clean up log if success and not verbose
     if [ "$status" -eq 0 ] && [ "${E2E_VERBOSE:-0}" -ne 1 ]; then
         rm -f "$case_log"
     fi
-    
+
     return "$status"
 }
 

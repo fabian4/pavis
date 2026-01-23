@@ -10,6 +10,14 @@ pub struct UpstreamConfigFile {
     pub instance_id: Option<String>,
     #[serde(default)]
     pub delay_ms: Option<u64>,
+    #[serde(default)]
+    pub failure_sequence: Option<Vec<FailureRule>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct FailureRule {
+    pub attempt: u32,
+    pub status: u16,
 }
 
 #[derive(Parser, Debug, Clone)]

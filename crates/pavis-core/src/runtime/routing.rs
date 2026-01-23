@@ -1,23 +1,21 @@
 use crate::runtime::HeadersPolicy;
-use crate::runtime::types::{Host, Hostname, Path, Timeout, TryTimeout, UpstreamName, Weight};
+use crate::runtime::retry::RetryPolicy;
+use crate::runtime::types::{Host, Hostname, Path, Timeout, UpstreamName, Weight};
 use compact_str::CompactString;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroU16;
 use std::sync::Arc;
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct VirtualHost {
     pub host: Host,
     pub paths: Vec<Route>,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct Route {
     pub matcher: RouteMatcher,
     pub timeout: Timeout,
@@ -29,9 +27,9 @@ pub struct Route {
     pub principal: Principal,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum Principal {
     Any,
@@ -39,9 +37,9 @@ pub enum Principal {
     Prefix { prefix: String },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum RouteAction {
     Forward(Vec<Destination>),
@@ -49,33 +47,18 @@ pub enum RouteAction {
     Direct { status: u16, body: String },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct Rewrite {
     pub path: RewritePath,
     pub host: RewriteHost,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
-#[non_exhaustive]
-pub enum RetryPolicy {
-    Disabled,
-    Enabled {
-        attempts: NonZeroU16,
-        per_try: TryTimeout,
-        on: RetryFlags,
-    },
-}
-
 /// Composite route matcher supporting path, method, and header predicates.
 ///
 /// Evaluation order: path → method → headers (short-circuit on first mismatch).
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct RouteMatcher {
     pub path: PathMatch,
     pub method: MethodPredicate,
@@ -83,10 +66,20 @@ pub struct RouteMatcher {
 }
 
 #[repr(u8)]
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
-#[archive(check_bytes)]
+#[rkyv(compare(PartialEq))]
 #[non_exhaustive]
 pub enum PathMatch {
     Prefix { path: Path },
@@ -95,22 +88,39 @@ pub enum PathMatch {
 }
 
 /// HTTP method matching predicate.
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone, PartialEq, Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum MethodPredicate {
     /// Match any HTTP method.
     Any,
     /// Match a specific HTTP method (case-insensitive per RFC 7231).
     Specific(HttpMethod),
+    /// Match any of the listed HTTP methods.
+    List(Vec<HttpMethod>),
 }
 
 /// Standard HTTP methods (RFC 7231 + CONNECT/TRACE).
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "UPPERCASE"))]
-#[archive(check_bytes)]
+#[rkyv(compare(PartialEq))]
+#[rkyv(attr(derive(Debug)))]
+#[repr(u8)]
 pub enum HttpMethod {
     GET,
     POST,
@@ -140,10 +150,27 @@ impl HttpMethod {
     }
 }
 
+impl From<&str> for HttpMethod {
+    fn from(value: &str) -> Self {
+        match value.to_uppercase().as_str() {
+            "GET" => HttpMethod::GET,
+            "POST" => HttpMethod::POST,
+            "PUT" => HttpMethod::PUT,
+            "DELETE" => HttpMethod::DELETE,
+            "PATCH" => HttpMethod::PATCH,
+            "HEAD" => HttpMethod::HEAD,
+            "OPTIONS" => HttpMethod::OPTIONS,
+            "CONNECT" => HttpMethod::CONNECT,
+            "TRACE" => HttpMethod::TRACE,
+            _ => HttpMethod::GET, // Default to GET for unknown
+        }
+    }
+}
+
 /// Collection of header predicates (all must match for route to match).
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum HeaderPredicates {
     /// No header matching (route matches regardless of headers).
@@ -153,9 +180,8 @@ pub enum HeaderPredicates {
 }
 
 /// Individual header matching predicate.
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct HeaderPredicate {
     /// Header name (case-insensitive per HTTP spec).
     pub name: CompactString,
@@ -164,15 +190,17 @@ pub struct HeaderPredicate {
 }
 
 /// Header value matching strategies.
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum HeaderMatch {
     /// Header must be present (any value accepted).
     Present,
     /// Header value must exactly match (case-sensitive).
     Exact(CompactString),
+    /// Header value prefix match (case-sensitive).
+    Prefix(CompactString),
     /// Header value must match regex pattern.
     /// Pattern is stored as string; runtime compiles and caches regex.
     Regex(CompactString),
@@ -180,9 +208,18 @@ pub enum HeaderMatch {
     Absent,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct RetryFlags(pub u8);
 
 #[allow(dead_code)]
@@ -196,26 +233,25 @@ pub const RETRY_REFUSED: u8 = 0b0000_1000;
 #[allow(dead_code)]
 pub const RETRY_RESERVED: u8 = 0b1111_0000;
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct Destination {
     pub upstream: UpstreamName,
     pub weight: Weight,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum RewritePath {
     Disabled,
     Prefix { from: Path, to: Path },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum RewriteHost {
     Disabled,
@@ -312,8 +348,6 @@ mod tests {
 
     #[test]
     fn test_route_matcher_rkyv_serialization() {
-        use rkyv::ser::{Serializer, serializers::AllocSerializer};
-
         let matcher = RouteMatcher {
             path: PathMatch::Exact {
                 path: Path("/test".to_string()),
@@ -325,12 +359,10 @@ mod tests {
             }]),
         };
 
-        let mut serializer = AllocSerializer::<256>::default();
-        serializer.serialize_value(&matcher).unwrap();
-        let bytes = serializer.into_serializer().into_inner();
+        let bytes = rkyv::to_bytes::<rancor::Error>(&matcher).unwrap();
 
         // Verify we can validate the archived bytes
-        let result = rkyv::check_archived_root::<RouteMatcher>(&bytes);
+        let result = rkyv::access::<rkyv::Archived<RouteMatcher>, rancor::Error>(&bytes);
         assert!(result.is_ok(), "rkyv validation failed");
     }
 

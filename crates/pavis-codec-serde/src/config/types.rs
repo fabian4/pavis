@@ -1,13 +1,16 @@
 mod admin;
+mod features;
 mod routes;
 mod server;
 mod telemetry;
 mod upstreams;
 
 pub use admin::{AdminConfig, ShutdownConfig};
+pub use features::{RegexLimits, RoutingFeatureConfig, RoutingFeatures};
 pub use routes::{
-    HeaderOperations, HeaderPredicate, Matcher, PathMatcher, PrincipalConfig, RetryPolicy,
-    RewritePolicy, Route, RouteAction, VirtualHost, WeightedDestination,
+    BackoffStrategyDTO, HeaderMatcherDTO, HeaderOperations, HeaderPredicate, HeaderPredicateLegacy,
+    Matcher, PathMatcher, PredicateNodeDTO, PrincipalConfig, RetryPolicy, RewritePolicy, Route,
+    RouteAction, VirtualHost, WeightedDestination,
 };
 pub use server::{ClientAuthConfig, Listener, TlsConfig};
 pub use telemetry::{TelemetryConfig, TracingConfig};
@@ -36,6 +39,7 @@ pub struct SerdeConfig {
     pub routes: Option<Vec<VirtualHost>>,
     pub shutdown: Option<ShutdownConfig>,
     pub admin: Option<AdminConfig>,
+    pub features: Option<RoutingFeatures>,
 }
 
 /// Shape-complete DTO with containers present and explicit empty/disabled states.
@@ -48,6 +52,7 @@ pub struct StructurallyConfig {
     pub routes: Vec<VirtualHost>,
     pub shutdown: ShutdownConfig,
     pub admin: AdminConfig,
+    pub features: RoutingFeatures,
 }
 
 impl SerdeConfig {

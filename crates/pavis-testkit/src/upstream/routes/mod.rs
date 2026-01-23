@@ -1,45 +1,64 @@
 pub mod delay;
 pub mod echo;
+pub mod failure;
 pub mod healthz;
 pub mod reset;
 pub mod status;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router, async_trait,
-    extract::{ConnectInfo, FromRequestParts, State},
+    extract::{ConnectInfo, FromRequestParts, Query, State},
     http::{self, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{any, get, post},
+    routing::{any, get},
 };
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
-use crate::upstream::types::{IdResponse, StubResponse};
+use crate::upstream::types::{IdResponse, StatusResponse, StubResponse};
 
 const TEST_RUN_HEADER: &str = "x-pavis-test-run";
 const TEST_CASE_HEADER: &str = "x-pavis-test-case";
+
+#[derive(Clone, Default)]
+struct FlakyState {
+    counters: HashMap<String, u32>,
+}
 
 #[derive(Clone)]
 pub struct SharedState {
     instance_id: Arc<String>,
     global_delay_ms: Option<u64>,
+    flaky: Arc<Mutex<FlakyState>>,
+    pub(crate) failure_config: Arc<Mutex<Vec<crate::common::cli::FailureRule>>>,
+    pub(crate) failure_counter: Arc<AtomicU32>,
 }
 
 impl SharedState {
     pub fn new(instance_id: String) -> Self {
-        Self {
-            instance_id: Arc::new(instance_id),
-            global_delay_ms: None,
-        }
+        Self::with_config(instance_id, None, None)
     }
 
     pub fn with_delay(instance_id: String, delay_ms: Option<u64>) -> Self {
+        Self::with_config(instance_id, delay_ms, None)
+    }
+
+    pub fn with_config(
+        instance_id: String,
+        delay_ms: Option<u64>,
+        failure_sequence: Option<Vec<crate::common::cli::FailureRule>>,
+    ) -> Self {
         Self {
             instance_id: Arc::new(instance_id),
             global_delay_ms: delay_ms,
+            flaky: Arc::new(Mutex::new(FlakyState::default())),
+            failure_config: Arc::new(Mutex::new(failure_sequence.unwrap_or_default())),
+            failure_counter: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -91,6 +110,89 @@ impl TransportMeta {
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct FlakyQuery {
+    #[serde(default = "default_flaky_code")]
+    code: u16,
+    #[serde(default = "default_flaky_times")]
+    times: u32,
+    #[serde(default)]
+    delay_ms: u64,
+    id: String,
+}
+
+fn default_flaky_code() -> u16 {
+    503
+}
+fn default_flaky_times() -> u32 {
+    1
+}
+
+#[derive(serde::Deserialize)]
+pub struct ResetQuery {
+    id: Option<String>,
+}
+
+async fn flaky_handler(
+    State(state): State<ServerState>,
+    Query(params): Query<FlakyQuery>,
+    ctx: TestContext,
+) -> Response {
+    if params.delay_ms > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(params.delay_ms)).await;
+    }
+
+    let mut flaky = state.shared.flaky.lock().expect("lock poisoned");
+    let count = flaky.counters.entry(params.id.clone()).or_insert(0);
+
+    tracing::info!(id = %params.id, count_before = *count, times = params.times, "flaky check start");
+
+    if *count < params.times {
+        *count += 1;
+        tracing::info!(id = %params.id, count_after = *count, "flaky failing");
+        let status = StatusCode::from_u16(params.code).unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
+        let mut resp = ctx.respond(
+            status,
+            StatusResponse {
+                status: status.as_u16(),
+                ok: false,
+            },
+        );
+        resp.headers_mut()
+            .insert(http::header::CONNECTION, HeaderValue::from_static("close"));
+        resp
+    } else {
+        tracing::info!(id = %params.id, count = *count, "flaky success");
+        ctx.respond(
+            StatusCode::OK,
+            StatusResponse {
+                status: 200,
+                ok: true,
+            },
+        )
+    }
+}
+
+async fn reset_handler(
+    State(state): State<ServerState>,
+    Query(params): Query<ResetQuery>,
+    ctx: TestContext,
+) -> Response {
+    let mut flaky = state.shared.flaky.lock().expect("lock poisoned");
+    if let Some(id) = params.id {
+        flaky.counters.remove(&id);
+    } else {
+        flaky.counters.clear();
+    }
+
+    ctx.respond(
+        StatusCode::OK,
+        IdResponse {
+            id: "reset_ok".to_string(),
+        },
+    )
+}
+
 pub fn router(shared: SharedState, transport: TransportMeta) -> Router {
     let state = ServerState::new(shared, transport);
 
@@ -103,9 +205,10 @@ pub fn router(shared: SharedState, transport: TransportMeta) -> Router {
         .route("/bytes", get(stub_bytes))
         .route("/hang", get(stub_hang))
         .route("/close", get(stub_close))
-        .route("/flaky", get(stub_flaky))
+        .route("/flaky", any(flaky_handler))
+        .route("/failure", any(failure::handler))
         .route("/received", get(stub_received))
-        .route("/reset", post(reset::handler))
+        .route("/reset", any(reset_handler))
         .fallback(any(echo::handler))
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()))
         .with_state(state)
@@ -190,30 +293,22 @@ where
     }
 }
 
-async fn instance_id(State(state): State<ServerState>, ctx: TestContext) -> Response {
-    ctx.respond(
-        StatusCode::OK,
-        IdResponse {
-            id: state.instance_id().to_string(),
-        },
-    )
-}
-
 async fn stub_bytes(ctx: TestContext) -> Response {
     ctx.respond(StatusCode::NOT_IMPLEMENTED, stub_response("/bytes"))
 }
 
 async fn stub_hang(ctx: TestContext) -> Response {
     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-    ctx.respond(StatusCode::OK, stub_response("/hang"))
+    ctx.respond(
+        StatusCode::OK,
+        IdResponse {
+            id: "hang_ok".to_string(),
+        },
+    )
 }
 
 async fn stub_close(ctx: TestContext) -> Response {
     ctx.respond(StatusCode::NOT_IMPLEMENTED, stub_response("/close"))
-}
-
-async fn stub_flaky(ctx: TestContext) -> Response {
-    ctx.respond(StatusCode::NOT_IMPLEMENTED, stub_response("/flaky"))
 }
 
 async fn stub_received(ctx: TestContext) -> Response {
@@ -226,4 +321,13 @@ fn stub_response(endpoint: &'static str) -> StubResponse {
         endpoint,
         note: "TODO",
     }
+}
+
+async fn instance_id(State(state): State<ServerState>, ctx: TestContext) -> Response {
+    ctx.respond(
+        StatusCode::OK,
+        IdResponse {
+            id: state.instance_id().to_string(),
+        },
+    )
 }

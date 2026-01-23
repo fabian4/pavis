@@ -1,4 +1,5 @@
 use pavis_codec_api::{Codec, CodecError, CompactionLevel};
+use pavis_codec_serde::config::SerdeConfig;
 use pavis_codec_serde::{SerdeCodec, SerdeFormat};
 use pavis_core::{
     AccessLogPolicy, CoreValidationError, IdleTimeout, Metrics, TlsPolicy, TlsVerify,
@@ -531,6 +532,28 @@ upstreams:
 }
 
 /// Test 7: Codec enforces pool.max >= 1 validation at compile time
+#[test]
+fn codec_parses_methods_list() {
+    let yaml = r#"
+listeners: []
+upstreams: []
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/multi" }
+          methods: ["GET", "POST"]
+        destinations: []
+"#;
+    let config = SerdeConfig::parse_str(SerdeFormat::Yaml, yaml).expect("parse");
+    let route = &config.routes.unwrap()[0].paths[0];
+    let matcher = route.matcher.as_ref().unwrap();
+    assert_eq!(
+        matcher.methods,
+        Some(vec!["GET".to_string(), "POST".to_string()])
+    );
+}
+
 #[test]
 fn codec_rejects_pool_max_zero() {
     let yaml = r#"

@@ -70,6 +70,8 @@ pub enum CoreValidationError {
     RegexTooLong { route: String },
     #[error("regex cache lock poisoned")]
     RegexCachePoisoned,
+    #[error("configuration requires capability '{0}' which is not supported by this runtime")]
+    UnsupportedCapability(String),
 }
 
 pub type CoreValidationResult<T> = Result<T, CoreValidationError>;
@@ -109,6 +111,7 @@ pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<Validated
     validate_port_conflicts(&config)?;
     admin::validate_shutdown(&config.shutdown)?;
     admin::validate_admin(&config.admin)?;
+    validate_required_capabilities(&config.required_capabilities)?;
     Ok(ValidatedRuntimeConfig::new(config))
 }
 
@@ -221,6 +224,26 @@ fn validate_port_conflicts(config: &RuntimeConfig) -> CoreValidationResult<()> {
     Ok(())
 }
 
+/// Validate that all required capabilities are supported by this runtime.
+///
+/// Currently supported capabilities:
+/// - (none - P0 baseline only)
+///
+/// P2 capabilities like "advanced_matchers" will be rejected until runtime support is added.
+fn validate_required_capabilities(capabilities: &[String]) -> CoreValidationResult<()> {
+    const SUPPORTED_CAPABILITIES: &[&str] = &["advanced_matchers"];
+
+    for capability in capabilities {
+        if !SUPPORTED_CAPABILITIES.contains(&capability.as_str()) {
+            return Err(CoreValidationError::UnsupportedCapability(
+                capability.clone(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,10 +253,10 @@ mod tests {
         EndpointAddr, HeaderName, HeaderPredicates, HeaderValue, Headers, HeadersPolicy, Host,
         Hostname, HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel,
         MethodPredicate, Metrics, OutlierDetectionPolicy, Path, PathMatch, Pool, Port, Principal,
-        RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route,
-        RouteAction, RouteMatcher, SampleRate, ServiceName, ShutdownPolicy, SniName, Telemetry,
-        Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, TryTimeout,
-        Upstream, UpstreamCa, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
+        RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction, RouteMatcher,
+        RoutingFeatures, SampleRate, ServiceName, ShutdownPolicy, SniName, Telemetry, Timeout,
+        TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, Upstream, UpstreamCa,
+        UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -307,11 +330,19 @@ mod tests {
                     },
                     timeout: Timeout::Disabled,
                     retry: RetryPolicy::Enabled {
-                        attempts: NonZeroU16::new(1).unwrap(),
-                        per_try: TryTimeout::Enabled(Duration(unsafe {
-                            std::num::NonZeroU32::new_unchecked(1000)
-                        })),
-                        on: RetryFlags(RETRY_FIVE_XX),
+                        max_attempts: NonZeroU16::new(3).unwrap(),
+                        per_try: crate::runtime::TryTimeout::Inherit,
+                        retryable_reasons: vec![crate::retry::RetryReason::StatusCode],
+                        retryable_status_codes: Some(crate::retry::RetryableStatusCodes {
+                            codes: vec![502, 503, 504],
+                        }),
+                        backoff: crate::retry::BackoffStrategy::Exponential {
+                            base_ms: 100,
+                            max_ms: 5000,
+                        },
+                        retry_non_idempotent: false,
+                        fail_on_non_replayable_retry: false,
+                        max_request_body_buffer_bytes: 1_048_576,
                     },
                     request_headers: Arc::new(HeadersPolicy::Enabled {
                         rules: Headers {
@@ -338,6 +369,8 @@ mod tests {
             }],
             shutdown: ShutdownPolicy::Disabled,
             admin: AdminConfig::Disabled,
+            features: RoutingFeatures::default(),
+            required_capabilities: Vec::new(),
         }
     }
 

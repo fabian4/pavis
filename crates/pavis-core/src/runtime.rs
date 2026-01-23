@@ -1,6 +1,10 @@
 mod admin;
 mod builder;
 mod headers;
+pub mod limits;
+pub mod matcher;
+mod read_timeout;
+pub mod retry;
 mod routing;
 mod server;
 mod shutdown;
@@ -11,11 +15,18 @@ mod upstream;
 pub use admin::AdminConfig;
 pub use builder::{BuilderError, ListenerBuilder, RuntimeConfigBuilder, UpstreamBuilder};
 pub use headers::{Headers, HeadersPolicy};
+pub use limits::{RegexLimits, RoutingFeatures};
+pub use matcher::{HeaderMatcher, MatcherCost, MethodMatcher, PredicateNode};
+pub use read_timeout::ReadTimeout;
+pub use retry::{
+    BackoffStrategy, BodyReplayability, MethodIdempotency, RetryPolicy, RetryReason,
+    RetryableStatusCodes,
+};
 pub use routing::{
     Destination, HeaderMatch, HeaderPredicate, HeaderPredicates, HttpMethod, MethodPredicate,
     PathMatch, Principal, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED, RETRY_RESERVED,
-    RETRY_RESET, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction,
-    RouteMatcher, VirtualHost,
+    RETRY_RESET, RetryFlags, Rewrite, RewriteHost, RewritePath, Route, RouteAction, RouteMatcher,
+    VirtualHost,
 };
 pub use server::{ClientAuth, Listener, TlsConfig, WorkerCount};
 pub use shutdown::ShutdownPolicy;
@@ -39,9 +50,8 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 /// The Root Configuration Object.
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 #[non_exhaustive]
 pub struct RuntimeConfig {
     pub listeners: Vec<Listener>,
@@ -50,6 +60,15 @@ pub struct RuntimeConfig {
     pub routes: Vec<VirtualHost>,
     pub shutdown: ShutdownPolicy,
     pub admin: AdminConfig,
+
+    /// P2: Routing features and limits
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub features: RoutingFeatures,
+
+    /// Required capabilities for this config (populated by codec, checked by runtime)
+    /// Example: ["advanced_matchers"] if P2 features detected
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub required_capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +185,8 @@ mod tests {
             }],
             shutdown: ShutdownPolicy::Disabled,
             admin: AdminConfig::Disabled,
+            features: RoutingFeatures::default(),
+            required_capabilities: Vec::new(),
         };
 
         assert_eq!(config.upstreams.len(), 1);
@@ -193,6 +214,8 @@ mod tests {
             routes: Vec::new(),
             shutdown: ShutdownPolicy::Disabled,
             admin: AdminConfig::Disabled,
+            features: RoutingFeatures::default(),
+            required_capabilities: Vec::new(),
         };
 
         let validated = ValidatedRuntimeConfig::new(config.clone());
@@ -225,6 +248,8 @@ mod tests {
             routes: Vec::new(),
             shutdown: ShutdownPolicy::Disabled,
             admin: AdminConfig::Disabled,
+            features: RoutingFeatures::default(),
+            required_capabilities: Vec::new(),
         };
 
         let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config.clone()) };

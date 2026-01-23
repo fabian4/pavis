@@ -86,6 +86,7 @@ echo "== Phase A: High Pool Limit (pool.max=20, load=10) =="
 # Send 10 concurrent requests (well below pool.max=20)
 SUCCESS=0
 REJECTED=0
+PIDS=""
 
 for _ in {1..10}; do
     (
@@ -95,8 +96,9 @@ for _ in {1..10}; do
             "http://127.0.0.1:$PORT_PAVIS/test" 2>/dev/null || echo "000")
         echo "$STATUS" >> "$TEST_TMP/responses.txt"
     ) &
+    PIDS="$PIDS $!"
 done
-wait
+wait $PIDS
 
 # Count responses
 while IFS= read -r status; do

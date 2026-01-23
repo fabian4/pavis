@@ -43,7 +43,7 @@ routes:
         retry:
           attempts: 2
           per_try_timeout: "200ms"
-          retry_on: ["connect_failure"]
+          retry_on: ["connect_error"]
         destinations: [{ upstream: "backend", weight: 1 }]
 EOF
 

@@ -1,5 +1,6 @@
 use crate::proxy::context::{RequestId, RouterContext, TracingSpan};
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
+use crate::retry::RetryContext;
 use crate::state::RuntimeStateHandle;
 use crate::telemetry::Telemetry;
 use crate::upstream::cluster::{CircuitBreakerRejection, PoolRejection, UpstreamOutcome};
@@ -8,8 +9,7 @@ use async_trait::async_trait;
 use http::Uri;
 use pavis_core::{
     ConnectTimeout, Discovery, EndpointAddr, HeadersPolicy, Hostname, HttpVersion, PathMatch,
-    Principal, RETRY_CONNECT_FAILURE, RETRY_FIVE_XX, RETRY_REFUSED, RETRY_RESET, RetryPolicy,
-    RouteAction, Timeout, TryTimeout,
+    RetryPolicy, RouteAction, Timeout, TryTimeout,
 };
 use pingora::ErrorType;
 use pingora::http::RequestHeader;
@@ -97,56 +97,11 @@ fn resolve_per_try_timeout(timeout: Timeout, retry: &RetryPolicy) -> Option<Dura
             TryTimeout::Enabled(duration) => Some(core_duration_to_std(duration)),
             TryTimeout::Inherit => resolve_route_timeout(timeout),
             TryTimeout::Disabled => None,
-            #[allow(unreachable_patterns)]
             _ => None,
         },
         RetryPolicy::Disabled => resolve_route_timeout(timeout),
-        #[allow(unreachable_patterns)]
         _ => resolve_route_timeout(timeout),
     }
-}
-
-fn retry_budget(retry: &RetryPolicy, flag: u8) -> Option<std::num::NonZeroU16> {
-    match retry {
-        RetryPolicy::Enabled { attempts, on, .. } if (on.0 & flag) != 0 => Some(*attempts),
-        _ => None,
-    }
-}
-
-fn try_mark_retry(ctx: &mut RouterContext, attempts: std::num::NonZeroU16) -> bool {
-    if ctx.retry_attempts < attempts.get() {
-        ctx.retry_attempts += 1;
-        true
-    } else {
-        false
-    }
-}
-
-fn is_connect_failure(etype: &ErrorType) -> bool {
-    matches!(
-        etype,
-        ErrorType::ConnectTimedout
-            | ErrorType::ConnectRefused
-            | ErrorType::ConnectNoRoute
-            | ErrorType::TLSHandshakeFailure
-            | ErrorType::TLSHandshakeTimedout
-            | ErrorType::InvalidCert
-            | ErrorType::ConnectError
-            | ErrorType::ConnectProxyFailure
-    )
-}
-
-fn is_reset_error(etype: &ErrorType) -> bool {
-    matches!(
-        etype,
-        ErrorType::ReadError
-            | ErrorType::WriteError
-            | ErrorType::ReadTimedout
-            | ErrorType::WriteTimedout
-            | ErrorType::ConnectionClosed
-            | ErrorType::H1Error
-            | ErrorType::H2Error
-    )
 }
 
 fn calculate_path_rewrite(
@@ -312,13 +267,17 @@ fn resolve_endpoint_addr(endpoint: &pavis_core::Endpoint) -> Result<SocketAddr> 
     }
 }
 
-fn is_authorized(principal: &Principal, client_identity: Option<&str>) -> bool {
+#[allow(dead_code)]
+pub(crate) fn is_authorized(
+    principal: &pavis_core::Principal,
+    client_identity: Option<&str>,
+) -> bool {
     match principal {
-        Principal::Any => true,
-        Principal::Authenticated { spiffe } => {
+        pavis_core::Principal::Any => true,
+        pavis_core::Principal::Authenticated { spiffe } => {
             client_identity.is_some_and(|identity| identity == spiffe.as_str())
         }
-        Principal::Prefix { prefix } => {
+        pavis_core::Principal::Prefix { prefix } => {
             client_identity.is_some_and(|identity| identity.starts_with(prefix.as_str()))
         }
         #[allow(unreachable_patterns)]
@@ -350,6 +309,10 @@ impl ProxyHttp for Proxy {
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
         }
     }
 
@@ -389,24 +352,78 @@ impl ProxyHttp for Proxy {
             None => return Error::e_explain(InternalError, "Upstream not found in config"),
         };
 
+        // Handle retries and backoff
+        if let Some(retry_ctx) = &ctx.retry_ctx
+            && retry_ctx.attempt > 1
+        {
+            // IMPORTANT: Release permits from previous attempt before waiting for new ones.
+            // This prevents deadlocks where retrying requests hold all slots while waiting for backoff.
+            ctx.pool_permit = None;
+            ctx.circuit_breaker_permit = None;
+
+            retry_ctx.apply_backoff().await;
+
+            // Check global deadline
+            if retry_ctx.is_deadline_exceeded() {
+                return Error::e_explain(
+                    ErrorType::HTTPStatus(504),
+                    "ERR_REQUEST_TIMEOUT_GLOBAL: total request time exceeded deadline",
+                );
+            }
+
+            // Check body replayability
+            if let Some(body) = &ctx.buffered_body
+                && let pavis_core::RetryPolicy::Enabled {
+                    fail_on_non_replayable_retry,
+                    ..
+                } = &ctx.retry_policy
+                && body
+                    .handle_non_replayable(*fail_on_non_replayable_retry)
+                    .is_err()
+            {
+                return Error::e_explain(
+                    ErrorType::HTTPStatus(500),
+                    "ERR_RETRY_BODY_NOT_REPLAYABLE: body size exceeds buffer limit",
+                );
+            }
+        }
+
         let pool_permit = match cluster.acquire_pool_permit().await {
             Ok(permit) => permit,
             Err(PoolRejection::QueueFull) => {
                 tracing::info!(upstream = %upstream_name.0, "Upstream pool queue full");
-                return Error::e_explain(
+                let mut err = Error::explain(
                     ErrorType::HTTPStatus(503),
                     "ERR_UPSTREAM_POOL_FULL: connection pool is full",
                 );
+
+                if let Some(retry_ctx) = &mut ctx.retry_ctx
+                    && retry_ctx.is_retryable(pavis_core::RetryReason::PoolFull)
+                    && retry_ctx.can_retry()
+                {
+                    retry_ctx.next_attempt(pavis_core::RetryReason::PoolFull);
+                    err.set_retry(true);
+                }
+                return Err(err);
             }
             Err(PoolRejection::QueueTimeout) => {
                 tracing::info!(
                     upstream = %upstream_name.0,
                     "Upstream pool queue wait timed out"
                 );
-                return Error::e_explain(
+                let mut err = Error::explain(
                     ErrorType::HTTPStatus(503),
                     "ERR_UPSTREAM_POOL_FULL: connection pool wait timed out",
                 );
+
+                if let Some(retry_ctx) = &mut ctx.retry_ctx
+                    && retry_ctx.is_retryable(pavis_core::RetryReason::PoolFull)
+                    && retry_ctx.can_retry()
+                {
+                    retry_ctx.next_attempt(pavis_core::RetryReason::PoolFull);
+                    err.set_retry(true);
+                }
+                return Err(err);
             }
             Err(PoolRejection::Closed) => {
                 tracing::error!(upstream = %upstream_name.0, "Upstream pool closed");
@@ -621,7 +638,6 @@ impl ProxyHttp for Proxy {
         let req_header = session.req_header();
         let host_header = req_header.headers.get("Host").and_then(|h| h.to_str().ok());
         let uri_path = req_header.uri.path();
-        let uri_query = req_header.uri.query();
 
         // Check if tracing is initialized AND enabled in current config
         let state = self.state.load();
@@ -685,47 +701,91 @@ impl ProxyHttp for Proxy {
             }
 
             apply_route_headers(ctx, route);
-            if ctx.client_identity.is_none() {
-                ctx.client_identity = extract_client_identity(session);
-            }
+
+            // RBAC Authorization
             if !is_authorized(&route.principal, ctx.client_identity.as_deref()) {
-                ctx.rbac_denied = true;
-
-                if let TracingSpan::Active(ref span) = ctx.span {
-                    span.record("rbac.denied", true);
-                    span.record("error", "RBAC denied");
-                }
-
                 tracing::info!(
-                    host = %vhost.host.0,
-                    route = %route_path(route),
+                    request_id = %ctx.req_id,
                     principal = ?route.principal,
-                    "RBAC denied request"
+                    client_identity = ?ctx.client_identity,
+                    "RBAC access denied"
                 );
+                ctx.rbac_denied = true;
                 let _ = session.respond_error(403).await;
                 return Ok(true);
             }
 
-            let host_rewrite = match &route.rewrite.host {
-                pavis_core::RewriteHost::Literal { host } => Some(host),
-                pavis_core::RewriteHost::Disabled => None,
-                #[allow(unreachable_patterns)]
-                _ => None,
-            };
-
-            let path_rewrite = calculate_path_rewrite(route, uri_path, uri_query);
-
-            if let Some(host) = host_rewrite {
-                let req_header = session.as_downstream_mut().req_header_mut();
-                if let Err(err) = req_header.insert_header("Host", host.0.as_str()) {
-                    tracing::warn!(error = %err, host = %host.0, "Failed to apply host rewrite");
-                } else {
-                    ctx.sni_override = Some(host.clone());
-                }
+            // Handle path rewrite
+            if let Some(new_uri) = calculate_path_rewrite(route, uri_path, req_header.uri.query()) {
+                tracing::debug!(
+                    original = %uri_path,
+                    rewritten = %new_uri.path(),
+                    "Calculated path rewrite"
+                );
+                ctx.rewritten_uri = Some(new_uri);
             }
 
-            if let Some(uri) = path_rewrite {
-                session.as_downstream_mut().req_header_mut().set_uri(uri);
+            // Handle host rewrite
+            if let pavis_core::RewriteHost::Literal { host } = &route.rewrite.host {
+                tracing::debug!(
+                    original = ?host_header,
+                    rewritten = %host.0,
+                    "Calculated host rewrite"
+                );
+                ctx.rewritten_host = Some(host.clone());
+            }
+
+            // Initialize RetryContext if enabled
+            if let pavis_core::RetryPolicy::Enabled {
+                max_request_body_buffer_bytes,
+                ..
+            } = &ctx.retry_policy
+            {
+                let upstream_name = match &route.action {
+                    RouteAction::Forward(destinations) if !destinations.is_empty() => {
+                        // We use the first upstream for the context; load balancing happens per-try
+                        destinations[0].upstream.0.clone()
+                    }
+                    _ => "unknown".to_string(),
+                };
+
+                let request_timeout_ms = resolve_route_timeout(ctx.route_timeout)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(60000); // Default to 60s if no timeout configured
+
+                ctx.retry_ctx = Some(RetryContext::new(
+                    ctx.retry_policy.clone(),
+                    request_timeout_ms,
+                    self.telemetry.metrics.clone(),
+                    upstream_name.clone(),
+                ));
+
+                // Buffer request body for replay if it exists
+                // Note: Pingora 0.6.0 session doesn't have is_body_empty,
+                // we'll try to read and see.
+                let mut body_bytes = Vec::new();
+                let limit = *max_request_body_buffer_bytes;
+
+                while let Some(chunk) = session.read_request_body().await? {
+                    if (body_bytes.len() as u64) + (chunk.len() as u64) > limit {
+                        // Body exceeds buffer limit, stop buffering and mark as streaming
+                        tracing::debug!(
+                            limit = limit,
+                            upstream = %upstream_name,
+                            "Request body exceeds buffer limit, marking as non-replayable"
+                        );
+                        body_bytes.extend_from_slice(&chunk);
+                        break;
+                    }
+                    body_bytes.extend_from_slice(&chunk);
+                }
+
+                ctx.buffered_body = Some(crate::retry::BufferedBody::new(
+                    body_bytes,
+                    limit,
+                    self.telemetry.metrics.clone(),
+                    &upstream_name,
+                ));
             }
 
             match &route.action {
@@ -804,19 +864,46 @@ impl ProxyHttp for Proxy {
         mut e: Box<Error>,
     ) -> Box<Error> {
         let mut retried = false;
-        if let Some(attempts) = retry_budget(&ctx.retry_policy, RETRY_CONNECT_FAILURE)
-            && is_connect_failure(e.etype())
-            && try_mark_retry(ctx, attempts)
-        {
-            retried = true;
-        }
 
-        if !retried
-            && let Some(attempts) = retry_budget(&ctx.retry_policy, RETRY_REFUSED)
-            && matches!(e.etype(), ErrorType::ConnectRefused)
-            && try_mark_retry(ctx, attempts)
-        {
-            retried = true;
+        if let Some(retry_ctx) = &mut ctx.retry_ctx {
+            let req_header = _session.req_header();
+            let method = pavis_core::HttpMethod::from(req_header.method.as_str());
+
+            if retry_ctx.is_method_allowed(&method) {
+                let reason = if matches!(e.etype(), ErrorType::ConnectTimedout) {
+                    pavis_core::RetryReason::ConnectTimeout
+                } else {
+                    pavis_core::RetryReason::ConnectError
+                };
+
+                if retry_ctx.is_retryable(reason) && retry_ctx.can_retry() {
+                    let can_replay = ctx
+                        .buffered_body
+                        .as_ref()
+                        .map(|b| b.can_replay())
+                        .unwrap_or(true);
+
+                    if can_replay {
+                        retry_ctx.next_attempt(reason);
+                        retried = true;
+                    } else if let pavis_core::RetryPolicy::Enabled {
+                        fail_on_non_replayable_retry: true,
+                        ..
+                    } = &ctx.retry_policy
+                    {
+                        let mut err = Error::new(ErrorType::HTTPStatus(500));
+                        err.set_context(
+                            "ERR_RETRY_BODY_NOT_REPLAYABLE: body size exceeds buffer limit",
+                        );
+                        e = err;
+                        e.set_retry(false);
+                    } else {
+                        tracing::warn!(
+                            "Request body not replayable, retry aborted (returning last response)"
+                        );
+                    }
+                }
+            }
         }
 
         if retried {
@@ -837,11 +924,30 @@ impl ProxyHttp for Proxy {
         let mut e = e.more_context(format!("Peer: {}", peer));
         e.set_retry(false);
 
-        if let Some(attempts) = retry_budget(&ctx.retry_policy, RETRY_RESET)
-            && is_reset_error(e.etype())
-            && try_mark_retry(ctx, attempts)
-        {
+        if _client_reused {
             e.set_retry(true);
+            return e;
+        }
+
+        if let Some(retry_ctx) = &mut ctx.retry_ctx {
+            let req_header = session.req_header();
+            let method = pavis_core::HttpMethod::from(req_header.method.as_str());
+
+            if retry_ctx.is_method_allowed(&method) {
+                let reason = if matches!(e.etype(), ErrorType::ReadTimedout) {
+                    pavis_core::RetryReason::ReadTimeout
+                } else {
+                    // For other errors while proxying, we might not want to retry
+                    // unless it is a reset and the policy allows it.
+                    // Current simple mapping:
+                    pavis_core::RetryReason::StatusCode // Placeholder
+                };
+
+                if retry_ctx.is_retryable(reason) && retry_ctx.can_retry() {
+                    e.set_retry(true);
+                    retry_ctx.next_attempt(reason);
+                }
+            }
         }
 
         // Preserve reuse safety by avoiding retries when the buffer is truncated.
@@ -858,6 +964,12 @@ impl ProxyHttp for Proxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
+        if let Some(uri) = &ctx.rewritten_uri {
+            upstream_request.set_uri(uri.clone());
+        }
+        if let Some(host) = &ctx.rewritten_host {
+            upstream_request.insert_header("Host", host.0.as_str())?;
+        }
         if let TracingSpan::Active(ref span) = ctx.span {
             let context = span.context();
             opentelemetry::global::get_text_map_propagator(|propagator| {
@@ -882,17 +994,41 @@ impl ProxyHttp for Proxy {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        if ctx.upstream_name.is_some() {
-            let status = upstream_response.status.as_u16();
-            if status >= 500
-                && let Some(attempts) = retry_budget(&ctx.retry_policy, RETRY_FIVE_XX)
-                && try_mark_retry(ctx, attempts)
-            {
-                let mut err = Error::new(ErrorType::HTTPStatus(status));
-                err.as_up();
-                err.set_retry(true);
-                err.set_context("retryable upstream response");
-                return Err(err);
+        if let Some(retry_ctx) = &mut ctx.retry_ctx {
+            let req_header = _session.req_header();
+            let method = pavis_core::HttpMethod::from(req_header.method.as_str());
+
+            if retry_ctx.is_method_allowed(&method) {
+                let status = upstream_response.status.as_u16();
+                if retry_ctx.is_status_code_retryable(status) && retry_ctx.can_retry() {
+                    let can_replay = ctx
+                        .buffered_body
+                        .as_ref()
+                        .map(|b| b.can_replay())
+                        .unwrap_or(true);
+
+                    if can_replay {
+                        let mut err = Error::new(ErrorType::HTTPStatus(status));
+                        err.as_up();
+                        err.set_retry(true);
+                        err.set_context("retryable upstream response");
+                        retry_ctx.next_attempt(pavis_core::RetryReason::StatusCode);
+                        return Err(err);
+                    } else if let pavis_core::RetryPolicy::Enabled {
+                        fail_on_non_replayable_retry: true,
+                        ..
+                    } = &ctx.retry_policy
+                    {
+                        return Error::e_explain(
+                            ErrorType::HTTPStatus(500),
+                            "ERR_RETRY_BODY_NOT_REPLAYABLE: body size exceeds buffer limit",
+                        );
+                    } else {
+                        tracing::warn!(
+                            "Request body not replayable, retry aborted (returning last response)"
+                        );
+                    }
+                }
             }
         }
 
@@ -901,6 +1037,15 @@ impl ProxyHttp for Proxy {
 
     async fn logging(&self, session: &mut Session, _e: Option<&Error>, ctx: &mut Self::CTX) {
         self.telemetry.access_log.log(session, ctx).await;
+
+        if let Some(retry_ctx) = &ctx.retry_ctx {
+            let status = session
+                .response_written()
+                .map(|r| r.status.as_u16())
+                .unwrap_or(0);
+            let success = status > 0 && status < 500;
+            retry_ctx.record_outcome(success);
+        }
 
         if let Some(metrics) = &self.telemetry.metrics {
             let req = session.req_header();

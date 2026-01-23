@@ -14,9 +14,19 @@ use serde::{Deserialize, Serialize};
 ///
 /// Security: Should bind to loopback (127.0.0.1) or Unix socket.
 /// No authentication is provided in Phase 7.
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum AdminConfig {
     /// Admin API is disabled.

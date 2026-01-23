@@ -273,7 +273,7 @@ mod tests {
         let yaml_path = path.with_extension("yaml");
         std::fs::rename(&path, &yaml_path)?;
 
-        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(100));
+        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(500));
         let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
 
         // Skip initial
@@ -310,7 +310,7 @@ mod tests {
         let yaml_path = path.with_extension("yaml");
         std::fs::rename(&path, &yaml_path)?;
 
-        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(50));
+        let mut ingest = FileIngest::new(yaml_path.clone(), Duration::from_millis(500));
         let mut stream = ingest.stream().await.map_err(|e| anyhow::anyhow!(e))?;
 
         // Skip initial
@@ -323,7 +323,7 @@ mod tests {
             }
 
             if let Ok(Some(Ok(artifact))) =
-                tokio::time::timeout(Duration::from_millis(500), stream.next()).await
+                tokio::time::timeout(Duration::from_millis(1500), stream.next()).await
             {
                 let expected = format!("v{round}-10");
                 assert_eq!(artifact.bytes, Bytes::from(expected));

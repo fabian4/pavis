@@ -6,7 +6,9 @@
 //! 2. **Pre-compiled Regex**: All regular expressions must be compiled at initialization time, never during request handling.
 //! 3. **Read-Only**: The router state is immutable after initialization.
 
+use crate::regex_validator::CompiledRegex;
 use anyhow::{Context, Result};
+use pavis_core::limits::RegexLimits;
 use pavis_core::{HeaderPredicates, MethodPredicate, PathMatch, VirtualHost};
 use regex::Regex;
 use std::collections::HashMap;
@@ -34,10 +36,20 @@ pub(crate) struct CompiledVirtualHost {
 pub struct Router {
     pub(crate) exact_hosts: HashMap<String, CompiledVirtualHost>,
     pub(crate) wildcard_hosts: Vec<CompiledVirtualHost>,
+    pub(crate) regex_cache: HashMap<String, CompiledRegex>,
+    pub(crate) regex_limits: RegexLimits,
 }
 
 impl Router {
     pub fn new(routes: Vec<VirtualHost>) -> Result<Self> {
+        Self::with_regex(routes, HashMap::new(), RegexLimits::default())
+    }
+
+    pub fn with_regex(
+        routes: Vec<VirtualHost>,
+        regex_cache: HashMap<String, CompiledRegex>,
+        regex_limits: RegexLimits,
+    ) -> Result<Self> {
         let mut exact_hosts = HashMap::new();
         let mut wildcard_hosts = Vec::new();
 
@@ -120,6 +132,8 @@ impl Router {
         Ok(Self {
             exact_hosts,
             wildcard_hosts,
+            regex_cache,
+            regex_limits,
         })
     }
 

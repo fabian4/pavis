@@ -13,14 +13,14 @@ use pavis_core::{
     RouteMatcher, RuntimeConfigBuilder, ServiceName, Telemetry, Timeout, TlsConfig, TlsPolicy,
     UpstreamBuilder, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
 };
-use pavis_pvs::{PAVIS_CHECKSUM_HEADER, compute_checksum};
+use pavis_pvs::compute_checksum;
 use pingora::services::Service;
 use reqwest::Client;
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::{NonZeroU16, NonZeroU32};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 fn minimal_config(name: &str) -> pavis_core::RuntimeConfig {
@@ -126,7 +126,7 @@ fn make_agent(base: String, lkg_path: PathBuf, state: Arc<RuntimeStateHandle>) -
     ))
 }
 
-fn checksum_for_bytes(bytes: &[u8]) -> String {
+fn etag_for_bytes(bytes: &[u8]) -> String {
     let digest = compute_checksum(bytes);
     let mut out = String::with_capacity(digest.len() * 2 + "sha256:".len());
     out.push_str("sha256:");
@@ -174,7 +174,7 @@ fn worker_name_is_stable() {
 }
 
 #[tokio::test]
-async fn apply_update_replaces_state_and_caches_checksum() {
+async fn apply_update_replaces_state_and_caches_etag() {
     let dir = std::env::temp_dir().join("pavis_poll_update");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("dir");
@@ -196,12 +196,12 @@ async fn apply_update_replaces_state_and_caches_checksum() {
         lkg.clone(),
         state_handle.clone(),
     );
-    let checksum = checksum_for_bytes(&bytes);
+    let etag = etag_for_bytes(&bytes);
     agent
-        .apply_update_for_tests(bytes, checksum.clone(), None)
+        .apply_update_for_tests(bytes, etag.clone(), None)
         .await
         .expect("apply");
-    assert_eq!(agent.last_checksum_for_tests(), Some(checksum));
+    assert_eq!(agent.last_applied_etag_for_tests(), Some(etag));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -213,7 +213,7 @@ async fn poll_once_returns_no_change_on_304() {
     let lkg = std::env::temp_dir().join("pavis_poll_304.pvs");
     let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
     let agent = make_agent(base, lkg, state);
-    let outcome = agent.poll_once().await.expect("poll");
+    let outcome = agent.poll_once(0).await.expect("poll");
     assert!(matches!(outcome, super::PollOutcome::NoChange));
 }
 
@@ -231,7 +231,7 @@ async fn apply_update_removes_tmp_on_load_failure() {
     // But load() uses pavis_pvs::load, which uses rkyv.
     // Let's just pass invalid bytes to apply_update, but it calls verify() first.
     let bad_pvs = vec![0u8; 100]; // Should fail verify
-    let checksum = checksum_for_bytes(&bad_pvs);
+    let checksum = etag_for_bytes(&bad_pvs);
     let err = agent
         .apply_update_for_tests(bad_pvs, checksum, None)
         .await
@@ -257,13 +257,13 @@ async fn poll_once_reports_non_success_status() {
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let agent = make_agent(base, lkg.clone(), state_handle);
 
-    let err = agent.poll_once().await.expect_err("status error");
+    let err = agent.poll_once(0).await.expect_err("status error");
     assert!(err.to_string().contains("poll failed: status=500"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]
-async fn apply_update_rejects_checksum_mismatch() {
+async fn apply_update_rejects_etag_mismatch() {
     let dir = std::env::temp_dir().join("pavis_version_fail");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("dir");
@@ -289,8 +289,8 @@ async fn apply_update_rejects_checksum_mismatch() {
     let err = agent
         .apply_update_for_tests(bytes, "sha256:bad".to_string(), None)
         .await
-        .expect_err("checksum mismatch");
-    assert!(err.to_string().contains("checksum mismatch"));
+        .expect_err("etag mismatch");
+    assert!(err.to_string().contains("etag/sha256 mismatch"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -312,149 +312,15 @@ async fn test_apply_update_success() {
     let pvs = pavis_pvs::encode(&config).expect("encode");
 
     agent
-        .apply_update_for_tests(pvs.clone(), checksum_for_bytes(&pvs), None)
+        .apply_update_for_tests(pvs.clone(), etag_for_bytes(&pvs), None)
         .await
         .expect("apply update should succeed");
 
     assert_eq!(
-        agent.last_checksum_for_tests(),
-        Some(checksum_for_bytes(&pvs))
+        agent.last_applied_etag_for_tests(),
+        Some(etag_for_bytes(&pvs))
     );
     assert!(lkg.exists());
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[tokio::test]
-async fn poll_once_applies_missing_versions_in_order() {
-    let dir = std::env::temp_dir().join("pavis_poll_gap");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("dir");
-    let lkg = dir.join("config.pvs");
-
-    let base_state = minimal_config("v1");
-    // SAFETY: tests use configs that are assumed valid for runtime state construction.
-    let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(base_state) };
-    let state = RuntimeState::from_config(&validated).expect("state");
-    let state_handle = Arc::new(RuntimeStateHandle::new(state));
-
-    let v1_bytes = pvs_bytes("v1");
-    let v2_bytes = pvs_bytes("v2");
-    let v3_bytes = pvs_bytes("v3");
-    let v4_bytes = pvs_bytes("v4");
-    let v1_checksum = checksum_for_bytes(&v1_bytes);
-    let v2_checksum = checksum_for_bytes(&v2_bytes);
-    let v3_checksum = checksum_for_bytes(&v3_bytes);
-    let v4_checksum = checksum_for_bytes(&v4_bytes);
-
-    let artifacts = Arc::new(HashMap::from([
-        (2u64, (v2_bytes, v2_checksum)),
-        (3u64, (v3_bytes, v3_checksum)),
-        (4u64, (v4_bytes.clone(), v4_checksum.clone())),
-    ]));
-
-    let app = {
-        let config_bytes = v4_bytes.clone();
-        let config_checksum = v4_checksum.clone();
-        let artifacts = Arc::clone(&artifacts);
-        Router::new()
-            .route(
-                "/v1/config",
-                get(move || {
-                    let config_bytes = config_bytes.clone();
-                    let config_checksum = config_checksum.clone();
-                    async move {
-                        use axum::http::header::ETAG;
-                        use axum::response::Response;
-                        let mut response =
-                            Response::new(axum::body::Body::from(config_bytes.clone()));
-                        *response.status_mut() = StatusCode::OK;
-                        let headers = response.headers_mut();
-                        headers.insert(
-                            ETAG,
-                            axum::http::HeaderValue::from_str(&format!("\"{}\"", config_checksum))
-                                .unwrap(),
-                        );
-                        headers.insert(
-                            pavis_core::CONFIG_VERSION_HEADER,
-                            axum::http::HeaderValue::from_static("4"),
-                        );
-                        headers.insert(
-                            pavis_core::CONFIG_SIZE_HEADER,
-                            axum::http::HeaderValue::from_str(&config_bytes.len().to_string())
-                                .unwrap(),
-                        );
-                        response
-                    }
-                }),
-            )
-            .route(
-                "/v1/artifacts/:version",
-                get(
-                    move |axum::extract::Path(version): axum::extract::Path<u64>| {
-                        let artifacts = Arc::clone(&artifacts);
-                        async move {
-                            use axum::response::Response;
-                            if let Some((bytes, checksum)) = artifacts.get(&version) {
-                                let mut response =
-                                    Response::new(axum::body::Body::from(bytes.clone()));
-                                *response.status_mut() = StatusCode::OK;
-                                let headers = response.headers_mut();
-                                headers.insert(
-                                    axum::http::header::CONTENT_TYPE,
-                                    axum::http::HeaderValue::from_static(
-                                        "application/octet-stream",
-                                    ),
-                                );
-                                headers.insert(
-                                    axum::http::HeaderName::from_static(PAVIS_CHECKSUM_HEADER),
-                                    axum::http::HeaderValue::from_str(checksum).unwrap(),
-                                );
-                                response
-                            } else {
-                                StatusCode::NOT_FOUND.into_response()
-                            }
-                        }
-                    },
-                ),
-            )
-    };
-
-    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-        Ok(listener) => listener,
-        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("skipping stub bind: {err}");
-            return;
-        }
-        Err(err) => panic!("bind failed: {err}"),
-    };
-    let addr = listener.local_addr().expect("addr");
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve");
-    });
-    let base = format!("http://{}", addr);
-
-    let agent = make_agent(base, lkg.clone(), state_handle.clone());
-    agent
-        .apply_update_for_tests(v1_bytes, v1_checksum, Some(1))
-        .await
-        .expect("apply v1");
-
-    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-    {
-        let seen = Arc::clone(&seen);
-        agent.on_update(move |config| {
-            let name = config.telemetry.service_name.0.clone();
-            let mut guard = seen.lock().expect("lock");
-            guard.push(name);
-        });
-    }
-
-    let outcome = agent.poll_once().await.expect("poll");
-    assert!(matches!(outcome, super::PollOutcome::Updated));
-    let observed = seen.lock().expect("lock").clone();
-    assert_eq!(observed, vec!["v2", "v3", "v4"]);
-    assert_eq!(agent.last_version_for_tests(), Some(4));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -515,7 +381,7 @@ async fn poll_once_missing_etag_header() {
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let agent = make_agent(base, lkg.clone(), state_handle);
 
-    let err = agent.poll_once().await.expect_err("should fail");
+    let err = agent.poll_once(0).await.expect_err("should fail");
     let msg = err.to_string();
     eprintln!("Actual error: {}", msg);
     assert!(
@@ -527,7 +393,7 @@ async fn poll_once_missing_etag_header() {
 }
 
 #[tokio::test]
-async fn poll_once_no_change_on_matching_checksum() {
+async fn poll_once_no_change_on_matching_etag() {
     let headers = vec![(
         "etag".to_string(),
         "\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"".to_string(),
@@ -547,11 +413,11 @@ async fn poll_once_no_change_on_matching_checksum() {
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let agent = make_agent(base, lkg.clone(), state_handle);
 
-    agent.set_last_checksum_for_tests(Some(
+    agent.set_last_applied_etag_for_tests(Some(
         "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
     ));
 
-    let outcome = agent.poll_once().await.expect("poll");
+    let outcome = agent.poll_once(0).await.expect("poll");
     assert!(matches!(outcome, super::PollOutcome::NoChange));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -560,13 +426,13 @@ async fn poll_once_no_change_on_matching_checksum() {
 async fn test_poll_once_success() {
     let config = minimal_config("v1");
     let pvs = pavis_pvs::encode(&config).expect("encode");
-    let checksum = checksum_for_bytes(&pvs);
+    let etag = etag_for_bytes(&pvs);
 
     // We need a way to return bytes.
     use axum::response::Response;
 
     let pvs_clone = pvs.clone();
-    let checksum_header = checksum.clone();
+    let checksum_header = etag.clone();
     let app = Router::new().route(
         "/v1/config",
         get(move || {
@@ -601,9 +467,322 @@ async fn test_poll_once_success() {
     let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
     let agent = make_agent(base, lkg.clone(), state_handle);
 
-    let outcome = agent.poll_once().await.expect("poll");
+    let outcome = agent.poll_once(0).await.expect("poll");
     assert!(matches!(outcome, super::PollOutcome::Updated));
-    assert_eq!(agent.last_checksum_for_tests(), Some(checksum));
+    assert_eq!(agent.last_applied_etag_for_tests(), Some(etag));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn poll_once_skips_intermediate_versions_entirely() {
+    let dir = std::env::temp_dir().join("pavis_poll_latest_only");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let lkg = dir.join("config.pvs");
+
+    let base_state = minimal_config("bootstrap");
+    let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(base_state) };
+    let state = RuntimeState::from_config(&validated).expect("state");
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+
+    let v1_bytes = pvs_bytes("v1");
+    let v1_etag = etag_for_bytes(&v1_bytes);
+    let v5_bytes = pvs_bytes("v5");
+    let v5_etag = etag_for_bytes(&v5_bytes);
+
+    let artifact_fetches = Arc::new(AtomicUsize::new(0));
+    let config_bytes = v5_bytes.clone();
+    let config_etag = v5_etag.clone();
+    let artifacts_counter = Arc::clone(&artifact_fetches);
+
+    let app = Router::new()
+        .route(
+            "/v1/config",
+            get(move || {
+                let config_bytes = config_bytes.clone();
+                let config_etag = config_etag.clone();
+                async move {
+                    use axum::response::Response;
+                    let mut response = Response::new(axum::body::Body::from(config_bytes.clone()));
+                    *response.status_mut() = StatusCode::OK;
+                    let headers = response.headers_mut();
+                    headers.insert(
+                        axum::http::header::ETAG,
+                        axum::http::HeaderValue::from_str(&format!("\"{}\"", config_etag)).unwrap(),
+                    );
+                    headers.insert(
+                        pavis_core::CONFIG_VERSION_HEADER,
+                        axum::http::HeaderValue::from_static("5"),
+                    );
+                    headers.insert(
+                        pavis_core::CONFIG_SIZE_HEADER,
+                        axum::http::HeaderValue::from_str(&config_bytes.len().to_string()).unwrap(),
+                    );
+                    response
+                }
+            }),
+        )
+        .route(
+            "/v1/artifacts/:version",
+            get(
+                move |axum::extract::Path(_version): axum::extract::Path<u64>| {
+                    let artifacts_counter = Arc::clone(&artifacts_counter);
+                    async move {
+                        artifacts_counter.fetch_add(1, Ordering::SeqCst);
+                        StatusCode::NOT_FOUND
+                    }
+                },
+            ),
+        );
+
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => listener,
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(err) => panic!("bind failed: {err}"),
+    };
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    let base = format!("http://{}", addr);
+
+    let agent = make_agent(base, lkg.clone(), state_handle.clone());
+    agent
+        .apply_update_for_tests(v1_bytes, v1_etag, Some(1))
+        .await
+        .expect("apply v1");
+
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    {
+        let observed = Arc::clone(&observed);
+        agent.on_update(move |config| {
+            let mut guard = observed.lock().expect("lock");
+            guard.push(config.telemetry.service_name.0.clone());
+        });
+    }
+
+    let outcome = agent.poll_once(0).await.expect("poll");
+    assert!(matches!(outcome, super::PollOutcome::Updated));
+
+    let observed = observed.lock().expect("lock").clone();
+    assert_eq!(observed, vec!["v5"]);
+    assert_eq!(artifact_fetches.load(Ordering::SeqCst), 0);
+    assert_eq!(agent.last_applied_etag_for_tests(), Some(v5_etag));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn poll_once_rejected_etag_triggers_304_not_200() {
+    let dir = std::env::temp_dir().join("pavis_poll_rejected_long_poll");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let lkg = dir.join("config.pvs");
+
+    let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+    let bad_bytes = Arc::new(vec![0u8; 64]);
+    let bad_etag = etag_for_bytes(bad_bytes.as_ref());
+    let responses_200 = Arc::new(AtomicUsize::new(0));
+    let responses_304 = Arc::new(AtomicUsize::new(0));
+
+    let app = {
+        let bad_bytes = Arc::clone(&bad_bytes);
+        let bad_etag = bad_etag.clone();
+        let responses_200 = Arc::clone(&responses_200);
+        let responses_304 = Arc::clone(&responses_304);
+        Router::new().route(
+            "/v1/config",
+            get(move |headers: axum::http::HeaderMap| {
+                let bad_bytes = Arc::clone(&bad_bytes);
+                let bad_etag = bad_etag.clone();
+                let responses_200 = Arc::clone(&responses_200);
+                let responses_304 = Arc::clone(&responses_304);
+                async move {
+                    use axum::response::Response;
+                    let header_match = headers
+                        .get(axum::http::header::IF_NONE_MATCH)
+                        .and_then(|value| value.to_str().ok())
+                        .map(|value| value.trim_matches('"').to_string());
+                    if header_match.as_deref() == Some(bad_etag.as_str()) {
+                        responses_304.fetch_add(1, Ordering::SeqCst);
+                        return StatusCode::NOT_MODIFIED.into_response();
+                    }
+
+                    responses_200.fetch_add(1, Ordering::SeqCst);
+                    let mut response =
+                        Response::new(axum::body::Body::from(bad_bytes.as_ref().clone()));
+                    *response.status_mut() = StatusCode::OK;
+                    response.headers_mut().insert(
+                        axum::http::header::ETAG,
+                        axum::http::HeaderValue::from_str(&format!("\"{}\"", bad_etag)).unwrap(),
+                    );
+                    response
+                }
+            }),
+        )
+    };
+
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => listener,
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(err) => panic!("bind failed: {err}"),
+    };
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    let base = format!("http://{}", addr);
+
+    let agent = make_agent(base, lkg.clone(), state_handle.clone());
+
+    let outcome = agent.poll_once(0).await.expect("poll 1");
+    assert!(matches!(outcome, super::PollOutcome::Rejected));
+    assert_eq!(agent.last_rejected_etag_for_tests(), Some(bad_etag.clone()));
+
+    let outcome = agent.poll_once(0).await.expect("poll 2");
+    assert!(matches!(outcome, super::PollOutcome::NoChange));
+
+    let outcome = agent.poll_once(0).await.expect("poll 3");
+    assert!(matches!(outcome, super::PollOutcome::NoChange));
+
+    assert_eq!(responses_200.load(Ordering::SeqCst), 1);
+    assert_eq!(responses_304.load(Ordering::SeqCst), 2);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn poll_once_applies_new_artifact_after_rejection() {
+    let dir = std::env::temp_dir().join("pavis_poll_rejection_recovery");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let lkg = dir.join("config.pvs");
+
+    let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+    let bad_etag = etag_for_bytes(&[9u8; 64]);
+    let v2_bytes = Arc::new(pvs_bytes("v2"));
+    let v2_etag = etag_for_bytes(v2_bytes.as_ref());
+
+    let app = {
+        let rejected_etag = bad_etag.clone();
+        let applied_bytes = Arc::clone(&v2_bytes);
+        let applied_etag = v2_etag.clone();
+        Router::new().route(
+            "/v1/config",
+            get(move |headers: axum::http::HeaderMap| {
+                let rejected_etag = rejected_etag.clone();
+                let applied_bytes = Arc::clone(&applied_bytes);
+                let applied_etag = applied_etag.clone();
+                async move {
+                    use axum::response::Response;
+                    let header_match = headers
+                        .get(axum::http::header::IF_NONE_MATCH)
+                        .and_then(|value| value.to_str().ok())
+                        .map(|value| value.trim_matches('"').to_string());
+                    if header_match.as_deref() == Some(rejected_etag.as_str()) {
+                        let mut response =
+                            Response::new(axum::body::Body::from(applied_bytes.as_ref().clone()));
+                        *response.status_mut() = StatusCode::OK;
+                        response.headers_mut().insert(
+                            axum::http::header::ETAG,
+                            axum::http::HeaderValue::from_str(&format!("\"{}\"", applied_etag))
+                                .unwrap(),
+                        );
+                        return response;
+                    }
+                    if header_match.as_deref() == Some(applied_etag.as_str()) {
+                        return StatusCode::NOT_MODIFIED.into_response();
+                    }
+                    StatusCode::NOT_MODIFIED.into_response()
+                }
+            }),
+        )
+    };
+
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => listener,
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(err) => panic!("bind failed: {err}"),
+    };
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    let base = format!("http://{}", addr);
+
+    let agent = make_agent(base, lkg.clone(), state_handle.clone());
+    agent.set_last_rejected_etag_for_tests(Some(bad_etag.clone()));
+
+    let outcome = agent.poll_once(0).await.expect("poll 1");
+    assert!(matches!(outcome, super::PollOutcome::Updated));
+    assert_eq!(agent.last_applied_etag_for_tests(), Some(v2_etag.clone()));
+    assert_eq!(agent.last_rejected_etag_for_tests(), None);
+
+    let outcome = agent.poll_once(0).await.expect("poll 2");
+    assert!(matches!(outcome, super::PollOutcome::NoChange));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn poll_once_relay_violation_200_for_rejected_etag() {
+    let dir = std::env::temp_dir().join("pavis_poll_violation");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let lkg = dir.join("config.pvs");
+
+    let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+    let good_bytes = pvs_bytes("v1");
+    let good_etag = etag_for_bytes(&good_bytes);
+    let bad_bytes = Arc::new(vec![1u8; 64]);
+    let bad_etag = etag_for_bytes(bad_bytes.as_ref());
+
+    let app = {
+        let bad_bytes = Arc::clone(&bad_bytes);
+        let bad_etag = bad_etag.clone();
+        Router::new().route(
+            "/v1/config",
+            get(move || {
+                let bad_bytes = Arc::clone(&bad_bytes);
+                let bad_etag = bad_etag.clone();
+                async move {
+                    use axum::response::Response;
+                    let mut response =
+                        Response::new(axum::body::Body::from(bad_bytes.as_ref().clone()));
+                    *response.status_mut() = StatusCode::OK;
+                    response.headers_mut().insert(
+                        axum::http::header::ETAG,
+                        axum::http::HeaderValue::from_str(&format!("\"{}\"", bad_etag)).unwrap(),
+                    );
+                    response
+                }
+            }),
+        )
+    };
+
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => listener,
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(err) => panic!("bind failed: {err}"),
+    };
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    let base = format!("http://{}", addr);
+
+    let agent = make_agent(base, lkg.clone(), state_handle.clone());
+    agent
+        .apply_update_for_tests(good_bytes, good_etag.clone(), Some(1))
+        .await
+        .expect("apply baseline");
+    agent.set_last_rejected_etag_for_tests(Some(bad_etag.clone()));
+
+    let outcome = agent.poll_once(0).await.expect("poll");
+    assert!(matches!(outcome, super::PollOutcome::NoChange));
+    assert_eq!(agent.last_applied_etag_for_tests(), Some(good_etag));
+    assert_eq!(agent.last_rejected_etag_for_tests(), Some(bad_etag));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

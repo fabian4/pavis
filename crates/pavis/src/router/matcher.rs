@@ -1,11 +1,24 @@
+use crate::regex_validator::CompiledRegex;
 use crate::router::{CompiledVirtualHost, RouteZone, Router};
+use pavis_core::limits::RegexLimits;
 use pavis_core::{HeaderMatch, HeaderPredicates, MethodPredicate, PathMatch, Route, VirtualHost};
+use std::collections::HashMap;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PredicateStats {
     pub path_misses: u64,
     pub method_misses: u64,
     pub header_misses: u64,
+
+    // P2: Evaluation counters per operator
+    pub exact_evals: u64,
+    pub prefix_evals: u64,
+    pub regex_evals: u64,
+    pub present_evals: u64,
+    pub absent_evals: u64,
+
+    // P2: Rejection counters
+    pub regex_input_too_large: u64,
 }
 
 impl PredicateStats {
@@ -18,6 +31,25 @@ impl PredicateStats {
     fn record_header_miss(&mut self) {
         self.header_misses += 1;
     }
+
+    fn record_eval_exact(&mut self) {
+        self.exact_evals += 1;
+    }
+    fn record_eval_prefix(&mut self) {
+        self.prefix_evals += 1;
+    }
+    fn record_eval_regex(&mut self) {
+        self.regex_evals += 1;
+    }
+    fn record_eval_present(&mut self) {
+        self.present_evals += 1;
+    }
+    fn record_eval_absent(&mut self) {
+        self.absent_evals += 1;
+    }
+    fn record_regex_input_too_large(&mut self) {
+        self.regex_input_too_large += 1;
+    }
 }
 
 impl core::ops::AddAssign for PredicateStats {
@@ -25,6 +57,13 @@ impl core::ops::AddAssign for PredicateStats {
         self.path_misses += other.path_misses;
         self.method_misses += other.method_misses;
         self.header_misses += other.header_misses;
+
+        self.exact_evals += other.exact_evals;
+        self.prefix_evals += other.prefix_evals;
+        self.regex_evals += other.regex_evals;
+        self.present_evals += other.present_evals;
+        self.absent_evals += other.absent_evals;
+        self.regex_input_too_large += other.regex_input_too_large;
     }
 }
 
@@ -79,11 +118,26 @@ pub(crate) fn match_request<'a>(
                         }
 
                         if !matches_method(&route.matcher.method, method) {
+                            println!(
+                                "DEBUG: Method mismatch for route {}: req={} predicate={:?}",
+                                compiled.index, method, route.matcher.method
+                            );
                             stats.record_method_miss();
                             continue;
+                        } else {
+                            println!(
+                                "DEBUG: Method MATCH for route {}: req={} predicate={:?}",
+                                compiled.index, method, route.matcher.method
+                            );
                         }
 
-                        if !matches_headers(&route.matcher.headers, headers) {
+                        if !matches_headers(
+                            &route.matcher.headers,
+                            headers,
+                            &router.regex_cache,
+                            &router.regex_limits,
+                            &mut stats,
+                        ) {
                             stats.record_header_miss();
                             continue;
                         }
@@ -100,6 +154,9 @@ pub(crate) fn match_request<'a>(
                         && matches_headers(
                             &vhost.config.paths[compiled.index].matcher.headers,
                             headers,
+                            &router.regex_cache,
+                            &router.regex_limits,
+                            &mut stats,
                         )
                     {
                         let route = &vhost.config.paths[compiled.index];
@@ -181,18 +238,29 @@ fn matches_method(predicate: &MethodPredicate, method: &str) -> bool {
     match predicate {
         MethodPredicate::Any => true,
         MethodPredicate::Specific(m) => method.eq_ignore_ascii_case(m.as_str()),
+        MethodPredicate::List(methods) => methods
+            .iter()
+            .any(|m| method.eq_ignore_ascii_case(m.as_str())),
         #[allow(unreachable_patterns)]
         _ => true, // Default to matching for unknown variants
     }
 }
 
 /// Match request headers against header predicates (AND logic).
-fn matches_headers(predicates: &HeaderPredicates, headers: &pingora::http::RequestHeader) -> bool {
+fn matches_headers(
+    predicates: &HeaderPredicates,
+    headers: &pingora::http::RequestHeader,
+    regex_cache: &HashMap<String, CompiledRegex>,
+    regex_limits: &RegexLimits,
+    stats: &mut PredicateStats,
+) -> bool {
     match predicates {
         HeaderPredicates::None => true,
         HeaderPredicates::Some(preds) => {
             // ALL predicates must match (AND logic)
-            preds.iter().all(|p| matches_header_predicate(p, headers))
+            preds
+                .iter()
+                .all(|p| matches_header_predicate(p, headers, regex_cache, regex_limits, stats))
         }
         #[allow(unreachable_patterns)]
         _ => true, // Default to matching for unknown variants
@@ -203,35 +271,68 @@ fn matches_headers(predicates: &HeaderPredicates, headers: &pingora::http::Reque
 fn matches_header_predicate(
     pred: &pavis_core::HeaderPredicate,
     headers: &pingora::http::RequestHeader,
+    regex_cache: &HashMap<String, CompiledRegex>,
+    regex_limits: &RegexLimits,
+    stats: &mut PredicateStats,
 ) -> bool {
     // Header names are case-insensitive per HTTP spec
     let header_value = headers.headers.get(pred.name.as_str());
 
     match (&pred.matcher, header_value) {
-        (HeaderMatch::Present, Some(_)) => true,
-        (HeaderMatch::Present, None) => false,
-        (HeaderMatch::Absent, None) => true,
-        (HeaderMatch::Absent, Some(_)) => false,
-        (HeaderMatch::Exact(expected), Some(actual)) => {
-            // Compare header value (case-sensitive)
-            actual.to_str().ok().is_some_and(|v| v == expected.as_str())
+        (HeaderMatch::Present, Some(_)) => {
+            stats.record_eval_present();
+            true
         }
-        (HeaderMatch::Exact(_), None) => false,
+        (HeaderMatch::Present, None) => {
+            stats.record_eval_present();
+            false
+        }
+        (HeaderMatch::Absent, None) => {
+            stats.record_eval_absent();
+            true
+        }
+        (HeaderMatch::Absent, Some(_)) => {
+            stats.record_eval_absent();
+            false
+        }
+        (HeaderMatch::Exact(expected), Some(actual)) => {
+            stats.record_eval_exact();
+            // Compare header value (case-sensitive)
+            actual.as_bytes() == expected.as_bytes()
+        }
+        (HeaderMatch::Exact(_), None) => {
+            stats.record_eval_exact();
+            false
+        }
+        (HeaderMatch::Prefix(prefix), Some(actual)) => {
+            stats.record_eval_prefix();
+            // Prefix match (case-sensitive)
+            actual.as_bytes().starts_with(prefix.as_bytes())
+        }
+        (HeaderMatch::Prefix(_), None) => {
+            stats.record_eval_prefix();
+            false
+        }
         (HeaderMatch::Regex(pattern), Some(actual)) => {
-            // For regex, we need to compile at config load time
-            // For now, we'll do a simple string match (will improve with compiled regex)
-            // TODO: Add regex compilation at config load time
-            if let Ok(actual_str) = actual.to_str() {
-                if let Ok(re) = regex::Regex::new(pattern.as_str()) {
-                    re.is_match(actual_str)
-                } else {
-                    false
+            stats.record_eval_regex();
+            // Use pre-compiled regex from cache
+            if let Some(compiled) = regex_cache.get(pattern.as_str()) {
+                // Enforce input length limit
+                if actual.len() > regex_limits.input_max_bytes as usize {
+                    stats.record_regex_input_too_large();
+                    return false;
                 }
+                compiled.is_match(actual.as_bytes(), regex_limits.input_max_bytes as usize)
             } else {
+                // If regex is not found in cache (should be impossible if validation passed),
+                // fail safe to no match
                 false
             }
         }
-        (HeaderMatch::Regex(_), None) => false,
+        (HeaderMatch::Regex(_), None) => {
+            stats.record_eval_regex();
+            false
+        }
         #[allow(unreachable_patterns)]
         _ => false, // Unknown variants default to no match
     }
@@ -307,6 +408,8 @@ mod tests {
         let router = Router {
             exact_hosts: HashMap::new(),
             wildcard_hosts: vec![suffix_vhost, prefix_vhost],
+            regex_cache: HashMap::new(),
+            regex_limits: RegexLimits::default(),
         };
 
         let req_header = mock_request_header("GET");
@@ -373,6 +476,8 @@ mod tests {
         let router = Router {
             exact_hosts: HashMap::new(),
             wildcard_hosts: vec![vhost],
+            regex_cache: HashMap::new(),
+            regex_limits: RegexLimits::default(),
         };
 
         let req_header = mock_request_header("GET");
@@ -417,8 +522,20 @@ mod tests {
             matcher: HeaderMatch::Exact("alice".into()),
         };
 
-        assert!(matches_header_predicate(&predicate, &req_with_header));
-        assert!(!matches_header_predicate(&predicate, &req_without_header));
+        assert!(matches_header_predicate(
+            &predicate,
+            &req_with_header,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
+        assert!(!matches_header_predicate(
+            &predicate,
+            &req_without_header,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
     }
 
     /// Test 3: Single header predicate - match exact value, reject different value.
@@ -437,8 +554,20 @@ mod tests {
             matcher: HeaderMatch::Exact("alice".into()),
         };
 
-        assert!(matches_header_predicate(&predicate, &req_alice));
-        assert!(!matches_header_predicate(&predicate, &req_bob));
+        assert!(matches_header_predicate(
+            &predicate,
+            &req_alice,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
+        assert!(!matches_header_predicate(
+            &predicate,
+            &req_bob,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
     }
 
     /// Test 4: Multi-value header - match if any value matches (OR within header).
@@ -460,14 +589,26 @@ mod tests {
         // Note: Exact match requires full value match. For true multi-value OR,
         // we'd need regex or the runtime to split on commas.
         // This test verifies exact matching works as expected.
-        assert!(matches_header_predicate(&predicate_json, &req));
+        assert!(matches_header_predicate(
+            &predicate_json,
+            &req,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
 
         // Test mismatch
         let predicate_xml = HeaderPredicate {
             name: "accept".into(),
             matcher: HeaderMatch::Exact("application/xml".into()),
         };
-        assert!(!matches_header_predicate(&predicate_xml, &req));
+        assert!(!matches_header_predicate(
+            &predicate_xml,
+            &req,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
     }
 
     /// Test 5: Multiple header predicates - X-Tenant: alice AND X-Region: us-east (both match).
@@ -490,7 +631,13 @@ mod tests {
             },
         ]);
 
-        assert!(matches_headers(&predicates, &req));
+        assert!(matches_headers(
+            &predicates,
+            &req,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
     }
 
     /// Test 6: Multiple header predicates - X-Tenant: alice AND X-Debug: true (second missing).
@@ -514,7 +661,13 @@ mod tests {
         ]);
 
         // Should fail because X-Debug is missing (AND logic requires all to match)
-        assert!(!matches_headers(&predicates, &req));
+        assert!(!matches_headers(
+            &predicates,
+            &req,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
     }
 
     /// Test 7: Compound predicates (path + method) - match both, reject if either fails.
@@ -554,6 +707,8 @@ mod tests {
         let router = Router {
             exact_hosts: HashMap::new(),
             wildcard_hosts: vec![vhost],
+            regex_cache: HashMap::new(),
+            regex_limits: RegexLimits::default(),
         };
 
         let req_get = mock_request_header("GET");
@@ -623,6 +778,8 @@ mod tests {
         let router = Router {
             exact_hosts: HashMap::new(),
             wildcard_hosts: vec![vhost],
+            regex_cache: HashMap::new(),
+            regex_limits: RegexLimits::default(),
         };
 
         let mut req_full_match = mock_request_header("GET");
@@ -702,6 +859,8 @@ mod tests {
         let router = Router {
             exact_hosts: HashMap::new(),
             wildcard_hosts: vec![vhost],
+            regex_cache: HashMap::new(),
+            regex_limits: RegexLimits::default(),
         };
 
         // Request with wrong method (no headers needed for short-circuit)
@@ -735,8 +894,20 @@ mod tests {
         };
 
         // Header name is case-insensitive (both should match)
-        assert!(matches_header_predicate(&predicate, &req_lowercase));
-        assert!(matches_header_predicate(&predicate, &req_uppercase));
+        assert!(matches_header_predicate(
+            &predicate,
+            &req_lowercase,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
+        assert!(matches_header_predicate(
+            &predicate,
+            &req_uppercase,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
 
         // Value is case-sensitive
         let mut req_wrong_case = mock_request_header("GET");
@@ -749,7 +920,10 @@ mod tests {
 
         assert!(!matches_header_predicate(
             &predicate_uppercase_value,
-            &req_wrong_case
+            &req_wrong_case,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
         ));
     }
 
@@ -769,10 +943,22 @@ mod tests {
         };
 
         // Empty header value should match empty string predicate
-        assert!(matches_header_predicate(&predicate_empty, &req_empty));
+        assert!(matches_header_predicate(
+            &predicate_empty,
+            &req_empty,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
 
         // Missing header should NOT match empty string predicate
-        assert!(!matches_header_predicate(&predicate_empty, &req_missing));
+        assert!(!matches_header_predicate(
+            &predicate_empty,
+            &req_missing,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
 
         // Test Present matcher
         let predicate_present = HeaderPredicate {
@@ -781,9 +967,21 @@ mod tests {
         };
 
         // Empty header value should match Present
-        assert!(matches_header_predicate(&predicate_present, &req_empty));
+        assert!(matches_header_predicate(
+            &predicate_present,
+            &req_empty,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
 
         // Missing header should NOT match Present
-        assert!(!matches_header_predicate(&predicate_present, &req_missing));
+        assert!(!matches_header_predicate(
+            &predicate_present,
+            &req_missing,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
     }
 }

@@ -21,6 +21,7 @@ trap cleanup_trap EXIT
 PORT_PAVIS=$(get_free_port)
 PORT_RELAY=$(get_free_port)
 PORT_UPSTREAM=$(get_free_port)
+PORT_METRICS=$(get_free_port)
 
 run_mock_relay "$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_RELAY/status" 5
@@ -57,11 +58,12 @@ fi
 wait_for_port "$PORT_UPSTREAM" 5
 echo "✓ Slow upstream started on port $PORT_UPSTREAM"
 
-cat <<-EOF > "$TEST_TMP/config.yaml"
+cat <<EOF > "$TEST_TMP/config.yaml"
 listeners:
   - name: "default"
     address: "127.0.0.1:$PORT_PAVIS"
-telemetry: {}
+telemetry:
+  metrics: "127.0.0.1:$PORT_METRICS"
 upstreams:
   - name: "backend"
     pool:
@@ -75,17 +77,18 @@ routes:
         destinations: [{ upstream: "backend", weight: 1 }]
 EOF
 gen_pvs "$TEST_TMP/config.yaml" "$TEST_TMP/config.pvs"
-
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config.pvs"
 cp "$TEST_TMP/config.pvs" "$TEST_TMP/initial.pvs"
 run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
+wait_for_port "$PORT_METRICS" 5
 
 echo "== Phase A: Pool Hard Limit (pool.max=3, no queue) =="
 
 # Send 10 concurrent requests (3 should succeed, 7 should get 503)
 SUCCESS=0
 REJECTED=0
+PIDS=""
 
 for _ in {1..10}; do
     (
@@ -95,8 +98,10 @@ for _ in {1..10}; do
             "http://127.0.0.1:$PORT_PAVIS/test" 2>/dev/null || echo "000")
         echo "$STATUS" >> "$TEST_TMP/responses.txt"
     ) &
+    PIDS="$PIDS $!"
 done
-wait
+wait $PIDS
+
 
 # Count responses
 while IFS= read -r status; do
@@ -109,19 +114,77 @@ done < "$TEST_TMP/responses.txt"
 
 echo "Results: $SUCCESS succeeded, $REJECTED rejected"
 
-# Verify deterministic behavior
-# Note: Due to timing, we expect at least some rejections if pool.max is enforced
-# The exact count may vary slightly due to request timing, but we should see rejections
-if [ "$SUCCESS" -lt 1 ] || [ "$SUCCESS" -gt 10 ]; then
-    echo "❌ Expected 1-10 successful requests, got: $SUCCESS"
-    exit 1
-fi
-
+# Verify rejections occurred
 if [ "$REJECTED" -lt 1 ]; then
     echo "❌ Expected at least 1 rejection (pool enforcement), got: $REJECTED"
     exit 1
 fi
 
 echo "✅ Pool limit enforcement verified: $SUCCESS succeeded, $REJECTED rejected"
+
+echo "== P2 Extension: Retry + Pool Interaction =="
+
+# Reload with retry + pool_full
+cat <<EOF > "$TEST_TMP/config.yaml"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:$PORT_PAVIS"
+telemetry:
+  metrics: "127.0.0.1:$PORT_METRICS"
+upstreams:
+  - name: "backend"
+    pool:
+      max: 2
+      queue_capacity: 0
+    endpoints: [{ ip: "127.0.0.1", port: $PORT_UPSTREAM }]
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/" }
+        retry:
+          max_attempts: 3
+          retryable_reasons: ["pool_full", "status_code"]
+          retryable_status_codes: [503]
+        destinations: [{ upstream: "backend", weight: 1 }]
+EOF
+
+gen_pvs "$TEST_TMP/config.yaml" "$TEST_TMP/config.pvs"
+publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config.pvs"
+
+# Wait for reload by checking metrics version
+METRICS_URL="http://127.0.0.1:$PORT_METRICS/metrics"
+wait_for_runtime_config_version "$METRICS_URL" 2 10 || (echo "❌ Timeout waiting for config version 2"; exit 1)
+sleep 2 # Extra safety for concurrent workers
+
+echo "Sending 5 concurrent slow requests exceeding pool.max=2..."
+# Send 5 concurrent slow requests. With pool.max=2, 3 should fail with pool_full and trigger retries.
+CURL_PIDS=""
+for i in {1..5}; do
+    curl -s --max-time 20 "http://127.0.0.1:$PORT_PAVIS/test" >/dev/null &
+    CURL_PIDS="$CURL_PIDS $!"
+done
+
+echo "Polling pool size while requests are active..."
+# Poll pool size multiple times, ensure never exceeds limit
+for _ in {1..15}; do
+    POOL_SIZE=$(curl -s "$METRICS_URL" | grep 'pavis_upstream_pool_size{upstream="backend"}' | awk '{print $2}')
+    if [ -n "$POOL_SIZE" ]; then
+        if [ "$(awk "BEGIN {print ($POOL_SIZE > 2)}")" -eq 1 ]; then
+            echo "❌ Pool size MUST NOT exceed pool.max=2 (current: $POOL_SIZE)"
+            exit 1
+        fi
+    fi
+    sleep 0.5
+done
+
+echo "Waiting for requests to complete (max 20s)..."
+wait $CURL_PIDS || true
+
+# Check metrics for pool_full retries
+echo "Checking metrics for retries..."
+assert_metric_at_least 'pavis_upstream_retries_total.*reason="pool_full"' 1 10 "$METRICS_URL"
+
+echo "✅ Pool + Retry interaction verified"
 
 echo "✅ Pool hard limit test passed"

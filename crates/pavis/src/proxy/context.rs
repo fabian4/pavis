@@ -1,4 +1,6 @@
+use crate::retry::{BufferedBody, RetryContext};
 use crate::state::RuntimeState;
+use http::Uri;
 use pavis_core::{EndpointAddr, HeadersPolicy, Hostname, RetryPolicy, Timeout, UpstreamName};
 use serde::Serialize;
 use std::sync::Arc;
@@ -132,11 +134,20 @@ pub struct RouterContext {
     pub route_pattern: RoutePattern,
     pub req_id: RequestId,
     pub span: TracingSpan,
-    pub pool_permit: Option<OwnedSemaphorePermit>,
+    pub pool_permit: Option<crate::upstream::cluster::PoolPermit>,
     pub circuit_breaker_permit: Option<OwnedSemaphorePermit>,
     /// Pinned configuration snapshot for this request.
     /// Captured in `request_filter` to ensure atomicity across routing and upstream selection.
     pub runtime_state: Option<Arc<RuntimeState>>,
+
+    /// P2 Retry context
+    pub retry_ctx: Option<RetryContext>,
+    /// P2 Buffered request body
+    pub buffered_body: Option<BufferedBody>,
+    /// Optional URI after path rewrite
+    pub rewritten_uri: Option<Uri>,
+    /// Optional Host after host rewrite
+    pub rewritten_host: Option<Hostname>,
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +176,13 @@ impl RoutePattern {
         match self {
             RoutePattern::NotMatched => "-",
             RoutePattern::Matched { pattern } => pattern,
+        }
+    }
+
+    pub fn as_label_opt(&self) -> Option<&str> {
+        match self {
+            RoutePattern::NotMatched => None,
+            RoutePattern::Matched { pattern } => Some(pattern),
         }
     }
 }
@@ -232,6 +250,10 @@ mod tests {
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
         };
 
         assert_eq!(
@@ -275,6 +297,10 @@ mod tests {
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
         };
 
         assert_eq!(ctx.upstream_label(), "-");
@@ -303,6 +329,10 @@ mod tests {
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
         };
 
         ctx.start_upstream();
@@ -336,6 +366,10 @@ mod tests {
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
         };
 
         std::thread::sleep(std::time::Duration::from_millis(10));

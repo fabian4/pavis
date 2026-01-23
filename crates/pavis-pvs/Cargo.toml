@@ -7,7 +7,8 @@ description = "PVS file protocol boundary for Pavis"
 
 [dependencies]
 pavis-core = { path = "../pavis-core" }
-rkyv = { version = "0.7", features = ["validation"] }
+rkyv = { version = "0.8", features = ["bytecheck"] }
+rancor = "0.1"
 sha2 = "0.10.9"
 thiserror = "1"
 memmap2 = "0.9"

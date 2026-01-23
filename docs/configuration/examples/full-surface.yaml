@@ -37,7 +37,10 @@ upstreams:
     pool:
       idle: "1m" # humantime format
       connect: "10s"
-      max: 500 # 0 for unlimited
+      max: 500 # Required, no unlimited pools (P0 enforcement)
+      queue:
+        capacity: 10 # Max requests to queue when pool is full
+        timeout_ms: 1000 # Queue wait timeout in milliseconds
     tls:
       enabled: true
       verify_cert: true
@@ -74,13 +77,39 @@ upstreams:
 routes:
   - host: "app.example.com"
     paths:
-      - matcher: !prefix
-          path: "/api"
+      - matcher:
+          path: !prefix { path: "/api" }
+          method: "GET" # Single method filter (optional)
+          # OR use methods for multi-method matching:
+          # methods: ["GET", "POST", "HEAD"]
+          headers: # All header predicates must match (AND logic)
+            - operator: exact
+              name: "x-tenant"
+              value: "prod"
+            - operator: prefix
+              name: "x-region"
+              prefix: "us-"
+            - operator: present
+              name: "x-debug"
         timeout: "30s"
         retry:
-          attempts: 3
-          retry_on: ["5xx", "connect_failure"] # 5xx, connect_failure, reset, refused
-          per_try_timeout: "5s"
+          max_attempts: 3 # Range: 1-10
+          retryable_reasons:
+            - status_code
+            - connect_timeout
+            - read_timeout
+            - per_try_timeout
+            - pool_full
+            - connect_error
+          retryable_status_codes: [502, 503, 504] # Required when status_code in reasons
+          backoff:
+            strategy: exponential # fixed, linear, or exponential
+            base_ms: 100
+            max_ms: 5000
+          retry_non_idempotent: false # Allow retrying POST/PATCH/DELETE
+          fail_on_non_replayable_retry: false # Return 500 if body can't be buffered
+          max_request_body_buffer_bytes: 1048576 # 1 MB buffer for retry replay
+          per_try: "5s" # Per-attempt timeout
         request_headers:
           set_headers: [["X-Internal", "true"]]
           remove_headers: ["Authorization"]

@@ -118,10 +118,10 @@ async fn poller_updates_lkg_on_checksum_change() {
         .unwrap(),
     );
 
-    let outcome = agent.poll_once().await.unwrap();
+    let outcome = agent.poll_once(0).await.unwrap();
     assert!(matches!(outcome, PollOutcome::Updated));
 
-    let outcome = agent.poll_once().await.unwrap();
+    let outcome = agent.poll_once(0).await.unwrap();
     assert!(matches!(outcome, PollOutcome::NoChange));
 
     let tmp_path = dir.join("config_v2.pvs");
@@ -129,7 +129,7 @@ async fn poller_updates_lkg_on_checksum_change() {
     let bytes_v2_expected = bytes_v2.clone();
     *relay_state.bytes.write().await = bytes_v2;
 
-    let outcome = agent.poll_once().await.unwrap();
+    let outcome = agent.poll_once(0).await.unwrap();
     assert!(matches!(outcome, PollOutcome::Updated));
 
     let on_disk = std::fs::read(&lkg_path).expect("read lkg");

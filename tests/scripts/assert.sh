@@ -65,7 +65,7 @@ assert_json_has_key() {
     # Read JSON from stdin
     local body
     body=$(cat)
-    if ! printf '%s' "$body" | grep -q "\"$key\""; then
+    if ! printf '%s' "$body" | grep -q "\"$key\"" ; then
         echo "❌ JSON assertion failed: Key '$key' missing in response"
         return 1
     fi
@@ -119,7 +119,7 @@ get_admin_version() {
     local admin_url="$1"
     pavis_curl_body "${admin_url}/stats" \
         | tr -d '\n' \
-        | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p'
+        | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
 wait_for_admin_version() {
@@ -254,10 +254,10 @@ get_runtime_config_version() {
     local metrics
     metrics=$(curl -s --connect-timeout 1 --max-time 2 "$metrics_url" | tr -d '\r') || return 1
     printf '%s\n' "$metrics" | awk '
-        match($0, /pavis_runtime_config_version\{[^}]*version="[^"]+"/) {
+        match($0, /pavis_runtime_config_version{[^}]*version="[^"]+"/) {
             value=substr($0, RSTART, RLENGTH)
             sub(/^.*version="/, "", value)
-            sub(/"$/, "", value)
+            sub( /"$/, "", value)
             print value
             found=1
             exit
@@ -268,15 +268,45 @@ get_runtime_config_version() {
 
 wait_for_runtime_config_version() {
     local metrics_url="$1"
-    local timeout="${2:-10}"
+    local expected_version="$2"
+    local timeout="${3:-10}"
     local retries=$((timeout * 4))
     local backoff=0.25
-    local version
 
-    for _ in $(seq 1 $retries); do
-        if version=$(get_runtime_config_version "$metrics_url"); then
-            echo "$version"
-            return 0
+    echo "DEBUG: wait_for_runtime_config_version looking for '$expected_version' at $metrics_url"
+
+    for i in $(seq 1 $retries); do
+        local metrics
+        metrics=$(curl -s --connect-timeout 1 --max-time 2 "$metrics_url" | tr -d '\r') || true
+        
+        if [ -n "$expected_version" ]; then
+            if echo "$metrics" | grep -q "pavis_runtime_config_version{version=\"$expected_version\"}"; then
+                echo "DEBUG: Found version $expected_version at retry $i"
+                echo "$expected_version"
+                return 0
+            fi
+            if [ $((i % 4)) -eq 0 ]; then
+                echo "DEBUG: Retry $i, version $expected_version not found yet. Current metrics (subset):"
+                echo "$metrics" | grep "pavis_runtime_config_version" | head -n 5
+            fi
+        else
+            # If no specific version expected, return the first one found
+            local version
+            version=$(echo "$metrics" | awk '
+                match($0, /pavis_runtime_config_version{[^}]*version="[^"]+"/) {
+                    value=substr($0, RSTART, RLENGTH)
+                    sub(/^.*version="/, "", value)
+                    sub( /"$/, "", value)
+                    print value
+                    found=1
+                    exit
+                }
+                END { if (!found) exit 1 }
+            ')
+            if [ -n "$version" ]; then
+                echo "$version"
+                return 0
+            fi
         fi
         sleep "$backoff"
     done
@@ -290,7 +320,7 @@ json_get_string() {
         match($0, "\"" key "\"[[:space:]]*:[[:space:]]*\"[^\"]*\"") {
             value=substr($0, RSTART, RLENGTH)
             sub(/.*:[[:space:]]*"/, "", value)
-            sub(/"$/, "", value)
+            sub( /"$/, "", value)
             print value
             found=1
             exit
@@ -339,7 +369,7 @@ json_get_header_first() {
             if (pos > 0) {
                 value=substr(value, pos + 2)
             }
-            sub(/"$/, "", value)
+            sub( /"$/, "", value)
             print value
             found=1
             exit
@@ -359,7 +389,7 @@ json_get_header_joined() {
             if (start > 0 && end > start) {
                 value=substr(value, start + 1, end - start - 1)
             }
-            gsub(/"/, "", value)
+            gsub( /"/, "", value)
             gsub(/[[:space:]]+/, "", value)
             gsub(/,/, ", ", value)
             print value
@@ -392,11 +422,94 @@ json_get_tls_string() {
         match($0, "\"tls\"[^}]*\"" key "\"[[:space:]]*:[[:space:]]*\"[^\"]*\"") {
             value=substr($0, RSTART, RLENGTH)
             sub(/.*:[[:space:]]*"/, "", value)
-            sub(/"$/, "", value)
+            sub( /"$/, "", value)
             print value
             found=1
             exit
         }
         END { if (!found) exit 1 }
     '
+}
+
+# --- P2 Extension Helpers ---
+
+assert_ge() {
+    local actual="$1"
+    local expected="$2"
+    local msg="$3"
+    if [ "$(awk "BEGIN {print ($actual >= $expected)}")" -eq 0 ]; then
+        echo "❌ Assertion failed: $msg"
+        echo "   Expected: >= $expected"
+        echo "   Actual:   $actual"
+        exit 1
+    fi
+}
+
+assert_le() {
+    local actual="$1"
+    local expected="$2"
+    local msg="$3"
+    if [ "$(awk "BEGIN {print ($actual <= $expected)}")" -eq 0 ]; then
+        echo "❌ Assertion failed: $msg"
+        echo "   Expected: <= $expected"
+        echo "   Actual:   $actual"
+        exit 1
+    fi
+}
+
+# Get current metric value
+get_metric() {
+    local metric_pattern="$1"
+    curl -s "http://127.0.0.1:${PORT_PAVIS:-8080}/metrics" | \
+        grep -E "$metric_pattern" | \
+        head -1 | \
+        awk '{print $2}'
+}
+
+# Assert metric >= threshold
+assert_metric_ge() {
+    local metric="$1"
+    local threshold="$2"
+    local msg="${3:-Metric $metric should be >= $threshold}"
+    local value
+    value=$(get_metric "$metric")
+    [ -z "$value" ] && value=0
+    assert_ge "$value" "$threshold" "$msg"
+}
+
+# Assert metric <= threshold (for gauge invariants like pool.max)
+assert_metric_le() {
+    local metric="$1"
+    local threshold="$2"
+    local msg="${3:-Metric $metric should be <= $threshold}"
+    local value
+    value=$(get_metric "$metric")
+    [ -z "$value" ] && value=0
+    assert_le "$value" "$threshold" "$msg"
+}
+
+# Poll metric multiple times, return max value (for gauge invariants)
+get_metric_max() {
+    local metric="$1"
+    local samples="${2:-10}"
+    local delay="${3:-0.1}"
+    local max=0
+
+    for _ in $(seq 1 "$samples"); do
+        local current
+        current=$(get_metric "$metric")
+        [ -z "$current" ] && current=0
+        if [ "$(awk "BEGIN {print ($current > $max)}")" -eq 1 ]; then
+            max=$current
+        fi
+        sleep "$delay"
+    done
+    echo "$max"
+}
+
+# Wait for config reload to complete
+wait_for_reload() {
+    local timeout="${1:-5}"
+    sleep 1  # Give relay time to process
+    wait_for_url "http://127.0.0.1:${PORT_PAVIS:-8080}/healthz" "$timeout"
 }

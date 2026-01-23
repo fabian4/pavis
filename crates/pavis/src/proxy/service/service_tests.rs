@@ -1,6 +1,6 @@
 use super::{
     Proxy, apply_route_headers, calculate_path_rewrite, resolve_per_try_timeout,
-    resolve_route_timeout, retry_budget, route_path,
+    resolve_route_timeout, route_path,
 };
 use crate::proxy::context::RouterContext;
 use crate::state::{RuntimeState, RuntimeStateHandle};
@@ -11,11 +11,10 @@ use pavis_core::{
     AccessLogPolicy, ClientCert, ClientCertChain, ConnectTimeout, ConnectionLimit, Destination,
     Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderPredicates, HeaderValue,
     Headers, HeadersPolicy, Host, Hostname, HttpVersion, IdleTimeout, LoadBalancer,
-    MethodPredicate, Metrics, Path, PathMatch, Pool, PoolQueue, Port, RETRY_CONNECT_FAILURE,
-    RETRY_FIVE_XX, RetryFlags, RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction,
-    RouteMatcher, ServiceName, SniName, Telemetry as RuntimeTelemetry, Timeout, TlsPolicy,
-    TryTimeout, Upstream, UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName, VirtualHost,
-    Weight,
+    MethodPredicate, Metrics, Path, PathMatch, Pool, PoolQueue, Port, RetryPolicy, Rewrite,
+    RewriteHost, RewritePath, RouteAction, RouteMatcher, ServiceName, SniName,
+    Telemetry as RuntimeTelemetry, Timeout, TlsPolicy, Upstream, UpstreamBuilder, UpstreamCa,
+    UpstreamId, UpstreamName, VirtualHost, Weight,
 };
 use pingora::http::ResponseHeader;
 use pingora::prelude::{ProxyHttp, RequestHeader, Session};
@@ -40,9 +39,19 @@ fn apply_route_headers_populates_router_context() {
         },
         timeout: Timeout::Enabled(Duration(NonZeroU32::new(500).unwrap())),
         retry: RetryPolicy::Enabled {
-            attempts: NonZeroU16::new(2).unwrap(),
-            per_try: TryTimeout::Enabled(Duration(NonZeroU32::new(200).unwrap())),
-            on: RetryFlags(RETRY_FIVE_XX),
+            max_attempts: NonZeroU16::new(2).unwrap(),
+            per_try: pavis_core::TryTimeout::Inherit,
+            retryable_reasons: vec![pavis_core::RetryReason::StatusCode],
+            retryable_status_codes: Some(pavis_core::RetryableStatusCodes {
+                codes: vec![502, 503, 504],
+            }),
+            backoff: pavis_core::BackoffStrategy::Exponential {
+                base_ms: 100,
+                max_ms: 5000,
+            },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1_048_576,
         },
         request_headers: HeadersPolicy::Enabled {
             rules: Headers {
@@ -81,23 +90,26 @@ fn apply_route_headers_populates_router_context() {
     let mut ctx = RouterContext {
         upstream_name: None,
         upstream_endpoint: None,
-        request_headers: HeadersPolicy::Disabled.into(),
-        response_headers: HeadersPolicy::Disabled.into(),
+        request_headers: Arc::new(HeadersPolicy::Disabled),
+        response_headers: Arc::new(HeadersPolicy::Disabled),
         sni_override: None,
-        start_time: std::time::Instant::now(),
+        start_time: Instant::now(),
         client_identity: None,
         rbac_denied: false,
         route_timeout: Timeout::Disabled,
         retry_policy: RetryPolicy::Disabled,
         retry_attempts: 0,
-        // Observability fields
         upstream_timing: crate::proxy::context::UpstreamTiming::NotStarted,
         route_pattern: crate::proxy::context::RoutePattern::NotMatched,
-        req_id: "test-req".parse().unwrap(),
+        req_id: "req-123".parse().unwrap(),
         span: crate::proxy::context::TracingSpan::Disabled,
         pool_permit: None,
         circuit_breaker_permit: None,
         runtime_state: None,
+        retry_ctx: None,
+        buffered_body: None,
+        rewritten_uri: None,
+        rewritten_host: None,
     };
 
     apply_route_headers(&mut ctx, &route);
@@ -127,25 +139,24 @@ fn resolve_route_timeout_maps_enabled() {
 fn resolve_per_try_timeout_inherits_route_timeout() {
     let timeout = Timeout::Enabled(Duration(NonZeroU32::new(500).unwrap()));
     let retry = RetryPolicy::Enabled {
-        attempts: NonZeroU16::new(2).unwrap(),
-        per_try: TryTimeout::Inherit,
-        on: RetryFlags(RETRY_FIVE_XX),
+        max_attempts: NonZeroU16::new(2).unwrap(),
+        per_try: pavis_core::TryTimeout::Inherit,
+        retryable_reasons: vec![pavis_core::RetryReason::StatusCode],
+        retryable_status_codes: Some(pavis_core::RetryableStatusCodes {
+            codes: vec![502, 503, 504],
+        }),
+        backoff: pavis_core::BackoffStrategy::Exponential {
+            base_ms: 100,
+            max_ms: 5000,
+        },
+        retry_non_idempotent: false,
+        fail_on_non_replayable_retry: false,
+        max_request_body_buffer_bytes: 1_048_576,
     };
     assert_eq!(
         resolve_per_try_timeout(timeout, &retry),
         Some(std::time::Duration::from_millis(500))
     );
-}
-
-#[test]
-fn retry_budget_requires_flag_match() {
-    let retry = RetryPolicy::Enabled {
-        attempts: NonZeroU16::new(3).unwrap(),
-        per_try: TryTimeout::Disabled,
-        on: RetryFlags(RETRY_FIVE_XX),
-    };
-    assert!(retry_budget(&retry, RETRY_FIVE_XX).is_some());
-    assert!(retry_budget(&retry, RETRY_CONNECT_FAILURE).is_none());
 }
 
 fn test_telemetry() -> Arc<Telemetry> {
@@ -439,15 +450,16 @@ async fn request_filter_applies_rewrite_policy() {
         .expect("request filter");
     assert!(!should_respond);
 
-    let header = session.as_downstream().req_header();
-    assert_eq!(header.uri.path(), "/v2/widgets");
-    assert_eq!(header.uri.query(), Some("id=1"));
     assert_eq!(
-        header.headers.get("Host").unwrap().to_str().unwrap(),
-        "rewrite.example.com"
+        ctx.rewritten_uri.as_ref().map(|u| u.path()),
+        Some("/v2/widgets")
     );
     assert_eq!(
-        ctx.sni_override.as_ref().map(|v| v.0.as_str()),
+        ctx.rewritten_uri.as_ref().and_then(|u| u.query()),
+        Some("id=1")
+    );
+    assert_eq!(
+        ctx.rewritten_host.as_ref().map(|v| v.0.as_str()),
         Some("rewrite.example.com")
     );
 }
@@ -1667,9 +1679,14 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
         .expect("request filter");
     assert!(!should_respond);
 
-    let header = session.as_downstream().req_header();
-    assert_eq!(header.uri.path(), "/new-api/resource");
-    assert_eq!(header.uri.query(), Some("filter=active&limit=10"));
+    assert_eq!(
+        ctx.rewritten_uri.as_ref().map(|u| u.path()),
+        Some("/new-api/resource")
+    );
+    assert_eq!(
+        ctx.rewritten_uri.as_ref().and_then(|u| u.query()),
+        Some("filter=active&limit=10")
+    );
 }
 
 #[tokio::test]
@@ -2024,15 +2041,15 @@ async fn request_filter_denies_when_principal_not_any() {
         .request_filter(&mut session, &mut ctx)
         .await
         .expect("request filter");
+
     assert!(should_respond);
-    assert!(ctx.upstream_name.is_none());
+    assert!(ctx.rbac_denied);
 
     let mut buf = [0u8; 256];
     let read = client.read(&mut buf).await.expect("read response");
     let body = String::from_utf8_lossy(&buf[..read]);
     assert!(body.contains("403"));
 }
-
 #[tokio::test]
 async fn request_filter_allows_with_matching_identity() {
     let routes = vec![VirtualHost {

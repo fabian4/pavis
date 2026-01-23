@@ -67,7 +67,16 @@ pub fn format_config(config: &binary::RuntimeConfig) -> String {
                 binary::PathMatch::Regex { path } => ("regex", path.0.as_str()),
                 _ => ("unknown", "??"),
             };
-            writeln!(&mut out, "  - [{match_type}] {}", path).ok();
+            let method = match &route.matcher.method {
+                binary::MethodPredicate::Any => "ANY".to_string(),
+                binary::MethodPredicate::Specific(m) => m.as_str().to_string(),
+                binary::MethodPredicate::List(m) => format!(
+                    "[{}]",
+                    m.iter().map(|m| m.as_str()).collect::<Vec<_>>().join(", ")
+                ),
+                _ => "Unknown".to_string(),
+            };
+            writeln!(&mut out, "  - [{match_type}] {} method={}", path, method).ok();
             match &route.action {
                 binary::RouteAction::Forward(destinations) => {
                     for dest in destinations {

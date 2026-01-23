@@ -268,4 +268,82 @@ cat <<-EOF > "$TEST_TMP/config_missing_ca.yaml"
 EOF
 publish_and_expect_runtime_rejection "missing-ca-bundle" "$TEST_TMP/config_missing_ca.yaml" "$TEST_TMP/config_missing_ca.pvs"
 
+echo "== Retry Validation Tests =="
+
+# Test 1: max_attempts = 0
+cat <<-EOF > "$TEST_TMP/invalid_retry_zero.yaml"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:$PORT_PAVIS"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints: [{ ip: "127.0.0.1", port: $UPSTREAM_HTTP_PORT_V1 }]
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/" }
+        retry:
+          attempts: 0
+        destinations: [{ upstream: "backend", weight: 1 }]
+EOF
+
+echo "Testing max_attempts = 0 rejection..."
+OUTPUT=$(gen_pvs "$TEST_TMP/invalid_retry_zero.yaml" "$TEST_TMP/invalid_retry_zero.pvs" 2>&1 || true)
+echo "$OUTPUT" | grep -q "max_attempts must be >= 1" || (echo "❌ Expected error for max_attempts=0"; exit 1)
+
+# Test 2: retryable_reasons with missing status_codes
+cat <<-EOF > "$TEST_TMP/invalid_retry_missing_codes.yaml"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:$PORT_PAVIS"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints: [{ ip: "127.0.0.1", port: $UPSTREAM_HTTP_PORT_V1 }]
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/" }
+        retry:
+          attempts: 3
+          retry_on: ["status_code"]
+        destinations: [{ upstream: "backend", weight: 1 }]
+EOF
+
+echo "Testing missing retryable_status_codes rejection..."
+OUTPUT=$(gen_pvs "$TEST_TMP/invalid_retry_missing_codes.yaml" "$TEST_TMP/invalid_retry_missing_codes.pvs" 2>&1 || true)
+echo "$OUTPUT" | grep -q "retryable_status_codes is required" || (echo "❌ Expected error for missing status codes"; exit 1)
+
+# Test 3: per_try_timeout > request_timeout
+cat <<-EOF > "$TEST_TMP/invalid_timeout_hierarchy.yaml"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:$PORT_PAVIS"
+telemetry: {}
+upstreams:
+  - name: "backend"
+    endpoints: [{ ip: "127.0.0.1", port: $UPSTREAM_HTTP_PORT_V1 }]
+routes:
+  - host: "*"
+    paths:
+      - matcher:
+          path: !prefix { path: "/" }
+        timeout: "100ms"
+        retry:
+          attempts: 3
+          retry_on: ["status_code"]
+          retryable_status_codes: [503]
+          per_try: "200ms"
+        destinations: [{ upstream: "backend", weight: 1 }]
+EOF
+
+echo "Testing per_try_timeout > request_timeout rejection..."
+OUTPUT=$(gen_pvs "$TEST_TMP/invalid_timeout_hierarchy.yaml" "$TEST_TMP/invalid_timeout_hierarchy.pvs" 2>&1 || true)
+echo "$OUTPUT" | grep -q "per_try timeout.*exceeds overall route timeout" || (echo "❌ Expected error for per_try_timeout > request_timeout in output: $OUTPUT"; exit 1)
+
+echo "✅ Retry validation tests passed"
+
 echo "✅ semantic_validation_suite passed"

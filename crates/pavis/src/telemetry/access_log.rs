@@ -331,6 +331,7 @@ mod tests {
         use crate::proxy::context::{RoutePattern, RouterContext, TracingSpan, UpstreamTiming};
         use pavis_core::{HeadersPolicy, RetryPolicy, Timeout, UpstreamName};
         use std::sync::Arc;
+        use std::time::Instant;
 
         let (access_log, mut worker) = AccessLog::new(&AccessLogPolicy::Stdout);
         let mut rx = worker.rx.take().expect("rx");
@@ -346,10 +347,10 @@ mod tests {
         let ctx = RouterContext {
             upstream_name: Some(UpstreamName("upstream-a".to_string())),
             upstream_endpoint: None,
-            request_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
-            response_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
             sni_override: None,
-            start_time: std::time::Instant::now(),
+            start_time: Instant::now(),
             client_identity: None,
             rbac_denied: false,
             route_timeout: Timeout::Disabled,
@@ -364,6 +365,10 @@ mod tests {
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
         };
 
         access_log.log(&mut session, &ctx).await;

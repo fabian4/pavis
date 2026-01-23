@@ -5,7 +5,6 @@ use crate::header::{
 };
 use crate::read::parse_header;
 use pavis_core::RuntimeConfig;
-use rkyv::Deserialize as _;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{ErrorKind, Read};
@@ -111,7 +110,7 @@ pub fn verify(bytes: &[u8]) -> PvsResult<VerifiedPvs> {
 pub fn read_from_path(path: impl AsRef<Path>) -> PvsResult<VerifiedPvs> {
     let (header, bytes) = read_verified_file(path)?;
     let payload = &bytes[HEADER_SIZE..];
-    let _archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
+    let _archived = rkyv::access::<rkyv::Archived<RuntimeConfig>, rancor::Error>(payload)
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
     Ok(VerifiedPvs {
         header,
@@ -122,7 +121,7 @@ pub fn read_from_path(path: impl AsRef<Path>) -> PvsResult<VerifiedPvs> {
 pub fn verify_file(path: impl AsRef<Path>) -> PvsResult<()> {
     let (_header, bytes) = read_verified_file(path)?;
     let payload = &bytes[HEADER_SIZE..];
-    rkyv::check_archived_root::<RuntimeConfig>(payload)
+    rkyv::access::<rkyv::Archived<RuntimeConfig>, rancor::Error>(payload)
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
     Ok(())
 }
@@ -169,7 +168,7 @@ fn to_hex(bytes: &[u8]) -> String {
 
 fn verify_owned(bytes: Vec<u8>) -> PvsResult<VerifiedPvs> {
     let (header, payload) = verify_bytes(&bytes)?;
-    let _archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
+    let _archived = rkyv::access::<rkyv::Archived<RuntimeConfig>, rancor::Error>(payload)
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
     Ok(VerifiedPvs {
         header,
@@ -180,11 +179,9 @@ fn verify_owned(bytes: Vec<u8>) -> PvsResult<VerifiedPvs> {
 pub fn load(path: impl AsRef<Path>) -> PvsResult<RuntimeConfig> {
     let (_header, bytes) = read_verified_file(path)?;
     let payload = &bytes[HEADER_SIZE..];
-    let archived = rkyv::check_archived_root::<RuntimeConfig>(payload)
+    let archived = rkyv::access::<rkyv::Archived<RuntimeConfig>, rancor::Error>(payload)
         .map_err(|e| PvsError::CorruptArchive(format!("{:?}", e)))?;
-    let mut deserializer = rkyv::de::deserializers::SharedDeserializeMap::new();
-    let config: RuntimeConfig = archived
-        .deserialize(&mut deserializer)
+    let config: RuntimeConfig = rkyv::deserialize::<RuntimeConfig, rancor::Error>(archived)
         .map_err(|e| PvsError::CorruptArchive(format!("Deserialization error: {:?}", e)))?;
     Ok(config)
 }

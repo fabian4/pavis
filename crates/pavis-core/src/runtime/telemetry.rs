@@ -4,9 +4,8 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct Telemetry {
     pub level: LogLevel,
     pub pingora: LogLevel,
@@ -16,10 +15,19 @@ pub struct Telemetry {
     pub tracing: TracingPolicy,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-#[archive(check_bytes)]
 #[repr(u8)]
 #[non_exhaustive]
 pub enum LogLevel {
@@ -30,8 +38,18 @@ pub enum LogLevel {
     Trace = 4,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq, Default)]
-#[archive(check_bytes)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum AccessLogPolicy {
     Disabled,
@@ -40,9 +58,9 @@ pub enum AccessLogPolicy {
     File(Path),
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum TracingPolicy {
     Disabled,
@@ -53,9 +71,9 @@ pub enum TracingPolicy {
     },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum TracingProvider {
     Otlp,
@@ -63,9 +81,9 @@ pub enum TracingProvider {
     Zipkin,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum Metrics {
     Disabled,

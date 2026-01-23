@@ -326,6 +326,53 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
+### `42_routing_method_header_predicates`
+
+**Category**: Traffic Management
+**Contracts**: D (Zero-Option)
+**Maturity**: L3
+
+**Scenario**:
+1. Verify method-based routing (GET vs POST) to different upstreams.
+2. Verify single header exact match routing.
+3. Verify multiple header match (AND logic).
+4. Verify fallback to default route on method/header mismatch.
+
+**Oracle**:
+- Upstream `instance_id` from `/echo`
+
+**Assertions**:
+- GET /api/get -> backend-v1
+- POST /api/post -> backend-v2
+- Header `x-tenant: alice` -> backend-v1
+- Headers `x-tenant: alice` AND `x-region: us-east` -> backend-v1
+- Mismatched headers -> backend-v2 (fallback)
+
+**Assessment**: PASS. Validates P0 method/header predicate combinations.
+
+---
+
+### `43_routing_tie_breaking`
+
+**Category**: Traffic Management
+**Contracts**: D (Zero-Option)
+**Maturity**: L3
+
+**Scenario**:
+1. Configure overlapping prefix routes: `/api/v2` (more specific) vs `/api` (less specific).
+2. Send requests matching both.
+
+**Oracle**:
+- Upstream `instance_id`
+
+**Assertions**:
+- `/api/v2/users` matches `/api/v2` route (longest prefix wins).
+- `/api/users` matches `/api` route.
+
+**Assessment**: PASS. Confirms deterministic tie-breaking based on prefix specificity.
+
+---
+
 ### `50_resilience_timeout`
 
 **Category**: Resilience
@@ -356,7 +403,7 @@ Tests comprehensive routing semantics in single artifact:
 
 **Scenario**:
 1. Configure upstream with one dead endpoint and one healthy endpoint.
-2. Enable retry policy with `retry_on: ["connect_failure"]`.
+2. Enable retry policy with `retry_on: ["connect_error"]`.
 3. Send `/echo` and expect a successful retry to the healthy backend.
 
 **Oracle**:
@@ -612,6 +659,89 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
+### `80_pool_hard_limit`
+
+**Category**: Resilience
+**Contracts**: (connection pooling)
+**Maturity**: L3
+
+**Scenario**:
+1. Configure `pool.max: 3` with 0 queue capacity.
+2. Send 10 concurrent requests to a slow backend (2s delay).
+
+**Oracle**:
+- HTTP status codes
+
+**Assertions**:
+- Exactly 3 requests succeed (200 OK).
+- Remaining 7 requests fail with 503 Service Unavailable (pool full).
+
+**Assessment**: PASS. Proves hard connection limit enforcement.
+
+---
+
+### `81_pool_queue_behavior`
+
+**Category**: Resilience
+**Contracts**: (connection pooling)
+**Maturity**: L3
+
+**Scenario**:
+1. Configure `pool.max: 3` and `queue_capacity: 2`.
+2. Send 10 concurrent requests.
+
+**Oracle**:
+- HTTP status codes
+
+**Assertions**:
+- Exactly 5 requests succeed (3 active + 2 queued).
+- Remaining 5 requests fail with 503.
+
+**Assessment**: PASS. Validates request queuing when connection pool is saturated.
+
+---
+
+### `82_pool_high_limit`
+
+**Category**: Resilience
+**Contracts**: (connection pooling)
+**Maturity**: L3
+
+**Scenario**:
+1. Configure `pool.max: 20`.
+2. Send 10 concurrent requests.
+
+**Oracle**:
+- HTTP status codes
+
+**Assertions**:
+- All 10 requests succeed (no false rejections).
+
+**Assessment**: PASS. Ensures no rejections occur when load is within pool limits.
+
+---
+
+### `83_pool_metric_tracking`
+
+**Category**: Observability / Resilience
+**Contracts**: (connection pooling)
+**Maturity**: L3
+
+**Scenario**:
+1. Configure `pool.max: 5`.
+2. Send 5 concurrent slow requests.
+3. Sample `/stats` gauge during and after execution.
+
+**Oracle**:
+- `/stats` JSON body
+
+**Assertions**:
+- Metrics show pool size increasing from 0 to 5 and returning to 0.
+
+**Assessment**: PASS. Confirms metric accuracy for connection pool tracking.
+
+---
+
 ### `90_operational_admin_api`
 
 **Category**: Operational Lifecycle
@@ -701,6 +831,90 @@ Tests comprehensive routing semantics in single artifact:
 - RSS is not strictly increasing on every reload
 
 **Assessment**: PASS. Coarse leak sentinel for reload cycles with deterministic bounds.
+
+---
+
+### `93_retry_status_codes`
+
+**Category**: Resilience
+**Contracts**: (retry policy execution)
+**Maturity**: L3
+
+**Scenario**:
+1. Configure route with `max_attempts: 5` and `retry_on: ["status_code"]` for 503.
+2. Request a flaky endpoint that fails with 503 twice before succeeding.
+
+**Oracle**:
+- HTTP status code
+- Metrics `pavis_upstream_retries_total`
+
+**Assertions**:
+- Client receives 200 OK.
+- Metrics show multiple retry attempts.
+
+**Assessment**: PASS. Verified P2 retry-on-status-code functionality.
+
+---
+
+### `94_retry_idempotency`
+
+**Category**: Resilience
+**Contracts**: (retry policy execution)
+**Maturity**: L3
+
+**Scenario**:
+1. Send POST request to flaky endpoint with `retry_non_idempotent: false`.
+2. Send POST request to flaky endpoint with `retry_non_idempotent: true`.
+
+**Oracle**:
+- HTTP status code
+
+**Assertions**:
+- Phase A (false): Client receives 503 (no retry).
+- Phase B (true): Client receives 200 OK (retry successful).
+
+**Assessment**: PASS. Verified idempotency constraints for retries.
+
+---
+
+### `95_retry_budget`
+
+**Category**: Resilience
+**Contracts**: (retry policy execution)
+**Maturity**: L3
+
+**Scenario**:
+1. Configure `request_timeout: 1000ms`.
+2. Send request to flaky endpoint with 200ms delay per attempt and 300ms backoff.
+
+**Oracle**:
+- HTTP status code
+
+**Assertions**:
+- Client receives 504 Gateway Timeout when global budget is exhausted, even if attempts remain.
+
+**Assessment**: PASS. Verified global timeout enforcement in retry loop.
+
+---
+
+### `96_retry_body_buffer`
+
+**Category**: Resilience
+**Contracts**: (retry policy execution)
+**Maturity**: L3
+
+**Scenario**:
+1. Send POST with small body (within `max_request_body_buffer_bytes`).
+2. Send POST with large body (exceeding limit).
+
+**Oracle**:
+- HTTP status code
+
+**Assertions**:
+- Small body: Sreceeds via retry (200 OK).
+- Large body: Retry aborted (503 original error returned) because body not replayable.
+
+**Assessment**: PASS. Verified body buffering vs streaming replay safety.
 
 ---
 

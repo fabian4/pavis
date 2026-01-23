@@ -139,6 +139,7 @@ fn sample_config() -> SerdeConfig {
                         path: "/".to_string(),
                     },
                     method: None,
+                    methods: None,
                     headers: None,
                 }),
                 timeout: None,
@@ -157,6 +158,7 @@ fn sample_config() -> SerdeConfig {
         }]),
         shutdown: None,
         admin: None,
+        features: None,
     }
 }
 

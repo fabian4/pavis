@@ -29,7 +29,6 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
-rkyv = { version = "0.7", features = ["validation"] }
 
 [features]
 default = ["ingest-file", "codec-serde"]

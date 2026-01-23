@@ -184,9 +184,26 @@ Defines how the proxy accepts inbound traffic.
 
 ### `upstreams[].pool.max`
 - **Type**: `integer`
+- **Required**: Required
+- **Validation**: Must be `> 0`. No unlimited pools supported (P0 enforcement).
+- **Runtime Effect**: Maximum concurrent connections. Enforced with semaphore-based gating.
+
+### `upstreams[].pool.queue`
+- **Type**: `object`
 - **Required**: Optional
-- **Default**: `0` (Unlimited)
-- **Validation**: Must be `> 0` if specified (unit variant `Unlimited` if `0` or `None`).
+- **Runtime Effect**: Queue configuration for requests when pool is full.
+
+### `upstreams[].pool.queue.capacity`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `0` (no queueing)
+- **Runtime Effect**: Maximum number of requests to queue when pool is full.
+
+### `upstreams[].pool.queue.timeout_ms`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `0` (immediate rejection)
+- **Runtime Effect**: Maximum time (in milliseconds) to wait in queue.
 
 ### `upstreams[].tls`
 - **Type**: `object`
@@ -316,14 +333,63 @@ Defines how the proxy accepts inbound traffic.
 - **Required**: Yes
 
 ### `routes[].paths[].matcher`
-- **Type**: `object (tagged enum)`
+- **Type**: `object`
 - **Required**: Optional
 - **Default**: `prefix: { path: "/" }`
+
+### `routes[].paths[].matcher.path`
+- **Type**: `object (tagged enum)`
+- **Required**: Yes (if matcher is specified)
 - **Allowed Values**:
   - `prefix: { path: "..." }` (YAML tag: `!prefix`)
   - `exact: { path: "..." }` (YAML tag: `!exact`)
   - `regex: { path: "..." }` (YAML tag: `!regex`)
 - **Validation**: `path` must be normalized (starts with `/`, no trailing slashes except for `/`) for `prefix` and `exact`. `regex` patterns are limited to 2048 chars.
+
+### `routes[].paths[].matcher.method`
+- **Type**: `string`
+- **Required**: Optional
+- **Allowed Values**: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS`, `CONNECT`, `TRACE` (case-insensitive)
+- **Runtime Effect**: Matches requests with this specific HTTP method.
+
+### `routes[].paths[].matcher.methods`
+- **Type**: `list of string`
+- **Required**: Optional
+- **Allowed Values**: List of HTTP methods (same as `method`)
+- **Runtime Effect**: Matches requests with any of the listed HTTP methods (OR logic).
+- **Validation**: Mutually exclusive with `method` (use one or the other, not both).
+
+### `routes[].paths[].matcher.headers`
+- **Type**: `list of object`
+- **Required**: Optional
+- **Runtime Effect**: All header predicates must match (AND logic).
+
+### `routes[].paths[].matcher.headers[].operator`
+- **Type**: `string` (enum)
+- **Required**: Optional
+- **Default**: `exact`
+- **Allowed Values**: `exact`, `prefix`, `regex`, `present`, `absent`
+
+### `routes[].paths[].matcher.headers[].name`
+- **Type**: `string`
+- **Required**: Yes
+- **Validation**: Header name (case-insensitive, alphanumeric + `-` + `_` only).
+
+### `routes[].paths[].matcher.headers[].value`
+- **Type**: `string`
+- **Required**: Required for `exact` operator
+- **Runtime Effect**: Exact value match (case-sensitive).
+
+### `routes[].paths[].matcher.headers[].prefix`
+- **Type**: `string`
+- **Required**: Required for `prefix` operator
+- **Runtime Effect**: Header value must start with this prefix (case-sensitive).
+
+### `routes[].paths[].matcher.headers[].pattern`
+- **Type**: `string`
+- **Required**: Required for `regex` operator
+- **Validation**: Valid regex pattern, max 256 bytes.
+- **Runtime Effect**: Header value must match regex pattern. Input limited to 4096 bytes.
 
 ### `routes[].paths[].timeout`
 - **Type**: `duration`
@@ -334,21 +400,68 @@ Defines how the proxy accepts inbound traffic.
 ### `routes[].paths[].retry`
 - **Type**: `object`
 - **Required**: Optional
-- **Runtime Effect**: Enforced during upstream request handling.
+- **Runtime Effect**: Enforced during upstream request handling with P2 retry policy.
 
-### `routes[].paths[].retry.attempts`
+### `routes[].paths[].retry.max_attempts`
 - **Type**: `integer`
 - **Required**: Yes
-- **Validation**: `1` to `65535`.
+- **Validation**: `1` to `10` (strictly enforced).
 
-### `routes[].paths[].retry.retry_on`
+### `routes[].paths[].retry.retryable_reasons`
 - **Type**: `list of string`
 - **Required**: Yes
-- **Allowed values**: `5xx` (or `five_xx`), `connect_failure`, `reset`, `refused`.
+- **Allowed values**: `status_code`, `connect_timeout`, `read_timeout`, `per_try_timeout`, `pool_full`, `connect_error`.
 
-### `routes[].paths[].retry.per_try_timeout`
+### `routes[].paths[].retry.retryable_status_codes`
+- **Type**: `list of integer`
+- **Required**: Required when `status_code` is in `retryable_reasons`
+- **Validation**: Cannot be empty when `status_code` retry is enabled.
+- **Example**: `[502, 503, 504]`
+
+### `routes[].paths[].retry.backoff`
+- **Type**: `object`
+- **Required**: Optional
+- **Default**: `fixed` with `base_ms: 100`
+
+### `routes[].paths[].retry.backoff.strategy`
+- **Type**: `string` (enum)
+- **Required**: Optional
+- **Default**: `fixed`
+- **Allowed values**: `fixed`, `linear`, `exponential`
+
+### `routes[].paths[].retry.backoff.base_ms`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `100`
+- **Runtime Effect**: Base delay in milliseconds between retries.
+
+### `routes[].paths[].retry.backoff.max_ms`
+- **Type**: `integer`
+- **Required**: Required for `exponential` strategy
+- **Runtime Effect**: Maximum delay cap for exponential backoff.
+
+### `routes[].paths[].retry.retry_non_idempotent`
+- **Type**: `boolean`
+- **Required**: Optional
+- **Default**: `false`
+- **Runtime Effect**: When `true`, allows retrying POST/PATCH/DELETE requests (requires body buffering).
+
+### `routes[].paths[].retry.fail_on_non_replayable_retry`
+- **Type**: `boolean`
+- **Required**: Optional
+- **Default**: `false`
+- **Runtime Effect**: When `true`, returns 500 error if retry is needed but request body cannot be buffered.
+
+### `routes[].paths[].retry.max_request_body_buffer_bytes`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `1048576` (1 MB)
+- **Runtime Effect**: Maximum request body size to buffer for retry replay.
+
+### `routes[].paths[].retry.per_try`
 - **Type**: `duration`
-- **Required**: Yes
+- **Required**: Optional
+- **Runtime Effect**: Per-attempt timeout (independent of global request timeout).
 
 ### `routes[].paths[].request_headers` / `response_headers`
 - **Type**: `object`

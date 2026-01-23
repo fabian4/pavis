@@ -134,7 +134,7 @@ impl MetricsHandle {
         let result = if verdict.selection.is_some() {
             "matched"
         } else {
-            "missed"
+            "no_match"
         };
         counter!("pavis_route_match_attempts_total", "result" => result).increment(1);
 
@@ -142,23 +142,66 @@ impl MetricsHandle {
         if stats.path_misses > 0 {
             counter!(
                 "pavis_route_match_predicate_failures_total",
-                "predicate" => "path"
+                "predicate_type" => "path"
             )
             .increment(stats.path_misses);
         }
         if stats.method_misses > 0 {
             counter!(
                 "pavis_route_match_predicate_failures_total",
-                "predicate" => "method"
+                "predicate_type" => "method"
             )
             .increment(stats.method_misses);
         }
         if stats.header_misses > 0 {
             counter!(
                 "pavis_route_match_predicate_failures_total",
-                "predicate" => "headers"
+                "predicate_type" => "header"
             )
             .increment(stats.header_misses);
+        }
+
+        // P2: Export operator-specific evaluation counts
+        if stats.exact_evals > 0 {
+            counter!(
+                "pavis_route_match_predicate_evaluations_total",
+                "operator" => "exact"
+            )
+            .increment(stats.exact_evals);
+        }
+        if stats.prefix_evals > 0 {
+            counter!(
+                "pavis_route_match_predicate_evaluations_total",
+                "operator" => "prefix"
+            )
+            .increment(stats.prefix_evals);
+        }
+        if stats.regex_evals > 0 {
+            counter!(
+                "pavis_route_match_predicate_evaluations_total",
+                "operator" => "regex"
+            )
+            .increment(stats.regex_evals);
+        }
+        if stats.present_evals > 0 {
+            counter!(
+                "pavis_route_match_predicate_evaluations_total",
+                "operator" => "present"
+            )
+            .increment(stats.present_evals);
+        }
+        if stats.absent_evals > 0 {
+            counter!(
+                "pavis_route_match_predicate_evaluations_total",
+                "operator" => "absent"
+            )
+            .increment(stats.absent_evals);
+        }
+
+        // P2: Export regex input length rejections
+        if stats.regex_input_too_large > 0 {
+            counter!("pavis_route_match_regex_input_too_large_total")
+                .increment(stats.regex_input_too_large);
         }
     }
 
@@ -213,6 +256,10 @@ impl MetricsHandle {
         gauge!("pavis_http_inflight_requests").decrement(1.0);
     }
 
+    pub fn record_pool_size(&self, upstream: &str, size: f64) {
+        gauge!("pavis_upstream_pool_size", "upstream" => upstream.to_string()).set(size);
+    }
+
     pub fn update_config_stats(&self, version: &str, size_bytes: u64) {
         gauge!("pavis_runtime_config_version", "version" => version.to_string()).set(1.0);
         gauge!("pavis_runtime_config_size_bytes").set(size_bytes as f64);
@@ -263,6 +310,33 @@ impl MetricsHandle {
 
     pub fn record_metrics_label_dropped(&self) {
         counter!("pavis_telemetry_metrics_label_dropped_total").increment(1);
+    }
+
+    pub fn record_retry(&self, upstream: &str, reason: &str, attempt: u16) {
+        counter!(
+            "pavis_upstream_retries_total",
+            "upstream" => upstream.to_string(),
+            "reason" => reason.to_string(),
+            "attempt" => attempt.to_string(),
+        )
+        .increment(1);
+    }
+
+    pub fn record_retry_outcome(&self, upstream: &str, outcome: &str) {
+        counter!(
+            "pavis_upstream_retry_outcome_total",
+            "upstream" => upstream.to_string(),
+            "outcome" => outcome.to_string(),
+        )
+        .increment(1);
+    }
+
+    pub fn record_retry_body_buffered(&self, upstream: &str, size_bytes: u64) {
+        histogram!(
+            "pavis_upstream_retry_body_buffer_size_bytes",
+            "upstream" => upstream.to_string(),
+        )
+        .record(size_bytes as f64);
     }
 }
 

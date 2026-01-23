@@ -120,6 +120,7 @@ lint:
 
 # Run shellcheck on bash scripts (requires shellcheck)
 shellcheck:
+	@echo "Running shellcheck..."
 	@sh -c 'if command -v rg >/dev/null 2>&1; then \
 		files=$$(rg --files -g "*.sh"); \
 	else \

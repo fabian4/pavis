@@ -5,9 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::num::NonZeroU16;
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 #[non_exhaustive]
 pub struct Listener {
     pub name: ListenerName,
@@ -16,18 +15,28 @@ pub struct Listener {
     pub tls: TlsConfig,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum WorkerCount {
     Auto,
     Count(NonZeroU16),
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum TlsConfig {
     Disabled,
@@ -38,9 +47,9 @@ pub enum TlsConfig {
     },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum ClientAuth {
     Disabled,

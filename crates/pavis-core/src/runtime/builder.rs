@@ -29,6 +29,8 @@ pub struct RuntimeConfigBuilder {
     routes: Vec<crate::runtime::VirtualHost>,
     shutdown: Option<ShutdownPolicy>,
     admin: Option<AdminConfig>,
+    features: Option<crate::runtime::RoutingFeatures>,
+    required_capabilities: Vec<String>,
 }
 
 impl RuntimeConfigBuilder {
@@ -66,6 +68,16 @@ impl RuntimeConfigBuilder {
         self
     }
 
+    pub fn features(mut self, features: crate::runtime::RoutingFeatures) -> Self {
+        self.features = Some(features);
+        self
+    }
+
+    pub fn add_required_capability(mut self, capability: String) -> Self {
+        self.required_capabilities.push(capability);
+        self
+    }
+
     pub fn build(self) -> Result<RuntimeConfig, BuilderError> {
         if self.listeners.is_empty() {
             return Err(BuilderError::MissingListeners);
@@ -74,6 +86,7 @@ impl RuntimeConfigBuilder {
         // Use sensible defaults if not specified
         let shutdown = self.shutdown.unwrap_or(ShutdownPolicy::Disabled);
         let admin = self.admin.unwrap_or(AdminConfig::Disabled);
+        let features = self.features.unwrap_or_default();
         Ok(RuntimeConfig {
             listeners: self.listeners,
             telemetry,
@@ -81,6 +94,8 @@ impl RuntimeConfigBuilder {
             routes: self.routes,
             shutdown,
             admin,
+            features,
+            required_capabilities: self.required_capabilities,
         })
     }
 }

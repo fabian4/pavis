@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::num::NonZeroU32;
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 #[non_exhaustive]
 pub struct Upstream {
     pub id: UpstreamId,
@@ -27,10 +26,21 @@ pub struct Upstream {
     pub endpoints: Vec<Endpoint>,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum Discovery {
     #[default]
@@ -42,10 +52,20 @@ pub enum Discovery {
 }
 
 #[repr(u8)]
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
-#[archive(check_bytes)]
 #[non_exhaustive]
 pub enum LoadBalancer {
     RoundRobin = 0,
@@ -55,10 +75,20 @@ pub enum LoadBalancer {
 }
 
 #[repr(u8)]
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-#[archive(check_bytes)]
 #[non_exhaustive]
 pub enum HttpVersion {
     #[default]
@@ -69,9 +99,8 @@ pub enum HttpVersion {
     H2H1 = 2,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct Pool {
     pub idle: IdleTimeout,
     pub connect: ConnectTimeout,
@@ -79,9 +108,19 @@ pub struct Pool {
     pub queue: PoolQueue,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct PoolQueue {
     /// Maximum number of queued requests waiting for an upstream connection.
     /// A value of 0 disables queuing.
@@ -103,9 +142,9 @@ impl Default for Pool {
     }
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 /// Passive outlier detection policy for upstream endpoints.
 pub enum OutlierDetectionPolicy {
@@ -116,9 +155,9 @@ pub enum OutlierDetectionPolicy {
     },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 /// Circuit breaker policy for upstream request limits.
 pub enum CircuitBreakerPolicy {
@@ -129,9 +168,9 @@ pub enum CircuitBreakerPolicy {
     },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 /// Active health check policy for upstream endpoints.
 pub enum ActiveHealthCheck {
@@ -145,17 +184,26 @@ pub enum ActiveHealthCheck {
 
 /// Maximum concurrent connections per upstream peer.
 /// Per P0 plan: must always be >= 1 (no unlimited variant).
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct ConnectionLimit(pub NonZeroU32);
 
 /// Default pool max connections (per P0 plan).
 pub const DEFAULT_POOL_MAX: u32 = 128;
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum TlsPolicy {
     Disabled,
@@ -167,10 +215,10 @@ pub enum TlsPolicy {
     },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum ClientCertChain {
     None,
@@ -178,9 +226,9 @@ pub enum ClientCertChain {
     File { path: Path },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum ClientCert {
     Disabled,
@@ -191,10 +239,20 @@ pub enum ClientCert {
     },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum TlsVerify {
     Disabled,
@@ -202,10 +260,10 @@ pub enum TlsVerify {
     Full,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum SniName {
     Auto,
@@ -213,27 +271,30 @@ pub enum SniName {
     Disabled,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone)]
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum UpstreamCa {
     System,
     File { path: Path },
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone, PartialEq, Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
 pub struct Endpoint {
     pub address: EndpointAddr,
     pub weight: Weight,
 }
 
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone, PartialEq, Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum EndpointAddr {
     Ip { address: IpAddr, port: Port },

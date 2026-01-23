@@ -1,3 +1,21 @@
+//! # ETag Invariant
+//!
+//! The runtime assumes identical `.pvs` artifact content MUST produce identical ETag values.
+//!
+//! ## Contract
+//! - ETag = `sha256:<hex-digest>` computed over the full artifact bytes.
+//! - Canonical form: `sha256:<lowercase-hex>` (no quotes, no "W/" prefix).
+//! - Identical ETags imply byte-identical content.
+//! - If the relay reuses an ETag for different content, the runtime will continue serving the
+//!   previously validated artifact.
+//!
+//! ## Conditional Requests
+//! - The runtime prefers `last_rejected_etag` over `last_applied_etag` for `If-None-Match`.
+//! - This prevents repeated downloads of known-bad artifacts.
+//! - The relay MUST return 304/204 when the conditional ETag matches its latest artifact.
+//! - Returning 200 for a previously rejected ETag is a relay contract violation; the runtime logs
+//!   an error and ignores the response.
+
 use async_trait::async_trait;
 use pingora::services::Service;
 use reqwest::Client;
@@ -29,8 +47,8 @@ pub struct ConfigAgent {
     client: Client,
     backoff: Backoff,
     state: Arc<RuntimeStateHandle>,
-    last_checksum: Arc<Mutex<Option<String>>>,
-    last_version: Arc<Mutex<Option<u64>>>,
+    last_applied_etag: Arc<Mutex<Option<String>>>,
+    last_rejected_etag: Arc<Mutex<Option<String>>>,
     on_update_callback: Mutex<Option<UpdateCallback>>,
     metrics: Arc<Mutex<Option<Arc<MetricsHandle>>>>,
 }
@@ -49,13 +67,29 @@ impl Service for ConfigAgentWorker {
     ) {
         let mut attempt = 0u32;
         loop {
+            let conditional_etag = self.agent.get_conditional_etag();
+            let wait_ms = if conditional_etag.is_some() {
+                30_000
+            } else {
+                0
+            };
             tokio::select! {
                 _ = shutdown.changed() => break,
-                result = self.agent.poll_once() => {
+                result = self.agent.poll_once(wait_ms) => {
                     match result {
-                        Ok(PollOutcome::Updated) | Ok(PollOutcome::NoChange) => {
+                        Ok(PollOutcome::Updated) => {
                             attempt = 0;
                             tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+                        Ok(PollOutcome::NoChange) => {
+                            attempt = 0;
+                            if wait_ms == 0 {
+                                tokio::time::sleep(Duration::from_millis(200)).await;
+                            }
+                        }
+                        Ok(PollOutcome::Rejected) => {
+                            attempt = 0;
+                            tokio::time::sleep(Duration::from_secs(5)).await;
                         }
                         Err(err) => {
                             tracing::warn!(error = %err, "config poll failed");
@@ -92,8 +126,8 @@ impl ConfigAgent {
             client,
             backoff,
             state,
-            last_checksum: Arc::new(Mutex::new(None)),
-            last_version: Arc::new(Mutex::new(None)),
+            last_applied_etag: Arc::new(Mutex::new(None)),
+            last_rejected_etag: Arc::new(Mutex::new(None)),
             on_update_callback: Mutex::new(None),
             metrics: Arc::new(Mutex::new(None)),
         })
@@ -141,26 +175,19 @@ impl ConfigAgent {
             client,
             backoff,
             state,
-            last_checksum: Arc::new(Mutex::new(None)),
-            last_version: Arc::new(Mutex::new(None)),
+            last_applied_etag: Arc::new(Mutex::new(None)),
+            last_rejected_etag: Arc::new(Mutex::new(None)),
             on_update_callback: Mutex::new(None),
             metrics: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub async fn poll_once(&self) -> anyhow::Result<PollOutcome> {
-        let current_checksum = {
-            let guard = self
-                .last_checksum
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            guard.clone()
-        };
-        let wait_ms = if current_checksum.is_some() { 30000 } else { 0 };
+    pub async fn poll_once(&self, wait_ms: u64) -> anyhow::Result<PollOutcome> {
+        let conditional_etag = self.get_conditional_etag();
         let url = format!("{}/v1/config?wait_ms={wait_ms}", self.relay_base);
         let mut request = self.client.get(url);
-        if let Some(checksum) = current_checksum.as_deref() {
-            request = request.header("if-none-match", format!("\"{checksum}\""));
+        if let Some(etag) = conditional_etag.as_deref() {
+            request = request.header("if-none-match", format!("\"{etag}\""));
         }
         let response = request.send().await?;
 
@@ -171,7 +198,7 @@ impl ConfigAgent {
                     .get(ETAG_HEADER)
                     .and_then(|value| value.to_str().ok())
                     .ok_or_else(|| anyhow::anyhow!("missing {ETAG_HEADER} response header"))?;
-                let header_checksum = parse_etag_header(header_etag)?;
+                let header_etag = parse_etag_header(header_etag)?;
 
                 let config_version = response
                     .headers()
@@ -184,26 +211,40 @@ impl ConfigAgent {
                     .and_then(|value| value.to_str().ok())
                     .and_then(|value| value.parse::<u64>().ok());
 
-                if self.is_checksum_current(&header_checksum) {
-                    self.record_config_stats(config_version, config_size, "current checksum");
-                    tracing::debug!(
-                        checksum = header_checksum,
-                        "config checksum unchanged, skipping update"
+                if self.is_etag_current(&header_etag) {
+                    self.record_config_stats(config_version, config_size, "current etag");
+                    tracing::debug!(etag = header_etag, "config etag unchanged, skipping update");
+                    return Ok(PollOutcome::NoChange);
+                }
+
+                if self.is_etag_rejected(&header_etag) {
+                    self.record_config_stats(
+                        config_version,
+                        config_size,
+                        "rejected etag (relay violation)",
+                    );
+                    tracing::error!(
+                        etag = header_etag,
+                        "relay returned 200 for previously rejected ETag; expected 304 (relay contract violation)"
                     );
                     return Ok(PollOutcome::NoChange);
                 }
-                if let Some(new_version) = config_version
-                    && let Some(last_version) = self.last_version()
-                    && new_version > last_version + 1
+
+                let bytes = response.bytes().await?;
+                match self
+                    .apply_update(bytes.to_vec(), header_etag.clone(), config_version)
+                    .await
                 {
-                    for missing_version in (last_version + 1)..new_version {
-                        self.fetch_and_apply_version(missing_version).await?;
+                    Ok(()) => Ok(PollOutcome::Updated),
+                    Err(err) => {
+                        self.set_last_rejected_etag(header_etag);
+                        tracing::warn!(
+                            error = %err,
+                            "config validation failed; continuing with LKG"
+                        );
+                        Ok(PollOutcome::Rejected)
                     }
                 }
-                let bytes = response.bytes().await?;
-                self.apply_update(bytes.to_vec(), header_checksum, config_version)
-                    .await?;
-                Ok(PollOutcome::Updated)
             }
             204 | 304 => Ok(PollOutcome::NoChange),
             status => Err(anyhow::anyhow!("poll failed: status={status}")),
@@ -213,15 +254,15 @@ impl ConfigAgent {
     async fn apply_update(
         &self,
         bytes: Vec<u8>,
-        expected_checksum: String,
+        expected_etag: String,
         config_version: Option<u64>,
     ) -> anyhow::Result<()> {
-        let actual_checksum = checksum_for_bytes(&bytes);
-        if actual_checksum != expected_checksum {
+        let actual_etag = checksum_for_bytes(&bytes);
+        if actual_etag != expected_etag {
             return Err(self.record_validation_failure(anyhow::anyhow!(
-                "checksum mismatch: expected={}, computed={}",
-                expected_checksum,
-                actual_checksum
+                "etag/sha256 mismatch: expected={}, computed={}",
+                expected_etag,
+                actual_etag
             )));
         }
         pavis_pvs::verify(&bytes).map_err(|err| self.record_validation_failure(err.into()))?;
@@ -254,7 +295,7 @@ impl ConfigAgent {
             event = "config_validation",
             result = "ok",
             reason = "none",
-            checksum = expected_checksum
+            etag = expected_etag
         );
 
         tokio::fs::rename(&tmp_path, &self.lkg_path)
@@ -262,7 +303,8 @@ impl ConfigAgent {
             .map_err(|err| self.record_apply_failure(err.into()))?;
 
         self.state.store(state);
-        self.set_last_checksum(actual_checksum);
+        self.set_last_applied_etag(expected_etag.clone());
+        self.clear_last_rejected_etag();
         self.record_config_stats(config_version, Some(bytes.len() as u64), "applied update");
 
         let callback = match self.on_update_callback.lock() {
@@ -283,11 +325,8 @@ impl ConfigAgent {
             target: "pavis.config",
             event = "config_apply",
             result = "ok",
-            checksum = expected_checksum
+            etag = expected_etag
         );
-        if let Some(version) = config_version {
-            self.set_last_version(version);
-        }
         Ok(())
     }
 
@@ -355,34 +394,43 @@ impl ConfigAgent {
     pub(crate) async fn apply_update_for_tests(
         &self,
         bytes: Vec<u8>,
-        checksum: String,
+        etag: String,
         version: Option<u64>,
     ) -> anyhow::Result<()> {
-        self.apply_update(bytes, checksum, version).await
+        self.apply_update(bytes, etag, version).await
     }
 
     #[cfg(test)]
-    pub(crate) fn last_checksum_for_tests(&self) -> Option<String> {
+    pub(crate) fn last_applied_etag_for_tests(&self) -> Option<String> {
         let guard = self
-            .last_checksum
+            .last_applied_etag
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.clone()
     }
 
     #[cfg(test)]
-    pub(crate) fn last_version_for_tests(&self) -> Option<u64> {
-        let guard = self
-            .last_version
+    pub(crate) fn set_last_applied_etag_for_tests(&self, value: Option<String>) {
+        let mut guard = self
+            .last_applied_etag
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *guard
+        *guard = value;
     }
 
     #[cfg(test)]
-    pub(crate) fn set_last_checksum_for_tests(&self, value: Option<String>) {
+    pub(crate) fn last_rejected_etag_for_tests(&self) -> Option<String> {
+        let guard = self
+            .last_rejected_etag
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_last_rejected_etag_for_tests(&self, value: Option<String>) {
         let mut guard = self
-            .last_checksum
+            .last_rejected_etag
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = value;
@@ -393,6 +441,7 @@ impl ConfigAgent {
 pub enum PollOutcome {
     Updated,
     NoChange,
+    Rejected,
 }
 
 fn classify_validation_error(err: &anyhow::Error) -> &'static str {
@@ -408,7 +457,7 @@ fn classify_validation_error(err: &anyhow::Error) -> &'static str {
     if err.downcast_ref::<CoreValidationError>().is_some() {
         return "semantic";
     }
-    if err.to_string().contains("checksum mismatch") {
+    if err.to_string().contains("etag/sha256 mismatch") {
         return "parse";
     }
     "semantic"
@@ -431,62 +480,81 @@ fn parse_config_version_header(value: &str) -> Option<u64> {
 
 fn parse_etag_header(value: &str) -> anyhow::Result<String> {
     let trimmed = value.trim();
-    if !trimmed.starts_with('"') || !trimmed.ends_with('"') || trimmed.len() < 2 {
-        anyhow::bail!("invalid etag format: {value}");
+
+    if trimmed.starts_with("W/") || trimmed.starts_with("w/") {
+        anyhow::bail!("weak ETags not supported: {value}");
     }
-    let unquoted = &trimmed[1..trimmed.len() - 1];
+
+    let unquoted = if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    };
+
     if !unquoted.starts_with("sha256:") {
-        anyhow::bail!("invalid etag format: {value}");
+        anyhow::bail!("invalid etag format (expected sha256:...): {value}");
     }
     let hex = &unquoted["sha256:".len()..];
     if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        anyhow::bail!("invalid etag format: {value}");
+        anyhow::bail!("invalid etag format (expected 64 hex chars): {value}");
     }
+
     Ok(format!("sha256:{}", hex.to_lowercase()))
 }
 
 impl ConfigAgent {
-    fn is_checksum_current(&self, checksum: &str) -> bool {
+    fn is_etag_current(&self, etag: &str) -> bool {
         let guard = self
-            .last_checksum
+            .last_applied_etag
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.as_deref() == Some(checksum)
+        guard.as_deref() == Some(etag)
     }
 
-    fn set_last_checksum(&self, checksum: String) {
+    fn set_last_applied_etag(&self, etag: String) {
         let mut guard = self
-            .last_checksum
+            .last_applied_etag
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *guard = Some(checksum);
+        *guard = Some(etag);
     }
 
-    fn last_version(&self) -> Option<u64> {
-        let guard = self
-            .last_version
+    fn get_conditional_etag(&self) -> Option<String> {
+        let rejected = self
+            .last_rejected_etag
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *guard
-    }
-
-    fn set_last_version(&self, version: u64) {
-        let mut guard = self
-            .last_version
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *guard = Some(version);
-    }
-
-    async fn fetch_and_apply_version(&self, version: u64) -> anyhow::Result<()> {
-        let url = format!("{}/v1/artifacts/{version}", self.relay_base);
-        let response = self.client.get(url).send().await?;
-        if response.status().as_u16() != 200 {
-            anyhow::bail!("artifact fetch failed: status={}", response.status());
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if rejected.is_some() {
+            return rejected;
         }
-        let bytes = response.bytes().await?;
-        let expected_checksum = checksum_for_bytes(&bytes);
-        self.apply_update(bytes.to_vec(), expected_checksum, Some(version))
-            .await
+        self.last_applied_etag
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn is_etag_rejected(&self, etag: &str) -> bool {
+        let guard = self
+            .last_rejected_etag
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.as_deref() == Some(etag)
+    }
+
+    fn set_last_rejected_etag(&self, etag: String) {
+        let mut guard = self
+            .last_rejected_etag
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(etag);
+    }
+
+    fn clear_last_rejected_etag(&self) {
+        let mut guard = self
+            .last_rejected_etag
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = None;
     }
 }

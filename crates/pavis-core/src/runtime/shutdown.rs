@@ -9,9 +9,19 @@ use serde::{Deserialize, Serialize};
 /// Shutdown policy for the runtime.
 ///
 /// Controls how the proxy responds to termination signals (SIGTERM/SIGINT).
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[archive(check_bytes)]
+#[repr(u8)]
 #[non_exhaustive]
 pub enum ShutdownPolicy {
     /// Exit immediately on signal without draining connections.
