@@ -10,7 +10,7 @@ source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
 source "$(dirname "$0")/../../scripts/assert.sh"
 
-setup_test "limits_01"
+setup_test "70_limits_oversize"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 

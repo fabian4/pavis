@@ -343,6 +343,7 @@ impl MetricsHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::router::{MatchVerdict, PredicateStats};
 
     #[test]
     fn metrics_worker_creates_handle() {
@@ -356,19 +357,49 @@ mod tests {
 
         // Handle may be None if recorder already installed by another test
         if let Some(handle) = handle {
-            // These should not panic even if called multiple times
+            // Request recording
             handle.record_request("GET", "/users/:id", 200, "backend-1", 0.1);
             handle.record_upstream_request("backend-1", 200, 0.05);
             handle.increment_active_connections();
             handle.decrement_active_connections();
+
+            // Config recording
             handle.update_config_stats("v1", 1024);
             handle.increment_reload_count();
             handle.record_config_validation("ok", "none");
             handle.record_config_apply("ok");
+
+            // Error/Event recording
             handle.record_access_log_dropped();
             handle.record_tracing_export_error();
             handle.record_span_created();
             handle.record_span_exported();
+            handle.record_metrics_label_dropped();
+
+            // Retry recording
+            handle.record_retry("backend-1", "connect_timeout", 1);
+            handle.record_retry_outcome("backend-1", "success");
+            handle.record_retry_body_buffered("backend-1", 1024);
+
+            // Pool recording
+            handle.record_pool_size("backend-1", 10.0);
+
+            // Route match recording
+            let verdict = MatchVerdict {
+                selection: None,
+                stats: PredicateStats {
+                    path_misses: 1,
+                    method_misses: 1,
+                    header_misses: 1,
+                    exact_evals: 1,
+                    prefix_evals: 1,
+                    regex_evals: 1,
+                    present_evals: 1,
+                    absent_evals: 1,
+                    regex_input_too_large: 1,
+                },
+            };
+            handle.record_route_match(&verdict);
         }
     }
 }

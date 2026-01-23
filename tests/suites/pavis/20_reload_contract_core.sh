@@ -1,16 +1,20 @@
 #!/bin/bash
 set -e
 
-# Case: reload_contract_core
+# Case: 20_reload_contract_core
 # Category: Reload Semantics
 # Invariants: A (No-Drop), C (Atomic Switch), D (Zero-Option)
 
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
+# shellcheck source=tests/scripts/wait_helpers.sh
+source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 source "$(dirname "$0")/../../scripts/assert.sh"
+# shellcheck source=tests/scripts/wait_helpers.sh
+source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 
-setup_test "reload_contract_core"
+setup_test "20_reload_contract_core"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 
@@ -141,7 +145,8 @@ if [ $FAIL_COUNT -gt 0 ]; then
 fi
 
 SWITCHED=0
-for _ in $(seq 1 20); do
+attempt=0
+for attempt in $(seq 1 20); do
     headers="$TEST_TMP/switch.headers"
     body="$TEST_TMP/switch.body"
     if curl -sS -D "$headers" -o "$body" "http://127.0.0.1:$PORT_PAVIS/echo"; then
@@ -154,6 +159,7 @@ for _ in $(seq 1 20); do
     sleep 0.5
 done
 
+assert_retry_succeeded "$attempt" 20
 if [ "$SWITCHED" -eq 0 ]; then
     echo "❌ Reload did not converge to V2 with header removal"
     exit 1

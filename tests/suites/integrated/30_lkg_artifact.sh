@@ -1,19 +1,20 @@
 #!/bin/bash
 set -e
 
-# Case: lkg_01_relay_bad_artifact
+# Case: 30_lkg_artifact
 # Category: Failure & LKG
 # Invariants: I3 (Artifact Opaqueness), I4 (System LKG)
 
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
+# shellcheck source=tests/scripts/wait_helpers.sh
+source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 source "$(dirname "$0")/../../scripts/assert.sh"
+# shellcheck source=tests/scripts/wait_helpers.sh
+source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 
-echo "Skipping (Runtime behavior requires clarification)"
-exit 77
-
-setup_test "lkg_01"
+setup_test "30_lkg_artifact"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 
@@ -74,9 +75,7 @@ fi
 assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
 
 # Publish Corrupt Data
-# We attempt to publish invalid data. Relay might reject (422) or accept.
-# If relay rejects, fine. If relay accepts, Runtime must reject.
-# The goal is "System LKG".
+# The relay MUST reject corrupt artifacts (magic/checksum validation).
 echo "CORRUPT" > "$TEST_TMP/corrupt.pvs"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     -H "x-pavis-version: 2" \
@@ -84,7 +83,6 @@ RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PORT_RE
 
 echo "Publish response: $RESP"
 
-sleep 2
 RELAY_VERSION=$(get_relay_config_version "http://127.0.0.1:$PORT_RELAY")
 RUNTIME_VERSION=$(get_runtime_config_version "$METRICS_URL")
 if [ -z "$RELAY_VERSION" ] || [ -z "$RUNTIME_VERSION" ]; then
@@ -96,16 +94,13 @@ if [ "$RESP" -lt 100 ]; then
     exit 1
 fi
 
-if [ "$RESP" -ge 400 ]; then
-    if [ "$RELAY_VERSION" -ne "$RUNTIME_VERSION" ]; then
-        echo "❌ Relay advanced despite rejecting corrupt publish"
-        exit 1
-    fi
-else
-    if [ "$RELAY_VERSION" -le "$RUNTIME_VERSION" ]; then
-        echo "❌ Relay version did not advance beyond runtime after corrupt publish"
-        exit 1
-    fi
+if [ "$RESP" -lt 400 ]; then
+    echo "❌ Relay accepted corrupt artifact (expected 4xx rejection)"
+    exit 1
+fi
+if [ "$RELAY_VERSION" -ne "$RUNTIME_VERSION" ]; then
+    echo "❌ Relay advanced despite rejecting corrupt publish"
+    exit 1
 fi
 
 # Assert Traffic Continues
@@ -115,10 +110,24 @@ assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
 # 5. Recovery Proof: Publish Valid V3
 
 cat <<-EOF > "$TEST_TMP/config_v3.yaml"
-	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
-	telemetry: { metrics: "127.0.0.1:$PORT_METRICS" }
-	upstreams: [{ name: "backend-v3", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }] }]
-	routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: "backend-v3", weight: 1 }] }] }]
+	listeners:
+	  - name: "default"
+	    address: "127.0.0.1:$PORT_PAVIS"
+	telemetry:
+	  metrics: "127.0.0.1:$PORT_METRICS"
+	upstreams:
+	  - name: "backend-v3"
+	    endpoints:
+	      - ip: "127.0.0.1"
+	        port: ${UPSTREAM_HTTP_PORT_V2}
+	routes:
+	  - host: "*"
+	    paths:
+	      - matcher:
+	          path: !prefix { path: "/" }
+	        destinations:
+	          - upstream: "backend-v3"
+	            weight: 1
 EOF
 
 gen_pvs "$TEST_TMP/config_v3.yaml" "$TEST_TMP/config_v3.pvs"
@@ -129,13 +138,16 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" -H "x-pavis-version
 
 MAX_RETRIES=20
 SWITCHED=0
-for _ in $(seq 1 $MAX_RETRIES); do
+attempt=0
+for attempt in $(seq 1 $MAX_RETRIES); do
     if pavis_curl_body "http://127.0.0.1:$PORT_PAVIS/echo" | grep -q "backend-v2"; then
         SWITCHED=1
         break
     fi
     sleep 0.5
 done
+
+assert_retry_succeeded "$attempt" "$MAX_RETRIES"
 
 if [ "$SWITCHED" -eq 0 ]; then
     echo "❌ Integrated recovery failed"

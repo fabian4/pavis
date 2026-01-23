@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Case: lifecycle_01_bootstrap_static
+# Case: 10_bootstrap_static
 # Category: Bootstrap & Initial Load
 # Invariants: D (Zero-Option)
 
@@ -10,7 +10,7 @@ source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
 source "$(dirname "$0")/../../scripts/assert.sh"
 
-setup_test "lifecycle_01"
+setup_test "10_bootstrap_static"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 

@@ -508,8 +508,20 @@ get_metric_max() {
 }
 
 # Wait for config reload to complete
+
 wait_for_reload() {
+
     local timeout="${1:-5}"
+
     sleep 1  # Give relay time to process
+
     wait_for_url "http://127.0.0.1:${PORT_PAVIS:-8080}/healthz" "$timeout"
+
+}
+
+
+
+fail() {
+    echo "❌ $1" >&2
+    exit 1
 }

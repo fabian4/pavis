@@ -213,4 +213,156 @@ mod tests {
     }
 
     // Semantic SNI auto checks now live in pavis-core.
+
+    #[test]
+    fn validate_circuit_breaker_phase6() {
+        // 1. max_retries unsupported
+        let mut config = SerdeConfig {
+            upstreams: Some(vec![Upstream {
+                name: "u1".to_string(),
+                circuit_breaker: Some(CircuitBreaker {
+                    max_connections: 1,
+                    max_pending_requests: 1,
+                    max_retries: Some(3),
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(validate(&mut config).is_err());
+
+        // 2. max_connections == 0
+        let mut config = SerdeConfig {
+            upstreams: Some(vec![Upstream {
+                name: "u1".to_string(),
+                circuit_breaker: Some(CircuitBreaker {
+                    max_connections: 0,
+                    max_pending_requests: 1,
+                    max_retries: None,
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(validate(&mut config).is_err());
+    }
+
+    #[test]
+    fn validate_outlier_detection_phase6() {
+        // 1. consecutive_errors == 0
+        let mut config = SerdeConfig {
+            upstreams: Some(vec![Upstream {
+                name: "u1".to_string(),
+                outlier_detection: Some(OutlierDetection {
+                    consecutive_errors: 0,
+                    eject_duration: Duration::from_secs(10),
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(validate(&mut config).is_err());
+
+        // 2. eject_duration == 0
+        let mut config = SerdeConfig {
+            upstreams: Some(vec![Upstream {
+                name: "u1".to_string(),
+                outlier_detection: Some(OutlierDetection {
+                    consecutive_errors: 1,
+                    eject_duration: Duration::from_secs(0),
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(validate(&mut config).is_err());
+    }
+
+    #[test]
+    fn validate_health_check_phase6() {
+        // 1. thresholds != 1
+        let mut config = SerdeConfig {
+            upstreams: Some(vec![Upstream {
+                name: "u1".to_string(),
+                health_check: Some(HealthCheck {
+                    path: "/".to_string(),
+                    interval: Duration::from_secs(5),
+                    timeout: None,
+                    healthy_threshold: 2,
+                    unhealthy_threshold: 1,
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(validate(&mut config).is_err());
+
+        // 2. path empty
+        let mut config = SerdeConfig {
+            upstreams: Some(vec![Upstream {
+                name: "u1".to_string(),
+                health_check: Some(HealthCheck {
+                    path: "".to_string(),
+                    interval: Duration::from_secs(5),
+                    timeout: None,
+                    healthy_threshold: 1,
+                    unhealthy_threshold: 1,
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(validate(&mut config).is_err());
+
+        // 3. invalid path (no slash)
+        let mut config = SerdeConfig {
+            upstreams: Some(vec![Upstream {
+                name: "u1".to_string(),
+                health_check: Some(HealthCheck {
+                    path: "foo".to_string(),
+                    interval: Duration::from_secs(5),
+                    timeout: None,
+                    healthy_threshold: 1,
+                    unhealthy_threshold: 1,
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(validate(&mut config).is_err());
+
+        // 4. interval == 0
+        let mut config = SerdeConfig {
+            upstreams: Some(vec![Upstream {
+                name: "u1".to_string(),
+                health_check: Some(HealthCheck {
+                    path: "/".to_string(),
+                    interval: Duration::from_secs(0),
+                    timeout: None,
+                    healthy_threshold: 1,
+                    unhealthy_threshold: 1,
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(validate(&mut config).is_err());
+
+        // 5. timeout > interval
+        let mut config = SerdeConfig {
+            upstreams: Some(vec![Upstream {
+                name: "u1".to_string(),
+                health_check: Some(HealthCheck {
+                    path: "/".to_string(),
+                    interval: Duration::from_secs(5),
+                    timeout: Some(Duration::from_secs(6)),
+                    healthy_threshold: 1,
+                    unhealthy_threshold: 1,
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert!(validate(&mut config).is_err());
+    }
 }

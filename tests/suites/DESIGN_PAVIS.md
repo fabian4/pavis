@@ -88,7 +88,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 ---
 
-### `22_reload_storm`
+### `21_reload_storm`
 
 **Category**: Reload Semantics
 **Contracts**: A (No-Drop), C (Atomic Switch)
@@ -113,7 +113,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 ---
 
-### `23_reload_keepalive_atomic`
+### `22_reload_keepalive_atomic`
 
 **Category**: Reload Semantics
 **Contracts**: A (No-Drop), C (Atomic Switch)
@@ -139,7 +139,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 ---
 
-### `24_atomic_mid_request`
+### `23_reload_atomic_mid_request`
 
 **Category**: Reload Semantics
 **Contracts**: C (Atomic Switch)
@@ -162,7 +162,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 ---
 
-### `30_lkg`
+### `30_lkg_recovery`
 
 **Category**: Failure & LKG
 **Contracts**: B (LKG Preservation)
@@ -191,7 +191,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 ---
 
-### `32_lkg_relay_unavailable`
+### `31_lkg_relay_unavailable`
 
 **Category**: Failure & LKG
 **Contracts**: B (LKG Preservation)
@@ -215,7 +215,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 ---
 
-### `33_semantic_validation_suite`
+### `40_validation_core_suite`
 
 **Category**: Failure & LKG
 **Contracts**: B (LKG Preservation)
@@ -223,13 +223,11 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 **Scenario**:
 1. Start with V1 (backend-v1)
-2. Sequentially publish semantic-invalid configs:
+2. Sequentially publish core-invalid configs:
    - Missing upstream reference
-   - Invalid regex matcher
    - Invalid circuit breaker limits
    - Invalid outlier detection settings
    - Invalid health check thresholds
-   - Missing upstream CA bundle file (runtime env validation)
 3. After each attempt, validate LKG traffic remains on backend-v1
 
 **Oracle**:
@@ -237,13 +235,13 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 - Compile/publish outcome (informational)
 
 **Assertions**:
-- Each invalid config is rejected (compile or runtime) and traffic remains on backend-v1
+- Each invalid config is rejected (core validation) and traffic remains on backend-v1
 
-**Assessment**: PASS. Covers a set of semantic validation errors while preserving LKG.
+**Assessment**: PASS. Covers core semantic validation errors while preserving LKG.
 
 ---
 
-### `34_runtime_env_rejection`
+### `41_validation_runtime_env_rejection`
 
 **Category**: Failure & LKG
 **Contracts**: B (LKG Preservation)
@@ -267,7 +265,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 
 ---
 
-### `40_traffic_routing_semantics`
+### `50_routing_semantics`
 
 **Category**: Traffic Management
 **Contracts**: C (Atomic Switch), D (Zero-Option)
@@ -303,7 +301,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `41_traffic_weighted`
+### `51_routing_weighted`
 
 **Category**: Traffic Behavior Under Reload
 **Contracts**: A (No-Drop)
@@ -326,7 +324,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `42_routing_method_header_predicates`
+### `52_routing_method_header_predicates`
 
 **Category**: Traffic Management
 **Contracts**: D (Zero-Option)
@@ -352,7 +350,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `43_routing_tie_breaking`
+### `53_routing_tie_breaking`
 
 **Category**: Traffic Management
 **Contracts**: D (Zero-Option)
@@ -373,7 +371,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `50_resilience_timeout`
+### `60_resilience_timeout`
 
 **Category**: Resilience
 **Contracts**: (timeout enforcement)
@@ -395,7 +393,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `51_resilience_retry`
+### `61_resilience_retry`
 
 **Category**: Resilience
 **Contracts**: (retry policy execution)
@@ -416,7 +414,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `52_resilience_outlier_detection`
+### `62_resilience_outlier_detection`
 
 **Category**: Resilience
 **Contracts**: (passive outlier ejection)
@@ -441,7 +439,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `53_resilience_active_health_check`
+### `63_resilience_active_health_check`
 
 **Category**: Resilience
 **Contracts**: (active health probes)
@@ -464,7 +462,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `54_resilience_circuit_breaker`
+### `64_resilience_circuit_breaker`
 
 **Category**: Resilience
 **Contracts**: (in-flight/pending limits)
@@ -486,7 +484,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `60_security_tls`
+### `70_security_tls`
 
 **Category**: Security
 **Contracts**: (upstream TLS with custom CA)
@@ -499,7 +497,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `61_security_inbound_mtls`
+### `71_security_inbound_mtls`
 
 **Category**: Security
 **Contracts**: (inbound mTLS with client cert validation)
@@ -512,7 +510,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `63_security_rbac_spiffe`
+### `72_security_rbac_spiffe`
 
 **Category**: Security (RBAC)
 **Contracts**: (SPIFFE identity exact match)
@@ -526,7 +524,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `64_security_rbac_prefix`
+### `73_security_rbac_prefix`
 
 **Category**: Security (RBAC)
 **Contracts**: (SPIFFE prefix match)
@@ -540,7 +538,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `65_security_mtls_outbound`
+### `74_security_mtls_outbound`
 
 **Category**: Security
 **Contracts**: (outbound mTLS with client cert)
@@ -553,7 +551,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `66_security_tls_sni_auto`
+### `75_security_tls_sni_auto`
 
 **Category**: Security
 **Contracts**: (auto SNI derivation)
@@ -566,7 +564,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `67_security_mtls_chain_mode`
+### `76_security_mtls_chain_mode`
 
 **Category**: Security
 **Contracts**: (client cert chain_mode)
@@ -579,7 +577,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `70_obs_consistency`
+### `80_observability_consistency`
 
 **Category**: Observability
 **Contracts**: D (Zero-Option)
@@ -613,7 +611,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `71_obs_access_log`
+### `81_observability_access_log`
 
 **Category**: Observability
 **Contracts**: (structured access logging)
@@ -636,7 +634,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `72_obs_tracing_context`
+### `82_observability_tracing_context`
 
 **Category**: Observability
 **Contracts**: (W3C trace context propagation)
@@ -659,7 +657,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `80_pool_hard_limit`
+### `90_connection_pool_hard_limit`
 
 **Category**: Resilience
 **Contracts**: (connection pooling)
@@ -680,7 +678,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `81_pool_queue_behavior`
+### `91_connection_pool_queue_behavior`
 
 **Category**: Resilience
 **Contracts**: (connection pooling)
@@ -701,7 +699,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `82_pool_high_limit`
+### `92_connection_pool_high_limit`
 
 **Category**: Resilience
 **Contracts**: (connection pooling)
@@ -721,7 +719,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `83_pool_metric_tracking`
+### `93_connection_pool_metric_tracking`
 
 **Category**: Observability / Resilience
 **Contracts**: (connection pooling)
@@ -742,7 +740,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `90_operational_admin_api`
+### `00_operational_admin_api`
 
 **Category**: Operational Lifecycle
 **Contracts**: D (Zero-Option)
@@ -777,7 +775,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `91_operational_graceful_shutdown`
+### `01_operational_graceful_shutdown`
 
 **Category**: Operational Lifecycle
 **Contracts**: (graceful drain on SIGTERM)
@@ -810,7 +808,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `92_operational_reload_resource_sanity`
+### `02_operational_reload_resource_sanity`
 
 **Category**: Operational Lifecycle
 **Contracts**: (resource sanity during reloads)
@@ -834,7 +832,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `93_retry_status_codes`
+### `65_resilience_retry_status_codes`
 
 **Category**: Resilience
 **Contracts**: (retry policy execution)
@@ -856,7 +854,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `94_retry_idempotency`
+### `66_resilience_retry_idempotency`
 
 **Category**: Resilience
 **Contracts**: (retry policy execution)
@@ -877,7 +875,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `95_retry_budget`
+### `67_resilience_retry_budget`
 
 **Category**: Resilience
 **Contracts**: (retry policy execution)
@@ -897,7 +895,7 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `96_retry_body_buffer`
+### `68_resilience_retry_body_buffer`
 
 **Category**: Resilience
 **Contracts**: (retry policy execution)
@@ -932,7 +930,23 @@ Tests comprehensive routing semantics in single artifact:
 
 ### Summary
 
-| Category                  | Cases | Maturity Distribution |\n|---------------------------|-------|-----------------------|\n| Bootstrap & Initial Load  | 1     | L3: 1                 |\n| Reload Semantics          | 2     | L3: 2                 |\n| Failure & LKG             | 1     | L3: 1                 |\n| Traffic Management        | 2     | L3: 2                 |\n| Resilience (Timeout/Retry)| 2     | SKIPPED               |\n| Resilience (Health/CB/OD) | 3     | L3: 3                 |\n| Security (TLS/mTLS)       | 5     | SKIPPED (rustls)      |\n| Security (RBAC)           | 2     | L3: 2                 |\n| Observability (Metrics)   | 1     | L3: 1                 |\n| Observability (Logs/Trace)| 3     | SKIPPED               |\n| Operational Lifecycle     | 2     | L3: 2                 |\n\n**Total Cases**: 24\n**Active (L3)**: 14\n**Skipped**: 10 (7 rustls limitations, 3 implementation gaps)
+| Category                         | Cases | Maturity Distribution |
+|----------------------------------|-------|-----------------------|
+| Bootstrap & Initial Load         | 1     | L3: 1                 |
+| Reload Semantics                 | 4     | L3: 4                 |
+| Failure & LKG                    | 5     | L3: 5                 |
+| Traffic Management               | 5     | L3: 5                 |
+| Resilience (Timeout/Retry)       | 6     | L3: 6                 |
+| Resilience (Health/CB/OD)        | 3     | L3: 3                 |
+| Security (TLS/mTLS)              | 5     | SKIPPED (rustls)      |
+| Security (RBAC)                  | 2     | SKIPPED               |
+| Observability (Metrics/Logs/Trace)| 3    | L3: 3                 |
+| Connection Pooling               | 4     | L3: 4                 |
+| Operational Lifecycle            | 3     | L3: 3                 |
+
+**Total Cases**: 41  
+**Active (L3)**: 34  
+**Skipped**: 7 (TLS/mTLS/RBAC feature gaps)
 
 ### Risk Coverage Mapping
 
@@ -947,7 +961,7 @@ Tests comprehensive routing semantics in single artifact:
 - LKG guardrails (B): L3
 - Routing semantics (matchers, headers, actions, rewrites): L3
 - Resilience (outlier detection, health checks, circuit breaker): L3
-- RBAC authorization: L3
+- RBAC authorization: SKIPPED (feature gap)
 - Metrics exposition and cardinality protection: L3
 
 **Weak or Partially Covered Areas**:

@@ -58,28 +58,31 @@ The Relay Suite validates the **Control Plane** correctness of the `pavis-relay`
 
 ---
 
-### `11_contract_republish`
+### `11_contract_republish_monotonicity`
 
-**Category**: Contract & Integrity
-**Contracts**: R1 (Opaque Transfer), R5 (Concurrency Safety)
+**Category**: Contract & Long-Poll Semantics
+**Contracts**: R1 (Opaque Transfer), R2 (ETag), R3 (Efficient Long-Poll), R5 (No False Wake)
 **Maturity**: L3
 
 **Scenario**:
 1. Publish artifact (V1)
-2. Publish identical artifact again (idempotent republish)
-3. Fetch and compare
+2. Start long-poll subscriber with `If-None-Match: <etag>` and `wait_ms=3000`
+3. Publish identical artifact again (idempotent republish)
+4. Fetch and compare
 
 **Oracle**:
 - HTTP 200 on both publishes
 - ETag values across requests
 - Version headers
+- Long-poll status + elapsed time
 
 **Assertions**:
 - ETag identical across republishes of same bytes
 - Version increments monotonically (1 → 2)
 - Fetched artifact matches original
+- Long-poll completes with HTTP 204 after ~3000ms (no early wake)
 
-**Assessment**: PASS. Proves idempotent republish semantics and monotonic versioning.
+**Assessment**: PASS. Proves idempotent republish semantics, monotonic versioning, and no false wakeup.
 
 ---
 
@@ -131,7 +134,7 @@ The Relay Suite validates the **Control Plane** correctness of the `pavis-relay`
 
 ---
 
-### `30_etag_validation`
+### `12_contract_etag_validation`
 
 **Category**: Long-Poll Semantics
 **Contracts**: R2 (Versioned/ETag)
@@ -205,32 +208,6 @@ The Relay Suite validates the **Control Plane** correctness of the `pavis-relay`
 
 ---
 
-### `40_republish_stability`
-
-**Category**: Long-Poll Semantics
-**Contracts**: R3 (Efficient Long-Poll), R5 (Concurrency Safety - No False Wake)
-**Maturity**: L3
-
-**Scenario**:
-1. Publish config, fetch ETag
-2. Start long-poll subscriber with `wait_ms=3000` in background
-3. Republish identical artifact (same bytes, same ETag)
-4. Wait for subscriber completion
-
-**Oracle**:
-- HTTP status code from long-poll
-- Elapsed time
-- ETag values
-
-**Assertions**:
-- Long-poll completes with HTTP 204 after ~3000ms (no early wake)
-- ETag unchanged
-- `2800ms < elapsed < 3300ms`
-
-**Assessment**: PASS. Proves republish of identical artifact does not trigger false wakeup.
-
----
-
 ### `40_concurrency_rapid`
 
 **Category**: Concurrency
@@ -282,7 +259,7 @@ The Relay Suite validates the **Control Plane** correctness of the `pavis-relay`
 
 ---
 
-### `50_transport_integrity`
+### `13_contract_transport_integrity`
 
 **Category**: Contract & Integrity
 **Contracts**: R1 (Opaque Transfer), R2 (Versioned/ETag)
@@ -308,7 +285,7 @@ The Relay Suite validates the **Control Plane** correctness of the `pavis-relay`
 
 ---
 
-### `60_robustness_reconnect`
+### `61_robustness_reconnect`
 
 **Category**: Robustness
 **Contracts**: R2 (Versioned/ETag), R3 (Efficient Long-Poll)
@@ -333,7 +310,7 @@ The Relay Suite validates the **Control Plane** correctness of the `pavis-relay`
 
 ---
 
-### `60_boundary_conditions`
+### `60_robustness_boundary_conditions`
 
 **Category**: Long-Poll Semantics
 **Contracts**: R3 (Efficient Long-Poll), R2 (Versioned/ETag)
@@ -417,14 +394,14 @@ Tests edge cases:
 | Category               | Cases | Maturity Distribution |
 |------------------------|-------|-----------------------|
 | Contract & Integrity   | 4     | L3: 4                 |
-| Long-Poll Semantics    | 5     | L3: 4, L2: 1          |
+| Long-Poll Semantics    | 2     | L3: 2                 |
 | Fanout                 | 2     | L3: 2                 |
 | Concurrency            | 1     | L2: 1                 |
 | Persistence            | 1     | L3: 1                 |
-| Robustness             | 1     | L3: 1                 |
+| Robustness             | 2     | L3: 2                 |
 | Limits                 | 2     | L3: 2                 |
 
-**Total Cases**: 15
+**Total Cases**: 14
 **L3 (Full Proof)**: 13
 **L2 (Partial Proof)**: 2
 **L1 (Sanity)**: 0
@@ -445,5 +422,4 @@ Tests edge cases:
 - Transport protocol integrity: L3
 
 **Weak or Partially Covered Areas**:
-- **Long-poll blocking proof** (R3): L2 - `20_longpoll_wait` lacks liveness check
 - **Version monotonicity during concurrent updates** (R5): L2 - `40_concurrency_rapid` checks final state only

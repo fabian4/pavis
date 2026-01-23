@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Case: smoke_01_full_path_bootstrap
+# Case: 10_bootstrap_path
 # Category: Smoke & Bootstrap
 # Invariants: I1 (End-to-End Publish), I2 (Hot Reload Pipeline)
 
@@ -9,8 +9,10 @@ set -e
 source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
 source "$(dirname "$0")/../../scripts/assert.sh"
+# shellcheck source=tests/scripts/wait_helpers.sh
+source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 
-setup_test "smoke_01"
+setup_test "10_bootstrap_path"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 
@@ -78,13 +80,17 @@ curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
 # Poll until 200 OK
 MAX_RETRIES=20
 SUCCESS=0
+attempt=0
 for _ in $(seq 1 $MAX_RETRIES); do
+    attempt=$((attempt + 1))
     if pavis_curl_body -f "http://127.0.0.1:$PORT_PAVIS/echo" > /dev/null; then
         SUCCESS=1
         break
     fi
     sleep 0.5
 done
+
+assert_retry_succeeded "$attempt" "$MAX_RETRIES"
 
 if [ "$SUCCESS" -eq 0 ]; then
     echo "❌ Traffic did not start flowing after publish"

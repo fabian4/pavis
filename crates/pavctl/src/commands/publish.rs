@@ -38,3 +38,50 @@ pub(crate) fn publish_to_relay(relay_base: &str, artifact: &Path) -> Result<()> 
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_publish_success() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/v1/publish")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"version": 1, "checksum": "abc", "size": 100, "published_at": "now"}"#)
+            .create();
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"test content").unwrap();
+
+        let result = publish_to_relay(&server.url(), file.path());
+        assert!(result.is_ok());
+        mock.assert();
+    }
+
+    #[test]
+    fn test_publish_server_error() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/v1/publish")
+            .with_status(500)
+            .with_body("internal server error")
+            .create();
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"test content").unwrap();
+
+        let result = publish_to_relay(&server.url(), file.path());
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("publish failed: status=500")
+        );
+        mock.assert();
+    }
+}

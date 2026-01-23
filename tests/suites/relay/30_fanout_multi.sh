@@ -1,16 +1,20 @@
 #!/bin/bash
 set -e
 
-# Case: fanout_01_multi_subscriber_broadcast
+# Case: 30_fanout_multi
 # Category: Fanout
 # Invariants: R4 (Fanout Correctness)
 
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
+# shellcheck source=tests/scripts/wait_helpers.sh
+source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 source "$(dirname "$0")/../../scripts/assert.sh"
+# shellcheck source=tests/scripts/wait_helpers.sh
+source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 
-setup_test "fanout_01"
+setup_test "30_fanout_multi"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 

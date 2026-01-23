@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use pavis_core::{Discovery, HttpVersion, LoadBalancer};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Upstream {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<u16>,
@@ -136,4 +136,14 @@ pub struct Endpoint {
 
 fn default_health_threshold() -> usize {
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_health_threshold() {
+        assert_eq!(default_health_threshold(), 1);
+    }
 }

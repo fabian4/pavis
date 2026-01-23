@@ -10,17 +10,28 @@ use std::time::Duration;
 
 #[derive(Deserialize)]
 pub struct LongPollQuery {
-    etag: Option<String>,
-    timeout_ms: Option<u64>,
+    wait_ms: Option<u64>,
+}
+
+fn parse_if_none_match(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(header::IF_NONE_MATCH)?;
+    let s = value.to_str().ok()?;
+    let trimmed = s.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+        Some(trimmed[1..trimmed.len() - 1].to_string())
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 pub async fn handler(
     State(state): State<RelayState>,
     State(args): State<RelayArgs>,
     Query(params): Query<LongPollQuery>,
+    headers: HeaderMap,
 ) -> Response {
-    let client_etag = params.etag.as_deref().unwrap_or("");
-    let timeout_val = params.timeout_ms.unwrap_or(args.default_timeout_ms);
+    let client_etag = parse_if_none_match(&headers).unwrap_or_default();
+    let timeout_val = params.wait_ms.unwrap_or(args.default_timeout_ms);
     let timeout_dur = Duration::from_millis(timeout_val);
 
     // Check immediate

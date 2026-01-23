@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Case: longpoll_02_timeout_no_change
+# Case: 21_longpoll_timeout
 # Category: Long-Poll Semantics
 # Invariants: R3 (Efficient Long-Poll)
 
@@ -10,7 +10,7 @@ source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
 source "$(dirname "$0")/../../scripts/assert.sh"
 
-setup_test "longpoll_02"
+setup_test "21_longpoll_timeout"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 

@@ -79,11 +79,11 @@ data:
       - host: "*"
         paths:
           - matcher:
-              exact: "/health"
+              path: !exact { path: "/health" }
             status: 200
             body: "OK"
           - matcher:
-              prefix: "/"
+              path: !prefix { path: "/" }
             destinations:
               - upstream: "backend"
                 weight: 100

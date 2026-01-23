@@ -197,7 +197,7 @@ The runner writes a run-scoped `context.env` at `tests/temp/context.env` and cop
 
 ### Phase 7: Operational Lifecycle
 
-**Admin API Tests** (`90_operational_admin_api.sh`):
+**Admin API Tests** (`00_operational_admin_api.sh`):
 - **Scope**: Verifies read-only admin API endpoints (`/health`, `/stats`)
 - **Assertions**:
   - `/health` returns `{"status":"healthy"}` with 200 OK
@@ -209,7 +209,7 @@ The runner writes a run-scoped `context.env` at `tests/temp/context.env` and cop
   - Traffic routing unaffected by admin API presence
 - **Configuration**: Admin enabled on separate port, shutdown disabled for test speed
 
-**Graceful Shutdown Tests** (`91_operational_graceful_shutdown.sh`):
+**Graceful Shutdown Tests** (`01_operational_graceful_shutdown.sh`):
 - **Scope**: Verifies SIGTERM triggers graceful drain of in-flight requests
 - **Topology**: Pavis + slow mock upstream (3s response delay)
 - **Assertions**:

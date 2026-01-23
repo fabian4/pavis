@@ -301,28 +301,20 @@ publish_pavis_config_variant() {
   temp_config=$(mktemp --suffix=.yaml)
 
   cp "$(resolve_pavis_config_path)" "$temp_config"
-  if command -v yq > /dev/null 2>&1; then
-    yq -i '.routes[0].paths[1].matcher.path = "/fixed"' "$temp_config"
-    yq -i ".routes[0].paths[1].response_headers.set_headers = [[\"${FINGERPRINT_HEADER}\", \"${fingerprint}\"]]" "$temp_config"
-    if [[ -n "$rewrite_path" ]]; then
-      yq -i ".routes[0].paths[1].rewrite.path = \"${rewrite_path}\"" "$temp_config"
-    else
-      yq -i 'del(.routes[0].paths[1].rewrite)' "$temp_config"
-    fi
-  else
-    sed -i.bak '0,/matcher: !prefix/{/path: "\/"/s//path: "\/fixed"/}' "$temp_config"
-    rm -f "${temp_config}.bak"
-    sed -i.bak "/weight: 100/a\\
+
+  # Use sed to modify the config (yq doesn't handle YAML tags correctly)
+  sed -i.bak 's|path: !prefix { path: "/" }|path: !prefix { path: "/fixed" }|' "$temp_config"
+  rm -f "${temp_config}.bak"
+  sed -i.bak "/weight: 100/a\\
         response_headers:\\
           set_headers:\\
             - [\"${FINGERPRINT_HEADER}\", \"${fingerprint}\"]" "$temp_config"
-    rm -f "${temp_config}.bak"
-    if [[ -n "$rewrite_path" ]]; then
-      sed -i.bak "/path: \"\\/fixed\"/a\\
+  rm -f "${temp_config}.bak"
+  if [[ -n "$rewrite_path" ]]; then
+    sed -i.bak "/path: !prefix { path: \"\/fixed\" }/a\\
         rewrite:\\
           path: \"${rewrite_path}\"" "$temp_config"
-      rm -f "${temp_config}.bak"
-    fi
+    rm -f "${temp_config}.bak"
   fi
 
   publish_to_pavis_relay "$temp_config" "$version"

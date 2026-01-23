@@ -27,3 +27,4 @@ serde = { version = "1.0", features = ["derive"] }
 [dev-dependencies]
 serde_yaml = "0.9"
 tempfile = "3"
+mockito = "1.6"

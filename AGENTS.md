@@ -347,11 +347,11 @@ Is behavior documented in spec/protocol?
 - **Always use `make` commands to run E2E tests**. Never invoke test scripts directly.
 - **Run single tests when appropriate** to save time during iterative development:
   - Full suite: `make e2e` (runs all E2E tests in binary mode)
-  - Single pavis test: `make e2e-pavis CASE=42_routing_method_header_predicates.sh`
+  - Single pavis test: `make e2e-pavis CASE=52_routing_method_header_predicates.sh`
   - Single relay test: `make e2e-relay CASE=10_bootstrap.sh`
   - Single integrated test: `make e2e-integrated CASE=100_proxy_relay_integration.sh`
-  - Docker mode: `make e2e-pavis-docker CASE=42_routing_method_header_predicates.sh`
-  - Example: If you modify routing logic, run `make e2e-pavis CASE=42_routing_method_header_predicates.sh` instead of the full suite
+  - Docker mode: `make e2e-pavis-docker CASE=52_routing_method_header_predicates.sh`
+  - Example: If you modify routing logic, run `make e2e-pavis CASE=52_routing_method_header_predicates.sh` instead of the full suite
   - **IMPORTANT**: Use the full test filename with `.sh` extension, not just the number
 
 ## Benchmarking

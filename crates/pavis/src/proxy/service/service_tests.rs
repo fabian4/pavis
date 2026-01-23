@@ -2106,3 +2106,142 @@ async fn request_filter_allows_with_matching_identity() {
         Some("backend")
     );
 }
+
+#[test]
+fn test_resolve_sni() {
+    use super::resolve_sni;
+    use pavis_core::{Hostname, SniName};
+
+    // 1. Explicit Name
+    assert_eq!(
+        resolve_sni(&SniName::Name(Hostname("explicit".into())), None, None),
+        Some(Hostname("explicit".into()))
+    );
+
+    // 2. Disabled
+    assert_eq!(
+        resolve_sni(&SniName::Disabled, Some(&Hostname("override".into())), None),
+        None
+    );
+
+    // 3. Auto with override
+    assert_eq!(
+        resolve_sni(
+            &SniName::Auto,
+            Some(&Hostname("override".into())),
+            Some(&Hostname("endpoint".into()))
+        ),
+        Some(Hostname("override".into()))
+    );
+
+    // 4. Auto with endpoint host
+    assert_eq!(
+        resolve_sni(&SniName::Auto, None, Some(&Hostname("endpoint".into()))),
+        Some(Hostname("endpoint".into()))
+    );
+
+    // 5. Auto with neither
+    assert_eq!(resolve_sni(&SniName::Auto, None, None), None);
+}
+
+#[test]
+fn test_endpoint_host_for_sni() {
+    use super::endpoint_host_for_sni;
+    use pavis_core::{Discovery, Endpoint, EndpointAddr, Hostname, Port, UpstreamName, Weight};
+
+    let endpoint_dns = Endpoint {
+        address: EndpointAddr::Dns {
+            host: Hostname("dns.com".into()),
+            port: Port(NonZeroU16::new(80).unwrap()),
+        },
+        weight: Weight(NonZeroU16::new(1).unwrap()),
+    };
+
+    let endpoint_ip = Endpoint {
+        address: EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: Port(NonZeroU16::new(80).unwrap()),
+        },
+        weight: Weight(NonZeroU16::new(1).unwrap()),
+    };
+
+    let mut upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("u".into()))
+        .discovery(Discovery::Static)
+        .pool(Pool::default())
+        .tls(TlsPolicy::Disabled)
+        .build()
+        .unwrap();
+
+    // 1. DNS endpoint always returns host
+    assert_eq!(
+        endpoint_host_for_sni(&upstream, &endpoint_dns),
+        Some(Hostname("dns.com".into()))
+    );
+
+    // 2. IP endpoint with Static discovery -> None
+    assert_eq!(endpoint_host_for_sni(&upstream, &endpoint_ip), None);
+
+    // 3. IP endpoint with Logical discovery
+    upstream.discovery = Discovery::Logical;
+    // ... but no endpoints in upstream config (simulating dynamic resolution result mismatch?)
+    // Actually `endpoint_host_for_sni` iterates `upstream.endpoints`.
+    // If upstream has no DNS endpoints, it returns None.
+    assert_eq!(endpoint_host_for_sni(&upstream, &endpoint_ip), None);
+
+    // 4. Logical discovery with matching DNS endpoint in config
+    upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("u".into()))
+        .discovery(Discovery::Logical)
+        .pool(Pool::default())
+        .tls(TlsPolicy::Disabled)
+        .add_endpoint(endpoint_dns.clone())
+        .build()
+        .unwrap();
+
+    // Now IP endpoint should map back to the single DNS endpoint host
+    assert_eq!(
+        endpoint_host_for_sni(&upstream, &endpoint_ip),
+        Some(Hostname("dns.com".into()))
+    );
+
+    // 5. Logical discovery with multiple different DNS endpoints -> None (ambiguous)
+    upstream = UpstreamBuilder::new()
+        .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+        .name(UpstreamName("u".into()))
+        .discovery(Discovery::Logical)
+        .pool(Pool::default())
+        .tls(TlsPolicy::Disabled)
+        .add_endpoint(endpoint_dns.clone())
+        .add_endpoint(Endpoint {
+            address: EndpointAddr::Dns {
+                host: Hostname("other.com".into()),
+                port: Port(NonZeroU16::new(80).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        })
+        .build()
+        .unwrap();
+
+    assert_eq!(endpoint_host_for_sni(&upstream, &endpoint_ip), None);
+}
+
+#[test]
+fn test_resolve_endpoint_addr_ip() {
+    use super::resolve_endpoint_addr;
+    use pavis_core::{Endpoint, EndpointAddr, Port, Weight};
+
+    let endpoint = Endpoint {
+        address: EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            port: Port(NonZeroU16::new(8080).unwrap()),
+        },
+        weight: Weight(NonZeroU16::new(1).unwrap()),
+    };
+
+    let addr = resolve_endpoint_addr(&endpoint).unwrap();
+    assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
+    assert_eq!(addr.port(), 8080);
+}

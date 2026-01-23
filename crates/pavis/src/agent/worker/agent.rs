@@ -89,7 +89,10 @@ impl Service for ConfigAgentWorker {
                         }
                         Ok(PollOutcome::Rejected) => {
                             attempt = 0;
-                            self.agent.clear_last_rejected_etag();
+                            // Do not clear rejected ETag here. We want to use it in the next poll
+                            // to avoid re-downloading the same invalid artifact.
+                            // If the relay still has this artifact, it will return 304.
+                            // If the relay updates, it will return 200 with new content.
                             tokio::time::sleep(Duration::from_secs(5)).await;
                         }
                         Err(err) => {

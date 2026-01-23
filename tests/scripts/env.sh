@@ -282,6 +282,31 @@ get_sut_id() {
     fi
 }
 
+get_sut_host_pid() {
+    local name="$1"
+    local pid_file="$TEST_TMP/pids/$name.pid"
+    local container_file="$TEST_TMP/pids/$name.container"
+    local pid=""
+
+    if [ -f "$pid_file" ]; then
+        pid=$(read_pid_file "$pid_file" 2>/dev/null || true)
+    elif [ -f "$container_file" ]; then
+        local container_id
+        container_id=$(cat "$container_file")
+        pid=$(docker inspect --format '{{.State.Pid}}' "$container_id" 2>/dev/null || true)
+    fi
+
+    case "$pid" in
+        ''|*[!0-9]*)
+            echo ""
+            return 1
+            ;;
+        *)
+            echo "$pid"
+            ;;
+    esac
+}
+
 stop_sut() {
     local name="$1"
     local pid_file="$TEST_TMP/pids/$name.pid"

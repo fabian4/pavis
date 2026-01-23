@@ -251,7 +251,7 @@ fn main() -> Result<()> {
             relay.to_string(),
             PathBuf::from(&args.config),
             state_handle.clone(),
-            Duration::from_secs(15),
+            Duration::from_secs(60),
             backoff,
         )?;
 

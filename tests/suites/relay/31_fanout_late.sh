@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Case: fanout_02_catch_up
+# Case: 31_fanout_late
 # Category: Fanout
 # Invariants: R2 (ETag Delivery)
 
@@ -10,7 +10,7 @@ source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
 source "$(dirname "$0")/../../scripts/assert.sh"
 
-setup_test "fanout_02"
+setup_test "31_fanout_late"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 

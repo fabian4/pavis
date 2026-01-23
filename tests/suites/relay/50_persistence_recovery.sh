@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Case: persistence_01_restart_recovery
+# Case: 50_persistence_recovery
 # Category: Persistence
 # Invariants: R6 (Persistence)
 
@@ -10,7 +10,7 @@ source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
 source "$(dirname "$0")/../../scripts/assert.sh"
 
-setup_test "persistence_01"
+setup_test "50_persistence_recovery"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Case: concurrency_01_rapid_publish
+# Case: 40_concurrency_rapid
 # Category: Concurrency
 # Invariants: R5 (Concurrency Safety), R2 (Versioned)
 
@@ -10,7 +10,7 @@ source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
 source "$(dirname "$0")/../../scripts/assert.sh"
 
-setup_test "concurrency_01"
+setup_test "40_concurrency_rapid"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 

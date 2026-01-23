@@ -245,3 +245,109 @@ fn build_health_client(upstream: &pavis_core::Upstream, timeout: Duration) -> Re
         .build()
         .context("failed to build health check client")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pavis_core::{
+        ClientCert, Discovery, EndpointAddr, Hostname, HttpVersion, LoadBalancer, Pool, Port,
+        SniName, TlsPolicy, TlsVerify, Upstream, UpstreamBuilder, UpstreamCa, UpstreamId,
+        UpstreamName,
+    };
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::num::{NonZeroU16, NonZeroU32};
+
+    fn make_upstream(tls: TlsPolicy) -> Upstream {
+        UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::Random)
+            .protocol(HttpVersion::H1)
+            .pool(Pool::default())
+            .tls(tls)
+            .build()
+            .expect("failed to build upstream")
+    }
+
+    #[test]
+    fn test_core_duration_to_std() {
+        let core = pavis_core::Duration(NonZeroU32::new(100).unwrap());
+        let std = core_duration_to_std(&core);
+        assert_eq!(std.as_millis(), 100);
+    }
+
+    #[test]
+    fn test_endpoint_label() {
+        let ip = EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: Port(NonZeroU16::new(8080).unwrap()),
+        };
+        assert_eq!(endpoint_label(&ip), "127.0.0.1:8080");
+
+        let dns = EndpointAddr::Dns {
+            host: Hostname("example.com".to_string()),
+            port: Port(NonZeroU16::new(443).unwrap()),
+        };
+        assert_eq!(endpoint_label(&dns), "example.com:443");
+    }
+
+    #[test]
+    fn test_health_check_host() {
+        let ip_endpoint = EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            port: Port(NonZeroU16::new(8080).unwrap()),
+        };
+        let dns_endpoint = EndpointAddr::Dns {
+            host: Hostname("example.com".to_string()),
+            port: Port(NonZeroU16::new(443).unwrap()),
+        };
+
+        // Case 1: TLS Disabled
+        let u1 = make_upstream(TlsPolicy::Disabled);
+        assert_eq!(health_check_host(&u1, &ip_endpoint), None);
+        assert_eq!(
+            health_check_host(&u1, &dns_endpoint),
+            Some("example.com".to_string())
+        );
+
+        // Case 2: TLS Enabled, SNI Disabled
+        let u2 = make_upstream(TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Disabled,
+            cert: ClientCert::Disabled,
+            ca: UpstreamCa::System,
+        });
+        assert_eq!(health_check_host(&u2, &ip_endpoint), None);
+        assert_eq!(health_check_host(&u2, &dns_endpoint), None);
+
+        // Case 3: TLS Enabled, SNI Auto
+        let u3 = make_upstream(TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Auto,
+            cert: ClientCert::Disabled,
+            ca: UpstreamCa::System,
+        });
+        assert_eq!(health_check_host(&u3, &ip_endpoint), None);
+        assert_eq!(
+            health_check_host(&u3, &dns_endpoint),
+            Some("example.com".to_string())
+        );
+
+        // Case 4: TLS Enabled, SNI Explicit
+        let u4 = make_upstream(TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Name(Hostname("custom.host".to_string())),
+            cert: ClientCert::Disabled,
+            ca: UpstreamCa::System,
+        });
+        assert_eq!(
+            health_check_host(&u4, &ip_endpoint),
+            Some("custom.host".to_string())
+        );
+        assert_eq!(
+            health_check_host(&u4, &dns_endpoint),
+            Some("custom.host".to_string())
+        );
+    }
+}

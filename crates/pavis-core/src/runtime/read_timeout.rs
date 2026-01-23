@@ -32,3 +32,19 @@ impl Default for ReadTimeout {
         Self::Enabled(Duration(std::num::NonZeroU32::new(30000).unwrap()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default() {
+        let timeout = ReadTimeout::default();
+        match timeout {
+            ReadTimeout::Enabled(duration) => {
+                assert_eq!(duration.0.get(), 30000);
+            }
+            _ => panic!("Expected ReadTimeout::Enabled"),
+        }
+    }
+}

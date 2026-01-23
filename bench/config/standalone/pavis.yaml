@@ -21,12 +21,12 @@ upstreams:
 routes:
   - host: "*"
     paths:
-      - matcher: !exact
-          path: "/health"
+      - matcher:
+          path: !exact { path: "/health" }
         status: 200
         body: "OK"
-      - matcher: !prefix
-          path: "/"
+      - matcher:
+          path: !prefix { path: "/" }
         destinations:
           - upstream: "backend"
             weight: 100

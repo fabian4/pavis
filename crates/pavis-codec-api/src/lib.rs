@@ -3,9 +3,9 @@ use pavis_ingest_api::Artifact;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CodecError {
-    #[error("codec check failed")]
+    #[error("codec check failed: {0}")]
     Check(#[source] anyhow::Error),
-    #[error("codec compile failed")]
+    #[error("codec compile failed: {0}")]
     Compile(#[source] anyhow::Error),
     #[error(transparent)]
     Core(CoreValidationError),

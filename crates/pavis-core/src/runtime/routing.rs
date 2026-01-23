@@ -394,4 +394,71 @@ mod tests {
             panic!("Expected Some variant");
         }
     }
+
+    #[test]
+    fn test_http_method_from_str() {
+        assert_eq!(HttpMethod::from("GET"), HttpMethod::GET);
+        assert_eq!(HttpMethod::from("get"), HttpMethod::GET);
+        assert_eq!(HttpMethod::from("POST"), HttpMethod::POST);
+        assert_eq!(HttpMethod::from("PUT"), HttpMethod::PUT);
+        assert_eq!(HttpMethod::from("DELETE"), HttpMethod::DELETE);
+        assert_eq!(HttpMethod::from("PATCH"), HttpMethod::PATCH);
+        assert_eq!(HttpMethod::from("HEAD"), HttpMethod::HEAD);
+        assert_eq!(HttpMethod::from("OPTIONS"), HttpMethod::OPTIONS);
+        assert_eq!(HttpMethod::from("CONNECT"), HttpMethod::CONNECT);
+        assert_eq!(HttpMethod::from("TRACE"), HttpMethod::TRACE);
+        assert_eq!(HttpMethod::from("UNKNOWN"), HttpMethod::GET); // Default
+    }
+
+    #[test]
+    fn test_principal_variants() {
+        let p1 = Principal::Any;
+        let p2 = Principal::Authenticated {
+            spiffe: "spiffe://example.org/ns/foo/sa/bar".to_string(),
+        };
+        let p3 = Principal::Prefix {
+            prefix: "admin-".to_string(),
+        };
+
+        assert!(matches!(p1, Principal::Any));
+        assert!(matches!(p2, Principal::Authenticated { .. }));
+        assert!(matches!(p3, Principal::Prefix { .. }));
+    }
+
+    #[test]
+    fn test_route_action_variants() {
+        let a1 = RouteAction::Forward(vec![]);
+        let a2 = RouteAction::Redirect {
+            status: 301,
+            location: "/".to_string(),
+        };
+        let a3 = RouteAction::Direct {
+            status: 200,
+            body: "ok".to_string(),
+        };
+
+        assert!(matches!(a1, RouteAction::Forward(_)));
+        assert!(matches!(a2, RouteAction::Redirect { .. }));
+        assert!(matches!(a3, RouteAction::Direct { .. }));
+    }
+
+    #[test]
+    fn test_rewrite_variants() {
+        let rp1 = RewritePath::Disabled;
+        let rp2 = RewritePath::Prefix {
+            from: Path("/api".to_string()),
+            to: Path("/".to_string()),
+        };
+
+        assert!(matches!(rp1, RewritePath::Disabled));
+        assert!(matches!(rp2, RewritePath::Prefix { .. }));
+
+        let rh1 = RewriteHost::Disabled;
+        let rh2 = RewriteHost::Literal {
+            host: Hostname("example.com".to_string()),
+        };
+
+        assert!(matches!(rh1, RewriteHost::Disabled));
+        assert!(matches!(rh2, RewriteHost::Literal { .. }));
+    }
 }

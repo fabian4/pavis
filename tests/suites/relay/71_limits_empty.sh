@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Case: limits_02_empty_publish
+# Case: 71_limits_empty
 # Category: Limits
 # Invariants: R1 (Opaque)
 
@@ -10,7 +10,7 @@ source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
 source "$(dirname "$0")/../../scripts/assert.sh"
 
-setup_test "limits_02"
+setup_test "71_limits_empty"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 

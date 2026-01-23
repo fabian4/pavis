@@ -1,16 +1,20 @@
 #!/bin/bash
 set -e
 
-# Case: longpoll_01_wait_for_update
+# Case: 20_longpoll_wait
 # Category: Long-Poll Semantics
 # Invariants: R3 (Efficient Long-Poll), R2 (Versioned)
 
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
+# shellcheck source=tests/scripts/wait_helpers.sh
+source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 source "$(dirname "$0")/../../scripts/assert.sh"
+# shellcheck source=tests/scripts/wait_helpers.sh
+source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 
-setup_test "longpoll_01"
+setup_test "20_longpoll_wait"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 

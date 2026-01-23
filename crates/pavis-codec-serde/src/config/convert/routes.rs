@@ -969,10 +969,285 @@ fn from_runtime_headers(h: &pavis_core::HeadersPolicy) -> Option<HeaderOperation
 mod tests {
     use super::*;
     use crate::config::types::{
-        BackoffStrategyDTO, Matcher, PathMatcher, RetryPolicy, Route,
-        RouteAction as CodecRouteAction, VirtualHost, WeightedDestination,
+        BackoffStrategyDTO, HeaderMatcherDTO, HeaderPredicate, HeaderPredicateLegacy, Matcher,
+        PathMatcher, RetryPolicy, Route, RouteAction as CodecRouteAction, VirtualHost,
+        WeightedDestination,
     };
     use std::time::Duration;
+
+    #[test]
+    fn invalid_http_method() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: Some("INVALID".to_string()),
+                    methods: None,
+                    headers: None,
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("invalid HTTP method 'INVALID'"));
+    }
+
+    #[test]
+    fn header_regex_too_long() {
+        let pattern = "a".repeat(300);
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    methods: None,
+                    headers: Some(vec![HeaderPredicate::V2(HeaderMatcherDTO::Regex {
+                        name: "x-h".to_string(),
+                        pattern: pattern.clone(),
+                    })]),
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("exceeds 256 bytes"));
+    }
+
+    #[test]
+    fn header_regex_invalid_syntax() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    methods: None,
+                    headers: Some(vec![HeaderPredicate::V2(HeaderMatcherDTO::Regex {
+                        name: "x-h".to_string(),
+                        pattern: "(unclosed".to_string(),
+                    })]),
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("invalid regex pattern"));
+    }
+
+    #[test]
+    fn retry_policy_per_try_exceeds_timeout() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: Some(Duration::from_millis(100)),
+                retry: Some(RetryPolicy {
+                    max_attempts: 2,
+                    retryable_reasons: vec!["status_code".to_string()],
+                    retryable_status_codes: Some(vec![500]),
+                    backoff: BackoffStrategyDTO::Fixed { base_ms: 10 },
+                    retry_non_idempotent: false,
+                    fail_on_non_replayable_retry: false,
+                    max_request_body_buffer_bytes: 1024,
+                    per_try: Some(Duration::from_millis(200)),
+                }),
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("per_try timeout (200ms) exceeds overall route timeout (100ms)")
+        );
+    }
+
+    #[test]
+    fn legacy_header_absent_incompatible() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    methods: None,
+                    headers: Some(vec![HeaderPredicate::V1(HeaderPredicateLegacy {
+                        name: "x-h".to_string(),
+                        value: Some("v".to_string()),
+                        regex: false,
+                        prefix: false,
+                        absent: true,
+                    })]),
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("absent=true is incompatible with value")
+        );
+    }
+
+    #[test]
+    fn legacy_header_regex_requires_value() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    methods: None,
+                    headers: Some(vec![HeaderPredicate::V1(HeaderPredicateLegacy {
+                        name: "x-h".to_string(),
+                        value: None,
+                        regex: true,
+                        prefix: false,
+                        absent: false,
+                    })]),
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("regex=true requires a value"));
+    }
+
+    #[test]
+    fn legacy_header_prefix_requires_value() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    methods: None,
+                    headers: Some(vec![HeaderPredicate::V1(HeaderPredicateLegacy {
+                        name: "x-h".to_string(),
+                        value: None,
+                        regex: false,
+                        prefix: true,
+                        absent: false,
+                    })]),
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(err.to_string().contains("prefix=true requires a value"));
+    }
+
+    #[test]
+    fn legacy_header_regex_prefix_exclusive() {
+        let vhost = VirtualHost {
+            host: "*".to_string(),
+            paths: vec![Route {
+                matcher: Some(Matcher {
+                    path: PathMatcher::Prefix {
+                        path: "/".to_string(),
+                    },
+                    method: None,
+                    methods: None,
+                    headers: Some(vec![HeaderPredicate::V1(HeaderPredicateLegacy {
+                        name: "x-h".to_string(),
+                        value: Some("v".to_string()),
+                        regex: true,
+                        prefix: true,
+                        absent: false,
+                    })]),
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                principal: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".to_string(),
+                },
+            }],
+        };
+        let err = to_runtime(vec![vhost]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("regex and prefix are mutually exclusive")
+        );
+    }
 
     #[test]
     fn to_runtime_validates_destination_weight() {
