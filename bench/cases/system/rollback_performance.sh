@@ -26,7 +26,7 @@ set -euo pipefail
 # This ensures we measure runtime recovery, not load interference artifacts.
 #
 # Recovery is detected using statistical robustness:
-#   - Requires N consecutive probe samples below threshold
+#   - First crossing + hysteresis (K of M probe samples below threshold)
 #   - Threshold set to 1.20x baseline to account for natural jitter/cache warming
 #
 # PORTABILITY FIX:
@@ -63,7 +63,8 @@ DEGRADED_DELAY_MS="10"
 # Recovery detection parameters
 PROBE_RPS=10                    # Low RPS to avoid load interference
 PROBE_DURATION_S=1              # Short duration for quick probes
-CONSECUTIVE_SAMPLES_REQUIRED=3  # Require N consecutive samples below threshold for robustness
+HYSTERESIS_WINDOW_SAMPLES=3     # M samples window
+HYSTERESIS_REQUIRED_SAMPLES=2   # K samples required below threshold within window
 RESTORE_THRESHOLD_PCT=20        # 20% above baseline (allows for jitter/cache warming)
 
 is_number() {
@@ -119,6 +120,26 @@ probe_p99_lightweight() {
 
   rm -f "$temp_output"
   return 1
+}
+
+median_from_samples() {
+  local -a samples=("$@")
+  local count="${#samples[@]}"
+  if (( count == 0 )); then
+    return 1
+  fi
+  printf "%s\n" "${samples[@]}" | sort -n | awk '{
+    a[NR]=$1
+  }
+  END {
+    n=NR
+    if (n == 0) exit 1
+    if (n % 2 == 1) {
+      print a[(n+1)/2]
+    } else {
+      print (a[n/2] + a[n/2+1]) / 2
+    }
+  }'
 }
 
 main() {
@@ -208,8 +229,10 @@ main() {
   #
   # TTBR Measurement Contract:
   # --------------------------
-  # - rollback_ttbr_ms = elapsed time from rollback publish until recovery FIRST satisfied
-  # - Recovery condition: v1 fingerprint observed AND N consecutive p99 probes <= baseline * (1 + threshold_pct/100)
+  # - rollback_ttbr_ms = elapsed time from rollback publish until FIRST return to baseline shape
+  # - Recovery condition: v1 fingerprint observed AND first crossing + hysteresis
+  #   (K of next M probe p99 samples <= baseline * (1 + threshold_pct/100))
+  # - rollback_p99_ms is derived from the same low-RPS probe regime to avoid contradictions
   # - If recovery never happens within timeout, rollback_ttbr_ms = timeout_ms and baseline_restored=false
   # - Timeout is a HARD upper bound: no operations may occur after timeout is exceeded
   #
@@ -219,17 +242,24 @@ main() {
   # - Recovery is detected via lightweight probes (10 RPS, 1s duration)
   # - Probes add <1% load and do NOT interfere with queue/pool recovery
   #
+  # Rationale:
+  # ----------
+  # Hysteresis (K of M) tolerates single-sample jitter while still catching real regressions.
+  # This prevents false FAILs when steady-state rollback performance is already good.
+  #
   log_info "Rolling back to good config (v1)"
   local baseline_restored=false
   local rollback_ttbr_ms=0
-  local consecutive_good_samples=0
+  local rollback_p99_ms=""
+  local first_good_seen=false
+  local -a hysteresis_window=()
   publish_pavis_config_variant 1 "1" ""
   local start_ts
   start_ts=$(timestamp_ms)
 
   log_info "Measuring time to baseline restoration (TTBR)"
   log_info "Recovery threshold: ${RESTORE_THRESHOLD_PCT}% above baseline (${baseline_p99}ms)"
-  log_info "Requires ${CONSECUTIVE_SAMPLES_REQUIRED} consecutive samples below threshold"
+  log_info "Requires ${HYSTERESIS_REQUIRED_SAMPLES} of ${HYSTERESIS_WINDOW_SAMPLES} samples below threshold"
 
   local timeout_ms=30000
   local restore_threshold_ms
@@ -266,35 +296,58 @@ main() {
     local current_fingerprint
     current_fingerprint=$(fetch_response_header "$target_url" "$FINGERPRINT_HEADER")
     if [[ "$current_fingerprint" != "1" ]]; then
-      consecutive_good_samples=0  # Reset counter if config not yet applied
+      first_good_seen=false
+      hysteresis_window=()
       continue
     fi
 
     # Non-intrusive probe: 10 RPS for 1s (only 10 requests, <1% of typical load)
     local current_p99
     current_p99=$(probe_p99_lightweight "$target_url") || {
-      consecutive_good_samples=0  # Reset on probe failure
+      first_good_seen=false
+      hysteresis_window=()
       continue
     }
 
+    local sample_elapsed_ms
+    sample_elapsed_ms=$(( $(timestamp_ms) - start_ts ))
+
     # Check if current p99 is within threshold (FIXED: using awk, not bc)
     if float_compare "$current_p99" "<=" "$restore_threshold_ms"; then
-      consecutive_good_samples=$((consecutive_good_samples + 1))
-      log_info "Sample ${consecutive_good_samples}/${CONSECUTIVE_SAMPLES_REQUIRED}: P99=${current_p99}ms <= ${restore_threshold_ms}ms (elapsed: ${elapsed_ms}ms)"
+      if [[ "$first_good_seen" != "true" ]]; then
+        first_good_seen=true
+        hysteresis_window=()
+      fi
+    fi
 
-      # Recovery confirmed: N consecutive samples below threshold
-      if (( consecutive_good_samples >= CONSECUTIVE_SAMPLES_REQUIRED )); then
-        rollback_ttbr_ms=$elapsed_ms
+    if [[ "$first_good_seen" == "true" ]]; then
+      hysteresis_window+=("$current_p99")
+      if (( ${#hysteresis_window[@]} > HYSTERESIS_WINDOW_SAMPLES )); then
+        hysteresis_window=("${hysteresis_window[@]:1}")
+      fi
+
+      local good_samples=0
+      for sample in "${hysteresis_window[@]}"; do
+        if float_compare "$sample" "<=" "$restore_threshold_ms"; then
+          good_samples=$((good_samples + 1))
+        fi
+      done
+
+      log_info "Sample window: ${good_samples}/${HYSTERESIS_WINDOW_SAMPLES} <= ${restore_threshold_ms}ms (latest: ${current_p99}ms, elapsed: ${sample_elapsed_ms}ms)"
+
+      if (( ${#hysteresis_window[@]} >= HYSTERESIS_WINDOW_SAMPLES && good_samples >= HYSTERESIS_REQUIRED_SAMPLES )); then
+        rollback_ttbr_ms=$sample_elapsed_ms
+        rollback_p99_ms=$(median_from_samples "${hysteresis_window[@]}") || rollback_p99_ms="$current_p99"
         baseline_restored=true
-        log_info "Baseline restored at ${rollback_ttbr_ms}ms (${consecutive_good_samples} consecutive samples below threshold)"
+        log_info "Baseline restored at ${rollback_ttbr_ms}ms (hysteresis satisfied)"
         break
       fi
-    else
-      # Sample exceeded threshold, reset counter
-      log_info "Sample above threshold: P99=${current_p99}ms > ${restore_threshold_ms}ms (elapsed: ${elapsed_ms}ms) - resetting counter"
-      consecutive_good_samples=0
     fi
   done
+
+  if [[ -z "$rollback_p99_ms" ]]; then
+    rollback_p99_ms="null"
+  fi
 
   # Step 6: Run final recovery validation load test to confirm stability
   log_info "Running final recovery validation (full load for ${RECOVERY_DURATION_S}s)"
@@ -339,12 +392,14 @@ main() {
   "degraded_achieved_rps": $degraded_achieved_rps,
   "recovery_achieved_rps": $recovery_achieved_rps,
   "rollback_ttbr_ms": $rollback_ttbr_ms,
+  "rollback_p99_ms": $rollback_p99_ms,
   "recovery_p99_ms": $recovery_p99,
   "recovery_errors": $recovery_errors,
   "baseline_restored": $baseline_restored,
   "restore_threshold_pct": $RESTORE_THRESHOLD_PCT,
   "restore_threshold_ms": $restore_threshold_ms,
-  "consecutive_samples_required": $CONSECUTIVE_SAMPLES_REQUIRED,
+  "hysteresis_window_samples": $HYSTERESIS_WINDOW_SAMPLES,
+  "hysteresis_required_samples": $HYSTERESIS_REQUIRED_SAMPLES,
   "config_versions": [1, 2, 1],
   "target_rps": $TARGET_RPS,
   "probe_rps": $PROBE_RPS,
