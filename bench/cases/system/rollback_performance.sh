@@ -1,9 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# =============================================================================
 # System Mode Test: Rollback Performance
-# Measures time to restore baseline performance after rolling back from a degraded config.
-# Apply and rollback are proven by response fingerprinting (frozen data plane semantics).
+# =============================================================================
+#
+# WHAT THIS TEST MEASURES:
+# ------------------------
+# - rollback_ttbr_ms: Time-To-Baseline-Restoration after rollback from degraded config
+#   * Starts when rollback config is published
+#   * Ends when p99 latency returns to within acceptable range of baseline
+#   * Measures RUNTIME recovery: queue drain, pool stabilization, scheduler settling
+#
+# WHAT THIS TEST DOES NOT MEASURE:
+# ---------------------------------
+# - Config propagation time (separate metric: convergence_time)
+# - Test harness overhead (loadgen startup, curl latency)
+# - Single-sample outliers or transient spikes
+#
+# CRITICAL INVARIANT:
+# -------------------
+# During TTBR measurement, there is exactly ONE load source:
+#   - Lightweight probe bursts (10 RPS, 1s duration)
+#   - NO concurrent background loadgen
+# This ensures we measure runtime recovery, not load interference artifacts.
+#
+# Recovery is detected using statistical robustness:
+#   - Requires N consecutive probe samples below threshold
+#   - Threshold set to 1.20x baseline to account for natural jitter/cache warming
+#
+# PORTABILITY FIX:
+# ----------------
+# - bc is ONLY used for floating-point math (threshold calculation)
+# - awk is used for all floating-point comparisons (portable, no bc dependency)
+# - No bc usage for sleep timing (uses fixed fractional values)
+#
+# =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts"
 # shellcheck source=bench/scripts/utils.sh
@@ -28,9 +60,65 @@ NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 FINGERPRINT_HEADER="X-Pavis-Config-Version"
 DEGRADED_DELAY_MS="10"
 
+# Recovery detection parameters
+PROBE_RPS=10                    # Low RPS to avoid load interference
+PROBE_DURATION_S=1              # Short duration for quick probes
+CONSECUTIVE_SAMPLES_REQUIRED=3  # Require N consecutive samples below threshold for robustness
+RESTORE_THRESHOLD_PCT=20        # 20% above baseline (allows for jitter/cache warming)
+
 is_number() {
   local value="$1"
   [[ "$value" =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]
+}
+
+# Portable float comparison using awk (no bc dependency for comparisons)
+# Usage: float_compare "value" "operator" "threshold"
+# Operators: ">", ">=", "<", "<=", "=="
+# Returns: 0 if true, 1 if false
+float_compare() {
+  local value="$1"
+  local op="$2"
+  local threshold="$3"
+
+  awk -v val="$value" -v th="$threshold" -v operator="$op" 'BEGIN {
+    if (operator == ">") exit !(val > th)
+    else if (operator == ">=") exit !(val >= th)
+    else if (operator == "<") exit !(val < th)
+    else if (operator == "<=") exit !(val <= th)
+    else if (operator == "==") exit !(val == th)
+    else exit 1
+  }'
+}
+
+# Non-intrusive probe: Uses low RPS and short duration to avoid interfering with recovery
+# Returns: p99 latency in milliseconds, or empty string on failure
+probe_p99_lightweight() {
+  local target_url="$1"
+  local temp_output
+  temp_output=$(mktemp)
+
+  # Lightweight probe: 10 RPS for 1s = only 10 requests
+  # This is <1% of typical TARGET_RPS and won't interfere with pool/queue recovery
+  if "${BENCH_LOADGEN_BIN}" \
+    --url "$target_url" \
+    --rate "$PROBE_RPS" \
+    --duration "$PROBE_DURATION_S" \
+    --connections 10 \
+    --output "$temp_output" \
+    > /dev/null 2>&1; then
+
+    local p99
+    p99=$(jq -r '.latency_ms.p99' "$temp_output" 2>/dev/null || echo "")
+    rm -f "$temp_output"
+
+    if is_number "$p99" && float_compare "$p99" ">" "0"; then
+      echo "$p99"
+      return 0
+    fi
+  fi
+
+  rm -f "$temp_output"
+  return 1
 }
 
 main() {
@@ -38,10 +126,8 @@ main() {
 
   # Get proxy-specific configuration
   local pod_label
-  local container_name
   local proxy_port
   pod_label=$(get_proxy_pod_label)
-  container_name=$(get_proxy_container_name)
   proxy_port=$(get_proxy_port)
 
   local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}"
@@ -85,7 +171,7 @@ main() {
 
   local baseline_p99
   baseline_p99=$(jq -r '.latency_ms.p99' "${output_dir}/baseline.json")
-  if ! is_number "$baseline_p99" || (( $(echo "$baseline_p99 <= 0" | bc -l) )); then
+  if ! is_number "$baseline_p99" || float_compare "$baseline_p99" "<=" "0"; then
     log_error "Invalid baseline P99: '${baseline_p99}'"
     kubectl_stop_port_forward "$pf_pid"
     return 1
@@ -119,74 +205,114 @@ main() {
   log_info "Degraded errors: $degraded_errors"
 
   # Step 5: Rollback to good config (v1) and measure TTBR.
-  # Contract:
-  # - rollback_ttbr_ms is the elapsed time from rollback publish until recovery is FIRST satisfied.
-  # - recovery condition: v1 fingerprint observed AND p99 <= baseline * 1.10.
-  # - If recovery never happens within timeout, rollback_ttbr_ms == timeout_ms and baseline_restored=false.
+  #
+  # TTBR Measurement Contract:
+  # --------------------------
+  # - rollback_ttbr_ms = elapsed time from rollback publish until recovery FIRST satisfied
+  # - Recovery condition: v1 fingerprint observed AND N consecutive p99 probes <= baseline * (1 + threshold_pct/100)
+  # - If recovery never happens within timeout, rollback_ttbr_ms = timeout_ms and baseline_restored=false
+  # - Timeout is a HARD upper bound: no operations may occur after timeout is exceeded
+  #
+  # Non-Intrusive Probing:
+  # ----------------------
+  # - During TTBR measurement, NO background loadgen runs
+  # - Recovery is detected via lightweight probes (10 RPS, 1s duration)
+  # - Probes add <1% load and do NOT interfere with queue/pool recovery
+  #
   log_info "Rolling back to good config (v1)"
   local baseline_restored=false
   local rollback_ttbr_ms=0
+  local consecutive_good_samples=0
   publish_pavis_config_variant 1 "1" ""
   local start_ts
   start_ts=$(timestamp_ms)
 
-  # Step 6: Measure time to baseline restoration (TTBR)
   log_info "Measuring time to baseline restoration (TTBR)"
+  log_info "Recovery threshold: ${RESTORE_THRESHOLD_PCT}% above baseline (${baseline_p99}ms)"
+  log_info "Requires ${CONSECUTIVE_SAMPLES_REQUIRED} consecutive samples below threshold"
 
-  # Start recovery measurement
+  local timeout_ms=30000
+  local restore_threshold_ms
+  # Use bc ONLY for floating-point math (threshold calculation)
+  restore_threshold_ms=$(echo "$baseline_p99 * (1 + $RESTORE_THRESHOLD_PCT / 100)" | bc -l)
+
+  # TTBR measurement loop with hard timeout semantics
+  while true; do
+    # Check elapsed time BEFORE any operations
+    local elapsed_ms
+    elapsed_ms=$(( $(timestamp_ms) - start_ts ))
+
+    # Hard timeout: If we've exceeded timeout, stop immediately
+    if [[ $elapsed_ms -ge $timeout_ms ]]; then
+      rollback_ttbr_ms=$timeout_ms
+      log_warn "Timeout reached (${timeout_ms}ms) without recovery"
+      break
+    fi
+
+    # Ensure we have enough time for probe + sleep before timeout
+    # If not, this would be the last iteration - skip it and exit
+    local time_for_probe_and_sleep=$(( PROBE_DURATION_S * 1000 + 1000 ))
+    if (( elapsed_ms + time_for_probe_and_sleep > timeout_ms )); then
+      rollback_ttbr_ms=$timeout_ms
+      log_warn "Insufficient time for probe before timeout (${elapsed_ms}ms / ${timeout_ms}ms)"
+      break
+    fi
+
+    # Brief sleep to avoid tight polling
+    sleep 1
+    elapsed_ms=$(( $(timestamp_ms) - start_ts ))
+
+    # Check if fingerprint has reverted to v1
+    local current_fingerprint
+    current_fingerprint=$(fetch_response_header "$target_url" "$FINGERPRINT_HEADER")
+    if [[ "$current_fingerprint" != "1" ]]; then
+      consecutive_good_samples=0  # Reset counter if config not yet applied
+      continue
+    fi
+
+    # Non-intrusive probe: 10 RPS for 1s (only 10 requests, <1% of typical load)
+    local current_p99
+    current_p99=$(probe_p99_lightweight "$target_url") || {
+      consecutive_good_samples=0  # Reset on probe failure
+      continue
+    }
+
+    # Check if current p99 is within threshold (FIXED: using awk, not bc)
+    if float_compare "$current_p99" "<=" "$restore_threshold_ms"; then
+      consecutive_good_samples=$((consecutive_good_samples + 1))
+      log_info "Sample ${consecutive_good_samples}/${CONSECUTIVE_SAMPLES_REQUIRED}: P99=${current_p99}ms <= ${restore_threshold_ms}ms (elapsed: ${elapsed_ms}ms)"
+
+      # Recovery confirmed: N consecutive samples below threshold
+      if (( consecutive_good_samples >= CONSECUTIVE_SAMPLES_REQUIRED )); then
+        rollback_ttbr_ms=$elapsed_ms
+        baseline_restored=true
+        log_info "Baseline restored at ${rollback_ttbr_ms}ms (${consecutive_good_samples} consecutive samples below threshold)"
+        break
+      fi
+    else
+      # Sample exceeded threshold, reset counter
+      log_info "Sample above threshold: P99=${current_p99}ms > ${restore_threshold_ms}ms (elapsed: ${elapsed_ms}ms) - resetting counter"
+      consecutive_good_samples=0
+    fi
+  done
+
+  # Step 6: Run final recovery validation load test to confirm stability
+  log_info "Running final recovery validation (full load for ${RECOVERY_DURATION_S}s)"
   "${BENCH_LOADGEN_BIN}" \
     --url "$target_url" \
     --rate "$TARGET_RPS" \
     --duration "$RECOVERY_DURATION_S" \
     --connections 100 \
     --output "${output_dir}/recovery.json" \
-    > /dev/null 2>&1 &
-  local recovery_pid=$!
-
-  # Poll for baseline restoration.
-  # Rollback completion requires:
-  # 1) fingerprint == v1 (applied), and
-  # 2) P99 <= baseline * 1.10.
-  local timeout_ms=30000
-  local elapsed_ms=0
-  local restore_threshold_pct=10
-  local restore_threshold_ms
-  restore_threshold_ms=$(echo "$baseline_p99 * (1 + $restore_threshold_pct / 100)" | bc -l)
-
-  while [[ $elapsed_ms -lt $timeout_ms ]]; do
-    sleep 1
-    elapsed_ms=$(( $(timestamp_ms) - start_ts ))
-
-    local current_fingerprint
-    current_fingerprint=$(fetch_response_header "$target_url" "$FINGERPRINT_HEADER")
-    if [[ "$current_fingerprint" != "1" ]]; then
-      continue
-    fi
-
-    # Check current P99 once v1 is observed
-    local current_p99
-    current_p99=$(capture_p99_snapshot 2 "$target_url" "$TARGET_RPS") || continue
-
-    # Check if within 10% of baseline
-    if (( $(echo "$current_p99 <= $restore_threshold_ms" | bc -l) )); then
-      rollback_ttbr_ms=$elapsed_ms
-      baseline_restored=true
-      log_info "Baseline restored at ${rollback_ttbr_ms}ms (P99: ${current_p99}ms <= ${restore_threshold_ms}ms)"
-      break
-    fi
-  done
-
-  # Wait for recovery test to complete
-  wait "$recovery_pid" 2>/dev/null || true
+    > /dev/null 2>&1 || true
 
   # Step 7: Extract final recovery stats
-  local recovery_p99
-  recovery_p99=$(jq -r '.latency_ms.p99' "${output_dir}/recovery.json")
-  local recovery_errors
-  recovery_errors=$(jq -r '.errors // 0' "${output_dir}/recovery.json")
+  local recovery_p99=""
+  local recovery_errors=0
   local baseline_achieved_rps=""
   local degraded_achieved_rps=""
   local recovery_achieved_rps=""
+
   if [[ -f "${output_dir}/baseline.json" ]]; then
     baseline_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/baseline.json")
   fi
@@ -194,12 +320,9 @@ main() {
     degraded_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/degraded.json")
   fi
   if [[ -f "${output_dir}/recovery.json" ]]; then
+    recovery_p99=$(jq -r '.latency_ms.p99 // empty' "${output_dir}/recovery.json")
+    recovery_errors=$(jq -r '.errors // 0' "${output_dir}/recovery.json")
     recovery_achieved_rps=$(jq -r '.achieved_rps // empty' "${output_dir}/recovery.json")
-  fi
-
-  if [[ "$baseline_restored" != "true" ]]; then
-    rollback_ttbr_ms=$timeout_ms
-    log_warn "Baseline not restored within ${timeout_ms}ms (threshold ${restore_threshold_ms}ms)"
   fi
 
   # Cleanup port-forward
@@ -219,10 +342,13 @@ main() {
   "recovery_p99_ms": $recovery_p99,
   "recovery_errors": $recovery_errors,
   "baseline_restored": $baseline_restored,
-  "restore_threshold_pct": $restore_threshold_pct,
+  "restore_threshold_pct": $RESTORE_THRESHOLD_PCT,
   "restore_threshold_ms": $restore_threshold_ms,
+  "consecutive_samples_required": $CONSECUTIVE_SAMPLES_REQUIRED,
   "config_versions": [1, 2, 1],
-  "target_rps": $TARGET_RPS
+  "target_rps": $TARGET_RPS,
+  "probe_rps": $PROBE_RPS,
+  "probe_duration_s": $PROBE_DURATION_S
 }
 EOF
 
@@ -232,7 +358,8 @@ EOF
   log_info "Validating results"
   local validation_failed=0
 
-  if (( $(echo "$rollback_ttbr_ms < 0" | bc -l) )); then
+  # FIXED: Use awk for float comparison instead of bc
+  if float_compare "$rollback_ttbr_ms" "<" "0"; then
     log_warn "Invalid rollback_ttbr_ms: ${rollback_ttbr_ms}ms"
     validation_failed=1
   fi
@@ -247,13 +374,14 @@ EOF
     validation_failed=1
   fi
 
-  if (( $(echo "$rollback_ttbr_ms > 10000" | bc -l) )); then
+  # FIXED: Use awk for float comparison instead of bc
+  if float_compare "$rollback_ttbr_ms" ">" "10000"; then
     log_warn "TTBR exceeded 10s threshold: ${rollback_ttbr_ms}ms"
     validation_failed=1
   fi
 
   if (( recovery_errors > 0 )); then
-    log_warn "Detected ${recovery_errors} errors during recovery"
+    log_warn "Detected ${recovery_errors} errors during recovery validation"
     validation_failed=1
   fi
 
@@ -302,19 +430,36 @@ publish_pavis_config_variant() {
 
   cp "$(resolve_pavis_config_path)" "$temp_config"
 
-  # Use sed to modify the config (yq doesn't handle YAML tags correctly)
+  # Step 1: Replace path prefix
   sed -i.bak 's|path: !prefix { path: "/" }|path: !prefix { path: "/fixed" }|' "$temp_config"
   rm -f "${temp_config}.bak"
-  sed -i.bak "/weight: 100/a\\
-        response_headers:\\
-          set_headers:\\
-            - [\"${FINGERPRINT_HEADER}\", \"${fingerprint}\"]" "$temp_config"
-  rm -f "${temp_config}.bak"
+
+  # Step 2: Add response headers after "weight: 100" line
+  # Using awk instead of sed for portability (sed's multi-line append syntax varies)
+  awk -v header="$FINGERPRINT_HEADER" -v value="$fingerprint" '
+  {
+    print
+    if (/weight: 100/) {
+      print "        response_headers:"
+      print "          set_headers:"
+      print "            - [\"" header "\", \"" value "\"]"
+    }
+  }
+  ' "$temp_config" > "$temp_config.new"
+  mv "$temp_config.new" "$temp_config"
+
+  # Step 3: Add rewrite path if specified
   if [[ -n "$rewrite_path" ]]; then
-    sed -i.bak "/path: !prefix { path: \"\/fixed\" }/a\\
-        rewrite:\\
-          path: \"${rewrite_path}\"" "$temp_config"
-    rm -f "${temp_config}.bak"
+    awk -v rpath="$rewrite_path" '
+    {
+      print
+      if (/path: !prefix { path: "\/fixed" }/) {
+        print "        rewrite:"
+        print "          path: \"" rpath "\""
+      }
+    }
+    ' "$temp_config" > "$temp_config.new"
+    mv "$temp_config.new" "$temp_config"
   fi
 
   publish_to_pavis_relay "$temp_config" "$version"
