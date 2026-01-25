@@ -3,8 +3,11 @@ use async_trait::async_trait;
 use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use pingora::services::Service;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub struct MetricsWorker {
     addr: SocketAddr,
@@ -127,6 +130,90 @@ async fn serve_metrics(
 #[derive(Clone)]
 pub struct MetricsHandle {
     _handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
+}
+
+pub const POOL_KEY_CARDINALITY_CAP: usize = 1024;
+
+pub struct PoolKeyCardinalitySnapshot {
+    pub cardinality: usize,
+    pub saturated: bool,
+}
+
+struct BoundedKeySet {
+    cap: usize,
+    ttl: Duration,
+    entries: HashMap<u64, Instant>,
+    order: VecDeque<(u64, Instant)>,
+}
+
+impl BoundedKeySet {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            ttl: Duration::from_secs(60),
+            entries: HashMap::with_capacity(cap),
+            order: VecDeque::with_capacity(cap),
+        }
+    }
+
+    fn insert(&mut self, key: u64) -> PoolKeyCardinalitySnapshot {
+        let now = Instant::now();
+        self.entries.insert(key, now);
+        self.order.push_back((key, now));
+        self.evict_expired(now);
+        self.evict_over_cap();
+
+        PoolKeyCardinalitySnapshot {
+            cardinality: self.entries.len(),
+            saturated: self.entries.len() >= self.cap,
+        }
+    }
+
+    fn evict_expired(&mut self, now: Instant) {
+        while let Some((key, ts)) = self.order.front().copied() {
+            if now.duration_since(ts) <= self.ttl {
+                break;
+            }
+            self.order.pop_front();
+            if self.entries.get(&key).is_some_and(|seen| *seen == ts) {
+                self.entries.remove(&key);
+            }
+        }
+    }
+
+    fn evict_over_cap(&mut self) {
+        while self.entries.len() > self.cap {
+            if let Some((key, ts)) = self.order.pop_front() {
+                if self.entries.get(&key).is_some_and(|seen| *seen == ts) {
+                    self.entries.remove(&key);
+                }
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+pub struct PoolKeyCardinalityTracker {
+    cap: usize,
+    inner: Mutex<HashMap<String, BoundedKeySet>>,
+}
+
+impl PoolKeyCardinalityTracker {
+    pub fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            inner: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn record(&self, upstream: &str, key_hash: u64) -> PoolKeyCardinalitySnapshot {
+        let mut guard = self.inner.lock().expect("pool key tracker lock poisoned");
+        let entry = guard
+            .entry(upstream.to_string())
+            .or_insert_with(|| BoundedKeySet::new(self.cap));
+        entry.insert(key_hash)
+    }
 }
 
 impl MetricsHandle {
@@ -260,6 +347,36 @@ impl MetricsHandle {
         gauge!("pavis_upstream_pool_size", "upstream" => upstream.to_string()).set(size);
     }
 
+    pub fn record_pool_key_cardinality(&self, upstream: &str, cardinality: usize, saturated: bool) {
+        let reported = if saturated {
+            (POOL_KEY_CARDINALITY_CAP + 1) as f64
+        } else {
+            cardinality as f64
+        };
+        gauge!(
+            "pavis_upstream_pool_key_cardinality_approx",
+            "upstream" => upstream.to_string()
+        )
+        .set(reported);
+    }
+
+    pub fn record_connection_reused(&self, upstream: &str) {
+        counter!(
+            "pavis_upstream_connection_reused_total",
+            "upstream" => upstream.to_string()
+        )
+        .increment(1);
+    }
+
+    pub fn record_connection_new(&self, upstream: &str, reason: &str) {
+        counter!(
+            "pavis_upstream_connection_new_total",
+            "upstream" => upstream.to_string(),
+            "reason" => reason.to_string()
+        )
+        .increment(1);
+    }
+
     pub fn update_config_stats(&self, version: &str, size_bytes: u64) {
         gauge!("pavis_runtime_config_version", "version" => version.to_string()).set(1.0);
         gauge!("pavis_runtime_config_size_bytes").set(size_bytes as f64);
@@ -383,6 +500,9 @@ mod tests {
 
             // Pool recording
             handle.record_pool_size("backend-1", 10.0);
+            handle.record_pool_key_cardinality("backend-1", 12, false);
+            handle.record_connection_reused("backend-1");
+            handle.record_connection_new("backend-1", "new_connection");
 
             // Route match recording
             let verdict = MatchVerdict {

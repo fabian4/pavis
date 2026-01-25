@@ -40,6 +40,8 @@ pavis --config /etc/pavis/config.pvs \
 **Environment Variables:**
 - `RUST_LOG`: Logging level (`info`, `debug`, `trace`)
   - Example: `RUST_LOG=pavis=debug,pavis_core=trace`
+- `MALLOC_CONF`: Jemalloc tuning (non-MSVC builds only).
+  - Example: `MALLOC_CONF=background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000`
 
 ---
 

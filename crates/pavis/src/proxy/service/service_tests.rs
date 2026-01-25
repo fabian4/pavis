@@ -281,6 +281,8 @@ fn mtls_upstream(
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
             sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
             cert: ClientCert::Enabled {
                 cert_path: pavis_core::Path(cert_path.to_string_lossy().to_string()),
                 key_path: pavis_core::Path(key_path.to_string_lossy().to_string()),
@@ -530,6 +532,8 @@ async fn upstream_peer_defaults_sni() {
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Full,
             sni: pavis_core::SniName::Name(Hostname("example.com".to_string())),
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
         })
@@ -586,6 +590,8 @@ async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Full,
             sni: pavis_core::SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
         })
@@ -1490,6 +1496,8 @@ async fn test_upstream_peer_tls_verify_variants() {
     upstream_base.tls = TlsPolicy::Enabled {
         verify: pavis_core::TlsVerify::Disabled,
         sni: SniName::Name(Hostname("example.com".to_string())),
+        canonical_sni: pavis_core::CanonicalSni::Disabled,
+        reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
         cert: pavis_core::ClientCert::Disabled,
         ca: UpstreamCa::System,
     };
@@ -1737,6 +1745,8 @@ async fn upstream_peer_tls_and_pool_variants() {
     upstream.tls = TlsPolicy::Enabled {
         verify: pavis_core::TlsVerify::CaOnly,
         sni: pavis_core::SniName::Name(Hostname("custom.sni".to_string())),
+        canonical_sni: pavis_core::CanonicalSni::Disabled,
+        reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
         cert: pavis_core::ClientCert::Disabled,
         ca: UpstreamCa::System,
     };
@@ -1789,6 +1799,8 @@ async fn upstream_peer_sni_fallback_warning() {
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
             sni: pavis_core::SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
         })
@@ -1841,6 +1853,8 @@ async fn upstream_peer_sni_override_prevents_fallback() {
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
             sni: pavis_core::SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
         })
@@ -1895,6 +1909,8 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
         .tls(TlsPolicy::Enabled {
             verify: pavis_core::TlsVerify::Disabled,
             sni: pavis_core::SniName::Name(Hostname("explicit.com".to_string())),
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
             cert: pavis_core::ClientCert::Disabled,
             ca: UpstreamCa::System,
         })

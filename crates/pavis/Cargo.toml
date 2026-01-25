@@ -32,6 +32,7 @@ x509-parser = "0.16"
 ouroboros = "0.18"
 static_assertions = "1.1"
 compact_str = "0.9"
+tikv-jemallocator = "0.6"
 
 # Observability (Phase 5)
 metrics = "0.22"

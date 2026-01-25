@@ -3,10 +3,10 @@ use std::net::IpAddr;
 use std::num::{NonZeroU16, NonZeroU32};
 
 use pavis_core::{
-    ActiveHealthCheck, CircuitBreakerPolicy, ClientCert, ClientCertChain, ConnectTimeout,
-    ConsecutiveErrors, Discovery, EndpointAddr, ErrorCode, FieldPathBuilder, MaxConnections,
-    MaxPendingRequests, OutlierDetectionPolicy, Path, PavisError, SniName, TlsVerify,
-    UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName,
+    ActiveHealthCheck, CanonicalSni, CircuitBreakerPolicy, ClientCert, ClientCertChain,
+    ConnectTimeout, ConsecutiveErrors, Discovery, EndpointAddr, ErrorCode, FieldPathBuilder,
+    MaxConnections, MaxPendingRequests, OutlierDetectionPolicy, Path, PavisError, ReuseAcrossSni,
+    SniName, TlsVerify, UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName,
 };
 
 use crate::config::types::{
@@ -146,6 +146,32 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
                             u.name
                         ));
                     }
+                    let canonical_sni = match t.canonical_sni {
+                        Some(name) => {
+                            if name.trim().is_empty() {
+                                return Err(anyhow::anyhow!(
+                                    "upstream '{}' canonical_sni cannot be empty",
+                                    u.name
+                                ));
+                            }
+                            CanonicalSni::Enabled {
+                                name: pavis_core::Hostname(name),
+                            }
+                        }
+                        None => CanonicalSni::Disabled,
+                    };
+                    let reuse_across_sni = match t.reuse_across_sni.unwrap_or(false) {
+                        true => ReuseAcrossSni::Enabled,
+                        false => ReuseAcrossSni::Disabled,
+                    };
+                    if matches!(reuse_across_sni, ReuseAcrossSni::Enabled)
+                        && matches!(verify, TlsVerify::Disabled)
+                    {
+                        return Err(anyhow::anyhow!(
+                            "upstream '{}' reuse_across_sni requires verify != disabled",
+                            u.name
+                        ));
+                    }
                     let ca = match t.ca_bundle_path {
                         Some(path) => {
                             if path.trim().is_empty() {
@@ -215,6 +241,8 @@ pub(super) fn to_runtime(upstreams: Vec<Upstream>) -> Result<Vec<pavis_core::Ups
                     pavis_core::TlsPolicy::Enabled {
                         verify,
                         sni,
+                        canonical_sni,
+                        reuse_across_sni,
                         cert,
                         ca,
                     }
@@ -361,6 +389,8 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Result<Vec<U
             pavis_core::TlsPolicy::Enabled {
                 verify,
                 sni,
+                canonical_sni,
+                reuse_across_sni,
                 cert,
                 ca,
             } => {
@@ -415,12 +445,26 @@ pub(super) fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Result<Vec<U
                     #[allow(unreachable_patterns)]
                     _ => None,
                 };
+                let canonical_sni = match canonical_sni {
+                    CanonicalSni::Disabled => None,
+                    CanonicalSni::Enabled { name } => Some(name.0),
+                    #[allow(unreachable_patterns)]
+                    _ => None,
+                };
+                let reuse_across_sni = match reuse_across_sni {
+                    ReuseAcrossSni::Enabled => Some(true),
+                    ReuseAcrossSni::Disabled => None,
+                    #[allow(unreachable_patterns)]
+                    _ => None,
+                };
                 Some(UpstreamTlsConfig {
                     enabled: Some(true),
                     verify_hostname: Some(verify_hostname),
                     verify_cert: Some(verify_cert),
                     sni,
                     sni_mode,
+                    canonical_sni,
+                    reuse_across_sni,
                     ca_bundle_path,
                     cert: cert_config,
                 })
@@ -852,6 +896,8 @@ mod tests {
                 verify_cert: None,
                 sni: None,
                 sni_mode: None,
+                canonical_sni: None,
+                reuse_across_sni: None,
                 ca_bundle_path: None,
                 cert: None,
             }),
@@ -886,6 +932,8 @@ mod tests {
                     verify_cert: Some(cert),
                     sni: None,
                     sni_mode: None,
+                    canonical_sni: None,
+                    reuse_across_sni: None,
                     ca_bundle_path: None,
                     cert: None,
                 }),
@@ -917,6 +965,8 @@ mod tests {
                 verify_cert: Some(true),
                 sni: None,
                 sni_mode: Some(SniMode::Disabled),
+                canonical_sni: None,
+                reuse_across_sni: None,
                 ca_bundle_path: None,
                 cert: None,
             }),
@@ -951,6 +1001,8 @@ mod tests {
                 verify_cert: Some(true),
                 sni: None,
                 sni_mode: Some(SniMode::Name),
+                canonical_sni: None,
+                reuse_across_sni: None,
                 ca_bundle_path: None,
                 cert: None,
             }),
@@ -982,6 +1034,8 @@ mod tests {
                 verify_cert: Some(true),
                 sni: Some("example.com".to_string()),
                 sni_mode: Some(SniMode::Auto),
+                canonical_sni: None,
+                reuse_across_sni: None,
                 ca_bundle_path: None,
                 cert: None,
             }),
@@ -1016,6 +1070,8 @@ mod tests {
                 verify_cert: Some(true),
                 sni: Some("example.com".to_string()),
                 sni_mode: None,
+                canonical_sni: None,
+                reuse_across_sni: None,
                 ca_bundle_path: None,
                 cert: Some(ClientCertConfig {
                     cert_path: "c.pem".to_string(),
@@ -1055,6 +1111,8 @@ mod tests {
                 verify_cert: Some(true),
                 sni: Some("example.com".to_string()),
                 sni_mode: None,
+                canonical_sni: None,
+                reuse_across_sni: None,
                 ca_bundle_path: None,
                 cert: Some(ClientCertConfig {
                     cert_path: "c.pem".to_string(),
@@ -1336,6 +1394,8 @@ mod tests {
                 verify_cert: Some(true),
                 sni: Some("example.com".to_string()),
                 sni_mode: None,
+                canonical_sni: None,
+                reuse_across_sni: None,
                 ca_bundle_path: None,
                 cert: Some(ClientCertConfig {
                     cert_path: "c.pem".to_string(),
@@ -1373,6 +1433,7 @@ mod tests {
                 sni,
                 cert,
                 ca,
+                ..
             } => {
                 assert!(matches!(verify, pavis_core::TlsVerify::Full));
                 match sni {
@@ -1430,6 +1491,8 @@ mod tests {
             .tls(TlsPolicy::Enabled {
                 verify: TlsVerify::Disabled,
                 sni: SniName::Auto,
+                canonical_sni: pavis_core::CanonicalSni::Disabled,
+                reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
                 cert: ClientCert::Disabled,
                 ca: pavis_core::UpstreamCa::System,
             })

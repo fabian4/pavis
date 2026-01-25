@@ -210,9 +210,41 @@ pub enum TlsPolicy {
     Enabled {
         verify: TlsVerify,
         sni: SniName,
+        canonical_sni: CanonicalSni,
+        reuse_across_sni: ReuseAcrossSni,
         cert: ClientCert,
         ca: UpstreamCa,
     },
+}
+
+#[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+#[repr(u8)]
+#[non_exhaustive]
+pub enum CanonicalSni {
+    Disabled,
+    Enabled { name: Hostname },
+}
+
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+#[repr(u8)]
+#[non_exhaustive]
+pub enum ReuseAcrossSni {
+    Disabled,
+    Enabled,
 }
 
 #[derive(Archive, RkyvDeserialize, RkyvSerialize, bytecheck::CheckBytes, Debug, Clone)]

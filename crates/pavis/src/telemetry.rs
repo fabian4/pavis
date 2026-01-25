@@ -17,6 +17,7 @@ pub mod tracing;
 pub struct Telemetry {
     pub access_log: Arc<access_log::AccessLog>,
     pub metrics: Option<Arc<metrics::MetricsHandle>>,
+    pub pool_key_tracker: Option<Arc<metrics::PoolKeyCardinalityTracker>>,
     // Tracing runtime is initialized asynchronously in TracingService.
     pub tracing: Arc<OnceLock<tracing::TracingRuntime>>,
 }
@@ -45,6 +46,11 @@ impl Telemetry {
 
         // Prepare tracing slots
         let tracing_slot = Arc::new(OnceLock::new());
+        let pool_key_tracker = metrics_handle.as_ref().map(|_| {
+            Arc::new(metrics::PoolKeyCardinalityTracker::new(
+                metrics::POOL_KEY_CARDINALITY_CAP,
+            ))
+        });
 
         let tracing_service = tracing::TracingService::new(
             config.tracing.clone(),
@@ -56,6 +62,7 @@ impl Telemetry {
             Self {
                 access_log: Arc::new(access_log),
                 metrics: metrics_handle,
+                pool_key_tracker,
                 tracing: tracing_slot,
             },
             access_log_worker,

@@ -62,6 +62,7 @@ Configuration processing **MUST** proceed through distinct stages to enforce the
 *   **Explicit State**: Configuration fields are strictly typed. `Option<T>` in the Runtime implies "Enabled/Disabled", never "Use Default".
 *   **Deterministic Time**: All time-based parameters **MUST** be materialized as fixed integer milliseconds.
 *   **Fail-Closed**: If the Runtime encounters a configuration state it cannot execute (e.g., invalid regex that passed validation), it **MUST** abort or fail-closed. It **MUST NOT** fall back to an insecure open state.
+*   **TLS SNI Stability**: The Codec may materialize `canonical_sni` to stabilize pooling. `reuse_across_sni` is an explicit, opt-in policy that requires verification to remain enabled.
 
 ## 4. Runtime Architecture
 

@@ -306,6 +306,8 @@ routes:
             .tls(TlsPolicy::Enabled {
                 verify: TlsVerify::CaOnly,
                 sni: pavis_core::SniName::Name(pavis_core::Hostname("backend.local".to_string())),
+                canonical_sni: pavis_core::CanonicalSni::Disabled,
+                reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
                 cert: pavis_core::ClientCert::Disabled,
                 ca: pavis_core::UpstreamCa::System,
             })

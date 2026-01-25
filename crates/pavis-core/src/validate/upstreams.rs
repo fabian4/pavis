@@ -1,4 +1,4 @@
-use crate::runtime::{ActiveHealthCheck, SniName, TlsPolicy, TlsVerify, Upstream};
+use crate::runtime::{ActiveHealthCheck, ReuseAcrossSni, SniName, TlsPolicy, TlsVerify, Upstream};
 use std::collections::HashSet;
 
 use super::{CoreValidationError, CoreValidationResult};
@@ -24,6 +24,18 @@ pub(super) fn validate_upstreams(upstreams: &[Upstream]) -> CoreValidationResult
             return Err(CoreValidationError::UpstreamTlsSniDisabled(
                 u.name.0.clone(),
             ));
+        }
+        if matches!(
+            &u.tls,
+            TlsPolicy::Enabled {
+                verify: TlsVerify::Disabled,
+                reuse_across_sni: ReuseAcrossSni::Enabled,
+                ..
+            }
+        ) {
+            return Err(
+                CoreValidationError::UpstreamTlsReuseAcrossSniRequiresVerify(u.name.0.clone()),
+            );
         }
         if let ActiveHealthCheck::Enabled {
             path,

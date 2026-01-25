@@ -288,7 +288,7 @@ mod tests {
         let output = format_header(&header);
         assert!(output.contains("--- Pavis Header ---"));
         assert!(output.contains("Magic: \"PAVS\""));
-        assert!(output.contains("Version: 0"));
+        assert!(output.contains(&format!("Version: {}", PAVIS_VERSION)));
         assert!(output.contains("Algorithm: 1"));
         assert!(output.contains(&hex::encode([0xAB; 32])));
     }

@@ -101,6 +101,36 @@ cleanup_test() {
     fi
 }
 
+port_in_use() {
+    local port="$1"
+
+    if command -v lsof >/dev/null 2>&1; then
+        if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    if command -v ss >/dev/null 2>&1; then
+        if ss -ltn "sport = :$port" 2>/dev/null | tail -n +2 | grep -q .; then
+            return 0
+        fi
+    fi
+
+    if command -v netstat >/dev/null 2>&1; then
+        if netstat -an 2>/dev/null | awk '$1 ~ /tcp/ && $NF ~ /LISTEN/' | grep -E "[:.]$port\$" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    if command -v nc >/dev/null 2>&1; then
+        if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 get_free_port() {
     local attempts=200
     local port
@@ -111,18 +141,18 @@ get_free_port() {
             attempts=$((attempts - 1))
             continue
         fi
-        if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+        if port_in_use "$port"; then
             attempts=$((attempts - 1))
             continue
         fi
-        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+        sleep 0.02
+        if port_in_use "$port"; then
             attempts=$((attempts - 1))
             continue
         fi
         USED_PORTS="$USED_PORTS $port"
         echo "$port"
         return 0
-        attempts=$((attempts - 1))
     done
     return 1
 }

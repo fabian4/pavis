@@ -26,6 +26,8 @@ pub enum CoreValidationError {
     MissingTlsFiles,
     #[error("upstream '{0}' has verify=full with sni=disabled")]
     UpstreamTlsSniDisabled(String),
+    #[error("upstream '{0}' has reuse_across_sni enabled with verify=disabled")]
+    UpstreamTlsReuseAcrossSniRequiresVerify(String),
     #[error(
         "upstream '{0}' has verify=full with sni=auto but no DNS endpoints or route host rewrite"
     )]
@@ -119,7 +121,9 @@ fn validate_sni_auto_requires_dns_or_rewrite(
     routes: &[crate::runtime::VirtualHost],
     upstreams: &[crate::runtime::Upstream],
 ) -> CoreValidationResult<()> {
-    use crate::runtime::{EndpointAddr, RewriteHost, SniName, TlsPolicy, TlsVerify};
+    use crate::runtime::{
+        CanonicalSni, EndpointAddr, ReuseAcrossSni, RewriteHost, SniName, TlsPolicy, TlsVerify,
+    };
     use std::collections::HashMap;
 
     #[derive(Default)]
@@ -131,12 +135,21 @@ fn validate_sni_auto_requires_dns_or_rewrite(
     let mut needs_override: HashMap<&UpstreamName, OverrideState> = HashMap::new();
     for upstream in upstreams {
         let tls = match &upstream.tls {
-            TlsPolicy::Enabled { verify, sni, .. } => (verify, sni),
+            TlsPolicy::Enabled {
+                verify,
+                sni,
+                canonical_sni,
+                reuse_across_sni,
+                ..
+            } => (verify, sni, canonical_sni, reuse_across_sni),
             TlsPolicy::Disabled => continue,
             #[allow(unreachable_patterns)]
             _ => continue,
         };
-        if !matches!(tls, (TlsVerify::Full, SniName::Auto)) {
+        if !matches!(tls, (TlsVerify::Full, SniName::Auto, _, _)) {
+            continue;
+        }
+        if matches!(tls.2, CanonicalSni::Enabled { .. }) {
             continue;
         }
 
@@ -144,7 +157,13 @@ fn validate_sni_auto_requires_dns_or_rewrite(
             .endpoints
             .iter()
             .any(|ep| matches!(ep.address, EndpointAddr::Dns { .. }));
-        if !has_dns {
+        if matches!(tls.3, ReuseAcrossSni::Enabled) {
+            if !has_dns {
+                return Err(CoreValidationError::UpstreamTlsAutoSniRequiresDns(
+                    upstream.name.0.clone(),
+                ));
+            }
+        } else if !has_dns {
             needs_override.insert(&upstream.name, OverrideState::default());
         }
     }
@@ -307,6 +326,8 @@ mod tests {
                 tls: TlsPolicy::Enabled {
                     verify: TlsVerify::Full,
                     sni: SniName::Name(Hostname("example.com".to_string())),
+                    canonical_sni: crate::runtime::CanonicalSni::Disabled,
+                    reuse_across_sni: crate::runtime::ReuseAcrossSni::Disabled,
                     cert: ClientCert::Disabled,
                     ca: UpstreamCa::System,
                 },

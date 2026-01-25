@@ -78,7 +78,9 @@ Applied at the listener level. Requires `cert_path` and `key_path`.
 
 ### Outbound TLS (Origination)
 Enable TLS for upstream connections by adding a `tls: {}` block to an upstream.
-- **SNI**: Defaults to `auto`. If `verify=full`, you must use DNS discovery or a route host rewrite.
+- **SNI**: Defaults to `auto`. If `verify=full`, you must use DNS discovery or a route host rewrite unless `canonical_sni` is set.
+- **Canonical SNI**: `canonical_sni` pins the handshake SNI and pool key to a stable value for better connection reuse.
+- **Reuse Across SNI**: `reuse_across_sni` forces reuse across SNI values and requires valid certificates for all hosts.
 - [Reference: `upstreams[].tls`](./runtime-config.reference.md#upstreams)
 
 ### Outbound mTLS

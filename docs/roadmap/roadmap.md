@@ -181,6 +181,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 - [ ] **[Bench] Protocol & Payload Coverage**: Add TLS-on/TLS-off variants, HTTP/2/gRPC workloads, and large-payload/streaming cases so production traffic patterns are exercised.
 - [ ] **[Bench] Saturation Profiles**: Implement a combined high-concurrency + open-loop saturation case and the memory-limited resource profile promised in the methodology.
 - [ ] **[Bench] Metrics & Reporting**: Surface target-vs-achieved RPS deltas, p999 for closed-loop tests, detailed error classes, and network/disk stats, then embed host hardware summaries, Docker image digests, and cpuset verification data directly in the generated reports for auditability.
+- [ ] **[Bench][Bug] System upstream name DNS collision**: In system benchmarks, upstream named `backend` resolves via cluster DNS to a public domain (`backend.fabianbao.xyz`), causing 502s and preventing version/fingerprint checks. Workaround: system-mode configs now use `local-backend`. Root cause suspected: runtime resolves upstream by name instead of configured endpoint address; needs core fix.
 
 ---
 

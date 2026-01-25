@@ -15,14 +15,17 @@ use pingora::ErrorType;
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
+use pingora::protocols::Digest;
 use pingora::proxy::{ProxyHttp, Session};
 use rand::Rng;
 use rustls::RootCertStore;
 use std::borrow::Cow;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -48,6 +51,8 @@ impl opentelemetry::propagation::Injector for HeaderInjector<'_> {
 }
 
 static CLOCK_UNDERFLOW_WARNED: AtomicBool = AtomicBool::new(false);
+static POOL_KEY_LOG_COUNTER: AtomicU64 = AtomicU64::new(0);
+static SNI_FRAGMENT_WARN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn request_id_timestamp(now: std::time::SystemTime) -> u128 {
     match now.duration_since(std::time::UNIX_EPOCH) {
@@ -80,6 +85,53 @@ fn apply_route_headers(ctx: &mut RouterContext, route: &pavis_core::Route) {
 
 fn core_duration_to_std(duration: &pavis_core::Duration) -> Duration {
     Duration::from_millis(duration.0.get() as u64)
+}
+
+fn reuse_key_hash(
+    addr: &SocketAddr,
+    sni: &str,
+    verify_mode: Option<pavis_core::TlsVerify>,
+    cert: Option<&pavis_core::ClientCert>,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    addr.to_string().hash(&mut hasher);
+    sni.hash(&mut hasher);
+    let verify_tag = match verify_mode {
+        Some(pavis_core::TlsVerify::Disabled) => 0u8,
+        Some(pavis_core::TlsVerify::CaOnly) => 1u8,
+        Some(pavis_core::TlsVerify::Full) => 2u8,
+        _ => 3u8,
+    };
+    verify_tag.hash(&mut hasher);
+    match cert {
+        Some(pavis_core::ClientCert::Enabled {
+            cert_path,
+            key_path,
+            chain,
+        }) => {
+            1u8.hash(&mut hasher);
+            cert_path.0.hash(&mut hasher);
+            key_path.0.hash(&mut hasher);
+            match chain {
+                pavis_core::ClientCertChain::None => 0u8.hash(&mut hasher),
+                pavis_core::ClientCertChain::Embedded => 1u8.hash(&mut hasher),
+                pavis_core::ClientCertChain::File { path } => {
+                    2u8.hash(&mut hasher);
+                    path.0.hash(&mut hasher);
+                }
+                #[allow(unreachable_patterns)]
+                _ => 3u8.hash(&mut hasher),
+            };
+        }
+        Some(pavis_core::ClientCert::Disabled) | None => {
+            0u8.hash(&mut hasher);
+        }
+        #[allow(unreachable_patterns)]
+        _ => {
+            4u8.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 fn resolve_route_timeout(timeout: Timeout) -> Option<Duration> {
@@ -468,38 +520,119 @@ impl ProxyHttp for Proxy {
             "forwarding request"
         );
 
-        let (use_tls, sni, verify_mode, cert, ca) = match &upstream.tls {
+        let (use_tls, sni_value, verify_mode, cert, ca) = match &upstream.tls {
             pavis_core::TlsPolicy::Disabled => (false, None, None, None, None),
             pavis_core::TlsPolicy::Enabled {
                 verify,
                 sni,
                 cert,
                 ca,
+                canonical_sni,
+                reuse_across_sni,
             } => {
-                let sni_value = match sni {
-                    pavis_core::SniName::Name(name) => {
-                        tracing::info!(
-                            upstream = %upstream_name.0,
-                            sni = %name.0,
-                            "Using explicit SNI for upstream"
-                        );
-                        Some(name.clone())
-                    }
-                    _ => resolve_sni(sni, ctx.sni_override.as_ref(), endpoint_host.as_ref()),
+                let canonical = match canonical_sni {
+                    pavis_core::CanonicalSni::Disabled => None,
+                    pavis_core::CanonicalSni::Enabled { name } => Some(name.clone()),
+                    #[allow(unreachable_patterns)]
+                    _ => None,
                 };
+
+                let sni_value = if let Some(name) = canonical {
+                    tracing::info!(
+                        upstream = %upstream_name.0,
+                        sni = %name.0,
+                        "Using canonical SNI for upstream"
+                    );
+                    Some(name)
+                } else if matches!(reuse_across_sni, pavis_core::ReuseAcrossSni::Enabled) {
+                    let fixed = match sni {
+                        pavis_core::SniName::Name(name) => Some(name.clone()),
+                        pavis_core::SniName::Auto => endpoint_host.clone(),
+                        pavis_core::SniName::Disabled => None,
+                        #[allow(unreachable_patterns)]
+                        _ => None,
+                    };
+                    if SNI_FRAGMENT_WARN_COUNTER
+                        .fetch_add(1, Ordering::Relaxed)
+                        .is_multiple_of(2048)
+                    {
+                        tracing::warn!(
+                            upstream = %upstream_name.0,
+                            sni_mode = ?sni,
+                            "reuse_across_sni enabled; upstream will reuse connections across SNI values"
+                        );
+                    }
+                    fixed
+                } else {
+                    match sni {
+                        pavis_core::SniName::Name(name) => {
+                            tracing::info!(
+                                upstream = %upstream_name.0,
+                                sni = %name.0,
+                                "Using explicit SNI for upstream"
+                            );
+                            Some(name.clone())
+                        }
+                        pavis_core::SniName::Auto => {
+                            if ctx.sni_override.is_some()
+                                && SNI_FRAGMENT_WARN_COUNTER
+                                    .fetch_add(1, Ordering::Relaxed)
+                                    .is_multiple_of(2048)
+                            {
+                                tracing::warn!(
+                                    upstream = %upstream_name.0,
+                                    "SNI override active without canonical SNI; connection reuse may fragment"
+                                );
+                            }
+                            resolve_sni(sni, ctx.sni_override.as_ref(), endpoint_host.as_ref())
+                        }
+                        _ => resolve_sni(sni, ctx.sni_override.as_ref(), endpoint_host.as_ref()),
+                    }
+                };
+
                 (true, sni_value, Some(*verify), Some(cert), Some(ca))
             }
             #[allow(unreachable_patterns)]
             _ => (false, None, None, None, None),
         };
 
-        if use_tls && matches!(verify_mode, Some(pavis_core::TlsVerify::Full)) && sni.is_none() {
+        if use_tls
+            && matches!(verify_mode, Some(pavis_core::TlsVerify::Full))
+            && sni_value.is_none()
+        {
             return Error::e_explain(
                 InternalError,
                 "TLS verify=full requires SNI (auto or explicit)",
             );
         }
-        let sni_string = sni.map(|name| name.0).unwrap_or_else(String::new);
+        let sni_label = sni_value.as_ref().map(|name| name.0.as_str()).unwrap_or("");
+        if let Some(tracker) = self.telemetry.pool_key_tracker.as_ref() {
+            let snapshot = tracker.record(
+                upstream_name.0.as_str(),
+                reuse_key_hash(&addr, sni_label, verify_mode, cert),
+            );
+            if let Some(metrics) = &self.telemetry.metrics {
+                metrics.record_pool_key_cardinality(
+                    upstream_name.0.as_str(),
+                    snapshot.cardinality,
+                    snapshot.saturated,
+                );
+            }
+            if POOL_KEY_LOG_COUNTER
+                .fetch_add(1, Ordering::Relaxed)
+                .is_multiple_of(4096)
+            {
+                tracing::debug!(
+                    upstream = %upstream_name.0,
+                    endpoint = %addr,
+                    sni = %sni_label,
+                    verify = ?verify_mode,
+                    "Observed upstream pool reuse key"
+                );
+            }
+        }
+
+        let sni_string = sni_value.map(|name| name.0).unwrap_or_else(String::new);
         let mut peer = HttpPeer::new(addr, use_tls, sni_string);
 
         if let Some(mode) = verify_mode {
@@ -628,6 +761,29 @@ impl ProxyHttp for Proxy {
         ctx.pool_permit = pool_permit;
 
         Ok(Box::new(peer))
+    }
+
+    async fn connected_to_upstream(
+        &self,
+        _session: &mut Session,
+        reused: bool,
+        _peer: &HttpPeer,
+        #[cfg(unix)] _fd: std::os::unix::io::RawFd,
+        #[cfg(windows)] _sock: std::os::windows::io::RawSocket,
+        _digest: Option<&Digest>,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        if let (Some(metrics), Some(upstream)) = (
+            &self.telemetry.metrics,
+            ctx.upstream_name.as_ref().map(|name| name.0.as_str()),
+        ) {
+            if reused {
+                metrics.record_connection_reused(upstream);
+            } else {
+                metrics.record_connection_new(upstream, "new_connection");
+            }
+        }
+        Ok(())
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {

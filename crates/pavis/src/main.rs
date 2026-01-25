@@ -9,6 +9,8 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
 use tracing_subscriber::{Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
 use arc_swap::ArcSwap;
@@ -23,6 +25,10 @@ use pavis_core::{AccessLogPolicy, LogLevel, RuntimeConfig, WorkerCount};
 use rustls::RootCertStore;
 use rustls::crypto::{CryptoProvider, ring};
 use std::sync::Once;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

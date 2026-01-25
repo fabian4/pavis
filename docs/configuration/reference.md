@@ -236,7 +236,22 @@ Defines how the proxy accepts inbound traffic.
 - **Default**: `auto`
 - **Allowed values**: `auto`, `name` (requires `sni`), `disabled`.
 - **Validation**: `verify=full` (both `verify_cert` and `verify_hostname` are `true`) requires `sni_mode` to be `auto` or `name`.
-- **Validation**: `verify=full` with `sni_mode=auto` requires DNS endpoints or a route host rewrite.
+- **Validation**: `verify=full` with `sni_mode=auto` requires DNS endpoints or a route host rewrite unless `canonical_sni` is set. If `reuse_across_sni` is enabled, DNS endpoints are required (host rewrite is ignored).
+
+### `upstreams[].tls.canonical_sni`
+- **Type**: `string`
+- **Required**: Optional
+- **Default**: Unset (disabled)
+- **Runtime Effect**: When set, the runtime uses this value for the TLS handshake **and** the pool reuse key, stabilizing connection reuse even when `sni_mode=auto`.
+- **Validation**: Must be non-empty. When set, the DNS/host rewrite requirement for `sni_mode=auto` does not apply.
+
+### `upstreams[].tls.reuse_across_sni`
+- **Type**: `boolean`
+- **Required**: Optional
+- **Default**: `false`
+- **Runtime Effect**: Forces connection reuse across SNI values by using a stable SNI for the handshake and pool key.
+- **Validation**: `verify_cert=false` is rejected when enabled. When enabled with `sni_mode=auto`, DNS endpoints are required (route host rewrite is ignored).
+- **Security**: Use only when the upstream certificate is valid for **all** hostnames served by the backend.
 
 ### `upstreams[].tls.ca_bundle_path`
 - **Type**: `string`

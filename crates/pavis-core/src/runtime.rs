@@ -39,9 +39,10 @@ pub use types::{
     ServiceName, Timeout, TryTimeout, UpstreamId, UpstreamName, Weight,
 };
 pub use upstream::{
-    ActiveHealthCheck, CircuitBreakerPolicy, ClientCert, ClientCertChain, ConnectionLimit,
-    Discovery, Endpoint, EndpointAddr, HttpVersion, LoadBalancer, OutlierDetectionPolicy, Pool,
-    PoolQueue, SniName, TlsPolicy, TlsVerify, Upstream, UpstreamCa,
+    ActiveHealthCheck, CanonicalSni, CircuitBreakerPolicy, ClientCert, ClientCertChain,
+    ConnectionLimit, Discovery, Endpoint, EndpointAddr, HttpVersion, LoadBalancer,
+    OutlierDetectionPolicy, Pool, PoolQueue, ReuseAcrossSni, SniName, TlsPolicy, TlsVerify,
+    Upstream, UpstreamCa,
 };
 
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};

@@ -48,6 +48,8 @@ pub struct UpstreamTlsConfig {
     pub sni: Option<String>,
     #[serde(rename = "sni_mode", alias = "sniMode")]
     pub sni_mode: Option<SniMode>,
+    pub canonical_sni: Option<String>,
+    pub reuse_across_sni: Option<bool>,
     #[serde(alias = "ca_bundle")]
     pub ca_bundle_path: Option<String>,
     pub cert: Option<ClientCertConfig>,

@@ -323,6 +323,8 @@ mod tests {
             .tls(TlsPolicy::Enabled {
                 verify: TlsVerify::Disabled,
                 sni: pavis_core::SniName::Auto,
+                canonical_sni: pavis_core::CanonicalSni::Disabled,
+                reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
                 cert: pavis_core::ClientCert::Enabled {
                     cert_path: pavis_core::Path(cert_path.to_string_lossy().to_string()),
                     key_path: pavis_core::Path(key_path.to_string_lossy().to_string()),
@@ -525,6 +527,8 @@ mod tests {
                 .tls(TlsPolicy::Enabled {
                     verify: TlsVerify::Full,
                     sni: pavis_core::SniName::Name(pavis_core::Hostname("example.com".to_string())),
+                    canonical_sni: pavis_core::CanonicalSni::Disabled,
+                    reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
                     cert: pavis_core::ClientCert::Disabled,
                     ca: UpstreamCa::File {
                         path: pavis_core::Path(ca_path.to_string_lossy().to_string()),

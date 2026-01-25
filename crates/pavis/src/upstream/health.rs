@@ -171,13 +171,37 @@ async fn probe_endpoint(
 
 fn health_check_host(upstream: &pavis_core::Upstream, endpoint: &EndpointAddr) -> Option<String> {
     match &upstream.tls {
-        TlsPolicy::Enabled { sni, .. } => match sni {
-            SniName::Name(name) => Some(name.0.clone()),
-            SniName::Auto => match endpoint {
-                EndpointAddr::Dns { host, .. } => Some(host.0.clone()),
+        TlsPolicy::Enabled {
+            sni,
+            canonical_sni,
+            reuse_across_sni,
+            ..
+        } => match canonical_sni {
+            pavis_core::CanonicalSni::Enabled { name } => Some(name.0.clone()),
+            pavis_core::CanonicalSni::Disabled => match reuse_across_sni {
+                pavis_core::ReuseAcrossSni::Enabled => match sni {
+                    SniName::Name(name) => Some(name.0.clone()),
+                    SniName::Auto => match endpoint {
+                        EndpointAddr::Dns { host, .. } => Some(host.0.clone()),
+                        _ => None,
+                    },
+                    SniName::Disabled => None,
+                    #[allow(unreachable_patterns)]
+                    _ => None,
+                },
+                pavis_core::ReuseAcrossSni::Disabled => match sni {
+                    SniName::Name(name) => Some(name.0.clone()),
+                    SniName::Auto => match endpoint {
+                        EndpointAddr::Dns { host, .. } => Some(host.0.clone()),
+                        _ => None,
+                    },
+                    SniName::Disabled => None,
+                    #[allow(unreachable_patterns)]
+                    _ => None,
+                },
+                #[allow(unreachable_patterns)]
                 _ => None,
             },
-            SniName::Disabled => None,
             #[allow(unreachable_patterns)]
             _ => None,
         },
@@ -315,6 +339,8 @@ mod tests {
         let u2 = make_upstream(TlsPolicy::Enabled {
             verify: TlsVerify::Full,
             sni: SniName::Disabled,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
             cert: ClientCert::Disabled,
             ca: UpstreamCa::System,
         });
@@ -325,6 +351,8 @@ mod tests {
         let u3 = make_upstream(TlsPolicy::Enabled {
             verify: TlsVerify::Full,
             sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
             cert: ClientCert::Disabled,
             ca: UpstreamCa::System,
         });
@@ -338,6 +366,8 @@ mod tests {
         let u4 = make_upstream(TlsPolicy::Enabled {
             verify: TlsVerify::Full,
             sni: SniName::Name(Hostname("custom.host".to_string())),
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
             cert: ClientCert::Disabled,
             ca: UpstreamCa::System,
         });
