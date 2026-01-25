@@ -4,13 +4,12 @@ version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
 
-[features]
-metrics = []
-
 [dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }
-hyper = { version = "0.14", features = ["server", "http1", "tcp", "client"] }
-http = "0.2"
+hyper = { version = "1.8.1", features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1.19", features = ["server", "http1", "tokio", "client", "client-legacy"] }
+http = "1.4"
+http-body-util = "0.1.3"
 bytes = "1.6"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }

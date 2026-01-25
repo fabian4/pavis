@@ -16,12 +16,12 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-tokio = { version = "1.37", features = ["full"] }
-anyhow = "1.0"
-serde = { version = "1.0", features = ["derive", "rc"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-async-trait = "0.1"
+tokio = { version = "1.49.0", features = ["full"] }
+anyhow = "1.0.100"
+serde = { version = "1.0.228", features = ["derive", "rc"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+async-trait = "0.1.89"
 
 [profile.release]
 lto = true

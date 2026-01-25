@@ -290,8 +290,9 @@ impl ConfigAgent {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err(self.record_validation_failure(err.into()));
         }
-        let state = RuntimeState::from_config(&validated)
+        let mut state = RuntimeState::from_config(&validated)
             .map_err(|err| self.record_validation_failure(err))?;
+        state.config_version = config_version;
 
         self.record_validation("ok", "none");
         tracing::info!(
@@ -310,6 +311,12 @@ impl ConfigAgent {
         self.set_last_applied_etag(expected_etag.clone());
         self.clear_last_rejected_etag();
         self.record_config_stats(config_version, Some(bytes.len() as u64), "applied update");
+        if let (Some(handle), Some(version)) = (self.metrics_handle(), config_version) {
+            let current = self.state.load();
+            if current.config_version == Some(version) {
+                handle.increment_reload_count();
+            }
+        }
 
         let callback = match self.on_update_callback.lock() {
             Ok(guard) => guard,

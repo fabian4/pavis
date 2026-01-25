@@ -73,6 +73,9 @@ spec:
         - name: proxy
           containerPort: 8080
           protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
         env:
         - name: PAVIS_RELAY_URL
           value: "http://pavis-relay:8090"

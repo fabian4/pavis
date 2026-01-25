@@ -195,6 +195,8 @@ fn new_ctx_defaults_are_empty() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -340,6 +342,8 @@ async fn request_filter_selects_weighted_destination() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -373,6 +377,8 @@ async fn request_filter_returns_404_when_no_route_matches() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -435,6 +441,8 @@ async fn request_filter_applies_rewrite_policy() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -496,6 +504,8 @@ async fn request_filter_skips_selection_when_no_destinations() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -551,6 +561,8 @@ async fn upstream_peer_defaults_sni() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -609,6 +621,8 @@ async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -637,6 +651,8 @@ async fn upstream_response_filter_applies_headers() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: Manager::new(&[]).expect("manager"),
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -677,6 +693,8 @@ async fn logging_handles_disabled_access_log() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
         upstream_manager: Manager::new(&[]).expect("manager"),
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -856,6 +874,8 @@ async fn upstream_peer_fails_when_no_upstream_in_ctx() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: Manager::new(&[]).expect("manager"),
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -879,6 +899,8 @@ async fn upstream_peer_fails_when_upstream_not_found() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: Manager::new(&[]).expect("manager"),
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -919,6 +941,8 @@ async fn upstream_peer_fails_when_no_endpoints() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: manager,
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -969,6 +993,8 @@ async fn upstream_peer_returns_503_when_pool_full() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: manager,
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1034,6 +1060,8 @@ async fn upstream_peer_returns_503_when_pool_wait_times_out() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: manager,
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1074,6 +1102,8 @@ async fn upstream_peer_errors_without_snapshot() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: Manager::new(&[upstream]).expect("manager"),
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1103,6 +1133,7 @@ async fn upstream_peer_uses_pinned_state_over_latest() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
         upstream_manager: Manager::new(&[upstream("new", 1, 8080)]).expect("manager"),
+        config_version: None,
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(proxy_state)),
@@ -1114,6 +1145,8 @@ async fn upstream_peer_uses_pinned_state_over_latest() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
         upstream_manager: Manager::new(&[]).expect("manager"),
+
+        config_version: None,
     });
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -1164,6 +1197,8 @@ async fn test_proxy_logging_with_upstream() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: Manager::new(&[]).expect("manager"),
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1207,6 +1242,8 @@ async fn request_filter_handles_redirect_action() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).unwrap()),
         upstream_manager: Manager::new(&[]).expect("manager"),
+
+        config_version: None,
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
@@ -1264,6 +1301,8 @@ async fn request_filter_handles_direct_action() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).unwrap()),
         upstream_manager: Manager::new(&[]).expect("manager"),
+
+        config_version: None,
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
@@ -1322,6 +1361,8 @@ async fn request_filter_redirect_with_different_status_codes() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).unwrap()),
         upstream_manager: Manager::new(&[]).expect("manager"),
+
+        config_version: None,
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
@@ -1378,6 +1419,8 @@ async fn request_filter_direct_with_custom_status() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).unwrap()),
         upstream_manager: Manager::new(&[]).expect("manager"),
+
+        config_version: None,
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
@@ -1455,6 +1498,8 @@ async fn test_upstream_request_filter() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: Manager::new(&[]).expect("manager"),
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1519,6 +1564,8 @@ async fn test_upstream_peer_tls_verify_variants() {
                 config: RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: Manager::new(&[u]).expect("manager"),
+
+                config_version: None,
             })),
             telemetry: test_telemetry(),
             ca_store: test_ca_store(),
@@ -1558,6 +1605,8 @@ async fn upstream_peer_sets_client_cert_key() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
             upstream_manager: manager,
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1616,6 +1665,8 @@ async fn test_request_filter_direct_response_with_headers() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(routes).unwrap()),
             upstream_manager: Manager::new(&[]).expect("manager"),
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1668,6 +1719,8 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
@@ -1727,6 +1780,8 @@ async fn upstream_peer_dns_supported() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: manager,
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1759,6 +1814,8 @@ async fn upstream_peer_tls_and_pool_variants() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: Manager::new(&[upstream]).expect("manager"),
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1820,6 +1877,8 @@ async fn upstream_peer_sni_fallback_warning() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: manager,
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1874,6 +1933,8 @@ async fn upstream_peer_sni_override_prevents_fallback() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: manager,
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -1930,6 +1991,8 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
             config: RuntimeState::default().config,
             router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
             upstream_manager: manager,
+
+            config_version: None,
         })),
         telemetry: test_telemetry(),
         ca_store: test_ca_store(),
@@ -2043,6 +2106,8 @@ async fn request_filter_denies_when_principal_not_any() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
@@ -2100,6 +2165,8 @@ async fn request_filter_allows_with_matching_identity() {
         config: RuntimeState::default().config,
         router: Arc::new(crate::router::Router::new(routes).expect("routes")),
         upstream_manager: manager,
+
+        config_version: None,
     };
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),

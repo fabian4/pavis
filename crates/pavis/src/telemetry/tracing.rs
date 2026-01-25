@@ -1,8 +1,12 @@
+use crate::telemetry::metrics::MetricsHandle;
 use async_trait::async_trait;
+use futures_util::future::BoxFuture;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::export::trace::{ExportResult, SpanData, SpanExporter};
 use opentelemetry_sdk::trace::{Config, Sampler};
 use pingora::services::Service;
+use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use tracing::{Event, Id, Subscriber};
@@ -261,12 +265,180 @@ where
 pub type TracingLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
 pub type ReloadHandle = ReloadableLayer<Registry>;
 
+pub fn maybe_init_tracing(
+    policy: &pavis_core::TracingPolicy,
+    service_name: &str,
+    reload_handle: Option<&ReloadHandle>,
+    runtime_slot: &Arc<OnceLock<TracingRuntime>>,
+    metrics: Option<Arc<MetricsHandle>>,
+) {
+    let pavis_core::TracingPolicy::Enabled {
+        sampling,
+        endpoint,
+        provider: _,
+    } = policy
+    else {
+        return;
+    };
+
+    if let Some(runtime) = runtime_slot.get() {
+        if let Some(handle) = reload_handle {
+            let tracer = runtime.provider.tracer("pavis");
+            let layer = tracing_opentelemetry::layer().with_tracer(tracer);
+            let boxed_layer: TracingLayer = if let Some(metrics) = &metrics {
+                let metrics_layer = SpanMetricsLayer::new(metrics.clone());
+                Box::new(metrics_layer.and_then(layer))
+            } else {
+                Box::new(layer)
+            };
+            handle.reload(boxed_layer);
+        }
+        return;
+    }
+
+    let result = opentelemetry_otlp::new_exporter()
+        .tonic()
+        .with_endpoint(endpoint)
+        .build_span_exporter();
+
+    match result {
+        Ok(exporter) => {
+            let exporter = if let Some(metrics) = &metrics {
+                MetricsSpanExporter::new(exporter, Some(metrics.clone()))
+            } else {
+                MetricsSpanExporter::new(exporter, None)
+            };
+            let sampling_rate = sampling.0 as f64 / 100.0;
+            let sampler = if sampling_rate >= 1.0 {
+                Sampler::AlwaysOn
+            } else if sampling_rate <= 0.0 {
+                Sampler::AlwaysOff
+            } else {
+                Sampler::TraceIdRatioBased(sampling_rate)
+            };
+
+            let config = Config::default().with_sampler(sampler).with_resource(
+                opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
+                    "service.name",
+                    service_name.to_string(),
+                )]),
+            );
+
+            let provider = opentelemetry_sdk::trace::TracerProvider::builder()
+                .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+                .with_config(config)
+                .build();
+
+            let tracer = provider.tracer("pavis");
+
+            let layer = tracing_opentelemetry::layer().with_tracer(tracer);
+            let boxed_layer: TracingLayer = if let Some(metrics) = &metrics {
+                let metrics_layer = SpanMetricsLayer::new(metrics.clone());
+                Box::new(metrics_layer.and_then(layer))
+            } else {
+                Box::new(layer)
+            };
+
+            if let Some(handle) = reload_handle {
+                handle.reload(boxed_layer);
+                ::tracing::info!("Tracing layer initialized and installed");
+            } else {
+                ::tracing::warn!("No reload handle provided for tracing");
+            }
+
+            let runtime = TracingRuntime { provider };
+            if runtime_slot.set(runtime).is_err() {
+                ::tracing::error!("Tracing runtime already initialized (unexpected)");
+            }
+        }
+        Err(e) => {
+            ::tracing::error!(error = %e, "Failed to build OTLP exporter");
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SpanMetricsLayer {
+    metrics: Arc<MetricsHandle>,
+}
+
+impl SpanMetricsLayer {
+    fn new(metrics: Arc<MetricsHandle>) -> Self {
+        Self { metrics }
+    }
+}
+
+impl<S> Layer<S> for SpanMetricsLayer
+where
+    S: Subscriber,
+{
+    fn on_new_span(&self, attrs: &tracing::span::Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let metadata = attrs.metadata();
+        if metadata.name() == "http_request" {
+            self.metrics.record_span_created();
+        }
+        let _ = (attrs, id, ctx);
+    }
+}
+
+struct MetricsSpanExporter<E> {
+    inner: E,
+    metrics: Option<Arc<MetricsHandle>>,
+}
+
+impl<E> MetricsSpanExporter<E> {
+    fn new(inner: E, metrics: Option<Arc<MetricsHandle>>) -> Self {
+        Self { inner, metrics }
+    }
+}
+
+impl<E> fmt::Debug for MetricsSpanExporter<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MetricsSpanExporter").finish()
+    }
+}
+
+impl<E> SpanExporter for MetricsSpanExporter<E>
+where
+    E: SpanExporter,
+{
+    fn export(&mut self, batch: Vec<SpanData>) -> BoxFuture<'static, ExportResult> {
+        let metrics = self.metrics.clone();
+        let fut = self.inner.export(batch);
+        Box::pin(async move {
+            match fut.await {
+                Ok(()) => {
+                    if let Some(handle) = metrics.as_ref() {
+                        handle.record_span_exported();
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if let Some(handle) = metrics.as_ref() {
+                        handle.record_tracing_export_error();
+                    }
+                    Err(err)
+                }
+            }
+        })
+    }
+
+    fn shutdown(&mut self) {
+        self.inner.shutdown();
+    }
+
+    fn force_flush(&mut self) -> BoxFuture<'static, ExportResult> {
+        self.inner.force_flush()
+    }
+}
+
 /// Background service that initializes and manages OpenTelemetry.
 pub struct TracingService {
     config: pavis_core::TracingPolicy,
     service_name: String,
     reload_handle: Option<ReloadHandle>,
     runtime_slot: Arc<OnceLock<TracingRuntime>>,
+    metrics: Option<Arc<MetricsHandle>>,
 }
 
 impl TracingService {
@@ -275,6 +447,7 @@ impl TracingService {
         service_name: String,
         reload_handle: Option<ReloadHandle>,
         runtime_slot: Arc<OnceLock<TracingRuntime>>,
+        metrics: Option<Arc<MetricsHandle>>,
     ) -> Self {
         // Set global propagator for context propagation (sync)
         opentelemetry::global::set_text_map_propagator(
@@ -286,6 +459,7 @@ impl TracingService {
             service_name,
             reload_handle,
             runtime_slot,
+            metrics,
         }
     }
 }
@@ -299,71 +473,19 @@ impl Service for TracingService {
         _threads: usize,
     ) {
         // 1. Initialize Tracing (if enabled)
-        if let pavis_core::TracingPolicy::Enabled {
-            provider: _, // Only OTLP supported for now
-            sampling,
-            endpoint,
-        } = &self.config
-        {
+        if let pavis_core::TracingPolicy::Enabled { endpoint, .. } = &self.config {
             ::tracing::info!(
                 service_name = %self.service_name,
                 endpoint = %endpoint,
                 "Initializing OpenTelemetry tracing (async)"
             );
-
-            // Initialize OTLP Exporter (Requires Tokio Context)
-            let result = opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_endpoint(endpoint)
-                .build_span_exporter();
-
-            match result {
-                Ok(exporter) => {
-                    let sampling_rate = sampling.0 as f64 / 100.0;
-                    let sampler = if sampling_rate >= 1.0 {
-                        Sampler::AlwaysOn
-                    } else if sampling_rate <= 0.0 {
-                        Sampler::AlwaysOff
-                    } else {
-                        Sampler::TraceIdRatioBased(sampling_rate)
-                    };
-
-                    let config = Config::default().with_sampler(sampler).with_resource(
-                        opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
-                            "service.name",
-                            self.service_name.clone(),
-                        )]),
-                    );
-
-                    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
-                        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-                        .with_config(config)
-                        .build();
-
-                    let tracer = provider.tracer("pavis");
-
-                    // Create the tracing-opentelemetry layer
-                    let layer = tracing_opentelemetry::layer().with_tracer(tracer);
-                    let boxed_layer: TracingLayer = Box::new(layer);
-
-                    // Install the layer via reload handle
-                    if let Some(handle) = &self.reload_handle {
-                        handle.reload(boxed_layer);
-                        ::tracing::info!("Tracing layer initialized and installed");
-                    } else {
-                        ::tracing::warn!("No reload handle provided for tracing");
-                    }
-
-                    // Publish runtime
-                    let runtime = TracingRuntime { provider };
-                    if self.runtime_slot.set(runtime).is_err() {
-                        ::tracing::error!("Tracing runtime already initialized (unexpected)");
-                    }
-                }
-                Err(e) => {
-                    ::tracing::error!(error = %e, "Failed to build OTLP exporter");
-                }
-            }
+            maybe_init_tracing(
+                &self.config,
+                &self.service_name,
+                self.reload_handle.as_ref(),
+                &self.runtime_slot,
+                self.metrics.clone(),
+            );
         }
 
         // 2. Wait for shutdown

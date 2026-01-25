@@ -28,7 +28,6 @@ It is designed to eliminate "backend noise" (application runtime overhead, GC pa
 | `GET` | `/fixed` | Returns fixed-size payload (default 64 bytes). | `application/octet-stream` |
 | `GET` | `/status/{code}` | Returns specified HTTP status (100-599) with fixed payload. | `application/octet-stream` |
 | `GET` | `/sleep?ms=N` | Sleeps for `N` ms (capped), then returns fixed payload. | `application/octet-stream` |
-| `GET` | `/metrics` | Prometheus metrics (request counts), if enabled. | `text/plain` |
 
 ### ⚙️ Configuration
 
@@ -259,4 +258,3 @@ These are intentional design choices to keep the tool simple and focused.
 
 - **[Benchmark Methodology](../../docs/benchmarks/methodology.md)**: How this backend is used in scientific benchmarks.
 - **[Benchmark README](../../bench/README.md)**: Full suite documentation.
-

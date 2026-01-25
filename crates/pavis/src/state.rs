@@ -12,6 +12,7 @@ pub struct RuntimeState {
     pub config: ValidatedRuntimeConfig,
     pub router: Arc<Router>,
     pub upstream_manager: Manager,
+    pub config_version: Option<u64>,
 }
 
 impl RuntimeState {
@@ -31,6 +32,7 @@ impl RuntimeState {
             config: config.clone(),
             router,
             upstream_manager,
+            config_version: None,
         })
     }
 }
@@ -65,6 +67,7 @@ impl Default for RuntimeState {
             config,
             router: Arc::new(Router::new(vec![]).expect("empty router")),
             upstream_manager: Manager::new(&[]).expect("empty upstream manager"),
+            config_version: None,
         }
     }
 }

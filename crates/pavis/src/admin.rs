@@ -65,8 +65,12 @@ impl AdminApiWorker {
             .sum();
 
         let body = format!(
-            r#"{{"version":"{}","uptime_seconds":{},"listeners":{},"upstreams":{},"routes":{}}}"#,
+            r#"{{"version":"{}","config_version":{},"uptime_seconds":{},"listeners":{},"upstreams":{},"routes":{}}}"#,
             env!("CARGO_PKG_VERSION"),
+            match state.config_version {
+                Some(version) => version.to_string(),
+                None => "null".to_string(),
+            },
             uptime_secs,
             state.config.listeners.len(),
             state.config.upstreams.len(),

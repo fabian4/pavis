@@ -62,7 +62,7 @@ run_case() {
     # Format the line
     local suite_upper
     suite_upper=$(echo "$suite" | tr '[:lower:]' '[:upper:]')
-    printf "[%s] %-40s " "$suite_upper" "$CASE_NAME"
+    printf "[%s] %-50s " "$suite_upper" "$CASE_NAME"
 
     TOTAL_CASES=$((TOTAL_CASES + 1))
     if [ "$status" -eq 0 ]; then
@@ -176,6 +176,7 @@ export TEST_SUITE="$SUITE_TARGET"
 # Generate run-level context.env for observability and artifact validation
 TEST_OUTPUT_DIR="${SCRIPT_DIR}/temp"
 mkdir -p "$TEST_OUTPUT_DIR"
+echo 0 > "$TEST_OUTPUT_DIR/port_alloc.state"
 if ! bash "${SCRIPT_DIR}/scripts/gen_context_env.sh" "$TEST_OUTPUT_DIR/context.env"; then
     echo "❌ Failed to generate run-level context.env"
     exit 1

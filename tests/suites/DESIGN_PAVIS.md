@@ -577,37 +577,37 @@ Tests comprehensive routing semantics in single artifact:
 
 ---
 
-### `80_observability_consistency`
+### `80_observability_metrics_contract`
 
 **Category**: Observability
 **Contracts**: D (Zero-Option)
 **Maturity**: L3
 
 **Scenario**:
-1. Start pavis with metrics, access log, and tracing enabled via mock relay
-2. Generate traffic: 2 requests to `/echo` and 1 request to `/consistent`
-3. Verify upstream echo contains `traceparent`
-4. Wait for access log entry for `/consistent` and validate upstream + status
-5. Scrape metrics, validate counters for `/echo`, `/consistent`, and upstream total
-6. **Cardinality protection**: Send 2 requests to unmatched paths
-7. Validate unmatched paths NOT in metrics
-8. **Hot reload test**: Publish new config, wait 2s, send traffic, validate counter persistence
+1. Start pavis with metrics + access log enabled (tracing disabled) via mock relay.
+2. Baseline metrics snapshot.
+3. Generate traffic and assert **no increase** in spans-created while tracing is disabled.
+4. Force access-log backpressure (bounded channel + throttled writer) and assert access-log dropped counter **delta ≥ 1**.
+5. Publish config v2 with tracing enabled and unreachable OTLP endpoint.
+6. **Reload oracle**: poll `/stats` until `config_version` transitions from v1 → v2.
+7. After transition, assert reload counter **delta ≥ 1**.
+8. Generate traffic and assert **spans-created** and **export-errors** counters **delta ≥ 1**.
+9. Verify gauge presence: `pavis_runtime_config_version{version="2"}` exists.
+10. Verify request metrics family contains expected `/echo` labels (no absolute counts).
 
 **Oracle**:
-- Upstream echo headers
-- Access log entries
-- Prometheus metrics text format
+- `/stats` config_version transition (reload activation)
+- Prometheus metrics text format (delta + presence checks)
 
 **Assertions**:
-- `traceparent` header present in upstream echo
-- Access log entry recorded for `/consistent` with upstream `backend-consistent` and status 200
-- `pavis_http_requests_total{route="/echo", status="200"} 2`
-- `pavis_http_requests_total{route="/consistent", status="200"} 1`
-- `pavis_upstream_requests_total{upstream="backend-consistent", status="200"} 3`
-- Unmatched paths not present in metrics (no label explosion)
-- After hot reload: `/echo` counter value = 3 (persistence)
+- Spans-created counter does **not** increase while tracing is disabled.
+- Access-log dropped counter increases under deterministic backpressure.
+- After `/stats` config_version transition, reload-count counter increases.
+- With tracing enabled and unreachable OTLP endpoint: spans-created and export-errors counters increase.
+- Gauge presence: `pavis_runtime_config_version{version="2"}` present.
+- Request metrics family includes `/echo` label set (no absolute counter totals).
 
-**Assessment**: PASS. Proves cross-signal consistency, label-cardinality protection, and metric persistence across hot reload.
+**Assessment**: PASS. Proves metrics contract, deterministic backpressure, reload activation semantics, and tracing export error behavior without external collectors.
 
 ---
 

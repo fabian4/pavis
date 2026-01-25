@@ -94,3 +94,99 @@ print_background_info() {
   printf 'Check progress: tail -f %s\n' "$log_file"
   printf '\n'
 }
+
+start_metrics_scrape() {
+  local output_file="$1"
+  local url="${BENCH_METRICS_URL:-}"
+  local interval="${BENCH_METRICS_INTERVAL_S:-2}"
+  local timeout="${BENCH_METRICS_TIMEOUT_S:-5}"
+  local startup_wait="${BENCH_METRICS_STARTUP_WAIT_S:-15}"
+  local kubectl_label="${BENCH_METRICS_KUBECTL_LABEL:-}"
+  local kubectl_container="${BENCH_METRICS_KUBECTL_CONTAINER:-}"
+  local kubectl_port="${BENCH_METRICS_KUBECTL_PORT:-}"
+  local kubectl_namespace="${BENCH_METRICS_KUBECTL_NAMESPACE:-bench-system}"
+
+  if [[ -z "$url" && -z "$kubectl_label" ]]; then
+    return 0
+  fi
+
+  ensure_dir "$(dirname "$output_file")"
+
+  (
+    scrape_once() {
+      if [[ -n "$kubectl_label" && -n "$kubectl_port" ]]; then
+        local pod_name
+        pod_name=$(kubectl get pod -l "$kubectl_label" -n "$kubectl_namespace" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+        if [[ -z "$pod_name" ]]; then
+          return 1
+        fi
+        if [[ -n "$kubectl_container" ]]; then
+          kubectl exec -n "$kubectl_namespace" "$pod_name" -c "$kubectl_container" -- \
+            sh -c "curl -s --connect-timeout 1 --max-time \"$timeout\" http://127.0.0.1:${kubectl_port}/metrics" 2>/dev/null
+        else
+          kubectl exec -n "$kubectl_namespace" "$pod_name" -- \
+            sh -c "curl -s --connect-timeout 1 --max-time \"$timeout\" http://127.0.0.1:${kubectl_port}/metrics" 2>/dev/null
+        fi
+      else
+        curl -s --connect-timeout 1 --max-time "$timeout" "$url"
+      fi
+    }
+
+    local ready=0
+    local start_ts
+    start_ts=$(date +%s)
+    while [[ $ready -eq 0 ]]; do
+      if [[ $startup_wait -le 0 ]]; then
+        break
+      fi
+      local now
+      now=$(date +%s)
+      if [[ $((now - start_ts)) -ge $startup_wait ]]; then
+        break
+      fi
+      local payload
+      payload=$(scrape_once) || payload=""
+      if [[ -n "$payload" ]]; then
+        printf '## %s\n' "$(_timestamp)" >> "$output_file"
+        printf '%s\n' "$payload" >> "$output_file"
+        printf '\n' >> "$output_file"
+        ready=1
+        break
+      fi
+      sleep 1
+    done
+
+    while true; do
+      printf '## %s\n' "$(_timestamp)" >> "$output_file"
+      local payload
+      payload=$(scrape_once) || payload=""
+      if [[ -n "$payload" ]]; then
+        printf '%s\n' "$payload" >> "$output_file"
+      else
+        printf 'scrape_failed\n' >> "$output_file"
+      fi
+      printf '\n' >> "$output_file"
+      sleep "$interval"
+    done
+  ) &
+  BENCH_METRICS_SCRAPE_PID=$!
+  persist_env_var "BENCH_METRICS_SCRAPE_PID" "$BENCH_METRICS_SCRAPE_PID"
+}
+
+stop_metrics_scrape() {
+  local pid="${BENCH_METRICS_SCRAPE_PID:-}"
+  if [[ -n "$pid" ]]; then
+    kill "$pid" >/dev/null 2>&1 || true
+    wait "$pid" 2>/dev/null || true
+    unset BENCH_METRICS_SCRAPE_PID
+  fi
+}
+
+stop_metrics_port_forward() {
+  local pid="${BENCH_METRICS_PORT_FORWARD_PID:-}"
+  if [[ -n "$pid" ]]; then
+    kill "$pid" >/dev/null 2>&1 || true
+    wait "$pid" 2>/dev/null || true
+    unset BENCH_METRICS_PORT_FORWARD_PID
+  fi
+}

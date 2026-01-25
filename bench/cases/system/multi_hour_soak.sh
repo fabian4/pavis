@@ -36,7 +36,7 @@ main() {
   container_name=$(get_proxy_container_name)
   proxy_port=$(get_proxy_port)
 
-  local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}"
+  local output_dir="${BENCH_OUTPUT_DIR}/${BENCH_MODE}/${BENCH_PROXY}/${CASE_NAME}${BENCH_CASE_SUFFIX:+__${BENCH_CASE_SUFFIX}}"
   ensure_dir "$output_dir"
 
   # Setup port-forward to access test backend

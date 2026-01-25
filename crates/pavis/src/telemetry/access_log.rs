@@ -1,22 +1,27 @@
 use crate::proxy::context::RequestId;
+use crate::telemetry::metrics::MetricsHandle;
 use async_trait::async_trait;
 use pavis_core::AccessLogPolicy;
 use pingora::protocols::l4::socket::SocketAddr;
 use pingora::proxy::Session;
 use pingora::services::Service;
 use serde::Serialize;
+use std::sync::{Arc, Mutex};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
+use tokio::time::Duration;
 
 pub struct AccessLog {
     tx: mpsc::Sender<LogEntry>,
     enabled: bool,
+    metrics: Mutex<Option<Arc<MetricsHandle>>>,
 }
 
 pub struct AccessLogWorker {
     rx: Option<mpsc::Receiver<LogEntry>>,
     config: AccessLogPolicy,
+    throttle_ms: Option<u64>,
 }
 
 #[async_trait]
@@ -59,6 +64,9 @@ impl Service for AccessLogWorker {
                             match &self.config {
                                 AccessLogPolicy::Stdout => {
                                     print!("{}", log_line);
+                                    if let Some(delay_ms) = self.throttle_ms {
+                                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                                    }
                                 }
                                 AccessLogPolicy::File(_) => {
                                     if let Some(w) = &mut file_writer {
@@ -66,6 +74,8 @@ impl Service for AccessLogWorker {
                                             eprintln!("Failed to write to access log: {}", e);
                                         } else if let Err(e) = w.flush().await {
                                             eprintln!("Failed to flush access log: {}", e);
+                                        } else if let Some(delay_ms) = self.throttle_ms {
+                                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                                         }
                                     }
                                 }
@@ -93,15 +103,32 @@ impl Service for AccessLogWorker {
 
 impl AccessLog {
     pub fn new(config: &AccessLogPolicy) -> (Self, AccessLogWorker) {
-        let (tx, rx) = mpsc::channel::<LogEntry>(4096);
+        let (tx, rx) = mpsc::channel::<LogEntry>(access_log_channel_capacity());
         let enabled = *config != AccessLogPolicy::Disabled;
+        let throttle_ms = access_log_throttle_ms();
 
         let worker = AccessLogWorker {
             rx: Some(rx),
             config: config.clone(),
+            throttle_ms,
         };
 
-        (Self { tx, enabled }, worker)
+        (
+            Self {
+                tx,
+                enabled,
+                metrics: Mutex::new(None),
+            },
+            worker,
+        )
+    }
+
+    pub fn set_metrics_handle(&self, handle: Option<Arc<MetricsHandle>>) {
+        let mut guard = self
+            .metrics
+            .lock()
+            .expect("access log metrics lock poisoned");
+        *guard = handle;
     }
 
     pub async fn log(&self, session: &mut Session, ctx: &crate::proxy::context::RouterContext) {
@@ -171,7 +198,15 @@ impl AccessLog {
         };
 
         // Non-blocking send (lossy if full)
-        let _ = self.tx.try_send(entry);
+        if let Err(mpsc::error::TrySendError::Full(_)) = self.tx.try_send(entry)
+            && let Some(handle) = self
+                .metrics
+                .lock()
+                .expect("access log metrics lock poisoned")
+                .as_ref()
+        {
+            handle.record_access_log_dropped();
+        }
     }
 }
 
@@ -218,6 +253,20 @@ fn format_log_line(entry: &LogEntry) -> String {
             eprintln!("Failed to serialize access log entry: {}", e);
             String::new()
         }
+    }
+}
+
+fn access_log_channel_capacity() -> usize {
+    match std::env::var("PAVIS_ACCESS_LOG_CHANNEL_CAPACITY") {
+        Ok(value) => value.parse::<usize>().unwrap_or(4096),
+        Err(_) => 4096,
+    }
+}
+
+fn access_log_throttle_ms() -> Option<u64> {
+    match std::env::var("PAVIS_ACCESS_LOG_WRITE_THROTTLE_MS") {
+        Ok(value) => value.parse::<u64>().ok().filter(|v| *v > 0),
+        Err(_) => None,
     }
 }
 

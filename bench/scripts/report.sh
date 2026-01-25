@@ -8,6 +8,10 @@ if [[ -f "$CONFIG_ENV" ]]; then
   source "$CONFIG_ENV"
 fi
 
+if [[ -f "${SCRIPT_DIR}/summarize_github.sh" ]]; then
+  bash "${SCRIPT_DIR}/summarize_github.sh"
+fi
+
 STANDALONE_CSV="${STANDALONE_CSV:-bench/output/standalone/summary.csv}"
 SYSTEM_CSV="${SYSTEM_CSV:-bench/output/system/summary.csv}"
 

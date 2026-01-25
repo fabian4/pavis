@@ -13,21 +13,32 @@ fi
 SCRIPT_LIB_DIR="$PROJECT_ROOT/scripts/lib"
 source "$SCRIPT_LIB_DIR/process.sh"
 source "$SCRIPT_LIB_DIR/docker.sh"
+# shellcheck source=scripts/lib/env.sh
+source "$SCRIPT_LIB_DIR/env.sh"
 
-export TEST_MODE=${TEST_MODE:-binary}
-export PAVIS_BIN=${PAVIS_BIN:-$PROJECT_ROOT/target/release/pavis}
-export RELAY_BIN=${RELAY_BIN:-$PROJECT_ROOT/target/release/pavis-relay}
-export PAVCTL_BIN=${PAVCTL_BIN:-$PROJECT_ROOT/target/release/pavctl}
-export PAVIS_UPSTREAM_BIN=${PAVIS_UPSTREAM_BIN:-$PROJECT_ROOT/target/release/pavis-mock-upstream}
-export MOCK_RELAY_BIN=${MOCK_RELAY_BIN:-$PROJECT_ROOT/target/release/pavis-mock-relay}
-export PAVIS_IMAGE=${PAVIS_IMAGE:-pavis:local}
-export RELAY_IMAGE=${RELAY_IMAGE:-pavis-relay:local}
-export MOCK_RELAY_IMAGE=${MOCK_RELAY_IMAGE:-pavis-mock-relay:local}
-export UPSTREAM_IMAGE=${UPSTREAM_IMAGE:-pavis-mock-upstream:local}
-export UPSTREAM_HTTP_PORT_V1=${UPSTREAM_HTTP_PORT_V1:-8081}
-export UPSTREAM_HTTP_PORT_V2=${UPSTREAM_HTTP_PORT_V2:-8082}
-export UPSTREAM_HTTPS_PORT_V1=${UPSTREAM_HTTPS_PORT_V1:-8443}
-export UPSTREAM_HTTPS_PORT_V2=${UPSTREAM_HTTPS_PORT_V2:-8444}
+export TEST_MODE="${TEST_MODE:-binary}"
+
+PAVIS_BIN="$(resolve_bin PAVIS_BIN pavis "$PROJECT_ROOT/target/release/pavis")"
+export PAVIS_BIN
+RELAY_BIN="$(resolve_bin RELAY_BIN pavis-relay "$PROJECT_ROOT/target/release/pavis-relay")"
+export RELAY_BIN
+PAVCTL_BIN="$(resolve_bin PAVCTL_BIN pavctl "$PROJECT_ROOT/target/release/pavctl")"
+export PAVCTL_BIN
+
+PAVIS_UPSTREAM_BIN="$(resolve_bin PAVIS_UPSTREAM_BIN pavis-mock-upstream "$PROJECT_ROOT/target/release/pavis-mock-upstream")"
+export PAVIS_UPSTREAM_BIN
+MOCK_RELAY_BIN="$(resolve_bin MOCK_RELAY_BIN pavis-mock-relay "$PROJECT_ROOT/target/release/pavis-mock-relay")"
+export MOCK_RELAY_BIN
+
+export PAVIS_IMAGE="${PAVIS_IMAGE:-pavis:local}"
+export RELAY_IMAGE="${RELAY_IMAGE:-pavis-relay:local}"
+export MOCK_RELAY_IMAGE="${MOCK_RELAY_IMAGE:-pavis-mock-relay:local}"
+export UPSTREAM_IMAGE="${UPSTREAM_IMAGE:-pavis-mock-upstream:local}"
+
+export UPSTREAM_HTTP_PORT_V1="${UPSTREAM_HTTP_PORT_V1:-8081}"
+export UPSTREAM_HTTP_PORT_V2="${UPSTREAM_HTTP_PORT_V2:-8082}"
+export UPSTREAM_HTTPS_PORT_V1="${UPSTREAM_HTTPS_PORT_V1:-8443}"
+export UPSTREAM_HTTPS_PORT_V2="${UPSTREAM_HTTPS_PORT_V2:-8444}"
 
 CERTS_DIR="$PROJECT_ROOT/tests/suites/config/certs"
 USED_PORTS=""
@@ -39,6 +50,8 @@ setup_test() {
     TEST_TMP="$PROJECT_ROOT/tests/temp/${case_name}_${timestamp}"
     mkdir -p "$TEST_TMP"
     export TEST_TMP
+
+    USED_PORTS=""
     
     if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
         echo "Using temp dir: $TEST_TMP"
@@ -101,60 +114,43 @@ cleanup_test() {
     fi
 }
 
-port_in_use() {
-    local port="$1"
-
-    if command -v lsof >/dev/null 2>&1; then
-        if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-
-    if command -v ss >/dev/null 2>&1; then
-        if ss -ltn "sport = :$port" 2>/dev/null | tail -n +2 | grep -q .; then
-            return 0
-        fi
-    fi
-
-    if command -v netstat >/dev/null 2>&1; then
-        if netstat -an 2>/dev/null | awk '$1 ~ /tcp/ && $NF ~ /LISTEN/' | grep -E "[:.]$port\$" >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-
-    if command -v nc >/dev/null 2>&1; then
-        if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
+# Dynamic ports are mandatory in CI because TOCTOU probes, parallel jobs,
+# and shared-runner contention constantly collide on fixed ranges.
 get_free_port() {
-    local attempts=200
     local port
 
-    while [ "$attempts" -gt 0 ]; do
-        port=$((20000 + (RANDOM % 40000)))
+    while true; do
+        if command -v python3 >/dev/null 2>&1; then
+            port=$(python3 - <<'PY'
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)
+        elif command -v perl >/dev/null 2>&1; then
+            port=$(perl -MSocket -e '
+                socket(my $sock, PF_INET, SOCK_STREAM, getprotobyname("tcp")) or die $!;
+                bind($sock, sockaddr_in(0, inet_aton("127.0.0.1"))) or die $!;
+                my ($port, $addr) = sockaddr_in(getsockname($sock));
+                close($sock);
+                print "$port\n";
+            ')
+        else
+            echo "❌ python3 or perl is required for dynamic port allocation" >&2
+            return 1
+        fi
+
+        if [[ -z "$port" ]]; then
+            continue
+        fi
         if [[ " $USED_PORTS " == *" $port "* ]]; then
-            attempts=$((attempts - 1))
-            continue
-        fi
-        if port_in_use "$port"; then
-            attempts=$((attempts - 1))
-            continue
-        fi
-        sleep 0.02
-        if port_in_use "$port"; then
-            attempts=$((attempts - 1))
             continue
         fi
         USED_PORTS="$USED_PORTS $port"
         echo "$port"
         return 0
     done
-    return 1
 }
 
 now_ms() {
@@ -400,6 +396,12 @@ run_pavis() {
             -v "$TEST_TMP:$TEST_TMP:rw"
             -v "$CERTS_DIR:$CERTS_DIR:ro"
         )
+        if [ -n "${PAVIS_ACCESS_LOG_CHANNEL_CAPACITY:-}" ]; then
+            docker_args+=(-e "PAVIS_ACCESS_LOG_CHANNEL_CAPACITY=${PAVIS_ACCESS_LOG_CHANNEL_CAPACITY}")
+        fi
+        if [ -n "${PAVIS_ACCESS_LOG_WRITE_THROTTLE_MS:-}" ]; then
+            docker_args+=(-e "PAVIS_ACCESS_LOG_WRITE_THROTTLE_MS=${PAVIS_ACCESS_LOG_WRITE_THROTTLE_MS}")
+        fi
         local cmd_args=("--config" "$config_path")
         if [ -n "$relay_url" ]; then
             cmd_args+=("--relay-url" "$relay_url")
@@ -484,8 +486,22 @@ run_mock_relay() {
 publish_config() {
     local relay_url="$1"
     local pvs_path="$2"
-    
-    curl -f -X POST "${relay_url}/publish" --data-binary "@${pvs_path}"
+
+    local timeout="${PAVIS_PUBLISH_TIMEOUT:-5}"
+    local retries="${PAVIS_PUBLISH_RETRIES:-10}"
+    local attempt=1
+
+    while [ "$attempt" -le "$retries" ]; do
+        if curl -f --connect-timeout 1 --max-time "$timeout" \
+            -X POST "${relay_url}/publish" --data-binary "@${pvs_path}"; then
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.2
+    done
+
+    echo "❌ publish_config failed after ${retries} attempts" >&2
+    return 1
 }
 
 gen_pvs() {

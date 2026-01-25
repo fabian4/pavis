@@ -251,6 +251,11 @@ fn main() -> Result<()> {
     let runtime_state = pavis::state::RuntimeState::from_config(&config)?;
     let state_handle = Arc::new(RuntimeStateHandle::new(runtime_state));
 
+    let tracing_reload_handle = reload_handle.clone();
+    let (telemetry, access_log_worker, metrics_worker, tracing_service) =
+        Telemetry::new(&config.telemetry, Some(reload_handle.clone()));
+    let telemetry = Arc::new(telemetry);
+
     let config_agent = args.relay_url.as_ref().map(|relay| {
         let backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 200);
         let agent = ConfigAgent::new(
@@ -262,17 +267,22 @@ fn main() -> Result<()> {
         )?;
 
         let ca_store_clone = ca_store.clone();
+        let tracing_slot = telemetry.tracing.clone();
+        let tracing_metrics = telemetry.metrics.clone();
         agent.on_update(move |config| {
             ca_store_clone.store(Arc::new(create_root_store(config)));
             tracing::info!("Updated global CA root store from new configuration");
+            pavis::telemetry::tracing::maybe_init_tracing(
+                &config.telemetry.tracing,
+                &config.telemetry.service_name.0,
+                Some(&tracing_reload_handle),
+                &tracing_slot,
+                tracing_metrics.clone(),
+            );
         });
 
         Ok::<_, anyhow::Error>(Arc::new(agent))
     });
-
-    let (telemetry, access_log_worker, metrics_worker, tracing_service) =
-        Telemetry::new(&config.telemetry, Some(reload_handle));
-    let telemetry = Arc::new(telemetry);
     if let (Some(Ok(agent)), Some(metrics)) = (config_agent.as_ref(), telemetry.metrics.as_ref()) {
         agent.set_metrics_handle(metrics.clone());
     }

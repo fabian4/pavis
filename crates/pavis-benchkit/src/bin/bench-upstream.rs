@@ -1,13 +1,15 @@
 use bytes::Bytes;
 use http::header;
-use http::{HeaderValue, StatusCode};
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server};
-use pavis_benchkit::Metrics;
+use http::{HeaderValue, Method, Request, Response, StatusCode};
+use http_body_util::Full;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper_util::rt::TokioIo;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpListener;
 
 const DEFAULT_PORT: u16 = 8000;
 const DEFAULT_FIXED_BYTES: usize = 64;
@@ -17,13 +19,14 @@ const HEALTHZ_BODY: &[u8] = b"ok";
 const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 const CONTENT_TYPE_TEXT: &str = "text/plain";
 
+type ResponseBody = Full<Bytes>;
+
 struct AppState {
     fixed_payload: Bytes,
     fixed_len: HeaderValue,
     ok_body: Bytes,
     ok_len: HeaderValue,
     sleep_cap_ms: u64,
-    metrics: Metrics,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -44,7 +47,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         ok_body,
         ok_len,
         sleep_cap_ms,
-        metrics: Metrics::new(),
     });
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -55,47 +57,69 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .enable_time()
         .build()?;
 
-    if std::env::var("RUST_LOG").is_ok() {
+    let verbose = std::env::var("RUST_LOG").is_ok();
+    if verbose {
         eprintln!(
             "bench-upstream listening on {addr}, fixed_bytes={fixed_bytes}, workers={workers}"
         );
     }
 
     runtime.block_on(async move {
-        let make_svc = make_service_fn(move |_conn| {
-            let state = state.clone();
-            async move {
-                Ok::<_, Infallible>(service_fn(move |req| {
-                    let state = state.clone();
-                    handle_request(req, state)
-                }))
-            }
-        });
-
-        Server::bind(&addr)
-            .http1_only(true)
-            .http1_keepalive(true)
-            .http1_half_close(false)
-            .serve(make_svc)
-            .await
-            .map_err(|err| {
-                if std::env::var("RUST_LOG").is_ok() {
-                    eprintln!("bench-upstream server error: {err}");
-                }
-                err
-            })
+        let listener = TcpListener::bind(addr).await?;
+        run_server(listener, state, verbose).await;
+        Ok::<(), std::io::Error>(())
     })?;
 
     Ok(())
 }
 
-async fn handle_request(
-    req: Request<Body>,
-    state: Arc<AppState>,
-) -> Result<Response<Body>, Infallible> {
-    state.metrics.record_request();
+#[allow(clippy::collapsible_if)]
+async fn run_server(listener: TcpListener, state: Arc<AppState>, verbose: bool) {
+    loop {
+        let (stream, _) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                if verbose {
+                    eprintln!("bench-upstream accept error: {err}");
+                }
+                continue;
+            }
+        };
 
-    if req.method() != http::Method::GET {
+        if let Err(err) = stream.set_nodelay(true) {
+            if verbose {
+                eprintln!("bench-upstream failed to set TCP_NODELAY: {err}");
+            }
+            continue;
+        }
+
+        let io = TokioIo::new(stream);
+        let state = state.clone();
+        tokio::spawn(async move {
+            let svc = service_fn(move |req| {
+                let state = state.clone();
+                handle_request(req, state)
+            });
+
+            if let Err(err) = http1::Builder::new()
+                .keep_alive(true)
+                .half_close(false)
+                .serve_connection(io, svc)
+                .await
+            {
+                if verbose {
+                    eprintln!("bench-upstream connection error: {err}");
+                }
+            }
+        });
+    }
+}
+
+async fn handle_request<B>(
+    req: Request<B>,
+    state: Arc<AppState>,
+) -> Result<Response<ResponseBody>, Infallible> {
+    if req.method() != Method::GET {
         return Ok(respond_with(
             StatusCode::METHOD_NOT_ALLOWED,
             CONTENT_TYPE_OCTET_STREAM,
@@ -123,7 +147,6 @@ async fn handle_request(
             &state.fixed_len,
             close,
         ),
-        "/metrics" => respond_metrics(&state, close),
         _ if path.starts_with("/status/") => {
             let status = parse_status(path).unwrap_or(StatusCode::BAD_REQUEST);
             respond_with(
@@ -176,7 +199,7 @@ fn respond_with(
     body: Bytes,
     body_len: &HeaderValue,
     close: bool,
-) -> Response<Body> {
+) -> Response<ResponseBody> {
     let mut builder = Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, content_type)
@@ -186,44 +209,14 @@ fn respond_with(
         builder = builder.header(header::CONNECTION, "close");
     }
 
-    builder.body(Body::from(body)).unwrap_or_else(|_| {
-        let mut fallback = Response::new(Body::from(Bytes::from_static(b"")));
+    builder.body(Full::new(body)).unwrap_or_else(|_| {
+        let mut fallback = Response::new(Full::new(Bytes::from_static(b"")));
         *fallback.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
         fallback
             .headers_mut()
             .insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
         fallback
     })
-}
-
-fn respond_metrics(state: &AppState, close: bool) -> Response<Body> {
-    #[cfg(feature = "metrics")]
-    {
-        let body = format!(
-            "# HELP bench_upstream_requests_total Total HTTP requests.\n# TYPE bench_upstream_requests_total counter\nbench_upstream_requests_total {}\n",
-            state.metrics.requests_total()
-        );
-        let len = HeaderValue::from_str(&body.len().to_string())
-            .unwrap_or_else(|_| HeaderValue::from_static("0"));
-        respond_with(
-            StatusCode::OK,
-            "text/plain; version=0.0.4",
-            Bytes::from(body),
-            &len,
-            close,
-        )
-    }
-
-    #[cfg(not(feature = "metrics"))]
-    {
-        respond_with(
-            StatusCode::NOT_FOUND,
-            CONTENT_TYPE_OCTET_STREAM,
-            state.fixed_payload.clone(),
-            &state.fixed_len,
-            close,
-        )
-    }
 }
 
 fn parse_status(path: &str) -> Option<StatusCode> {
@@ -252,7 +245,7 @@ fn parse_sleep_ms(query: Option<&str>, cap_ms: u64) -> Option<u64> {
     None
 }
 
-fn should_close(req: &Request<Body>) -> bool {
+fn should_close<B>(req: &Request<B>) -> bool {
     req.headers()
         .get(header::CONNECTION)
         .and_then(|value| value.to_str().ok())
@@ -290,8 +283,6 @@ mod tests {
     use super::*;
     use http::Request;
     use http::header::{CONNECTION, CONTENT_LENGTH};
-    #[cfg(feature = "metrics")]
-    use hyper::body::HttpBody;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
@@ -354,13 +345,13 @@ mod tests {
     fn should_close_detects_connection_close() {
         let req = Request::builder()
             .header(CONNECTION, "close")
-            .body(Body::empty())
+            .body(())
             .unwrap();
         assert!(should_close(&req));
 
         let req = Request::builder()
             .header(CONNECTION, "keep-alive")
-            .body(Body::empty())
+            .body(())
             .unwrap();
         assert!(!should_close(&req));
     }
@@ -369,7 +360,7 @@ mod tests {
     fn should_close_handles_comma_separated_values() {
         let req = Request::builder()
             .header(CONNECTION, "upgrade, close")
-            .body(Body::empty())
+            .body(())
             .unwrap();
         assert!(should_close(&req));
     }
@@ -397,7 +388,6 @@ mod tests {
             ok_body,
             ok_len,
             sleep_cap_ms,
-            metrics: Metrics::new(),
         })
     }
 
@@ -405,9 +395,9 @@ mod tests {
     async fn handle_request_healthz_ok() {
         let state = test_state(8, 10);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/healthz")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -426,9 +416,9 @@ mod tests {
     async fn handle_request_fixed_len_matches() {
         let state = test_state(32, 10);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/fixed")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -443,9 +433,9 @@ mod tests {
     async fn handle_request_status_invalid_returns_400() {
         let state = test_state(16, 10);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/status/999")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -460,9 +450,9 @@ mod tests {
     async fn handle_request_sleep_with_ms() {
         let state = test_state(4, 5);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/sleep?ms=1")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = tokio::time::timeout(Duration::from_millis(50), handle_request(req, state))
@@ -480,9 +470,9 @@ mod tests {
     async fn handle_request_sleep_missing_ms_returns_400() {
         let state = test_state(4, 5);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/sleep")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -497,9 +487,9 @@ mod tests {
     async fn handle_request_non_get_returns_405() {
         let state = test_state(6, 5);
         let req = Request::builder()
-            .method(http::Method::POST)
+            .method(Method::POST)
             .uri("/fixed")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -510,53 +500,14 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "metrics")]
-    #[tokio::test]
-    async fn handle_request_metrics_enabled_returns_prometheus() {
-        let state = test_state(8, 5);
-        let req = Request::builder()
-            .method(http::Method::GET)
-            .uri("/metrics")
-            .body(Body::empty())
-            .unwrap();
-
-        let resp = handle_request(req, state).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(
-            resp.headers().get(header::CONTENT_TYPE).unwrap(),
-            "text/plain; version=0.0.4"
-        );
-        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        assert!(text.contains("bench_upstream_requests_total 1"));
-    }
-
-    #[cfg(not(feature = "metrics"))]
-    #[tokio::test]
-    async fn handle_request_metrics_disabled_returns_404() {
-        let state = test_state(8, 5);
-        let req = Request::builder()
-            .method(http::Method::GET)
-            .uri("/metrics")
-            .body(Body::empty())
-            .unwrap();
-
-        let resp = handle_request(req, state).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-        assert_eq!(
-            resp.headers().get(header::CONTENT_LENGTH).unwrap(),
-            &HeaderValue::from_static("8")
-        );
-    }
-
     #[tokio::test]
     async fn handle_request_connection_close_echoes_header() {
         let state = test_state(8, 5);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/fixed")
             .header(header::CONNECTION, "close")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -571,9 +522,9 @@ mod tests {
     async fn handle_request_status_valid_codes() {
         let state = test_state(5, 5);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/status/503")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -592,9 +543,9 @@ mod tests {
     async fn handle_request_status_invalid_codes() {
         let state = test_state(7, 5);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/status/abc")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -609,9 +560,9 @@ mod tests {
     async fn handle_request_sleep_caps_ms() {
         let state = test_state(3, 5);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/sleep?ms=50")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = tokio::time::timeout(Duration::from_millis(50), handle_request(req, state))
@@ -629,9 +580,9 @@ mod tests {
     async fn handle_request_sleep_zero_ms_is_ok() {
         let state = test_state(3, 5);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/sleep?ms=0")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -642,9 +593,9 @@ mod tests {
     async fn handle_request_fixed_content_type_is_octet_stream() {
         let state = test_state(3, 5);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/fixed")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -658,10 +609,10 @@ mod tests {
     async fn handle_request_close_on_error_paths() {
         let state = test_state(3, 5);
         let req = Request::builder()
-            .method(http::Method::GET)
+            .method(Method::GET)
             .uri("/unknown")
             .header(header::CONNECTION, "close")
-            .body(Body::empty())
+            .body(())
             .unwrap();
 
         let resp = handle_request(req, state).await.unwrap();
@@ -672,52 +623,12 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "metrics")]
-    #[tokio::test]
-    async fn handle_request_metrics_has_content_length() {
-        let state = test_state(3, 5);
-        let req = Request::builder()
-            .method(http::Method::GET)
-            .uri("/metrics")
-            .body(Body::empty())
-            .unwrap();
-
-        let resp = handle_request(req, state).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let content_length = resp
-            .headers()
-            .get(header::CONTENT_LENGTH)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-        let expected = resp.into_body().size_hint().lower().to_string();
-        assert_eq!(content_length, expected);
-    }
-
     #[tokio::test]
     async fn keepalive_reuses_connection_without_date_or_server() {
         let state = test_state(4, 5);
-        let make_svc = make_service_fn(move |_conn| {
-            let state = state.clone();
-            async move {
-                Ok::<_, Infallible>(service_fn(move |req| {
-                    let state = state.clone();
-                    handle_request(req, state)
-                }))
-            }
-        });
-
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        listener.set_nonblocking(true).unwrap();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let server = Server::from_tcp(listener)
-            .unwrap()
-            .http1_only(true)
-            .http1_keepalive(true)
-            .http1_half_close(false)
-            .serve(make_svc);
-        let server_task = tokio::spawn(server);
+        let server_task = tokio::spawn(run_server(listener, state.clone(), false));
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let request = b"GET /fixed HTTP/1.1\r\nHost: localhost\r\n\r\n";

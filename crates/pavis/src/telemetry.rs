@@ -52,11 +52,14 @@ impl Telemetry {
             ))
         });
 
+        access_log.set_metrics_handle(metrics_handle.clone());
+
         let tracing_service = tracing::TracingService::new(
             config.tracing.clone(),
             config.service_name.0.clone(),
             reload_handle,
             tracing_slot.clone(),
+            metrics_handle.clone(),
         );
         (
             Self {

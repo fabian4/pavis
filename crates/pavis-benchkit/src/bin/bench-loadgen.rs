@@ -17,13 +17,19 @@
 //! (all concurrency slots full), the scheduler drops the request and continues.
 //! This preserves true open-loop semantics and makes saturation observable.
 
+use bytes::Bytes;
 use clap::Parser;
-use hyper::{Body, Client, Method, Request, Uri, body::HttpBody, client::HttpConnector};
+use http_body_util::{BodyExt, Empty};
+use hyper::{Method, Request, Uri};
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use hyper_util::rt::TokioExecutor;
 use serde::Serialize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
+
+type RequestBody = Empty<Bytes>;
 
 // ============================================================================
 // CLI Configuration
@@ -346,7 +352,7 @@ async fn scheduler(
     rate: u64,
     duration: Duration,
     concurrency: Arc<Semaphore>,
-    client: Client<HttpConnector>,
+    client: Client<HttpConnector, RequestBody>,
     uri: Uri,
     timeout: Duration,
     stats: Arc<Stats>,
@@ -419,7 +425,7 @@ async fn scheduler(
 /// This function is called by spawned worker tasks when concurrency capacity is available.
 /// It measures latency from request send to response fully read.
 async fn execute_request(
-    client: Client<HttpConnector>,
+    client: Client<HttpConnector, RequestBody>,
     uri: Uri,
     timeout: Duration,
     stats: Arc<Stats>,
@@ -432,7 +438,7 @@ async fn execute_request(
     let req = match Request::builder()
         .method(Method::GET)
         .uri(uri)
-        .body(Body::empty())
+        .body(RequestBody::new())
     {
         Ok(r) => r,
         Err(_) => {
@@ -443,12 +449,12 @@ async fn execute_request(
 
     // Execute request with timeout
     let result = tokio::time::timeout(timeout, async {
-        let resp = client.request(req).await?;
+        let resp = client.request(req).await.map_err(|_| ())?;
         // Read and discard response body to complete the request
         // This ensures we measure full request/response cycle time
-        let mut body = resp.into_body();
-        while body.data().await.is_some() {}
-        Ok::<_, hyper::Error>(())
+        let body = resp.into_body();
+        body.collect().await.map_err(|_| ())?;
+        Ok::<(), ()>(())
     })
     .await;
 
@@ -501,9 +507,9 @@ async fn async_main(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     // Shared HTTP client for all workers
     // HTTP/1.1 keepalive with connection pooling
-    let client = Client::builder()
-        .pool_max_idle_per_host(args.connections)
-        .build_http::<Body>();
+    let mut client_builder = Client::builder(TokioExecutor::new());
+    client_builder.pool_max_idle_per_host(args.connections);
+    let client: Client<_, RequestBody> = client_builder.build_http::<RequestBody>();
 
     let start = Instant::now();
 

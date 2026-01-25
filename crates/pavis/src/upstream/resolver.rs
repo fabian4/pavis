@@ -386,6 +386,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -406,6 +408,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -426,6 +430,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -461,6 +467,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
 
@@ -487,6 +495,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let _resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -506,6 +516,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -526,6 +538,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let _resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -563,6 +577,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -581,6 +597,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -605,6 +623,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
 
@@ -631,6 +651,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -651,6 +673,8 @@ mod tests {
                 config: crate::state::RuntimeState::default().config,
                 router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
                 upstream_manager: manager,
+
+                config_version: None,
             },
         ));
         let mut resolver =

@@ -11,25 +11,16 @@ source "$SCRIPT_DIR/utils.sh"
 source "$SCRIPT_DIR/k8s_helpers.sh"
 # Source shared HTTP primitives
 source "$SCRIPT_DIR/../../scripts/lib/http.sh"
+# shellcheck source=scripts/lib/env.sh
+source "$SCRIPT_DIR/../../scripts/lib/env.sh"
 
 RELAY_NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 
 PAVIS_VERSION_HEADER="x-pavis-version"
 
 resolve_pavctl_bin() {
-  if [[ -n "${BENCH_PAVCTL_BIN:-}" && -x "${BENCH_PAVCTL_BIN}" ]]; then
-    echo "${BENCH_PAVCTL_BIN}"
-    return 0
-  fi
-
-  local pavctl="${BENCH_ROOT}/target/release/pavctl"
-  if [[ -x "$pavctl" ]]; then
-    echo "$pavctl"
-    return 0
-  fi
-
-  log_info "Building pavctl" >&2
-  cargo build -p pavctl --release
+  local pavctl
+  pavctl="$(resolve_bin PAVIS_BIN pavctl "${BENCH_ROOT}/target/release/pavctl")"
   echo "$pavctl"
 }
 

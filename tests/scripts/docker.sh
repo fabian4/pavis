@@ -35,7 +35,7 @@ ensure_upstreams() {
     if [ "$TEST_MODE" == "binary" ]; then
         ensure_upstreams_binary
     else
-        start_upstreams_docker "$suite"
+        ensure_upstreams_docker "$suite"
     fi
 }
 
@@ -63,6 +63,7 @@ resolve_compose_file() {
 
 start_upstreams_docker() {
     local suite="$1"
+    local quiet="${2:-0}"
     local compose_file
     compose_file=$(resolve_compose_file "$suite")
     if [ -z "$compose_file" ]; then
@@ -73,14 +74,20 @@ start_upstreams_docker() {
     generate_certs
     local project="pavis-${suite}-e2e"
     local compose_log="$PROJECT_ROOT/tests/temp/upstreams-${suite}.log"
-    echo "::group::🐳 Starting Shared Upstreams (${suite})"
+    if [ "$quiet" -ne 1 ]; then
+        echo "::group::🐳 Starting Shared Upstreams (${suite})"
+    fi
     
     if docker compose -p "$project" -f "$compose_file" up -d --wait > "$compose_log" 2>&1; then
-        echo "✅ Upstreams started (Docker Compose)"
+        if [ "$quiet" -ne 1 ]; then
+            echo "✅ Upstreams started (Docker Compose)"
+        fi
     else
         echo "❌ Failed to start upstreams!"
         cat "$compose_log"
-        echo "::endgroup::"
+        if [ "$quiet" -ne 1 ]; then
+            echo "::endgroup::"
+        fi
         return 1
     fi
 
@@ -98,11 +105,47 @@ start_upstreams_docker() {
     if [ "$unhealthy" -eq 1 ]; then
         echo "❌ One or more upstream services are unhealthy."
         cat "$compose_log"
-        echo "::endgroup::"
+        if [ "$quiet" -ne 1 ]; then
+            echo "::endgroup::"
+        fi
         return 1
     fi
 
-    echo "::endgroup::"
+    if [ "$quiet" -ne 1 ]; then
+        echo "::endgroup::"
+    fi
+}
+
+ensure_upstreams_docker() {
+    local suite="$1"
+    local compose_file
+    compose_file=$(resolve_compose_file "$suite")
+    if [ -z "$compose_file" ]; then
+        return 1
+    fi
+
+    local project="pavis-${suite}-e2e"
+    local services
+    services=$(docker compose -p "$project" -f "$compose_file" ps --format "{{.Service}}" 2>/dev/null || true)
+    if [ -z "$services" ]; then
+        start_upstreams_docker "$suite" 1
+        return $?
+    fi
+
+    local unhealthy=0
+    for svc in $services; do
+        if ! docker compose -p "$project" -f "$compose_file" ps "$svc" | grep -q "Up"; then
+            unhealthy=1
+            break
+        fi
+    done
+
+    if [ "$unhealthy" -eq 1 ]; then
+        start_upstreams_docker "$suite" 1
+        return $?
+    fi
+
+    return 0
 }
 
 stop_upstreams_docker() {

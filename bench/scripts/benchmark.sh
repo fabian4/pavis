@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/utils.sh"
 # shellcheck source=scripts/lib/contract.sh
 source "$SCRIPT_DIR/../../scripts/lib/contract.sh"
+# shellcheck source=bench/scripts/k8s_helpers.sh
+source "$SCRIPT_DIR/k8s_helpers.sh"
 
 run_benchmark() {
   load_persisted_env
@@ -181,7 +183,40 @@ run_case() {
 
     log_case_environment "$case_name"
 
+    local mode="${BENCH_MODE:-standalone}"
+    local case_dir_base="${BENCH_OUTPUT_DIR}/${mode}/${BENCH_PROXY}/${case_name}"
+    local case_dir="${case_dir_base}${BENCH_CASE_SUFFIX:+__${BENCH_CASE_SUFFIX}}"
+    local metrics_port="${BENCH_METRICS_PORT:-9090}"
+    local metrics_url=""
+    if [[ "$mode" == "standalone" ]]; then
+      export BENCH_METRICS_TIMEOUT_S="${BENCH_METRICS_TIMEOUT_S:-5}"
+      unset BENCH_METRICS_KUBECTL_LABEL
+      unset BENCH_METRICS_KUBECTL_CONTAINER
+      unset BENCH_METRICS_KUBECTL_PORT
+      unset BENCH_METRICS_KUBECTL_NAMESPACE
+      metrics_url="http://127.0.0.1:${metrics_port}/metrics"
+    elif [[ "$mode" == "system" ]]; then
+      unset BENCH_METRICS_KUBECTL_LABEL
+      unset BENCH_METRICS_KUBECTL_CONTAINER
+      unset BENCH_METRICS_KUBECTL_PORT
+      unset BENCH_METRICS_KUBECTL_NAMESPACE
+      local pf_info
+      pf_info=$(kubectl_port_forward_background "app=test-backend" "${BENCH_METRICS_LOCAL_PORT:-19090}" "$metrics_port" "${BENCH_NAMESPACE:-bench-system}") || {
+        exit_with_error "Failed to start port-forward for metrics"
+      }
+      BENCH_METRICS_PORT_FORWARD_PID=$(printf '%s' "$pf_info" | awk '{print $1}')
+      local local_port
+      local_port=$(printf '%s' "$pf_info" | awk '{print $2}')
+      persist_env_var "BENCH_METRICS_PORT_FORWARD_PID" "$BENCH_METRICS_PORT_FORWARD_PID"
+      metrics_url="http://127.0.0.1:${local_port}/metrics"
+    fi
+    export BENCH_METRICS_URL="$metrics_url"
+    ensure_dir "$case_dir"
+    start_metrics_scrape "${case_dir}/metrics.prom"
+
     if [[ "$BENCH_DRY_RUN" == "1" || "$BENCH_DRY_RUN" == "true" ]]; then
+      stop_metrics_scrape
+      stop_metrics_port_forward
       log_info "[DRY-RUN] Skipping case ${case_name} (proxy=${BENCH_PROXY})"
       continue
     fi
@@ -209,10 +244,9 @@ run_case() {
     case_status=$?
     set -e
     echo "::endgroup::"
+    stop_metrics_scrape
+    stop_metrics_port_forward
 
-    local mode="${BENCH_MODE:-standalone}"
-    local case_dir_base="${BENCH_OUTPUT_DIR}/${mode}/${BENCH_PROXY}/${case_name}"
-    local case_dir="${case_dir_base}${BENCH_CASE_SUFFIX:+__${BENCH_CASE_SUFFIX}}"
     if [[ ! -d "$case_dir" && -d "$case_dir_base" ]]; then
       case_dir="$case_dir_base"
     fi

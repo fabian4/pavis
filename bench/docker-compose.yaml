@@ -47,6 +47,7 @@ services:
       - ./config/standalone/pavis.pvs:/etc/pavis/config.pvs:ro
     ports:
       - "8080:8080"
+      - "9090:9090"
     depends_on:
       bench-upstream:
         condition: service_started
@@ -65,4 +66,3 @@ services:
         hard: 65535
     sysctls:
       - net.core.somaxconn=65535
-
