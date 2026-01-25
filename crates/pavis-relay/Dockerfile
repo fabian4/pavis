@@ -28,7 +28,10 @@ RUN --mount=type=cache,target=/app/target \
     cargo build --release -p pavis-relay && \
     cp /app/target/release/pavis-relay /tmp/pavis_relay_tmp
 
-FROM gcr.io/distroless/cc-debian12
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /tmp/pavis_relay_tmp /usr/local/bin/pavis-relay
 ENTRYPOINT ["pavis-relay"]
 CMD ["--config", "/etc/pavis/relay.yaml"]

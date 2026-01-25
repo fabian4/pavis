@@ -15,7 +15,7 @@ pub(crate) fn router(state: RelayRuntimeState) -> Router {
         .route("/v1/config", get(get_config))
         .route("/v1/status", get(get_status))
         .route("/v1/publish", post(post_publish))
-        .route("/v1/artifacts/:version", get(get_artifact))
+        .route("/v1/artifacts/{version}", get(get_artifact))
         .route("/v1/metrics", get(get_metrics))
         .route("/health", get(get_health))
         .route("/ready", get(get_ready))

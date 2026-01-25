@@ -69,8 +69,35 @@ wait_for_port "$PORT_METRICS" 5
 
 # Capture Initial RSS
 PAVIS_PID=$(get_sut_host_pid "pavis")
-RSS_START=$(ps -o rss= -p "$PAVIS_PID" | tr -d ' ')
-echo "Initial RSS: ${RSS_START} KB"
+RESOURCE_OK=0
+if [ -n "$PAVIS_PID" ]; then
+    if [ -d "/proc/$PAVIS_PID" ]; then
+        RESOURCE_OK=1
+    elif ps -p "$PAVIS_PID" -o rss= >/dev/null 2>&1; then
+        RESOURCE_OK=2
+    fi
+fi
+
+sample_rss_kb() {
+    if [ "$RESOURCE_OK" -eq 1 ]; then
+        awk '/VmRSS:/ {print $2}' "/proc/$PAVIS_PID/status" 2>/dev/null
+    elif [ "$RESOURCE_OK" -eq 2 ]; then
+        if ps -p "$PAVIS_PID" -o rss= >/dev/null 2>&1; then
+            ps -o rss= -p "$PAVIS_PID" 2>/dev/null | tr -d ' '
+        else
+            echo 0
+        fi
+    else
+        echo 0
+    fi
+}
+
+RSS_START=$(sample_rss_kb)
+if [ "$RESOURCE_OK" -gt 0 ]; then
+    echo "Initial RSS: ${RSS_START} KB"
+else
+    echo "INFO: Resource sampling unavailable for PID '$PAVIS_PID'"
+fi
 
 # --- Step 1: Rapid Reloads (v2..v10) ---
 TOTAL_TRAFFIC=1000
@@ -158,16 +185,20 @@ echo "Monotonicity verified. Highest version seen: v$MAX_SEEN"
 
 # --- Step 4: Memory Assertion ---
 echo "Verifying memory stability..."
-# Give it a moment to settle/GC
-sleep 2
-RSS_END=$(ps -o rss= -p "$PAVIS_PID" | tr -d ' ')
-echo "Final RSS: ${RSS_END} KB"
+if [ "$RESOURCE_OK" -gt 0 ]; then
+    # Give it a moment to settle/GC
+    sleep 2
+    RSS_END=$(sample_rss_kb)
+    echo "Final RSS: ${RSS_END} KB"
 
-DELTA=$((RSS_END - RSS_START))
-# Allow up to 50% growth to account for transient buffers and caches.
-MAX_DELTA=$((RSS_START / 2))
-if [ "$DELTA" -gt "$MAX_DELTA" ]; then
-    fail "Significant memory increase detected after reload storm: +${DELTA} KB (>${MAX_DELTA} KB)"
+    DELTA=$((RSS_END - RSS_START))
+    # Allow up to 50% growth to account for transient buffers and caches.
+    MAX_DELTA=$((RSS_START / 2))
+    if [ "$DELTA" -gt "$MAX_DELTA" ]; then
+        fail "Significant memory increase detected after reload storm: +${DELTA} KB (>${MAX_DELTA} KB)"
+    fi
+else
+    echo "INFO: Skipping memory stability check (RSS sampling unavailable)"
 fi
 
 if ! check_sut_alive "pavis"; then

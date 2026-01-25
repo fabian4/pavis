@@ -1,14 +1,16 @@
 use crate::telemetry::metrics::MetricsHandle;
 use async_trait::async_trait;
-use futures_util::future::BoxFuture;
 use opentelemetry::trace::TracerProvider;
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::export::trace::{ExportResult, SpanData, SpanExporter};
-use opentelemetry_sdk::trace::{Config, Sampler};
+use opentelemetry_otlp::{SpanExporter as OtlpSpanExporter, WithExportConfig};
+use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::trace::{
+    Sampler, SdkTracerProvider, SpanData, SpanExporter as SdkSpanExporter,
+};
 use pingora::services::Service;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
+use std::time::Duration;
 use tracing::{Event, Id, Subscriber};
 use tracing_subscriber::{
     layer::{Context, Layer},
@@ -18,12 +20,14 @@ use tracing_subscriber::{
 /// Handle to the active tracing runtime (provider).
 /// Stored in OnceLock and accessed by Proxy.
 pub struct TracingRuntime {
-    provider: opentelemetry_sdk::trace::TracerProvider,
+    provider: SdkTracerProvider,
 }
 
 impl TracingRuntime {
     pub fn shutdown(&self) {
-        // Provider shutdowns on drop
+        if let Err(error) = self.provider.shutdown() {
+            ::tracing::warn!(%error, "Failed to shut down tracing provider cleanly");
+        }
     }
 }
 
@@ -296,12 +300,12 @@ pub fn maybe_init_tracing(
         return;
     }
 
-    let result = opentelemetry_otlp::new_exporter()
-        .tonic()
+    let exporter_result = OtlpSpanExporter::builder()
+        .with_tonic()
         .with_endpoint(endpoint)
-        .build_span_exporter();
+        .build();
 
-    match result {
+    match exporter_result {
         Ok(exporter) => {
             let exporter = if let Some(metrics) = &metrics {
                 MetricsSpanExporter::new(exporter, Some(metrics.clone()))
@@ -317,16 +321,14 @@ pub fn maybe_init_tracing(
                 Sampler::TraceIdRatioBased(sampling_rate)
             };
 
-            let config = Config::default().with_sampler(sampler).with_resource(
-                opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
-                    "service.name",
-                    service_name.to_string(),
-                )]),
-            );
+            let resource = opentelemetry_sdk::Resource::builder()
+                .with_service_name(service_name.to_string())
+                .build();
 
-            let provider = opentelemetry_sdk::trace::TracerProvider::builder()
-                .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-                .with_config(config)
+            let provider = SdkTracerProvider::builder()
+                .with_batch_exporter(exporter)
+                .with_sampler(sampler)
+                .with_resource(resource)
                 .build();
 
             let tracer = provider.tracer("pavis");
@@ -398,14 +400,17 @@ impl<E> fmt::Debug for MetricsSpanExporter<E> {
     }
 }
 
-impl<E> SpanExporter for MetricsSpanExporter<E>
+impl<E> SdkSpanExporter for MetricsSpanExporter<E>
 where
-    E: SpanExporter,
+    E: SdkSpanExporter,
 {
-    fn export(&mut self, batch: Vec<SpanData>) -> BoxFuture<'static, ExportResult> {
+    fn export(
+        &self,
+        batch: Vec<SpanData>,
+    ) -> impl std::future::Future<Output = OTelSdkResult> + Send {
         let metrics = self.metrics.clone();
         let fut = self.inner.export(batch);
-        Box::pin(async move {
+        async move {
             match fut.await {
                 Ok(()) => {
                     if let Some(handle) = metrics.as_ref() {
@@ -420,15 +425,23 @@ where
                     Err(err)
                 }
             }
-        })
+        }
     }
 
-    fn shutdown(&mut self) {
-        self.inner.shutdown();
+    fn shutdown_with_timeout(&mut self, timeout: Duration) -> OTelSdkResult {
+        self.inner.shutdown_with_timeout(timeout)
     }
 
-    fn force_flush(&mut self) -> BoxFuture<'static, ExportResult> {
+    fn shutdown(&mut self) -> OTelSdkResult {
+        self.inner.shutdown()
+    }
+
+    fn force_flush(&mut self) -> OTelSdkResult {
         self.inner.force_flush()
+    }
+
+    fn set_resource(&mut self, resource: &opentelemetry_sdk::Resource) {
+        self.inner.set_resource(resource);
     }
 }
 
@@ -494,7 +507,9 @@ impl Service for TracingService {
         // 3. Shutdown logic
         if let Some(runtime) = self.runtime_slot.get() {
             ::tracing::info!("Flushing traces...");
-            for _ in runtime.provider.force_flush() {}
+            if let Err(error) = runtime.provider.force_flush() {
+                ::tracing::warn!(%error, "Failed to flush tracing provider");
+            }
             runtime.shutdown();
         }
     }

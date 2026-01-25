@@ -10,6 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../scripts/lib/log.sh"
 # shellcheck source=scripts/lib/time.sh
 source "$SCRIPT_DIR/../../scripts/lib/time.sh"
+# shellcheck source=scripts/lib/env.sh
+source "$SCRIPT_DIR/../../scripts/lib/env.sh"
 
 main() {
   local output_file="${1:-}"
@@ -61,7 +63,14 @@ main() {
   local bench_output_dir="${BENCH_OUTPUT_DIR:-${bench_root}/bench/output}"
   local bench_scripts_dir="${BENCH_SCRIPTS_DIR:-${bench_root}/bench/scripts}"
   local bench_cases_dir="${BENCH_CASES_DIR:-${bench_root}/bench/cases/${bench_mode}}"
-  local bench_loadgen_bin="${BENCH_LOADGEN_BIN:-${bench_root}/target/release/bench-loadgen}"
+  local bench_loadgen_bin="${BENCH_LOADGEN_BIN:-}"
+  if [[ -z "$bench_loadgen_bin" || ! -x "$bench_loadgen_bin" ]]; then
+    if bench_loadgen_bin="$(resolve_bin BENCH_LOADGEN_BIN bench-loadgen "${bench_root}/target/release/bench-loadgen" 2>/dev/null)"; then
+      :
+    else
+      bench_loadgen_bin="${bench_root}/target/release/bench-loadgen"
+    fi
+  fi
   local bench_pvs_config="${BENCH_PVS_CONFIG:-${bench_root}/bench/config/standalone/pavis.pvs}"
 
   local backend_cpuset="${BACKEND_CPUSET:-}"

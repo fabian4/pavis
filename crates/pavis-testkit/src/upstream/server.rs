@@ -42,8 +42,8 @@ pub async fn run(args: UpstreamArgs) -> Result<()> {
         None
     };
 
-    let http_handle = Handle::new();
-    let https_handle = Handle::new();
+    let http_handle: Handle<SocketAddr> = Handle::new();
+    let https_handle: Handle<SocketAddr> = Handle::new();
 
     let mut http_task = tokio::spawn(run_http(http_addr, http_router, http_handle.clone()));
 
@@ -94,7 +94,7 @@ pub async fn run(args: UpstreamArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_http(addr: SocketAddr, router: Router, handle: Handle) -> Result<()> {
+async fn run_http(addr: SocketAddr, router: Router, handle: Handle<SocketAddr>) -> Result<()> {
     tracing::info!(%addr, "HTTP listener ready");
     axum_server::bind(addr)
         .handle(handle)
@@ -107,7 +107,7 @@ async fn run_https(
     addr: SocketAddr,
     router: Router,
     config: RustlsConfig,
-    handle: Handle,
+    handle: Handle<SocketAddr>,
 ) -> Result<()> {
     tracing::info!(%addr, "HTTPS listener ready");
     axum_server::bind_rustls(addr, config)

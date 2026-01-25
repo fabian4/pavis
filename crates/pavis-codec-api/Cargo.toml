@@ -7,7 +7,7 @@ description = "Codec API traits for Pavis"
 
 [dependencies]
 anyhow = { workspace = true }
-thiserror = "1"
+thiserror = "2"
 pavis-core = { path = "../pavis-core" }
 pavis-ingest-api = { path = "../pavis-ingest-api" }
 

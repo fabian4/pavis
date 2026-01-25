@@ -11,7 +11,7 @@ use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 
 use axum::{
-    Json, Router, async_trait,
+    Json, Router,
     extract::{ConnectInfo, FromRequestParts, Query, State},
     http::{self, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
@@ -245,7 +245,6 @@ impl TestContext {
     }
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for TestContext
 where
     S: Send + Sync,
@@ -274,7 +273,6 @@ where
 #[derive(Clone, Copy, Debug)]
 pub struct RemoteAddress(pub Option<SocketAddr>);
 
-#[async_trait]
 impl<S> FromRequestParts<S> for RemoteAddress
 where
     S: Send + Sync,

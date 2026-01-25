@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/utils.sh"
 # shellcheck source=bench/scripts/pretty.sh
 source "$SCRIPT_DIR/pretty.sh"
+# shellcheck source=scripts/lib/env.sh
+source "$SCRIPT_DIR/../../scripts/lib/env.sh"
 
 CLUSTER_NAME="${KIND_CLUSTER_NAME:-pavis-bench}"
 NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
@@ -247,9 +249,15 @@ setup_environment_standalone() {
   : "${BENCH_PVS_CONFIG:?BENCH_PVS_CONFIG is required}"
   : "${BENCH_DOCKER_COMPOSE:?BENCH_DOCKER_COMPOSE is required}"
 
-  if [[ ! -x "$BENCH_LOADGEN_BIN" ]]; then
-    bench_print_step "Building bench-loadgen binary"
-    cargo build -p pavis-benchkit --bin bench-loadgen --release
+  if [[ -z "${BENCH_LOADGEN_BIN:-}" || ! -x "$BENCH_LOADGEN_BIN" ]]; then
+    if BENCH_LOADGEN_BIN="$(resolve_bin BENCH_LOADGEN_BIN bench-loadgen "${BENCH_ROOT}/target/release/bench-loadgen")"; then
+      export BENCH_LOADGEN_BIN
+    else
+      bench_print_step "Building bench-loadgen binary"
+      cargo build -p pavis-benchkit --bin bench-loadgen --release
+      BENCH_LOADGEN_BIN="${BENCH_ROOT}/target/release/bench-loadgen"
+      export BENCH_LOADGEN_BIN
+    fi
   fi
 
   detect_cpu_pinning
@@ -338,10 +346,13 @@ ensure_pavis_config() {
   BENCH_PVS_GENERATED=false
   if [[ ! -f "$BENCH_PVS_CONFIG" ]]; then
     bench_print_step "Generating .pvs config from ${BENCH_ROOT}/bench/config/standalone/pavis.yaml"
-    local pavctl="${BENCH_ROOT}/target/release/pavctl"
-    if [[ ! -x "$pavctl" ]]; then
+    local pavctl=""
+    if pavctl="$(resolve_bin PAVCTL_BIN pavctl "${BENCH_ROOT}/target/release/pavctl")"; then
+      :
+    else
       bench_print_step "Building pavctl"
       cargo build -p pavctl --release
+      pavctl="${BENCH_ROOT}/target/release/pavctl"
     fi
     "$pavctl" gen "${BENCH_ROOT}/bench/config/standalone/pavis.yaml" "$BENCH_PVS_CONFIG"
     BENCH_PVS_GENERATED=true

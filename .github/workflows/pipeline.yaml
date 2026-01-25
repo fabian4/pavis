@@ -288,6 +288,9 @@ jobs:
           name: release-bins
           path: .artifacts/release-bins
 
+      - name: Ensure executable bits
+        run: chmod +x .artifacts/release-bins/* || true
+
       - name: Add release-bins to PATH
         run: echo "$GITHUB_WORKSPACE/.artifacts/release-bins" >> "$GITHUB_PATH"
 

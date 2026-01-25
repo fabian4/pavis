@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/utils.sh"
 # shellcheck source=scripts/lib/contract.sh
 source "$SCRIPT_DIR/../../scripts/lib/contract.sh"
+# shellcheck source=scripts/lib/env.sh
+source "$SCRIPT_DIR/../../scripts/lib/env.sh"
 # shellcheck source=bench/scripts/k8s_helpers.sh
 source "$SCRIPT_DIR/k8s_helpers.sh"
 
@@ -153,9 +155,13 @@ run_case() {
   fi
 
   # Ensure BENCH_LOADGEN_BIN is available
-  if [[ -z "${BENCH_LOADGEN_BIN:-}" ]]; then
-      log_warn "BENCH_LOADGEN_BIN not set in environment, attempting fallback"
-      BENCH_LOADGEN_BIN="${BENCH_ROOT}/target/release/bench-loadgen"
+  if [[ -z "${BENCH_LOADGEN_BIN:-}" || ! -x "$BENCH_LOADGEN_BIN" ]]; then
+    log_warn "BENCH_LOADGEN_BIN missing or not executable, attempting to resolve"
+    if BENCH_LOADGEN_BIN="$(resolve_bin BENCH_LOADGEN_BIN bench-loadgen "${BENCH_ROOT}/target/release/bench-loadgen")"; then
+      export BENCH_LOADGEN_BIN
+    else
+      exit_with_error "bench-loadgen not found in PATH or ${BENCH_ROOT}/target/release"
+    fi
   fi
 
   local payload_set=("$BENCH_PAYLOAD_SIZE")

@@ -84,8 +84,14 @@ sample_fds() {
 sample_rss_kb() {
     if [ "$RESOURCE_OK" -eq 1 ]; then
         awk '/VmRSS:/ {print $2}' "/proc/$PID/status" 2>/dev/null
+    elif [ "$RESOURCE_OK" -eq 2 ]; then
+        if ps -p "$PID" -o rss= >/dev/null 2>&1; then
+            ps -o rss= -p "$PID" 2>/dev/null | tr -d ' '
+        else
+            echo 0
+        fi
     else
-        ps -o rss= -p "$PID" | tr -d ' '
+        echo 0
     fi
 }
 

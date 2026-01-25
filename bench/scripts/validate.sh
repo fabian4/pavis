@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bench/scripts/utils.sh
 source "$SCRIPT_DIR/utils.sh"
+# shellcheck source=scripts/lib/env.sh
+source "$SCRIPT_DIR/../../scripts/lib/env.sh"
 
 default_cases_standalone="throughput_short_1x latency_short_1x latency_extended_1x concurrency_short_1x churn_short_1x"
 default_cases_system="stress_recovery config_reload_convergence rollback_performance"
@@ -284,9 +286,10 @@ USAGE
   export BENCH_REPORT_MD="$report_path"
   export BENCH_CASES_DIR="$cases_dir"
   export BENCH_SCRIPTS_DIR="$SCRIPT_DIR"
-  export BENCH_LOADGEN_BIN="${BENCH_ROOT}/target/release/bench-loadgen"
-  if [[ -f "${BENCH_LOADGEN_BIN}.exe" ]]; then
-    export BENCH_LOADGEN_BIN="${BENCH_LOADGEN_BIN}.exe"
+  if BENCH_LOADGEN_BIN="$(resolve_bin BENCH_LOADGEN_BIN bench-loadgen "${BENCH_ROOT}/target/release/bench-loadgen")"; then
+    export BENCH_LOADGEN_BIN
+  else
+    exit_with_error "bench-loadgen not found (set BENCH_LOADGEN_BIN or add to PATH)"
   fi
   export BENCH_PVS_CONFIG="${BENCH_ROOT}/bench/config/standalone/pavis.pvs"
   export BENCH_DOCKER_COMPOSE="${BENCH_ROOT}/bench/docker-compose.yaml"

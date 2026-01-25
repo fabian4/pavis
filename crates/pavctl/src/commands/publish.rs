@@ -15,18 +15,27 @@ pub(crate) fn publish_to_relay(relay_base: &str, artifact: &Path) -> Result<()> 
         .with_context(|| format!("failed to read artifact {}", artifact.display()))?;
     let url = format!("{}/v1/publish", relay_base.trim_end_matches('/'));
 
-    let response = match ureq::post(&url).send_bytes(&bytes) {
-        Ok(response) => response,
-        Err(ureq::Error::Status(status, response)) => {
-            let body = response.into_string().unwrap_or_default();
-            anyhow::bail!("publish failed: status={status}, body={body}");
-        }
-        Err(err) => return Err(err.into()),
-    };
+    let mut response = ureq::post(&url)
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .send(bytes.as_slice())
+        .context("failed to send publish request")?;
 
+    let status = response.status();
     let body = response
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .context("failed to read publish response body")?;
+
+    if !status.is_success() {
+        anyhow::bail!(
+            "publish failed: status={}, body={}",
+            status.as_u16(),
+            body.trim()
+        );
+    }
+
     let parsed: PublishResponse =
         serde_json::from_str(&body).context("failed to parse publish response")?;
 

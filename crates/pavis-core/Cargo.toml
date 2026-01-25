@@ -15,7 +15,7 @@ bytecheck = "0.8"
 rancor = "0.1"
 serde = { workspace = true, optional = true }
 regex = "1"
-thiserror = "1"
+thiserror = "2"
 http = "1.4"
 compact_str = { version = "0.9", features = ["rkyv", "serde"] }
 

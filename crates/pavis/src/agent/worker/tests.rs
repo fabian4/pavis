@@ -524,7 +524,7 @@ async fn poll_once_skips_intermediate_versions_entirely() {
             }),
         )
         .route(
-            "/v1/artifacts/:version",
+            "/v1/artifacts/{version}",
             get(
                 move |axum::extract::Path(_version): axum::extract::Path<u64>| {
                     let artifacts_counter = Arc::clone(&artifacts_counter);

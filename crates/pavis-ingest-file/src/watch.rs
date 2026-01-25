@@ -10,6 +10,8 @@ use tracing::{debug, error, warn};
 
 use crate::{infer_format, validate_bytes, validate_format};
 
+const WATCHER_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
 pub async fn spawn_watcher(
     path: PathBuf,
     debounce: Duration,
@@ -18,13 +20,14 @@ pub async fn spawn_watcher(
 ) -> Result<RecommendedWatcher, IngestError> {
     let (event_tx, mut event_rx) = mpsc::channel(100);
 
+    let config = Config::default().with_poll_interval(WATCHER_POLL_INTERVAL);
     let mut watcher = RecommendedWatcher::new(
         move |res: notify::Result<Event>| {
             if let Ok(event) = res {
                 let _ = event_tx.blocking_send(event);
             }
         },
-        Config::default(),
+        config,
     )
     .map_err(|e| IngestError::Io(anyhow::anyhow!(e)))?;
 
@@ -47,7 +50,7 @@ pub async fn spawn_watcher(
             ingest_path, last_mtime
         );
 
-        let mut poll_interval = tokio::time::interval(Duration::from_secs(2));
+        let mut poll_interval = tokio::time::interval(WATCHER_POLL_INTERVAL);
 
         loop {
             let timer_fired = async {

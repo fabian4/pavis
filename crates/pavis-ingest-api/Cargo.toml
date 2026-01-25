@@ -8,6 +8,6 @@ description = "Ingest API types for Pavis"
 [dependencies]
 anyhow = { workspace = true }
 bytes = "1"
-thiserror = "1"
+thiserror = "2"
 async-trait = { workspace = true }
 futures-core = "0.3"

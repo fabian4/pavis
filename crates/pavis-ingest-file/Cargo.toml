@@ -9,7 +9,7 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 bytes = "1"
 futures-util = "0.3"
-notify = "6.1"
+notify = "8"
 pavis-ingest-api = { path = "../pavis-ingest-api" }
 tokio = { workspace = true, features = ["fs", "io-util", "sync", "time"] }
 tracing = { workspace = true }
