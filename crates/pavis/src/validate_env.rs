@@ -220,4 +220,104 @@ mod tests {
         assert!(matches!(err, RuntimeEnvError::PortUnavailable { .. }));
         drop(listener);
     }
+
+    #[test]
+    fn validate_env_rejects_admin_port_in_use() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+
+        let mut cfg = base_runtime().into_inner();
+        cfg.admin = AdminConfig::Enabled {
+            addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        };
+        let validated = unsafe { ValidatedRuntimeConfig::from_trusted(cfg) };
+        let err = validate_runtime_env(&validated, None).expect_err("admin port in use");
+        assert!(matches!(err, RuntimeEnvError::PortUnavailable { .. }));
+        assert!(err.to_string().contains("admin"));
+    }
+
+    #[test]
+    fn validate_env_rejects_metrics_port_in_use() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+
+        let mut cfg = base_runtime().into_inner();
+        cfg.telemetry.metrics = Metrics::Enabled {
+            addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        };
+        let validated = unsafe { ValidatedRuntimeConfig::from_trusted(cfg) };
+        let err = validate_runtime_env(&validated, None).expect_err("metrics port in use");
+        assert!(matches!(err, RuntimeEnvError::PortUnavailable { .. }));
+        assert!(err.to_string().contains("metrics"));
+    }
+
+    #[test]
+    fn validate_env_rejects_missing_client_auth_ca() {
+        let mut cfg = base_runtime().into_inner();
+        // Create a temporary file to pass cert/key checks
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let path = temp.path().to_string_lossy().to_string();
+
+        cfg.listeners[0].tls = TlsConfig::Enabled {
+            cert_path: pavis_core::Path(path.clone()),
+            key_path: pavis_core::Path(path),
+            client_auth: ClientAuth::Required {
+                ca_path: pavis_core::Path("missing-ca.pem".to_string()),
+            },
+        };
+        let validated = unsafe { ValidatedRuntimeConfig::from_trusted(cfg) };
+        let err = validate_runtime_env(&validated, None).expect_err("missing ca");
+        assert!(matches!(err, RuntimeEnvError::MissingFile { .. }));
+        assert!(err.to_string().contains("tls.client_auth.ca_path"));
+    }
+
+    #[test]
+    fn validate_env_rejects_missing_upstream_tls_files() {
+        use pavis_core::{
+            CanonicalSni, ConnectTimeout, ConnectionLimit, Endpoint, EndpointAddr, IdleTimeout,
+            Pool, Port, ReuseAcrossSni, SniName, TlsPolicy, TlsVerify, UpstreamBuilder, UpstreamCa,
+            UpstreamId, UpstreamName, Weight,
+        };
+        use std::num::{NonZeroU16, NonZeroU32};
+
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("u".to_string()))
+            .discovery(pavis_core::Discovery::Static)
+            .balancer(pavis_core::LoadBalancer::Random)
+            .protocol(pavis_core::HttpVersion::H1)
+            .pool(Pool {
+                idle: IdleTimeout::Disabled,
+                connect: ConnectTimeout::Disabled,
+                max: ConnectionLimit(NonZeroU32::new(10).unwrap()),
+                queue: Default::default(),
+            })
+            .tls(TlsPolicy::Enabled {
+                verify: TlsVerify::Disabled,
+                sni: SniName::Auto,
+                canonical_sni: CanonicalSni::Disabled,
+                reuse_across_sni: ReuseAcrossSni::Disabled,
+                cert: pavis_core::ClientCert::Disabled,
+                ca: UpstreamCa::File {
+                    path: pavis_core::Path("missing-ca.pem".to_string()),
+                },
+            })
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Ip {
+                    address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    port: Port(NonZeroU16::new(80).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .expect("upstream");
+
+        let mut cfg = base_runtime().into_inner();
+        cfg.upstreams.push(upstream);
+
+        let validated = unsafe { ValidatedRuntimeConfig::from_trusted(cfg) };
+        let err = validate_runtime_env(&validated, None).expect_err("missing upstream ca");
+        assert!(matches!(err, RuntimeEnvError::MissingFile { .. }));
+        assert!(err.to_string().contains("tls.ca.path"));
+    }
 }

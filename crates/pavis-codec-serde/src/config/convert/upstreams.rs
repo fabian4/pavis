@@ -1528,4 +1528,118 @@ mod tests {
         let serde = from_runtime(vec![upstream.clone()]).expect("from_runtime");
         assert_eq!(serde[0].pool.as_ref().unwrap().max, Some(100));
     }
+
+    fn default_tls() -> UpstreamTlsConfig {
+        UpstreamTlsConfig {
+            enabled: None,
+            verify_hostname: None,
+            verify_cert: None,
+            sni: None,
+            sni_mode: None,
+            canonical_sni: None,
+            reuse_across_sni: None,
+            ca_bundle_path: None,
+            cert: None,
+        }
+    }
+
+    #[test]
+    fn sni_mode_disabled_rejects_explicit_sni() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                sni: Some("example.com".to_string()),
+                sni_mode: Some(SniMode::Disabled),
+                ..default_tls()
+            }),
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![],
+        }];
+        let err = to_runtime(config).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("sets sni_mode=disabled but also provides sni")
+        );
+    }
+
+    #[test]
+    fn canonical_sni_cannot_be_empty() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                canonical_sni: Some("".to_string()),
+                ..default_tls()
+            }),
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![],
+        }];
+        let err = to_runtime(config).unwrap_err();
+        assert!(err.to_string().contains("canonical_sni cannot be empty"));
+    }
+
+    #[test]
+    fn reuse_across_sni_requires_verify() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                verify_cert: Some(false),
+                reuse_across_sni: Some(true),
+                ..default_tls()
+            }),
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![],
+        }];
+        let err = to_runtime(config).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("reuse_across_sni requires verify != disabled")
+        );
+    }
+
+    #[test]
+    fn ca_bundle_path_cannot_be_empty() {
+        let config = vec![Upstream {
+            id: None,
+            name: "test".to_string(),
+            discovery: None,
+            balancer: None,
+            protocol: None,
+            pool: None,
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                ca_bundle_path: Some("".to_string()),
+                ..default_tls()
+            }),
+            circuit_breaker: None,
+            outlier_detection: None,
+            health_check: None,
+            endpoints: vec![],
+        }];
+        let err = to_runtime(config).unwrap_err();
+        assert!(err.to_string().contains("ca_bundle_path cannot be empty"));
+    }
 }

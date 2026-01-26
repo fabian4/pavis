@@ -31,6 +31,28 @@ impl TracingRuntime {
     }
 }
 
+pub trait TracingMetricsRecorder: Send + Sync {
+    fn record_span_created(&self);
+    fn record_span_exported(&self);
+    fn record_tracing_export_error(&self);
+}
+
+type DynTracingMetrics = Arc<dyn TracingMetricsRecorder>;
+
+impl TracingMetricsRecorder for MetricsHandle {
+    fn record_span_created(&self) {
+        MetricsHandle::record_span_created(self);
+    }
+
+    fn record_span_exported(&self) {
+        MetricsHandle::record_span_exported(self);
+    }
+
+    fn record_tracing_export_error(&self) {
+        MetricsHandle::record_tracing_export_error(self);
+    }
+}
+
 /// Custom ReloadableLayer that is transparent to downcasting.
 /// This allows tracing-opentelemetry to find the inner OpenTelemetryLayer.
 pub struct ReloadableLayer<S> {
@@ -290,7 +312,8 @@ pub fn maybe_init_tracing(
             let tracer = runtime.provider.tracer("pavis");
             let layer = tracing_opentelemetry::layer().with_tracer(tracer);
             let boxed_layer: TracingLayer = if let Some(metrics) = &metrics {
-                let metrics_layer = SpanMetricsLayer::new(metrics.clone());
+                let dyn_metrics: DynTracingMetrics = metrics.clone();
+                let metrics_layer = SpanMetricsLayer::new(dyn_metrics);
                 Box::new(metrics_layer.and_then(layer))
             } else {
                 Box::new(layer)
@@ -308,7 +331,8 @@ pub fn maybe_init_tracing(
     match exporter_result {
         Ok(exporter) => {
             let exporter = if let Some(metrics) = &metrics {
-                MetricsSpanExporter::new(exporter, Some(metrics.clone()))
+                let dyn_metrics: DynTracingMetrics = metrics.clone();
+                MetricsSpanExporter::new(exporter, Some(dyn_metrics))
             } else {
                 MetricsSpanExporter::new(exporter, None)
             };
@@ -335,7 +359,8 @@ pub fn maybe_init_tracing(
 
             let layer = tracing_opentelemetry::layer().with_tracer(tracer);
             let boxed_layer: TracingLayer = if let Some(metrics) = &metrics {
-                let metrics_layer = SpanMetricsLayer::new(metrics.clone());
+                let dyn_metrics: DynTracingMetrics = metrics.clone();
+                let metrics_layer = SpanMetricsLayer::new(dyn_metrics);
                 Box::new(metrics_layer.and_then(layer))
             } else {
                 Box::new(layer)
@@ -361,11 +386,11 @@ pub fn maybe_init_tracing(
 
 #[derive(Clone)]
 struct SpanMetricsLayer {
-    metrics: Arc<MetricsHandle>,
+    metrics: DynTracingMetrics,
 }
 
 impl SpanMetricsLayer {
-    fn new(metrics: Arc<MetricsHandle>) -> Self {
+    fn new(metrics: DynTracingMetrics) -> Self {
         Self { metrics }
     }
 }
@@ -385,11 +410,11 @@ where
 
 struct MetricsSpanExporter<E> {
     inner: E,
-    metrics: Option<Arc<MetricsHandle>>,
+    metrics: Option<DynTracingMetrics>,
 }
 
 impl<E> MetricsSpanExporter<E> {
-    fn new(inner: E, metrics: Option<Arc<MetricsHandle>>) -> Self {
+    fn new(inner: E, metrics: Option<DynTracingMetrics>) -> Self {
         Self { inner, metrics }
     }
 }
@@ -522,6 +547,102 @@ impl Service for TracingService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opentelemetry_sdk::error::OTelSdkError;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    use tracing::Level;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    #[derive(Default)]
+    struct TestTracingMetrics {
+        spans_created: AtomicUsize,
+        exports: AtomicUsize,
+        errors: AtomicUsize,
+    }
+
+    impl TestTracingMetrics {
+        fn spans(&self) -> usize {
+            self.spans_created.load(Ordering::SeqCst)
+        }
+
+        fn exports(&self) -> usize {
+            self.exports.load(Ordering::SeqCst)
+        }
+
+        fn errors(&self) -> usize {
+            self.errors.load(Ordering::SeqCst)
+        }
+    }
+
+    impl TracingMetricsRecorder for TestTracingMetrics {
+        fn record_span_created(&self) {
+            self.spans_created.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn record_span_exported(&self) {
+            self.exports.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn record_tracing_export_error(&self) {
+            self.errors.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum ExportOutcome {
+        Success,
+        Failure,
+    }
+
+    #[derive(Debug)]
+    struct TestExporter {
+        outcome: ExportOutcome,
+    }
+
+    impl TestExporter {
+        fn success() -> Self {
+            Self {
+                outcome: ExportOutcome::Success,
+            }
+        }
+
+        fn failure() -> Self {
+            Self {
+                outcome: ExportOutcome::Failure,
+            }
+        }
+    }
+
+    impl SdkSpanExporter for TestExporter {
+        fn export(
+            &self,
+            _batch: Vec<SpanData>,
+        ) -> impl std::future::Future<Output = OTelSdkResult> + Send {
+            let outcome = self.outcome;
+            async move {
+                match outcome {
+                    ExportOutcome::Success => Ok(()),
+                    ExportOutcome::Failure => {
+                        Err(OTelSdkError::InternalFailure("export failed".into()))
+                    }
+                }
+            }
+        }
+
+        fn shutdown_with_timeout(&mut self, _timeout: Duration) -> OTelSdkResult {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) -> OTelSdkResult {
+            Ok(())
+        }
+
+        fn force_flush(&mut self) -> OTelSdkResult {
+            Ok(())
+        }
+
+        fn set_resource(&mut self, _resource: &opentelemetry_sdk::Resource) {}
+    }
 
     #[test]
     fn reloadable_layer_recovers_from_poisoned_lock() {
@@ -536,5 +657,185 @@ mod tests {
         layer.reload(Box::new(tracing_subscriber::fmt::Layer::default()));
         let mut subscriber = Registry::default();
         layer.on_layer(&mut subscriber);
+    }
+
+    #[test]
+    fn span_metrics_layer_records_http_spans() {
+        let metrics = Arc::new(TestTracingMetrics::default());
+        let dyn_metrics: DynTracingMetrics = metrics.clone();
+        let layer = SpanMetricsLayer::new(dyn_metrics);
+        let subscriber = Registry::default().with(layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::span!(Level::INFO, "http_request");
+            span.in_scope(|| {});
+        });
+
+        assert_eq!(metrics.spans(), 1);
+    }
+
+    #[tokio::test]
+    async fn metrics_span_exporter_reports_success_and_error() {
+        let metrics_ok = Arc::new(TestTracingMetrics::default());
+        let exporter_ok = MetricsSpanExporter::new(
+            TestExporter::success(),
+            Some(metrics_ok.clone() as DynTracingMetrics),
+        );
+        exporter_ok
+            .export(Vec::new())
+            .await
+            .expect("export should succeed");
+        assert_eq!(metrics_ok.exports(), 1);
+
+        let metrics_err = Arc::new(TestTracingMetrics::default());
+        let exporter_err = MetricsSpanExporter::new(
+            TestExporter::failure(),
+            Some(metrics_err.clone() as DynTracingMetrics),
+        );
+        exporter_err
+            .export(Vec::new())
+            .await
+            .expect_err("export should fail");
+        assert_eq!(metrics_err.errors(), 1);
+    }
+
+    #[tokio::test]
+    async fn metrics_span_exporter_management_calls_delegate() {
+        let mut exporter = MetricsSpanExporter::new(TestExporter::success(), None);
+        exporter
+            .shutdown_with_timeout(Duration::from_millis(1))
+            .expect("shutdown_with_timeout delegates");
+        exporter.force_flush().expect("force_flush delegates");
+        exporter.shutdown().expect("shutdown delegates");
+        exporter.set_resource(&opentelemetry_sdk::Resource::builder().build());
+    }
+
+    #[tokio::test]
+    async fn maybe_init_tracing_initializes_runtime_and_reload() {
+        let policy = pavis_core::TracingPolicy::Enabled {
+            provider: pavis_core::TracingProvider::Otlp,
+            sampling: pavis_core::SampleRate(100),
+            endpoint: "http://127.0.0.1:4317".to_string(),
+        };
+        let reload = ReloadHandle::new();
+        let slot = Arc::new(OnceLock::new());
+
+        maybe_init_tracing(&policy, "svc", Some(&reload), &slot, None);
+
+        assert!(slot.get().is_some(), "runtime should be installed");
+        let guard = reload.inner.read().unwrap();
+        assert!(guard.is_some(), "layer should be installed");
+    }
+
+    #[test]
+    fn maybe_init_tracing_skips_when_disabled() {
+        let policy = pavis_core::TracingPolicy::Disabled;
+        let reload = ReloadHandle::new();
+        let slot = Arc::new(OnceLock::new());
+
+        maybe_init_tracing(&policy, "svc", Some(&reload), &slot, None);
+
+        assert!(slot.get().is_none());
+        let guard = reload.inner.read().unwrap();
+        assert!(guard.is_none());
+    }
+
+    #[tokio::test]
+    async fn tracing_service_initializes_and_shuts_down() {
+        let policy = pavis_core::TracingPolicy::Enabled {
+            provider: pavis_core::TracingProvider::Otlp,
+            sampling: pavis_core::SampleRate(100),
+            endpoint: "http://127.0.0.1:4317".to_string(),
+        };
+        let reload = ReloadHandle::new();
+        let slot = Arc::new(OnceLock::new());
+        let metrics = None;
+
+        let mut service = TracingService::new(
+            policy,
+            "svc".to_string(),
+            Some(reload.clone()),
+            slot.clone(),
+            metrics,
+        );
+
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let handle = tokio::spawn(async move {
+            service.start_service(None, rx, 1).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        tx.send(true).expect("should signal shutdown");
+        handle.await.expect("service should finish");
+
+        assert!(slot.get().is_some());
+        let guard = reload.inner.read().unwrap();
+        assert!(guard.is_some(), "layer should be installed by service");
+    }
+
+    struct SpyLayer {
+        on_new_span: Arc<AtomicBool>,
+        on_event: Arc<AtomicBool>,
+        on_enter: Arc<AtomicBool>,
+        on_exit: Arc<AtomicBool>,
+    }
+
+    impl SpyLayer {
+        fn new() -> Self {
+            Self {
+                on_new_span: Arc::new(AtomicBool::new(false)),
+                on_event: Arc::new(AtomicBool::new(false)),
+                on_enter: Arc::new(AtomicBool::new(false)),
+                on_exit: Arc::new(AtomicBool::new(false)),
+            }
+        }
+    }
+
+    impl<S: Subscriber> Layer<S> for SpyLayer {
+        fn on_new_span(
+            &self,
+            _attrs: &tracing::span::Attributes<'_>,
+            _id: &Id,
+            _ctx: Context<'_, S>,
+        ) {
+            self.on_new_span.store(true, Ordering::SeqCst);
+        }
+        fn on_event(&self, _event: &Event<'_>, _ctx: Context<'_, S>) {
+            self.on_event.store(true, Ordering::SeqCst);
+        }
+        fn on_enter(&self, _id: &Id, _ctx: Context<'_, S>) {
+            self.on_enter.store(true, Ordering::SeqCst);
+        }
+        fn on_exit(&self, _id: &Id, _ctx: Context<'_, S>) {
+            self.on_exit.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn reloadable_layer_delegation() {
+        use tracing::{Level, info, span};
+        use tracing_subscriber::prelude::*;
+
+        let reload = ReloadHandle::new();
+        let spy = SpyLayer::new();
+        let on_new_span = spy.on_new_span.clone();
+        let on_event = spy.on_event.clone();
+        let on_enter = spy.on_enter.clone();
+        let on_exit = spy.on_exit.clone();
+
+        reload.reload(Box::new(spy));
+
+        let subscriber = tracing_subscriber::registry().with(reload);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = span!(Level::INFO, "test_span");
+            let _enter = span.enter();
+            info!("test event");
+        });
+
+        assert!(on_new_span.load(Ordering::SeqCst), "on_new_span not called");
+        assert!(on_event.load(Ordering::SeqCst), "on_event not called");
+        assert!(on_enter.load(Ordering::SeqCst), "on_enter not called");
+        assert!(on_exit.load(Ordering::SeqCst), "on_exit not called");
     }
 }

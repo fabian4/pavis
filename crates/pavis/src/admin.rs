@@ -232,8 +232,8 @@ mod tests {
         let worker = AdminApiWorker::new(AdminConfig::Disabled, state);
         let response = worker.handle_request("GET", "/health").await;
 
-        assert!(response.contains("200 OK"));
-        assert!(response.contains(r#"{"status":"healthy"}"#));
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.ends_with(r#"{"status":"healthy"}"#));
     }
 
     #[tokio::test]
@@ -243,13 +243,22 @@ mod tests {
             crate::state::RuntimeState::from_config(&config).unwrap(),
         ));
 
-        let worker = AdminApiWorker::new(AdminConfig::Disabled, state);
+        let worker = AdminApiWorker::new(AdminConfig::Disabled, state.clone());
         let response = worker.handle_request("GET", "/stats").await;
+        let runtime = state.load();
 
-        assert!(response.contains("200 OK"));
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
         assert!(response.contains("version"));
         assert!(response.contains("uptime_seconds"));
-        assert!(response.contains("listeners"));
+        assert!(response.contains(&format!(
+            r#""listeners":{}"#,
+            runtime.config.listeners.len()
+        )));
+        assert!(response.contains(&format!(r#""routes":{}"#, runtime.config.routes.len())));
+        assert!(response.contains(&format!(
+            r#""upstreams":{}"#,
+            runtime.config.upstreams.len()
+        )));
     }
 
     #[tokio::test]
@@ -262,7 +271,56 @@ mod tests {
         let worker = AdminApiWorker::new(AdminConfig::Disabled, state);
         let response = worker.handle_request("GET", "/unknown").await;
 
-        assert!(response.contains("404 Not Found"));
+        assert!(response.starts_with("HTTP/1.1 404 Not Found"));
         assert!(response.contains(r#""error":"Not Found""#));
+        assert!(response.contains(r#""path":"/unknown""#));
+    }
+
+    #[tokio::test]
+    async fn run_server_serves_health_and_shuts_down() {
+        let config = test_config();
+        let state = Arc::new(RuntimeStateHandle::new(
+            crate::state::RuntimeState::from_config(&config).unwrap(),
+        ));
+
+        let addr = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            drop(listener);
+            addr
+        };
+
+        let (tx, rx) = watch::channel(false);
+        let worker = AdminApiWorker::new(AdminConfig::Enabled { addr }, state);
+        let server = tokio::spawn(async move {
+            worker.run_server(addr, rx).await.expect("server run");
+        });
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::time::{Duration, sleep};
+
+        let mut attempts = 0;
+        let mut stream = loop {
+            match tokio::net::TcpStream::connect(addr).await {
+                Ok(stream) => break stream,
+                Err(err) if attempts < 50 => {
+                    attempts += 1;
+                    sleep(Duration::from_millis(10)).await;
+                    continue;
+                }
+                Err(err) => panic!("connect failed: {err}"),
+            }
+        };
+        stream
+            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .expect("write");
+        let mut buf = vec![0u8; 256];
+        let read = stream.read(&mut buf).await.expect("read");
+        let response = String::from_utf8_lossy(&buf[..read]);
+        assert!(response.contains("200 OK"));
+
+        tx.send(true).expect("shutdown signal");
+        server.await.expect("server join");
     }
 }

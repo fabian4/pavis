@@ -381,3 +381,222 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod health_monitor_extra {
+    use super::*;
+    use crate::upstream::Cluster;
+    use axum::http::StatusCode;
+    use axum::{Router, routing::get, serve};
+    use pavis_core::{
+        ActiveHealthCheck, ClientCert, ClientCertChain, Discovery, Endpoint, EndpointAddr,
+        HttpVersion, LoadBalancer, Path as CorePath, Pool, Port, SniName, TlsPolicy, TlsVerify,
+        Upstream, UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName, Weight,
+    };
+    use rcgen::{CertifiedKey, generate_simple_self_signed};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::num::{NonZeroU16, NonZeroU32};
+    use std::path::PathBuf;
+    use std::time::Duration as StdDuration;
+
+    struct TempFile {
+        path: PathBuf,
+    }
+
+    impl TempFile {
+        fn new(prefix: &str, contents: &[u8]) -> Self {
+            let path = std::env::temp_dir().join(format!("{prefix}-{}.pem", rand::random::<u64>()));
+            std::fs::write(&path, contents).expect("write temp pem");
+            Self { path }
+        }
+
+        fn to_path(&self) -> pavis_core::Path {
+            pavis_core::Path(self.path.to_string_lossy().to_string())
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    async fn spawn_test_server(status: StatusCode) -> SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new().route("/health", get(move || async move { status }));
+        tokio::spawn(async move {
+            serve(listener, app).await.expect("serve test app");
+        });
+        addr
+    }
+
+    fn health_checked_upstream() -> Upstream {
+        UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(7).unwrap()))
+            .name(UpstreamName("hc".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::Random)
+            .protocol(HttpVersion::H1)
+            .pool(Pool::default())
+            .health_check(ActiveHealthCheck::Enabled {
+                path: CorePath("/health".to_string()),
+                interval: pavis_core::Duration(NonZeroU32::new(500).unwrap()),
+                timeout: pavis_core::Duration(NonZeroU32::new(500).unwrap()),
+            })
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Ip {
+                    address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    port: Port(NonZeroU16::new(80).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .expect("upstream")
+    }
+
+    #[tokio::test]
+    async fn probe_endpoint_reports_success() {
+        let addr = spawn_test_server(StatusCode::OK).await;
+        let mut upstream = health_checked_upstream();
+        if let Some(ep) = upstream.endpoints.get_mut(0) {
+            ep.address = EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(addr.port()).unwrap()),
+            };
+        }
+
+        let client = build_health_client(&upstream, StdDuration::from_secs(1)).unwrap();
+        let endpoint = upstream.endpoints.first().cloned().unwrap();
+        assert!(
+            probe_endpoint(&client, &upstream, &endpoint, "/health")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_endpoint_reports_failure_for_bad_status() {
+        let addr = spawn_test_server(StatusCode::INTERNAL_SERVER_ERROR).await;
+        let mut upstream = health_checked_upstream();
+        if let Some(ep) = upstream.endpoints.get_mut(0) {
+            ep.address = EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(addr.port()).unwrap()),
+            };
+        }
+
+        let client = build_health_client(&upstream, StdDuration::from_secs(1)).unwrap();
+        let endpoint = upstream.endpoints.first().cloned().unwrap();
+        let healthy = probe_endpoint(&client, &upstream, &endpoint, "/health")
+            .await
+            .unwrap();
+        assert!(!healthy);
+    }
+
+    #[tokio::test]
+    async fn probe_endpoint_handles_network_errors() {
+        let unreachable = Endpoint {
+            address: EndpointAddr::Ip {
+                address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port: Port(NonZeroU16::new(65_000).unwrap()),
+            },
+            weight: Weight(NonZeroU16::new(1).unwrap()),
+        };
+        let upstream = health_checked_upstream();
+        let client = build_health_client(&upstream, StdDuration::from_millis(100)).unwrap();
+        let result = probe_endpoint(&client, &upstream, &unreachable, "/health").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_health_client_rejects_missing_ca() {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(3).unwrap()))
+            .name(UpstreamName("missing-ca".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::Random)
+            .protocol(HttpVersion::H1)
+            .pool(Pool::default())
+            .tls(TlsPolicy::Enabled {
+                verify: TlsVerify::Full,
+                sni: SniName::Disabled,
+                canonical_sni: pavis_core::CanonicalSni::Disabled,
+                reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+                cert: ClientCert::Disabled,
+                ca: UpstreamCa::File {
+                    path: pavis_core::Path("/nonexistent/ca.pem".into()),
+                },
+            })
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Ip {
+                    address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    port: Port(NonZeroU16::new(80).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .unwrap();
+
+        let err = build_health_client(&upstream, StdDuration::from_secs(1)).unwrap_err();
+        assert!(err.to_string().contains("failed to read CA bundle"));
+    }
+
+    #[test]
+    fn build_health_client_supports_client_identity() {
+        let CertifiedKey { cert, key_pair } =
+            generate_simple_self_signed(vec!["client.test".to_string()]).unwrap();
+        let cert_pem = cert.pem();
+        let key_pem = key_pair.serialize_pem();
+        let chain_cert = generate_simple_self_signed(vec!["chain.test".to_string()]).unwrap();
+        let chain_pem = chain_cert.cert.pem();
+
+        let cert_file = TempFile::new("client-cert", cert_pem.as_bytes());
+        let key_file = TempFile::new("client-key", key_pem.as_bytes());
+        let chain_file = TempFile::new("client-chain", chain_pem.as_bytes());
+
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(4).unwrap()))
+            .name(UpstreamName("mtls".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::Random)
+            .protocol(HttpVersion::H1)
+            .pool(Pool::default())
+            .tls(TlsPolicy::Enabled {
+                verify: TlsVerify::Disabled,
+                sni: SniName::Auto,
+                canonical_sni: pavis_core::CanonicalSni::Disabled,
+                reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+                cert: ClientCert::Enabled {
+                    cert_path: cert_file.to_path(),
+                    key_path: key_file.to_path(),
+                    chain: ClientCertChain::File {
+                        path: chain_file.to_path(),
+                    },
+                },
+                ca: UpstreamCa::System,
+            })
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Ip {
+                    address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    port: Port(NonZeroU16::new(80).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .unwrap();
+
+        build_health_client(&upstream, StdDuration::from_secs(1)).expect("client");
+    }
+
+    #[test]
+    fn mark_all_unhealthy_clears_selection() {
+        let upstream = health_checked_upstream();
+        let cluster = Cluster::new(upstream);
+        let endpoints = cluster.current_endpoints();
+        assert!(!endpoints.is_empty());
+        assert!(cluster.select_endpoint().is_some());
+        mark_all_unhealthy(&cluster, &endpoints);
+        assert!(cluster.select_endpoint().is_none());
+    }
+}

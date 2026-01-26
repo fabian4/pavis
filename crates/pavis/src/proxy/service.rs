@@ -1301,6 +1301,124 @@ mod tests {
         let id = RequestId::from_parts(timestamp, 1);
         assert!(id.as_str().starts_with("req-0-"));
     }
+
+    #[test]
+    fn test_calculate_path_rewrite() {
+        use pavis_core::{
+            HeadersPolicy, PathMatch, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route,
+            RouteAction, RouteMatcher, Timeout,
+        };
+
+        let make_route = |path_match: PathMatch, rewrite: Option<RewritePath>| Route {
+            matcher: RouteMatcher {
+                path: path_match,
+                method: pavis_core::MethodPredicate::Any,
+                headers: pavis_core::HeaderPredicates::None,
+            },
+            timeout: Timeout::Disabled,
+            retry: RetryPolicy::Disabled,
+            request_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
+            response_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
+            rewrite: Rewrite {
+                path: rewrite.unwrap_or(RewritePath::Disabled),
+                host: RewriteHost::Disabled,
+            },
+            principal: pavis_core::Principal::Any,
+            action: RouteAction::Direct {
+                status: 200,
+                body: Default::default(),
+            },
+        };
+
+        // Prefix rewrite
+        let route = make_route(
+            PathMatch::Prefix {
+                path: pavis_core::Path("/api".to_string()),
+            },
+            Some(RewritePath::Prefix {
+                from: pavis_core::Path("/api".to_string()),
+                to: pavis_core::Path("/v1".to_string()),
+            }),
+        );
+        let uri = calculate_path_rewrite(&route, "/api/users", Some("q=1"));
+        let uri = uri.expect("should rewrite");
+        assert_eq!(uri.path(), "/v1/users");
+        assert_eq!(uri.query(), Some("q=1"));
+
+        // Exact match rewrite
+        let route = make_route(
+            PathMatch::Exact {
+                path: pavis_core::Path("/exact".to_string()),
+            },
+            Some(RewritePath::Prefix {
+                from: pavis_core::Path("/exact".to_string()),
+                to: pavis_core::Path("/new".to_string()),
+            }),
+        );
+        let uri = calculate_path_rewrite(&route, "/exact", None);
+        let uri = uri.expect("should rewrite");
+        assert_eq!(uri.path(), "/new");
+
+        // No match
+        let route = make_route(
+            PathMatch::Exact {
+                path: pavis_core::Path("/exact".to_string()),
+            },
+            Some(RewritePath::Prefix {
+                from: pavis_core::Path("/exact".to_string()),
+                to: pavis_core::Path("/new".to_string()),
+            }),
+        );
+        let uri = calculate_path_rewrite(&route, "/other", None);
+        assert!(uri.is_none());
+    }
+
+    #[test]
+    fn test_resolve_timeouts() {
+        use pavis_core::{Duration as CoreDuration, RetryPolicy, Timeout, TryTimeout};
+        use std::num::{NonZeroU16, NonZeroU32};
+        use std::time::Duration;
+
+        let t5s = Timeout::Enabled(CoreDuration(NonZeroU32::new(5000).unwrap()));
+        let t1s = TryTimeout::Enabled(CoreDuration(NonZeroU32::new(1000).unwrap()));
+
+        assert_eq!(
+            resolve_route_timeout(t5s),
+            Some(Duration::from_millis(5000))
+        );
+        assert_eq!(resolve_route_timeout(Timeout::Disabled), None);
+
+        let retry_enabled = RetryPolicy::Enabled {
+            max_attempts: NonZeroU16::new(3).unwrap(),
+            per_try: t1s,
+            retryable_reasons: vec![],
+            retryable_status_codes: None,
+            retry_non_idempotent: false,
+            backoff: pavis_core::BackoffStrategy::Fixed { base_ms: 100 },
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1024,
+        };
+
+        assert_eq!(
+            resolve_per_try_timeout(t5s, &retry_enabled),
+            Some(Duration::from_millis(1000))
+        );
+
+        let retry_inherit = RetryPolicy::Enabled {
+            max_attempts: NonZeroU16::new(3).unwrap(),
+            per_try: TryTimeout::Inherit,
+            retryable_reasons: vec![],
+            retryable_status_codes: None,
+            retry_non_idempotent: false,
+            backoff: pavis_core::BackoffStrategy::Fixed { base_ms: 100 },
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1024,
+        };
+        assert_eq!(
+            resolve_per_try_timeout(t5s, &retry_inherit),
+            Some(Duration::from_millis(5000))
+        );
+    }
 }
 
 fn route_path(route: &pavis_core::Route) -> &str {

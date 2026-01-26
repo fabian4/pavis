@@ -147,3 +147,72 @@ impl fmt::Display for PavisError {
 }
 
 impl std::error::Error for PavisError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_code_display_matches_expected_strings() {
+        assert_eq!(
+            ErrorCode::UnsupportedFeature.to_string(),
+            "ERR_UNSUPPORTED_FEATURE"
+        );
+        assert_eq!(ErrorCode::InvalidConfig.to_string(), "ERR_INVALID_CONFIG");
+        assert_eq!(
+            ErrorCode::ValidationFailed.to_string(),
+            "ERR_VALIDATION_FAILED"
+        );
+        assert_eq!(
+            ErrorCode::BackendIncompatible.to_string(),
+            "ERR_BACKEND_INCOMPATIBLE"
+        );
+        assert_eq!(
+            ErrorCode::UpstreamPoolFull.to_string(),
+            "ERR_UPSTREAM_POOL_FULL"
+        );
+    }
+
+    #[test]
+    fn error_context_builders_set_fields() {
+        let ctx = ErrorContext::default()
+            .with_field_path("telemetry.tracing")
+            .with_constraint("must_be_enabled")
+            .with_feature("tracing")
+            .with_backend("otlp")
+            .with_upstream("orders");
+
+        assert_eq!(ctx.field_path.as_deref(), Some("telemetry.tracing"));
+        assert_eq!(ctx.constraint.as_deref(), Some("must_be_enabled"));
+        assert_eq!(ctx.feature.as_deref(), Some("tracing"));
+        assert_eq!(ctx.backend.as_deref(), Some("otlp"));
+        assert_eq!(ctx.upstream.as_deref(), Some("orders"));
+    }
+
+    #[test]
+    fn field_path_builder_builds_and_escapes() {
+        let path = FieldPathBuilder::new()
+            .root("routes")
+            .index(0)
+            .field("matchers")
+            .map_key("header\"value")
+            .finish();
+        assert_eq!(path, "routes[0].matchers[\"header\\\"value\"]");
+    }
+
+    #[test]
+    fn field_path_builder_panics_without_root() {
+        assert!(std::panic::catch_unwind(|| { FieldPathBuilder::new().field("routes") }).is_err());
+    }
+
+    #[test]
+    fn pavis_error_display_includes_code_and_message() {
+        let error = PavisError::new(ErrorCode::InvalidConfig, "missing telemetry block")
+            .with_context(|ctx| ctx.with_field_path("telemetry"));
+        assert_eq!(
+            error.to_string(),
+            "ERR_INVALID_CONFIG: missing telemetry block"
+        );
+        assert_eq!(error.context.field_path.as_deref(), Some("telemetry"));
+    }
+}

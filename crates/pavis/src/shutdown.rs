@@ -50,12 +50,16 @@ impl ShutdownCoordinator {
             }
         }
 
-        // Broadcast shutdown to all subscribers
+        self.broadcast_and_drain().await;
+
+        Ok(())
+    }
+
+    async fn broadcast_and_drain(&self) {
         if self.shutdown_tx.send(true).is_err() {
             tracing::warn!("No shutdown subscribers, skipping broadcast");
         }
 
-        // If graceful shutdown is enabled, wait for drain timeout
         match self.policy {
             ShutdownPolicy::Disabled => {
                 tracing::info!("Graceful shutdown disabled, exiting immediately");
@@ -75,8 +79,11 @@ impl ShutdownCoordinator {
                 tracing::warn!("Unknown shutdown policy, exiting immediately");
             }
         }
+    }
 
-        Ok(())
+    #[cfg(test)]
+    pub async fn simulate_signal(&self) {
+        self.broadcast_and_drain().await;
     }
 }
 
@@ -85,17 +92,50 @@ mod tests {
     use super::*;
     use pavis_core::Duration;
     use std::num::NonZeroU32;
+    use std::sync::Arc;
+    use tokio::time::{advance, timeout};
 
     #[tokio::test]
-    async fn shutdown_coordinator_broadcasts() {
+    async fn simulate_signal_sets_flag() {
         let policy = ShutdownPolicy::Disabled;
-        let (_coordinator, rx) = ShutdownCoordinator::new(policy);
+        let (coordinator, rx) = ShutdownCoordinator::new(policy);
 
-        // Initially not shutdown
         assert!(!*rx.borrow());
+        coordinator.simulate_signal().await;
+        assert!(*rx.borrow());
+    }
 
-        // Simulate shutdown broadcast
-        // (we can't test signal handling in unit tests, so we just verify the channel works)
+    #[tokio::test]
+    async fn simulate_signal_disabled_returns_quickly() {
+        let (coordinator, _rx) = ShutdownCoordinator::new(ShutdownPolicy::Disabled);
+        timeout(
+            std::time::Duration::from_millis(50),
+            coordinator.simulate_signal(),
+        )
+        .await
+        .expect("simulate_signal should complete quickly");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn simulate_signal_enabled_waits_for_drain_timeout() {
+        let drain_timeout = Duration(NonZeroU32::new(100).unwrap());
+        let policy = ShutdownPolicy::Enabled { drain_timeout };
+        let (coordinator, _rx) = ShutdownCoordinator::new(policy);
+        let coordinator = Arc::new(coordinator);
+
+        let handle = {
+            let coordinator = coordinator.clone();
+            tokio::spawn(async move {
+                coordinator.simulate_signal().await;
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!handle.is_finished());
+
+        advance(std::time::Duration::from_millis(100)).await;
+        handle
+            .await
+            .expect("simulate_signal should finish after drain");
     }
 
     #[test]

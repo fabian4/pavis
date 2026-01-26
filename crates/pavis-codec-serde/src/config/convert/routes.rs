@@ -1775,4 +1775,89 @@ mod tests {
                 .contains("retryable_status_codes cannot be empty")
         );
     }
+
+    #[test]
+    fn test_from_runtime_header_predicate_conversions() {
+        use crate::config::types::{HeaderPredicate, HeaderPredicateLegacy};
+        use pavis_core::{HeaderMatch, HeaderPredicate as RuntimeHeaderPredicate};
+
+        let cases = vec![
+            (
+                HeaderMatch::Present,
+                HeaderPredicateLegacy {
+                    name: "test".to_string(),
+                    value: None,
+                    regex: false,
+                    prefix: false,
+                    absent: false,
+                },
+            ),
+            (
+                HeaderMatch::Exact(CompactString::new("val")),
+                HeaderPredicateLegacy {
+                    name: "test".to_string(),
+                    value: Some("val".to_string()),
+                    regex: false,
+                    prefix: false,
+                    absent: false,
+                },
+            ),
+            (
+                HeaderMatch::Prefix(CompactString::new("pre")),
+                HeaderPredicateLegacy {
+                    name: "test".to_string(),
+                    value: Some("pre".to_string()),
+                    regex: false,
+                    prefix: true,
+                    absent: false,
+                },
+            ),
+            (
+                HeaderMatch::Regex(CompactString::new(".*")),
+                HeaderPredicateLegacy {
+                    name: "test".to_string(),
+                    value: Some(".*".to_string()),
+                    regex: true,
+                    prefix: false,
+                    absent: false,
+                },
+            ),
+            (
+                HeaderMatch::Absent,
+                HeaderPredicateLegacy {
+                    name: "test".to_string(),
+                    value: None,
+                    regex: false,
+                    prefix: false,
+                    absent: true,
+                },
+            ),
+        ];
+
+        for (matcher, expected) in cases {
+            let pred = RuntimeHeaderPredicate {
+                name: CompactString::new("test"),
+                matcher,
+            };
+            let result = from_runtime_header_predicate(&pred);
+            match result {
+                HeaderPredicate::V1(legacy) => {
+                    assert_eq!(legacy.name, expected.name);
+                    assert_eq!(legacy.value, expected.value);
+                    assert_eq!(legacy.regex, expected.regex);
+                    assert_eq!(legacy.prefix, expected.prefix);
+                    assert_eq!(legacy.absent, expected.absent);
+                }
+                _ => panic!("Expected V1 variant"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_validate_header_name_errors() {
+        assert!(validate_header_name("Valid-Name", 0, 0, 0).is_ok());
+        assert!(validate_header_name("", 0, 0, 0).is_err());
+        assert!(validate_header_name("Invalid Name", 0, 0, 0).is_err());
+        assert!(validate_header_name("Inv@lid", 0, 0, 0).is_err());
+    }
 }

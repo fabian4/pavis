@@ -482,4 +482,52 @@ mod tests {
         ctx.apply_backoff().await;
         assert!(start.elapsed() < Duration::from_millis(100));
     }
+
+    #[test]
+    fn retry_context_calculates_linear_backoff() {
+        let policy = RetryPolicy::Enabled {
+            max_attempts: NonZeroU16::new(5).unwrap(),
+            per_try: pavis_core::TryTimeout::Inherit,
+            retryable_reasons: vec![],
+            retryable_status_codes: None,
+            backoff: BackoffStrategy::Linear { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1024,
+        };
+        let mut ctx = RetryContext::new(policy, 10000, None, "test".to_string());
+
+        assert_eq!(ctx.calculate_backoff(), Duration::ZERO);
+        ctx.next_attempt(RetryReason::StatusCode);
+        assert_eq!(ctx.calculate_backoff(), Duration::from_millis(100)); // (2-1)*100
+        ctx.next_attempt(RetryReason::StatusCode);
+        assert_eq!(ctx.calculate_backoff(), Duration::from_millis(200)); // (3-1)*100
+    }
+
+    #[test]
+    fn retry_context_calculates_fixed_backoff() {
+        let policy = RetryPolicy::Enabled {
+            max_attempts: NonZeroU16::new(5).unwrap(),
+            per_try: pavis_core::TryTimeout::Inherit,
+            retryable_reasons: vec![],
+            retryable_status_codes: None,
+            backoff: BackoffStrategy::Fixed { base_ms: 50 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1024,
+        };
+        let mut ctx = RetryContext::new(policy, 10000, None, "test".to_string());
+
+        assert_eq!(ctx.calculate_backoff(), Duration::from_millis(50));
+        ctx.next_attempt(RetryReason::StatusCode);
+        assert_eq!(ctx.calculate_backoff(), Duration::from_millis(50));
+    }
+
+    #[test]
+    fn retry_body_error_display() {
+        assert_eq!(
+            RetryBodyError::NotReplayable.to_string(),
+            "request body is not replayable (streaming body)"
+        );
+    }
 }

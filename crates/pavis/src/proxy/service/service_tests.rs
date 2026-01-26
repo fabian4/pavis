@@ -1,12 +1,14 @@
 use super::{
-    Proxy, apply_route_headers, calculate_path_rewrite, resolve_per_try_timeout,
-    resolve_route_timeout, route_path,
+    CLOCK_UNDERFLOW_WARNED, HeaderInjector, Proxy, apply_route_headers, calculate_path_rewrite,
+    generate_request_id, request_id_timestamp, resolve_per_try_timeout, resolve_route_timeout,
+    reuse_key_hash, route_path,
 };
-use crate::proxy::context::RouterContext;
+use crate::proxy::context::{RequestId, RouterContext};
 use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::Telemetry;
 use crate::upstream::Manager;
 use arc_swap::ArcSwap;
+use opentelemetry::propagation::Injector;
 use pavis_core::{
     AccessLogPolicy, ClientCert, ClientCertChain, ConnectTimeout, ConnectionLimit, Destination,
     Discovery, Duration, Endpoint, EndpointAddr, HeaderName, HeaderPredicates, HeaderValue,
@@ -20,11 +22,13 @@ use pingora::http::ResponseHeader;
 use pingora::prelude::{ProxyHttp, RequestHeader, Session};
 use rustls::RootCertStore;
 use std::collections::HashSet;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::{NonZeroU16, NonZeroU32};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::sync::atomic::Ordering;
+use std::time::{Duration as StdDuration, Instant, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[test]
@@ -2327,4 +2331,69 @@ fn test_resolve_endpoint_addr_ip() {
     let addr = resolve_endpoint_addr(&endpoint).unwrap();
     assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
     assert_eq!(addr.port(), 8080);
+}
+
+#[test]
+fn request_id_timestamp_handles_pre_epoch_clock() {
+    CLOCK_UNDERFLOW_WARNED.store(false, Ordering::Relaxed);
+    let before_epoch = SystemTime::UNIX_EPOCH - StdDuration::from_secs(1);
+    let ts = request_id_timestamp(before_epoch);
+    assert_eq!(ts, 0);
+    assert!(CLOCK_UNDERFLOW_WARNED.load(Ordering::Relaxed));
+}
+
+#[test]
+fn request_id_timestamp_computes_nanos() {
+    let ts = request_id_timestamp(SystemTime::UNIX_EPOCH + StdDuration::from_millis(1));
+    assert_eq!(ts, 1_000_000);
+}
+
+#[test]
+fn generate_request_id_produces_bounded_ascii() {
+    let id = generate_request_id();
+    assert!(id.as_str().starts_with("req-"));
+    assert!(id.as_str().len() <= 48);
+    RequestId::from_str(id.as_str()).expect("request id should parse");
+}
+
+#[test]
+fn reuse_key_hash_changes_with_tls_inputs() {
+    let addr: SocketAddr = "127.0.0.1:443".parse().unwrap();
+    let sni = "example.com";
+
+    let base = reuse_key_hash(&addr, sni, None, None);
+
+    let tls_only = reuse_key_hash(
+        &addr,
+        sni,
+        Some(pavis_core::TlsVerify::Full),
+        Some(&ClientCert::Disabled),
+    );
+    assert_ne!(base, tls_only);
+
+    let custom_cert = ClientCert::Enabled {
+        cert_path: pavis_core::Path("/tmp/cert.pem".into()),
+        key_path: pavis_core::Path("/tmp/key.pem".into()),
+        chain: ClientCertChain::None,
+    };
+    let with_cert = reuse_key_hash(
+        &addr,
+        sni,
+        Some(pavis_core::TlsVerify::Full),
+        Some(&custom_cert),
+    );
+    assert_ne!(tls_only, with_cert);
+}
+
+#[test]
+fn header_injector_sets_headers() {
+    let mut request = RequestHeader::build("GET", b"/", None).unwrap();
+    {
+        let mut injector = HeaderInjector(&mut request);
+        injector.set("x-test", "value".to_string());
+    }
+    assert_eq!(
+        request.headers.get("x-test").and_then(|v| v.to_str().ok()),
+        Some("value")
+    );
 }
