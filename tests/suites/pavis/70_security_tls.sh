@@ -5,12 +5,6 @@ set -e
 # Category: Security & TLS
 # Invariants: C (Atomic Switch)
 
-# SKIP: Pingora's rustls connector does not support per-peer CA certificates yet.
-# See: https://github.com/cloudflare/pingora/blob/main/pingora-core/src/connectors/tls/rustls/mod.rs
-# TODO: Re-enable when pingora implements per-peer CA support or when switching to OpenSSL backend
-echo "⏭️ SKIPPED: Pingora rustls does not support per-peer CA certificates"
-exit 77
-
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
@@ -125,7 +119,24 @@ if [ "$SWITCHED" -eq 0 ]; then
 fi
 
 # SNI Validation (Optional/Pending Upstream Support)
-sni_value=$(echo "$response" | json_get_tls_string "sni")
+# Accept null or empty SNI when upstream does not report it.
+sni_value=$(echo "$response" | awk '
+    { gsub(/\r|\n/, "", $0) }
+    match($0, "\"tls\"[^}]*\"sni\"[[:space:]]*:[[:space:]]*\"[^\"]*\"") {
+        value=substr($0, RSTART, RLENGTH)
+        sub(/.*:[[:space:]]*"/, "", value)
+        sub(/"$/, "", value)
+        print value
+        found=1
+        exit
+    }
+    match($0, "\"tls\"[^}]*\"sni\"[[:space:]]*:[[:space:]]*null") {
+        print "None"
+        found=1
+        exit
+    }
+    END { if (!found) print "" }
+')
 echo "Reported SNI: $sni_value"
 
 if [ "$sni_value" == "localhost" ]; then

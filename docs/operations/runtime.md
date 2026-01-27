@@ -11,9 +11,11 @@
 
 ### From Source
 ```bash
-cargo build --release --bin pavis
+sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+make binary-build CRATE=pavis
 sudo cp target/release/pavis /usr/local/bin/
 ```
+OpenSSL is the only supported TLS backend; rustls is not supported or tested in CI. `reqwest` uses native-tls (OpenSSL on Linux, system TLS on macOS/Windows).
 
 ### Container Image
 ```bash

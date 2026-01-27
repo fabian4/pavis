@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "Pavis runtime"
 
 [dependencies]
-pingora = { version = "0.6.0", default-features = false, features = ["proxy", "rustls"] }
+pingora = { version = "0.6.0", default-features = false, features = ["proxy", "openssl"] }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
@@ -21,16 +21,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
 arc-swap = "1.7.1"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json"] }
+openssl = "0.10"
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
 hickory-resolver = "0.25.2"
-rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
-rustls-pemfile = "2.1"
-webpki-roots = "1"
 x509-parser = "0.16"
-ouroboros = "0.18"
-static_assertions = "1.1"
 compact_str = "0.9"
 tikv-jemallocator = "0.6"
 

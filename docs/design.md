@@ -69,15 +69,15 @@ Pavis adopts the **Frozen Data Plane** model to solve the problem of runtime non
 
 ---
 
-## 6. TLS Backend Flexibility (Rustls vs. OpenSSL)
+## 6. TLS Backend (OpenSSL-only)
 
-**Context:** Pingora's default `rustls` backend lacks features required for Enterprise mesh environments (inbound mTLS, custom CA verification). However, forcing OpenSSL on everyone increases complexity and binary size.
+**Context:** Pingora's `rustls` backend lacks critical features required for mesh environments (inbound mTLS, per-upstream CA verification, client cert chains). Running multiple backends created ambiguity in feature availability.
 
-**Decision:** Support both `rustls` (default) and `OpenSSL` (feature-gated) backends.
+**Decision:** Standardize the runtime on the OpenSSL backend only. Rustls is not supported or tested in CI.
 
 **Rationale:**
-- **Pragmatic Defaults**: Most users don't need mTLS. `rustls` provides a modern, memory-safe default with smaller binaries.
-- **Enterprise Support**: Users requiring mTLS can enable the OpenSSL feature at build time.
-- **Validation Integrity**: The Codec validates configuration against target backend capabilities, preventing runtime surprises.
+- **Backend Parity**: Eliminates feature gaps and removes backend-dependent behavior.
+- **Operational Clarity**: `cargo build -p pavis` always produces the same TLS behavior.
+- **Validation Integrity**: The Codec targets a single backend capability surface, preventing runtime surprises.
 
-**See Also:** `docs/operations/runtime.md` for specific feature limitations per backend.
+**See Also:** `docs/operations/runtime.md` for build requirements and runtime expectations.

@@ -55,6 +55,7 @@ RUN gcc -O2 -s -o /tmp/entrypoint /src/entrypoint.c
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 ARG BINARY=pavis-mock-upstream

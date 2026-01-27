@@ -56,7 +56,6 @@ async fn upstream_peer_defaults_sni() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -115,7 +114,6 @@ async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -142,7 +140,6 @@ async fn upstream_peer_fails_when_no_upstream_in_ctx() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -166,7 +163,6 @@ async fn upstream_peer_fails_when_upstream_not_found() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -207,7 +203,6 @@ async fn upstream_peer_fails_when_no_endpoints() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -258,7 +253,6 @@ async fn upstream_peer_returns_503_when_pool_full() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session_one, _client_one) =
@@ -324,7 +318,6 @@ async fn upstream_peer_returns_503_when_pool_wait_times_out() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session_one, _client_one) =
@@ -365,7 +358,6 @@ async fn upstream_peer_errors_without_snapshot() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -397,7 +389,6 @@ async fn upstream_peer_uses_pinned_state_over_latest() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(proxy_state)),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let pinned_state = Arc::new(RuntimeState {
@@ -451,7 +442,6 @@ async fn test_upstream_peer_tls_verify_variants() {
                 config_version: None,
             })),
             telemetry: test_telemetry(),
-            ca_store: test_ca_store(),
         };
 
         let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -486,7 +476,6 @@ async fn upstream_peer_sets_client_cert_key() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -531,7 +520,6 @@ async fn upstream_peer_dns_supported() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -564,7 +552,6 @@ async fn upstream_peer_tls_and_pool_variants() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -625,7 +612,6 @@ async fn upstream_peer_sni_fallback_warning() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -679,7 +665,6 @@ async fn upstream_peer_sni_override_prevents_fallback() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -735,7 +720,6 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;

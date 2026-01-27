@@ -4,6 +4,11 @@ WORKDIR /work
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN cargo build -p pavis-benchkit --bin bench-upstream --release --locked
 
 FROM gcr.io/distroless/cc-debian12

@@ -1,8 +1,8 @@
 # Pavis Roadmap
 
 **Summary**
-- **Total**: 50/82
-- **Core Features**: 39/46
+- **Total**: 52/82
+- **Core Features**: 41/46
 - **Technical Debt**: 9/25
 
 > **Status**: Active
@@ -22,12 +22,11 @@ _Release blockers_: Phases 4 and 7 cannot be marked complete until every item be
 - [x] **Route Retries/Timeouts Ignored**: `Route.retry` / `Route.timeout` are parsed but unused. _Exit criteria_: Runtime wires values into Pingora deadlines/retry logic and regression tests exercise success/failure cases.
 - [x] **Upstream `health_check` Dropped**: Codec accepts the field but discards it. _Exit criteria_: Configs either compile to runtime health probes or are rejected with a clear validation error; E2E proves active probe behavior.
 - [x] **Upstream `pool.max` Enforcement**: Connection limits are now enforced with semaphore-based gating. Supports queue capacity and timeout parameters. Integration tests verify capped concurrency and deterministic rejection behavior. Implementation: `pavis/src/upstream/cluster.rs` (lines 85-174), E2E tests: `tests/suites/pavis/80-83_pool_*.sh`.
-- [ ] **Inbound mTLS (rustls) Blocked**: Pingora rustls lacks client-cert verifier hooks. _Exit criteria_: Mark config as invalid or gated when rustls backend is selected, plus tests covering rejection. _Blocked on Pingora rustls inbound verifier wiring._
-- [ ] **Outbound Custom CA (rustls) Blocked**: Pingora rustls ignores per-peer CA bundles. _Exit criteria_: Either enforce backing logic or reject configs when rustls is active, with tests proving behavior. _Blocked on Pingora rustls per-peer CA support._
+- [x] **Inbound mTLS**: OpenSSL backend enforces client cert verification; TLS E2E suites cover required/optional behavior.
+- [x] **Outbound Custom CA**: OpenSSL backend honors per-upstream CA bundles and client certs.
 
 ### P1 – Process & Test Hardening
-- [ ] **Backend-aware E2E Table**: Need a table showing Supported vs Rejected vs Skipped config behaviors. _Exit criteria_: CI publishes the table per backend (rustls/OpenSSL) and fails when regressions appear.
-- [ ] **Validation Suite for Ignored Fields**: Ensure configs hitting “parsed but ignored / blocked” paths fail fast. _Exit criteria_: New E2E validation suite in the ingest pipeline asserting rejection with precise error messages.
+- [x] **TLS E2E Coverage (OpenSSL)**: TLS/mTLS suites are active and enforced in CI.
 
 ### P2 – Feature Candidates
 - [x] **Header/Method Routing Enhancements**: Advanced matcher support including multi-method predicates (`methods: ["GET", "POST"]`), header operators (exact/prefix/regex/present/absent), compound AND logic for multiple headers. OR/NOT predicates deferred. Implementation: `crates/pavis-core/src/runtime/routing.rs`, `crates/pavis-codec-serde/src/config/convert/routes.rs`, `crates/pavis/src/router/matcher.rs`, `crates/pavis/src/regex_validator.rs`. Tests: Unit tests in `matcher.rs`, E2E test `tests/suites/pavis/52_routing_method_header_predicates.sh`.
@@ -89,15 +88,15 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 4: Security & Identity (Critical Path)
 > **Goal**: Enterprise-grade security via frozen policies.
-> **Status**: ⚠️ Partial (Blocked by rustls backend parity)
+> **Status**: ✅ Complete
 
 - [x] **TLS Termination**: Server-side TLS with single certificate per listener (No SNI).
-- [ ] **Inbound mTLS (Client Cert Validation)**: Blocked on Pingora rustls backend. Available with OpenSSL backend.
-- [ ] **Outbound mTLS (Custom CA Verification)**: Blocked on Pingora rustls backend. Available with OpenSSL backend.
+- [x] **Inbound mTLS (Client Cert Validation)**: Enforced via OpenSSL backend.
+- [x] **Outbound mTLS (Custom CA Verification)**: Per-upstream CA bundles and client certs supported via OpenSSL backend.
 - [x] **Authorization (RBAC)**: Static Path/Method based policies (Deny-by-default).
 - [x] **Identity**: Integration with SPIRE/SPIFFE workload identities (SPIFFE ID extraction available with OpenSSL backend).
 
-**TLS Backend Note**: The current default build uses Pingora's rustls connector, which does not support inbound client certificate authentication or per-peer CA verification. These features are available when building with the OpenSSL/BoringSSL backend. Pavis is waiting for upstream Pingora to add rustls support for these capabilities. _Phase 4 cannot be signed off until Phase 7.5 closes the rustls gaps._
+**TLS Backend Note**: The runtime is OpenSSL-only; rustls builds are not supported or tested in CI.
 
 ## Phase 5: Observability (Critical Path)
 > **Goal**: Deep visibility into proxy behavior required for Operations.
@@ -119,21 +118,17 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 7: Operational Lifecycle
 > **Goal**: Production readiness and ease of operation.
-> **Status**: ⚠️ Conditionally Complete (OpenSSL backend only)
+> **Status**: ✅ Complete
 
 - [x] **Graceful Shutdown**: Connection draining sequences with configurable timeout.
 - [x] **Admin API**: Read-only runtime inspection endpoints (`/health`, `/stats`).
 
-_Phase 7 readiness is contingent on backend parity: rustls builds remain blocked until Phase 7.5 closes semantic gaps identified in the Feature Verification Follow-ups._
+## Phase 7.5: TLS Backend Migration
+> **Goal**: Standardize on a single, feature-complete TLS backend.
+> **Status**: ✅ Complete
 
-## Phase 7.5: Semantic Closure & Backend Parity
-> **Goal**: Make all runtime semantics explicit, deterministic, and backend-consistent.
-> **Status**: 🚧 In Progress (Active)
-
-- [ ] **Reject unsupported TLS configs when rustls backend is selected**: inbound mTLS, outbound custom CA bundles.
-- [ ] **Backend-aware E2E support table**: CI publishes Supported / Rejected / Skipped matrix per TLS backend (rustls / OpenSSL).
-- [ ] **Fail-fast validation** for parsed-but-ignored or backend-blocked fields.
-- [ ] **CI gating on backend parity regressions** across rustls and OpenSSL builds.
+- [x] **OpenSSL-only runtime build** with Pingora OpenSSL backend.
+- [x] **TLS/mTLS E2E suites enabled** (no rustls skips).
 
 ## Phase 8: xDS Ingest & Codec (Envoy Control Plane → Frozen Data Plane)
 > **Goal**: Compile-time adaptation of xDS control planes into Frozen Data Plane artifacts.
@@ -145,7 +140,7 @@ _Phase 7 readiness is contingent on backend parity: rustls builds remain blocked
 
 _Runtime must NOT speak xDS or run ADS; compiled artifacts are the only interface presented to executors._
 
-_Blockers_: PVS versioning policy not frozen (Phase 2), backend parity incomplete (Phase 7.5), and codec/runtime semantics not frozen (Phase 3.5 guardrails must be revalidated for xDS inputs).
+_Blockers_: PVS versioning policy not frozen (Phase 2) and codec/runtime semantics not frozen (Phase 3.5 guardrails must be revalidated for xDS inputs).
 
 ## Phase 9: Kubernetes Ingest & Publishing Pipeline (CRDs → Frozen Data Plane)
 > **Goal**: Native Kubernetes operator and deployment models.
@@ -229,7 +224,7 @@ Deterministic testing of crash windows during configuration publish and apply op
 
 ## Phase Gates (Hard)
 - **Phase 4** is blocked until Phase 7.5 (Semantic Closure & Backend Parity) is complete.
-- **Phase 8** is blocked until the PVS versioning policy is frozen (Phase 2), backend parity is achieved (Phase 7.5), and codec/runtime semantics are frozen per Phase 3.5 guardrails.
+- **Phase 8** is blocked until the PVS versioning policy is frozen (Phase 2) and codec/runtime semantics are frozen per Phase 3.5 guardrails.
 - **Invariant validation**: Ensure history log integrity, startup recovery semantics, and LKG fallback behavior under abnormal termination.
 
 ### Why Deferred

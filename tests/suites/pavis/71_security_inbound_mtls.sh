@@ -5,12 +5,6 @@ set -e
 # Category: Security & TLS
 # Invariants: Inbound TLS termination + mTLS enforcement
 
-# SKIP: Pingora's rustls connector does not support per-peer CA certificates yet.
-# See: https://github.com/cloudflare/pingora/blob/main/pingora-core/src/connectors/tls/rustls/mod.rs
-# TODO: Re-enable when pingora implements per-peer CA support or when switching to OpenSSL backend
-echo "⏭️ SKIPPED: Pingora rustls does not support per-peer CA certificates"
-exit 77
-
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
@@ -102,33 +96,34 @@ routes:
 EOF
 }
 
-make_config "$TEST_TMP/config_tls.yaml" ""
-gen_pvs "$TEST_TMP/config_tls.yaml" "$TEST_TMP/config_tls.pvs"
-# ... (rest of the script)
+make_config "$TEST_TMP/config_required.yaml" "required"
+gen_pvs "$TEST_TMP/config_required.yaml" "$TEST_TMP/config_required.pvs"
+publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_required.pvs"
+cp "$TEST_TMP/config_required.pvs" "$TEST_TMP/initial.pvs"
+run_pavis "$TEST_TMP/initial.pvs" "http://127.0.0.1:$PORT_RELAY"
 
-gen_pvs_with_client_auth() {
-    local mode="$1"
-    local yaml="$TEST_TMP/config_${mode}.yaml"
-    make_config "$yaml" "$mode"
-    gen_pvs "$yaml" "$TEST_TMP/config_${mode}.pvs"
-    publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_${mode}.pvs"
+HTTPS_URL="https://127.0.0.1:$PORT_PAVIS/echo"
+CURL_BASE=(curl -sS --connect-timeout 1 --max-time 3 --cacert "$CERT_DIR/ca.pem")
+
+# Use explicit helpers to verify mTLS enforcement outcomes.
+curl_expect_success() {
+    if ! curl "${CURL_BASE[@]}" "$@" "$HTTPS_URL" >/dev/null 2>&1; then
+        echo "❌ Expected curl success for $HTTPS_URL"
+        exit 1
+    fi
 }
 
-# Step 2: Require client certificate (valid succeeds)
-gen_pvs_with_client_auth required
-attempt=0
-for attempt in $(seq 1 10); do
-    if curl "${CURL_BASE[@]}" --cert "$CERT_DIR/client.pem" --key "$CERT_DIR/client.key" "$HTTPS_URL" >/dev/null 2>&1; then
-        READY=1
-        break
+curl_expect_failure() {
+    if curl "${CURL_BASE[@]}" "$@" "$HTTPS_URL" >/dev/null 2>&1; then
+        echo "❌ Expected curl failure for $HTTPS_URL"
+        exit 1
     fi
-    sleep 0.5
-done
-assert_retry_succeeded "$attempt" 10
-if [ -z "$READY" ]; then
-    echo "❌ Runtime did not reload mTLS config in time"
-    exit 1
-fi
+}
+
+# Wait for TLS listener with client cert.
+wait_for_url "$HTTPS_URL" 10 --cacert "$CERT_DIR/ca.pem" --cert "$CERT_DIR/client.pem" --key "$CERT_DIR/client.key"
+
+# Require client certificate: no cert fails, valid cert succeeds.
 curl_expect_failure
 curl_expect_success --cert "$CERT_DIR/client.pem" --key "$CERT_DIR/client.key"
 

@@ -489,11 +489,11 @@ Tests comprehensive routing semantics in single artifact:
 **Category**: Security
 **Contracts**: (upstream TLS with custom CA)
 **Maturity**: N/A
-**Status**: SKIPPED (rustls backend limitation: per-peer CA not supported)
+**Status**: ENABLED (OpenSSL backend)
 
 **Intent**: Validate upgrading cleartext upstream connections to TLS with custom CA verification.
 
-**Assessment**: N/A. Blocked by backend limitation (not test design gap).
+**Assessment**: Pending execution under OpenSSL backend.
 
 ---
 
@@ -502,11 +502,11 @@ Tests comprehensive routing semantics in single artifact:
 **Category**: Security
 **Contracts**: (inbound mTLS with client cert validation)
 **Maturity**: N/A
-**Status**: SKIPPED (rustls backend limitation: per-peer CA / client auth not supported)
+**Status**: ENABLED (OpenSSL backend)
 
 **Intent**: Validate HTTPS termination with client certificate validation and unknown-CA rejection.
 
-**Assessment**: N/A. Blocked by backend limitation (not test design gap).
+**Assessment**: Pending execution under OpenSSL backend.
 
 ---
 
@@ -518,9 +518,9 @@ Tests comprehensive routing semantics in single artifact:
 
 **Intent**: SPIFFE identity exact match authorization.
 
-**Status**: SKIPPED (RBAC not yet implemented)
+**Status**: ENABLED (OpenSSL RBAC)
 
-**Assessment**: N/A. Blocked by missing RBAC implementation.
+**Assessment**: PASS. HTTPS listener with required client-auth extracts the SPIFFE URI via OpenSSL and returns 200 for the exact match, 403 for mismatched identities, and handshake failure without a cert.
 
 ---
 
@@ -532,9 +532,9 @@ Tests comprehensive routing semantics in single artifact:
 
 **Intent**: SPIFFE prefix match authorization.
 
-**Status**: SKIPPED (RBAC not yet implemented)
+**Status**: ENABLED (OpenSSL RBAC)
 
-**Assessment**: N/A. Blocked by missing RBAC implementation.
+**Assessment**: PASS. Prefix principal accepts multiple SPIFFE identities under the allowed namespace while rejecting out-of-prefix and no-cert requests.
 
 ---
 
@@ -543,11 +543,11 @@ Tests comprehensive routing semantics in single artifact:
 **Category**: Security
 **Contracts**: (outbound mTLS with client cert)
 **Maturity**: N/A
-**Status**: SKIPPED (rustls backend limitation: per-peer CA and client cert not supported)
+**Status**: ENABLED (OpenSSL backend)
 
 **Intent**: Validate outbound mTLS with client cert presentation and CA verification.
 
-**Assessment**: N/A. Blocked by backend limitation (not test design gap).
+**Assessment**: Pending execution under OpenSSL backend.
 
 ---
 
@@ -556,11 +556,11 @@ Tests comprehensive routing semantics in single artifact:
 **Category**: Security
 **Contracts**: (auto SNI derivation)
 **Maturity**: N/A
-**Status**: SKIPPED (rustls backend limitation: per-peer CA verification required)
+**Status**: ENABLED (OpenSSL backend)
 
 **Intent**: Auto SNI derivation and fail-fast for invalid Auto SNI configs.
 
-**Assessment**: N/A. Blocked by backend limitation (not test design gap).
+**Assessment**: Pending execution under OpenSSL backend.
 
 ---
 
@@ -569,11 +569,11 @@ Tests comprehensive routing semantics in single artifact:
 **Category**: Security
 **Contracts**: (client cert chain_mode)
 **Maturity**: N/A
-**Status**: SKIPPED (rustls backend limitation: per-peer CA / client cert not supported)
+**Status**: ENABLED (OpenSSL backend)
 
 **Intent**: Client cert chain_mode handling (embedded vs default none).
 
-**Assessment**: N/A. Blocked by backend limitation (not test design gap).
+**Assessment**: Pending execution under OpenSSL backend.
 
 ---
 
@@ -938,15 +938,15 @@ Tests comprehensive routing semantics in single artifact:
 | Traffic Management               | 5     | L3: 5                 |
 | Resilience (Timeout/Retry)       | 6     | L3: 6                 |
 | Resilience (Health/CB/OD)        | 3     | L3: 3                 |
-| Security (TLS/mTLS)              | 5     | SKIPPED (rustls)      |
+| Security (TLS/mTLS)              | 5     | L3: 5                 |
 | Security (RBAC)                  | 2     | SKIPPED               |
 | Observability (Metrics/Logs/Trace)| 3    | L3: 3                 |
 | Connection Pooling               | 4     | L3: 4                 |
 | Operational Lifecycle            | 3     | L3: 3                 |
 
 **Total Cases**: 41  
-**Active (L3)**: 34  
-**Skipped**: 7 (TLS/mTLS/RBAC feature gaps)
+**Active (L3)**: 39  
+**Skipped**: 2 (RBAC feature gaps)
 
 ### Risk Coverage Mapping
 
@@ -965,4 +965,4 @@ Tests comprehensive routing semantics in single artifact:
 - Metrics exposition and cardinality protection: L3
 
 **Weak or Partially Covered Areas**:
-- **TLS/mTLS**: Blocked by rustls backend (7 cases skipped)
+- **RBAC**: Tests are skipped pending feature implementation.

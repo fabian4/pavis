@@ -58,6 +58,11 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the formal architectural invariants
 
 See [docs/roadmap/features.md](./docs/roadmap/features.md) for a complete feature matrix.
 
+## Build Requirements
+
+Pavis runtime builds are **OpenSSL-only** via Pingora's OpenSSL backend; rustls is not supported or tested in CI.
+On Linux, install OpenSSL headers and pkg-config (e.g., `libssl-dev` and `pkg-config`) before building.
+
 ## Operational Model
 
 The operational model of Pavis is distinct from other proxies:

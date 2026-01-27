@@ -120,15 +120,17 @@ get_free_port() {
     local port
 
     while true; do
+        port=""
         if command -v python3 >/dev/null 2>&1; then
-            port=$(python3 - <<'PY'
+            port=$(python3 - <<'PY' 2>/dev/null || true
 import socket
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind(("127.0.0.1", 0))
     print(s.getsockname()[1])
 PY
 )
-        elif command -v perl >/dev/null 2>&1; then
+        fi
+        if [ -z "$port" ] && command -v perl >/dev/null 2>&1; then
             port=$(perl -MSocket -e '
                 socket(my $sock, PF_INET, SOCK_STREAM, getprotobyname("tcp")) or die $!;
                 bind($sock, sockaddr_in(0, inet_aton("127.0.0.1"))) or die $!;
@@ -136,8 +138,18 @@ PY
                 close($sock);
                 print "$port\n";
             ')
-        else
-            echo "❌ python3 or perl is required for dynamic port allocation" >&2
+        fi
+        if [ -z "$port" ]; then
+            for _ in $(seq 1 100); do
+                port=$((20000 + (RANDOM % 40000)))
+                if ! nc -z 127.0.0.1 "$port" 2>/dev/null; then
+                    break
+                fi
+                port=""
+            done
+        fi
+        if [ -z "$port" ]; then
+            echo "❌ Unable to find an available port" >&2
             return 1
         fi
 
@@ -231,6 +243,47 @@ EOF
             -out "$out_dir/${name}.pem" -days 365 \
             -extfile "$cnf_file" -extensions v3_sign > /dev/null 2>&1
     fi
+}
+
+generate_spiffe_client_cert() {
+    local name="$1"
+    local out_dir="$2"
+    local ca_cert="$3"
+    local ca_key="$4"
+    local spiffe_id="$5"
+
+    local cnf_file="$out_dir/${name}.cnf"
+
+    cat > "$cnf_file" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+[req_distinguished_name]
+CN = ${name}
+[v3_req]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+[alt_names]
+URI.1 = ${spiffe_id}
+[v3_sign]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+EOF
+
+    openssl req -newkey rsa:2048 -nodes \
+        -keyout "$out_dir/${name}.key" \
+        -out "$out_dir/${name}.csr" \
+        -config "$cnf_file" >/dev/null 2>&1
+
+    openssl x509 -req -in "$out_dir/${name}.csr" \
+        -CA "$ca_cert" -CAkey "$ca_key" -CAcreateserial \
+        -out "$out_dir/${name}.pem" \
+        -days 365 -extensions v3_sign -extfile "$cnf_file" >/dev/null 2>&1
 }
 
 generate_certs() {

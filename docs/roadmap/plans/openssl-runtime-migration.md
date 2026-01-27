@@ -6,21 +6,21 @@ _Last updated: 2026-01-27_
 
 ### 1.1 Inbound TLS termination
 - **File**: `crates/pavis/src/main.rs`
-  - Functions `configure_client_auth()` and `create_root_store()` wire Pingora listeners using **rustls** primitives (`rustls::RootCertStore`, `rustls_pemfile`, `rustls::server::WebPkiClientVerifier`).
-  - TODO comment notes Pingora rustls lacks client-cert verifier hooks.
+  - `configure_client_auth()` wires Pingora listeners using **OpenSSL** `TlsSettings` (`SslAcceptorBuilder`).
+  - Listener TLS uses `TlsSettings::intermediate` and OpenSSL verify/CA configuration.
 
 ### 1.2 Inbound mTLS
-- Same file/function: `configure_client_auth()` handles `pavis_core::ClientAuth::{Optional,Required}` but can’t enforce mTLS because rustls connector exposes no hooks.
+- `configure_client_auth()` enforces mTLS using `SslVerifyMode::PEER` and `FAIL_IF_NO_PEER_CERT`.
 
 ### 1.3 Outbound TLS (upstreams)
 - **Files**: `crates/pavis/src/upstream.rs`, `crates/pavis/src/upstream/cluster.rs`
-  - Use `pingora::protocols::tls::CaType` and `pingora::utils::tls::CertKey` along with `rustls_pemfile` to parse CA bundles/client certs. Per-upstream CA support is blocked by rustls backend.
+  - Use `pingora::protocols::tls::CaType = Box<[X509]>` and `pingora::utils::tls::CertKey` with OpenSSL PEM parsing for CA bundles and client certs.
 
 ### 1.4 TLS backend selection
-- `crates/pavis/Cargo.toml`: `pingora` declared with `features = ["proxy", "rustls"]`; runtime also depends directly on `rustls`, `rustls-pemfile`, `webpki-roots`. `reqwest` uses rustls backend.
+- `crates/pavis/Cargo.toml`: `pingora` declared with `features = ["proxy", "openssl"]`; runtime no longer depends on `rustls`, `rustls-pemfile`, or `webpki-roots`. `reqwest` uses native-tls.
 
 ### 1.5 TLS fixtures/tests
-- TLS/mTLS suites in `tests/suites/pavis/70_security_tls.sh`, `71_security_inbound_mtls.sh`, `74_security_mtls_outbound.sh`, `75_security_tls_sni_auto.sh`, `76_security_mtls_chain_mode.sh` currently skip with “Pingora rustls does not support per-peer CA certificates.” Scripts generate certs via `openssl` CLI and expect runtime support once backend switches.
+- TLS/mTLS suites in `tests/suites/pavis/70_security_tls.sh`, `71_security_inbound_mtls.sh`, `74_security_mtls_outbound.sh`, `75_security_tls_sni_auto.sh`, `76_security_mtls_chain_mode.sh` are active; scripts generate certs via `openssl` CLI.
 
 ### 1.6 Pingora OpenSSL Integration Surface (Hard Gate)
 Before changing any runtime code, the developer **must**:
@@ -31,21 +31,39 @@ Before changing any runtime code, the developer **must**:
 
 **Hard gate**: _Do not proceed to runtime wiring (Sections 3.1/3.2) until this integration surface is nailed down and the sections are updated accordingly._
 
+**Findings (Pingora 0.6.0, crate sources in Cargo registry):**
+- **Listener TLS (server side)**:
+  - Type: `pingora::listeners::tls::TlsSettings` (cfg `openssl_derived`) wraps `pingora::tls::ssl::SslAcceptorBuilder`.
+  - Constructor: `TlsSettings::intermediate(cert_path: &str, key_path: &str) -> Result<TlsSettings>`.
+  - Client auth wiring:
+    - CA bundle: `TlsSettings::set_ca_file(ca_path: impl AsRef<Path>) -> Result<()>`.
+    - Verify mode: `TlsSettings::set_verify(SslVerifyMode)`, with
+      - Optional client cert: `SslVerifyMode::PEER`
+      - Required client cert: `SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT`
+  - ALPN / HTTP/2: `TlsSettings::set_alpn(...)` and `TlsSettings::enable_h2()` (unchanged).
+- **Upstream TLS (client side)**:
+  - Connector type: `pingora::connectors::tls::Connector` (cfg `openssl_derived`) with `Connector::new(options: Option<ConnectorOptions>)`.
+  - Connection path uses `pingora::connectors::tls::connect(...)` which reads:
+    - CA bundle via `peer.get_ca()` where `CaType = Box<[pingora::tls::x509::X509]>` (OpenSSL backend).
+    - Client cert/key via `peer.get_client_cert_key()` where `CertKey` stores `Vec<X509>` + `PKey<Private>`.
+    - Verification toggles via `peer.verify_cert()` / `peer.verify_hostname()`.
+  - Client certs and chain are attached by setting `peer.client_cert_key = Some(Arc<CertKey>)`.
+
 ### 1.7 RuntimeConfig TLS Schema Completeness Audit (Hard Gate)
 Before wiring OpenSSL, inspect `crates/pavis-core/src/runtime/**/*.rs` (especially listener/upstream TLS structs) and document whether each required semantic is represented unambiguously in `RuntimeConfig`. Use the table below and fill in actual field names/decisions:
 
 | TLS Semantic | RuntimeConfig Field(s) | Adequate? (Yes/No) | Required Change |
 | --- | --- | --- | --- |
-| Listener TLS cert/key path | `runtime::server::TlsConfig::Enabled { cert_path, key_path, .. }` | Yes | None |
-| Listener client-auth mode (disabled/optional/required) | `runtime::server::ClientAuth` enum | Yes | None |
+| Listener TLS cert/key path | `runtime::listener::TlsConfig::Enabled { cert_path, key_path, client_auth }` | Yes | None |
+| Listener client-auth mode (disabled/optional/required) | `runtime::listener::ClientAuth` enum | Yes | None |
 | Listener client CA bundle path | `ClientAuth::{Optional,Required} { ca_path }` | Yes | None |
 | Upstream CA bundle (system/file) | `runtime::upstream::UpstreamCa::{System, File { path }}` | Yes | None |
-| Upstream client cert/key path | `runtime::upstream::ClientCert::Enabled { cert_path, key_path, .. }` | Yes | None |
+| Upstream client cert/key path | `runtime::upstream::ClientCert::Enabled { cert_path, key_path, chain }` | Yes | None |
 | Upstream client chain handling | `runtime::upstream::ClientCertChain::{None, Embedded, File { path }}` | Yes | None |
-| Outbound SNI override / server_name | `runtime::upstream::TlsPolicy::Enabled { sni: SniName, canonical_sni: CanonicalSni }` | Yes | None |
+| Outbound SNI override / server_name | `runtime::upstream::TlsPolicy::Enabled { sni, canonical_sni }` | Yes | None |
 | Verify on/off toggles (inbound/outbound) | Inbound: `ClientAuth`; Outbound: `TlsPolicy::Enabled { verify: TlsVerify }` | Yes | None |
-| Chain mode semantics | Same as `ClientCertChain` plus `reuse_across_sni` | Yes | None |
-| SPIFFE extraction preconditions | `runtime::routing::Principal::Authenticated { spiffe }` combined with `ClientAuth` to supply peer cert | Yes (requires runtime to surface SPIFFE when mTLS enabled) | None |
+| Chain mode semantics | `ClientCertChain` plus `reuse_across_sni` in `TlsPolicy::Enabled` | Yes | None |
+| SPIFFE extraction preconditions | `runtime::routing::Principal::Authenticated { spiffe }` combined with inbound `ClientAuth` and peer cert exposure | Yes (runtime must surface peer cert when mTLS enabled) | None |
 
 **Hard gate**: _Do not proceed to runtime wiring until the table is filled with actual field names and any schema gaps are explicitly planned/approved. If fields are missing or ambiguous, design the schema change first._
 
@@ -56,7 +74,8 @@ Before wiring OpenSSL, inspect `crates/pavis-core/src/runtime/**/*.rs` (especial
    - Hard-code `pingora` with `features = ["proxy", "openssl"]` (drop `rustls`) so every `cargo build -p pavis` and `make binary-build` emits an OpenSSL-backed binary. No optional feature flags may re-enable rustls.
    - Remove direct deps on `rustls`, `rustls-pemfile`, `webpki-roots`.
    - **Do not add `openssl` / `openssl-sys` crates by default.** First prove (via §1.6) that Pingora’s OpenSSL surface cannot express the needed semantics. Only then, as a documented last resort, add direct bindings and justify them in the PR.
-   - **Reqwest change is optional/deferred**: keep `reqwest` on rustls unless a dedicated follow-up documents native-tls implications (Linux/macOS/Windows). Note this constraint in the PR description if not switching.
+- **Reqwest**: switched to `native-tls` in this migration (document Linux/macOS/Windows assumptions in build docs).
+  - **Note (health checks)**: Pingora’s OpenSSL surface does not expose PKCS#12 builders. We add a direct `openssl` crate dependency in `pavis` to build PKCS#12 identities for `reqwest` health checks as a last resort.
    - If PEM parsing/helpers are still required after leveraging Pingora, add lightweight crates (e.g., `pem = "1"`) rather than diving straight into OpenSSL X509 APIs.
    - Explicit contract: _It must be impossible to accidentally produce a rustls-backed runtime binary after this migration._
 2. Ensure no other workspace crate unconditionally depends on rustls (audit with `rg -n "rustls" crates`). Document follow-ups if other binaries still need migration.
@@ -81,19 +100,25 @@ Before wiring OpenSSL, inspect `crates/pavis-core/src/runtime/**/*.rs` (especial
 
 ### 3.1 Server TLS/mTLS
 - **File**: `crates/pavis/src/main.rs`
-  - Rework `configure_client_auth()` to use the concrete Pingora OpenSSL listener builder(s) identified in §1.6. Feed cert/key/CA/chain paths from `pavis_core::TlsConfig` into those builders exactly as required.
-  - When `ClientAuth::Required/Optional`, rely on Pingora-provided verify/CA configuration APIs; only drop to raw OpenSSL types if Pingora lacks the necessary knobs.
+  - Rework `configure_client_auth()` to use `pingora::listeners::tls::TlsSettings` (`SslAcceptorBuilder`).
+    - Listener cert/key: `TlsSettings::intermediate(cert_path, key_path)`.
+    - CA bundle: `tls_settings.set_ca_file(ca_path)`.
+    - Verify: `SslVerifyMode::PEER` (optional) or `SslVerifyMode::PEER | FAIL_IF_NO_PEER_CERT` (required).
+  - Rely on Pingora OpenSSL builder APIs; only drop to raw OpenSSL types if these knobs are missing (they are present in 0.6.0).
 - Verify via TLS e2e test once unskipped.
 
 ### 3.2 Upstream TLS connectors
 - **Files**: `crates/pavis/src/upstream.rs`, `crates/pavis/src/upstream/cluster.rs`
-  - First attempt to reuse Pingora utilities such as `pingora::utils::tls::CertKey` and `pingora::protocols::tls::CaType` (or their OpenSSL equivalents) to load client certs, keys, chains, and CA bundles.
+  - Use Pingora OpenSSL types directly:
+    - `pingora::utils::tls::CertKey` (stores `Vec<X509>` + `PKey<Private>`)
+    - `pingora::protocols::tls::CaType = Box<[X509]>`
+    - PEM parsing via `pingora::tls::x509::X509::stack_from_pem` and `pingora::tls::pkey::PKey::private_key_from_pem`
   - Only introduce direct OpenSSL PEM/X509 parsing if §1.6 proves Pingora’s OpenSSL backend cannot express per-upstream CA bundles, client certificate/chain loading, or verify hooks. Any such gap must be called out in the PR description before adding `openssl`/`openssl-sys`.
   - All wiring must reference the concrete connector APIs captured in §1.6; do **not** reimplement PEM parsing unless unavoidable.
 
 ### 3.3 Config agent networking
 - **File**: `crates/pavis/src/agent/worker/agent.rs`
-  - Switching `reqwest` to native-tls is optional and may be deferred; primary objective is Pingora runtime TLS migration. If/when native-tls is adopted, document Linux/macOS/Windows assumptions for `make ci-local` and add CA override guidance. For this migration, keeping rustls here is acceptable to reduce blast radius.
+  - `reqwest` now uses native-tls; document Linux/macOS/Windows assumptions for `make ci-local` and add CA override guidance.
 
 ### 3.4 Remove rustls references
 - Clean up all `use rustls::*` imports and helper functions (e.g., `create_root_store`). Replace functionality with OpenSSL equivalents or Pingora-provided helpers.

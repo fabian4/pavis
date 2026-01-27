@@ -58,7 +58,6 @@ async fn request_filter_selects_weighted_destination() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -91,7 +90,6 @@ async fn request_filter_returns_404_when_no_route_matches() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -154,7 +152,6 @@ async fn request_filter_applies_rewrite_policy() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -218,7 +215,6 @@ async fn request_filter_skips_selection_when_no_destinations() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -383,7 +379,6 @@ async fn request_filter_handles_redirect_action() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -439,7 +434,6 @@ async fn request_filter_handles_direct_action() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -496,7 +490,6 @@ async fn request_filter_redirect_with_different_status_codes() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -552,7 +545,6 @@ async fn request_filter_direct_with_custom_status() {
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -647,7 +639,6 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) = session_for_request(

@@ -1,7 +1,11 @@
 //! Active health checks for upstream endpoints.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
+use openssl::pkey::PKey;
+use openssl::x509::X509;
+#[cfg(not(target_os = "macos"))]
+use openssl::{pkcs12::Pkcs12, stack::Stack};
 use pavis_core::{ActiveHealthCheck, Endpoint, EndpointAddr, SniName, TlsPolicy, TlsVerify};
 use pingora::services::Service;
 use reqwest::Client;
@@ -249,18 +253,72 @@ fn build_health_client(upstream: &pavis_core::Upstream, timeout: Duration) -> Re
             chain,
         } = cert
         {
-            let mut pem = std::fs::read(&cert_path.0)
+            #[cfg(target_os = "macos")]
+            let _ = &chain;
+            let cert_pem = std::fs::read(&cert_path.0)
                 .with_context(|| format!("failed to read client cert {}", cert_path.0))?;
-            if let pavis_core::ClientCertChain::File { path } = chain {
-                let chain_pem = std::fs::read(&path.0)
-                    .with_context(|| format!("failed to read client cert chain {}", path.0))?;
-                pem.extend_from_slice(&chain_pem);
+            let mut certs =
+                X509::stack_from_pem(&cert_pem).context("failed to parse client cert PEM")?;
+            if certs.is_empty() {
+                bail!("client cert bundle is empty");
             }
+            let leaf = certs.remove(0);
+            #[cfg(not(target_os = "macos"))]
+            let mut chain_certs = match chain {
+                pavis_core::ClientCertChain::Embedded => certs,
+                pavis_core::ClientCertChain::File { path } => {
+                    let chain_pem = std::fs::read(&path.0)
+                        .with_context(|| format!("failed to read client cert chain {}", path.0))?;
+                    let chain = X509::stack_from_pem(&chain_pem)
+                        .context("failed to parse client cert chain")?;
+                    if chain.is_empty() {
+                        bail!("client cert chain is empty");
+                    }
+                    chain
+                }
+                pavis_core::ClientCertChain::None => {
+                    if !certs.is_empty() {
+                        bail!("client cert must contain exactly one certificate");
+                    }
+                    Vec::new()
+                }
+                #[allow(unreachable_patterns)]
+                _ => Vec::new(),
+            };
             let key_pem = std::fs::read(&key_path.0)
                 .with_context(|| format!("failed to read client key {}", key_path.0))?;
-            pem.extend_from_slice(&key_pem);
-            let identity = reqwest::Identity::from_pem(&pem)
-                .context("failed to parse client identity for health checks")?;
+            let key =
+                PKey::private_key_from_pem(&key_pem).context("failed to parse client key PEM")?;
+            #[cfg(target_os = "macos")]
+            let identity = {
+                let leaf_pem = leaf
+                    .to_pem()
+                    .context("failed to encode leaf cert for health checks")?;
+                let key_pem_pkcs8 = key
+                    .private_key_to_pem_pkcs8()
+                    .context("failed to convert client key to PKCS8")?;
+                reqwest::Identity::from_pkcs8_pem(&leaf_pem, &key_pem_pkcs8)
+                    .context("failed to parse client identity for health checks")?
+            };
+
+            #[cfg(not(target_os = "macos"))]
+            let identity = {
+                let mut pkcs12_builder = Pkcs12::builder();
+                pkcs12_builder.name("pavis-health").pkey(&key).cert(&leaf);
+                if !chain_certs.is_empty() {
+                    let mut ca_stack = Stack::new().context("failed to allocate CA stack")?;
+                    for cert in chain_certs.drain(..) {
+                        ca_stack.push(cert).context("failed to add chain cert")?;
+                    }
+                    pkcs12_builder.ca(ca_stack);
+                }
+                const PKCS12_PASSWORD: &str = "pavis";
+                let pkcs12 = pkcs12_builder
+                    .build2(PKCS12_PASSWORD)
+                    .context("failed to build client PKCS12 identity")?;
+                reqwest::Identity::from_pkcs12_der(&pkcs12.to_der()?, PKCS12_PASSWORD)
+                    .context("failed to parse client identity for health checks")?
+            };
             builder = builder.identity(identity);
         }
     }
@@ -388,12 +446,12 @@ mod health_monitor_extra {
     use crate::upstream::Cluster;
     use axum::http::StatusCode;
     use axum::{Router, routing::get, serve};
+    use openssl::{asn1::Asn1Time, hash::MessageDigest, rsa::Rsa, x509::X509NameBuilder};
     use pavis_core::{
         ActiveHealthCheck, ClientCert, ClientCertChain, Discovery, Endpoint, EndpointAddr,
         HttpVersion, LoadBalancer, Path as CorePath, Pool, Port, SniName, TlsPolicy, TlsVerify,
         Upstream, UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName, Weight,
     };
-    use rcgen::{CertifiedKey, generate_simple_self_signed};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::num::{NonZeroU16, NonZeroU32};
     use std::path::PathBuf;
@@ -544,16 +602,40 @@ mod health_monitor_extra {
 
     #[test]
     fn build_health_client_supports_client_identity() {
-        let CertifiedKey { cert, key_pair } =
-            generate_simple_self_signed(vec!["client.test".to_string()]).unwrap();
-        let cert_pem = cert.pem();
-        let key_pem = key_pair.serialize_pem();
-        let chain_cert = generate_simple_self_signed(vec!["chain.test".to_string()]).unwrap();
-        let chain_pem = chain_cert.cert.pem();
+        fn generate_rsa_pem(subject: &str) -> (Vec<u8>, Vec<u8>) {
+            let rsa = Rsa::generate(2048).unwrap();
+            let key = PKey::from_rsa(rsa).unwrap();
 
-        let cert_file = TempFile::new("client-cert", cert_pem.as_bytes());
-        let key_file = TempFile::new("client-key", key_pem.as_bytes());
-        let chain_file = TempFile::new("client-chain", chain_pem.as_bytes());
+            let mut name_builder = X509NameBuilder::new().unwrap();
+            name_builder.append_entry_by_text("CN", subject).unwrap();
+            let name = name_builder.build();
+
+            let mut builder = X509::builder().unwrap();
+            builder.set_version(2).unwrap();
+            builder.set_subject_name(&name).unwrap();
+            builder.set_issuer_name(&name).unwrap();
+            builder.set_pubkey(&key).unwrap();
+            builder
+                .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+                .unwrap();
+            builder
+                .set_not_after(&Asn1Time::days_from_now(365).unwrap())
+                .unwrap();
+            builder.sign(&key, MessageDigest::sha256()).unwrap();
+            let cert = builder.build();
+
+            (
+                cert.to_pem().unwrap(),
+                key.private_key_to_pem_pkcs8().unwrap(),
+            )
+        }
+
+        let (cert_pem, key_pem) = generate_rsa_pem("client.test");
+        let (chain_pem, _chain_key) = generate_rsa_pem("chain.test");
+
+        let cert_file = TempFile::new("client-cert", cert_pem.as_slice());
+        let key_file = TempFile::new("client-key", key_pem.as_slice());
+        let chain_file = TempFile::new("client-chain", chain_pem.as_slice());
 
         let upstream = UpstreamBuilder::new()
             .id(UpstreamId(NonZeroU16::new(4).unwrap()))

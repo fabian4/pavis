@@ -5,12 +5,6 @@ set -e
 # Category: Security & TLS
 # Description: Verifies Auto SNI derivation and fail-fast for invalid Auto SNI configs.
 
-# SKIP: Pingora's rustls connector does not support per-peer CA certificates yet.
-# See: https://github.com/cloudflare/pingora/blob/main/pingora-core/src/connectors/tls/rustls/mod.rs
-# TODO: Re-enable when pingora implements per-peer CA support or when switching to OpenSSL backend
-echo "⏭️ SKIPPED: Pingora rustls does not support per-peer CA certificates"
-exit 77
-
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
 # shellcheck source=tests/scripts/assert.sh
@@ -83,7 +77,8 @@ if "$PAVCTL_BIN" gen "$TEST_TMP/invalid.yaml" "$TEST_TMP/invalid.pvs" >"$TEST_TM
   exit 1
 fi
 
-if ! grep -q "verify=full with sni=auto requires DNS endpoints or route host rewrite" "$TEST_TMP/logs/gen_invalid.log"; then
+# Match current validation message to ensure Auto SNI misconfigurations fail fast.
+if ! grep -q "verify=full with sni=auto but no DNS endpoints or route host rewrite" "$TEST_TMP/logs/gen_invalid.log"; then
   echo "❌ Expected validation error message for Auto SNI with IP endpoint"
   exit 1
 fi

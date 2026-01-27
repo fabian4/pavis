@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use axum::Router;
-use axum_server::{Handle, tls_rustls::RustlsConfig};
+use axum_server::{Handle, tls_openssl::OpenSSLConfig};
 
 use crate::common::cli::UpstreamArgs;
 use crate::common::shutdown;
@@ -30,7 +30,7 @@ pub async fn run(args: UpstreamArgs) -> Result<()> {
             cert_path: cert,
             key_path: key,
         };
-        Some(tls::rustls_config(&paths).await?)
+        Some(tls::openssl_config(&paths)?)
     } else {
         None
     };
@@ -106,11 +106,11 @@ async fn run_http(addr: SocketAddr, router: Router, handle: Handle<SocketAddr>) 
 async fn run_https(
     addr: SocketAddr,
     router: Router,
-    config: RustlsConfig,
+    config: OpenSSLConfig,
     handle: Handle<SocketAddr>,
 ) -> Result<()> {
     tracing::info!(%addr, "HTTPS listener ready");
-    axum_server::bind_rustls(addr, config)
+    axum_server::bind_openssl(addr, config)
         .handle(handle)
         .serve(router.into_make_service_with_connect_info::<SocketAddr>())
         .await?;

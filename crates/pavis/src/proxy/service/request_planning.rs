@@ -219,10 +219,12 @@ pub fn route_path(route: &pavis_core::Route) -> &str {
     }
 }
 
-pub fn extract_client_identity(_session: &pingora::proxy::Session) -> Option<String> {
-    // TODO: Implement peer certificate extraction for Rustls mode in Pingora 0.6.0.
-    // The current Stream trait does not expose peer_certificate in a backend-agnostic way.
-    None
+pub fn extract_client_identity(session: &pingora::proxy::Session) -> Option<String> {
+    let stream = session.as_downstream().stream()?;
+    let ssl = stream.get_ssl()?;
+    let cert = ssl.peer_certificate()?;
+    let cert_der = cert.to_der().ok()?;
+    crate::proxy::identity::extract_spiffe_id(&cert_der)
 }
 
 pub fn resolve_sni(

@@ -16,6 +16,10 @@ The Pavis runtime - a high-performance L7 proxy built on Pingora.
 - Environment validation (file readability and port availability) before applying configs
 - Optional: Polling remote relay for configuration updates
 
+## Build Requirements
+
+The runtime uses Pingora's OpenSSL backend only; rustls is not supported or tested in CI.
+
 ## Module Structure
 
 - **`app`**: Main entry point and Pingora server setup

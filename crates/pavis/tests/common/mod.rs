@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-use arc_swap::ArcSwap;
 use pavis::proxy::context::RouterContext;
 use pavis::proxy::service::test_exports::Proxy;
 use pavis::state::RuntimeStateHandle;
@@ -12,7 +11,6 @@ use pavis_core::{
     UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName, Weight, WorkerCount,
 };
 pub use pingora::prelude::Session;
-use rustls::RootCertStore;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
 use std::path::{Path as StdPath, PathBuf};
@@ -56,10 +54,6 @@ pub fn test_telemetry() -> Arc<Telemetry> {
     );
 
     Arc::new(telemetry)
-}
-
-pub fn test_ca_store() -> Arc<ArcSwap<RootCertStore>> {
-    Arc::new(ArcSwap::from_pointee(RootCertStore::empty()))
 }
 
 pub fn pin_runtime_state(ctx: &mut RouterContext, proxy: &Proxy) {

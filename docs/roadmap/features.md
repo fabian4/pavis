@@ -36,15 +36,15 @@ This document provides a feature status overview for reference.
 | Feature | Status | Note / Alternative |
 | :--- | :---: | :--- |
 | **Server TLS** (Termination) | ✅ | Single cert per listener supported. |
-| **Upstream TLS** (Origination) | 🚧 | Supported. Custom CAs blocked on rustls backend (P0). |
-| **Inbound mTLS** (Client Cert Validation) | ⚠️ | Requires OpenSSL/BoringSSL backend. Not available with rustls. |
-| **Outbound mTLS** (Client Cert to Upstream) | ⚠️ | Requires OpenSSL/BoringSSL backend for custom CAs. Not available with rustls. |
+| **Upstream TLS** (Origination) | ✅ | Per-upstream CA bundles and SNI policies supported. |
+| **Inbound mTLS** (Client Cert Validation) | ✅ | Enforced via OpenSSL backend. |
+| **Outbound mTLS** (Client Cert to Upstream) | ✅ | Client cert + chain modes supported via OpenSSL backend. |
 | **RBAC** (Path/Method Auth) | ✅ | Deny-by-default policies. |
 | **SNI Multi-Cert** | ❌ | **Dropped**. Sidecars usually have 1 identity. Use Ingress for multi-domain. |
 | **External Auth** (OIDC/OAuth) | ❌ | **Dropped**. Sidecar handles Service-to-Service, not End-User Login. |
 | **WAF** (ModSecurity) | ❌ | **Dropped**. Performance killer. Use dedicated firewall. |
 
-**Note on TLS Backend**: Feature availability depends on the compile-time backend (Rustls vs OpenSSL). See `docs/OPERATIONS.md`.
+**Note on TLS Backend**: The runtime is OpenSSL-only; Rustls is not supported or tested in CI.
 
 ## 3. Resilience
 

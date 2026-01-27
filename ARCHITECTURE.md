@@ -78,7 +78,7 @@ The Runtime operates as a "dumb pipe" optimized for the frozen model.
 
 *   **Static Endpoints**: Fixed IPs compiled into the artifact.
 *   **DNS Resolution**: The Runtime respects the *mechanism* (StrictDNS/LogicalDNS) and *TTL* defined in the frozen config. It **MUST NOT** alter the discovery policy at runtime.
-*   **TLS Backend**: Feature availability (e.g., inbound mTLS) is determined by the compile-time backend selection (Rustls vs. OpenSSL). The Runtime does not abstract over missing backend capabilities; configuration requiring unsupported features **MUST** be rejected.
+*   **TLS Backend**: The runtime is OpenSSL-only. There is no Rustls fallback; all TLS semantics (inbound mTLS, per-upstream CA, client cert chains) are implemented against the OpenSSL backend.
 
 ### 4.3 Resilience Policies
 

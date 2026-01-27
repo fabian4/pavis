@@ -128,7 +128,6 @@ async fn upstream_response_filter_applies_headers() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let mut ctx = proxy.new_ctx();
@@ -167,7 +166,6 @@ async fn test_upstream_request_filter() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
     let mut ctx = proxy.new_ctx();
     ctx.request_headers = HeadersPolicy::Enabled {
@@ -247,7 +245,6 @@ async fn test_request_filter_direct_response_with_headers() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) = session_for_request(b"GET /direct HTTP/1.1\r\n\r\n").await;

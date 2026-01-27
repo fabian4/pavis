@@ -6,19 +6,15 @@
 //! 2. **Atomic Updates**: Dynamic updates to upstream state must be atomic or eventually consistent without blocking readers.
 //! 3. **Distributed State**: Load balancing state (e.g., RR counters) should be distributed or aligned to prevent false sharing.
 
-use anyhow::{Context, Result, anyhow};
-use ouroboros::self_referencing;
+use anyhow::{Context, Result};
 use pingora::protocols::tls::CaType;
-use pingora::utils::tls::{CertKey, WrappedX509};
-use static_assertions::const_assert_eq;
+use pingora::tls::pkey::PKey;
+use pingora::tls::x509::X509;
+use pingora::utils::tls::CertKey;
 use std::collections::HashMap;
 use std::fs;
-use std::io::BufReader;
-use std::mem::{ManuallyDrop, align_of, size_of};
 use std::path::Path;
-use std::ptr;
 use std::sync::Arc;
-use x509_parser::prelude::{FromDer, X509Certificate};
 
 use pavis_core::Upstream;
 
@@ -99,14 +95,10 @@ fn load_client_cert_key(
     key_path: &Path,
     chain: &pavis_core::ClientCertChain,
 ) -> Result<Arc<CertKey>> {
-    let cert_file = fs::File::open(cert_path)
+    let cert_pem = fs::read(cert_path)
         .with_context(|| format!("failed to read client cert {}", cert_path.display()))?;
-    let mut cert_reader = BufReader::new(cert_file);
-
-    // Collect every certificate in the PEM bundle.
-    let certs: Vec<_> = rustls_pemfile::certs(&mut cert_reader)
-        .collect::<Result<_, _>>()
-        .context("failed to parse client cert PEM bundle")?;
+    let certs =
+        X509::stack_from_pem(&cert_pem).context("failed to parse client cert PEM bundle")?;
 
     if certs.is_empty() {
         anyhow::bail!("client cert bundle is empty");
@@ -125,12 +117,10 @@ fn load_client_cert_key(
     };
 
     if let pavis_core::ClientCertChain::File { path } = chain {
-        let chain_file = fs::File::open(Path::new(&path.0))
+        let chain_pem = fs::read(Path::new(&path.0))
             .with_context(|| format!("failed to read client cert chain {}", path.0.as_str()))?;
-        let mut chain_reader = BufReader::new(chain_file);
-        let chain_certs: Vec<_> = rustls_pemfile::certs(&mut chain_reader)
-            .collect::<Result<_, _>>()
-            .context("failed to parse client cert chain")?;
+        let chain_certs =
+            X509::stack_from_pem(&chain_pem).context("failed to parse client cert chain")?;
 
         if chain_certs.is_empty() {
             anyhow::bail!("client cert chain is empty");
@@ -138,97 +128,26 @@ fn load_client_cert_key(
         selected.extend(chain_certs);
     }
 
-    let key_file = fs::File::open(key_path)
+    let key_pem = fs::read(key_path)
         .with_context(|| format!("failed to read client key {}", key_path.display()))?;
-    let mut key_reader = BufReader::new(key_file);
+    let key = PKey::private_key_from_pem(&key_pem).context("failed to parse client key PEM")?;
 
-    // Use the first private key in the bundle.
-    let key = rustls_pemfile::private_key(&mut key_reader)
-        .context("failed to parse client key PEM")?
-        .ok_or_else(|| anyhow::anyhow!("no private key found in {}", key_path.display()))?;
-
-    let selected_ders: Vec<Vec<u8>> = selected.into_iter().map(|c| c.to_vec()).collect();
-    let key_der = key.secret_der().to_vec();
-
-    Ok(Arc::new(CertKey::new(selected_ders, key_der)))
+    Ok(Arc::new(CertKey::new(selected, key)))
 }
 
 fn load_ca_bundle(path: &Path) -> Result<Arc<CaType>> {
     tracing::debug!(path = %path.display(), "loading upstream CA bundle");
-    let ca_file = fs::File::open(path)
-        .with_context(|| format!("failed to read CA bundle {}", path.display()))?;
-    let mut ca_reader = BufReader::new(ca_file);
-    let certs: Vec<_> = rustls_pemfile::certs(&mut ca_reader)
-        .collect::<Result<_, _>>()
-        .context("failed to parse CA bundle")?;
+    let ca_pem =
+        fs::read(path).with_context(|| format!("failed to read CA bundle {}", path.display()))?;
+    let certs = X509::stack_from_pem(&ca_pem).context("failed to parse CA bundle")?;
 
     if certs.is_empty() {
         anyhow::bail!("CA bundle is empty at {}", path.display());
     }
 
     tracing::debug!(count = certs.len(), "parsed certificates from CA bundle");
-
-    let wrapped: Vec<WrappedX509> = certs
-        .into_iter()
-        .enumerate()
-        .map(|(idx, cert)| {
-            let cert_bytes = cert.to_vec();
-            // Parse locally for debug logging
-            if let Ok((_, x509)) = X509Certificate::from_der(cert_bytes.as_slice()) {
-                tracing::debug!(
-                    idx = idx,
-                    subject = %x509.subject(),
-                    issuer = %x509.issuer(),
-                    "loaded CA cert"
-                );
-            }
-            wrap_ca_cert(cert_bytes).with_context(|| {
-                format!(
-                    "failed to parse certificate {} in CA bundle {}",
-                    idx + 1,
-                    path.display()
-                )
-            })
-        })
-        .collect::<Result<_>>()?;
-
-    let ca_wrapped: Arc<[WrappedX509]> = Arc::from(wrapped);
-    Ok(ca_wrapped as Arc<CaType>)
-}
-
-#[self_referencing]
-struct WrappedX509Shim {
-    raw_cert: Vec<u8>,
-    #[borrows(raw_cert)]
-    #[covariant]
-    cert: X509Certificate<'this>,
-}
-
-const_assert_eq!(size_of::<WrappedX509Shim>(), size_of::<WrappedX509>());
-const_assert_eq!(align_of::<WrappedX509Shim>(), align_of::<WrappedX509>());
-
-fn shim_into_wrapped(shim: WrappedX509Shim) -> WrappedX509 {
-    let shim = ManuallyDrop::new(shim);
-    // SAFETY: Layouts match because the shim mirrors WrappedX509 and we assert size/alignment.
-    unsafe { ptr::read((&*shim) as *const WrappedX509Shim as *const WrappedX509) }
-}
-
-fn wrap_ca_cert(cert: Vec<u8>) -> Result<WrappedX509> {
-    X509Certificate::from_der(cert.as_slice())
-        .map_err(|err| anyhow!("{err}"))
-        .context("failed to parse CA certificate")?;
-
-    let shim = WrappedX509ShimBuilder {
-        raw_cert: cert,
-        cert_builder: |raw| {
-            X509Certificate::from_der(raw.as_slice())
-                .expect("validated CA certificate must remain valid")
-                .1
-        },
-    }
-    .build();
-
-    Ok(shim_into_wrapped(shim))
+    let ca_list: CaType = certs.into_boxed_slice();
+    Ok(Arc::new(ca_list))
 }
 
 #[cfg(test)]

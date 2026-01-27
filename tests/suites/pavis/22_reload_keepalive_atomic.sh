@@ -138,7 +138,8 @@ keepalive_client() {
         while IFS= read -r header <&3; do
             [ "$header" = $'\r' ] && break
             case "$header" in
-                [Xx]-[Pp][Aa][Vv][Ii][Ss]-[Vv]ersion:*)
+                # Keepalive samples must track the reload marker header.
+                [Xx]-[Bb][Aa][Cc][Kk][Ee][Nn][Dd]-[Vv]ersion:*)
                     version=$(echo "$header" | awk '{print $2}' | tr -d '\r')
                     ;;
                 [Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll]ength:*)

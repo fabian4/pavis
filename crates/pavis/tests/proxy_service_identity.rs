@@ -50,7 +50,6 @@ async fn request_filter_denies_when_principal_not_any() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, mut client) =
@@ -106,7 +105,6 @@ async fn request_filter_allows_with_matching_identity() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -139,4 +137,11 @@ fn test_is_authorized_principal_variants() {
     assert!(is_authorized(&prefix, Some("spiffe://abc")));
     assert!(!is_authorized(&prefix, Some("https://foo")));
     assert!(!is_authorized(&prefix, None));
+}
+
+#[test]
+fn extract_client_identity_returns_none_for_non_tls_session() {
+    let (_client, server) = tokio::io::duplex(64);
+    let session = Session::new_h1(Box::new(server));
+    assert!(pavis::proxy::service::test_exports::extract_client_identity(&session).is_none());
 }

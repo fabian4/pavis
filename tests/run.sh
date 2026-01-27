@@ -184,14 +184,18 @@ fi
 echo "Generated run-level context.env in $TEST_OUTPUT_DIR"
 
 if [ "$TEST_MODE" == "binary" ]; then
-    log_group "🛠️ Build Binaries"
-    if (cd "$PROJECT_ROOT" && cargo build --release); then
-        echo "✅ Build success"
-        log_endgroup
+    if [ -x "${PAVIS_BIN:-}" ] && [ -x "${RELAY_BIN:-}" ] && [ -x "${PAVCTL_BIN:-}" ]; then
+        echo "✅ Using prebuilt binaries (PAVIS_BIN/RELAY_BIN/PAVCTL_BIN resolved)"
     else
-        echo "❌ Build failed"
-        log_endgroup
-        exit 1
+        log_group "🛠️ Build Binaries"
+        if (cd "$PROJECT_ROOT" && cargo build --release); then
+            echo "✅ Build success"
+            log_endgroup
+        else
+            echo "❌ Build failed"
+            log_endgroup
+            exit 1
+        fi
     fi
 fi
 

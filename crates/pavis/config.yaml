@@ -25,8 +25,7 @@ upstreams:
     #   sni_mode: auto
     #   # sni: "backend.example.com"
     #   #
-    #   # WARNING: The following options require the OpenSSL/BoringSSL backend.
-    #   # With the default rustls backend, these are parsed but ignored:
+    #   # OpenSSL is the only supported TLS backend; these options are enforced:
     #   # ca_bundle_path: "/etc/pavis/certs/upstream-ca.pem"
     #   # cert:
     #   #   cert_path: "/etc/pavis/certs/client.crt"

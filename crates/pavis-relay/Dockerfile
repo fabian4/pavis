@@ -31,6 +31,7 @@ RUN --mount=type=cache,target=/app/target \
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /tmp/pavis_relay_tmp /usr/local/bin/pavis-relay
 ENTRYPOINT ["pavis-relay"]

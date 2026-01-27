@@ -39,7 +39,6 @@ fn new_ctx_defaults_are_empty() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let before = Instant::now();

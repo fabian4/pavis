@@ -20,7 +20,6 @@ async fn logging_handles_disabled_access_log() {
     let proxy = Proxy {
         state: state_handle,
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
 
     let (mut session, _client) =
@@ -39,7 +38,6 @@ async fn test_proxy_logging_with_upstream() {
             config_version: None,
         })),
         telemetry: test_telemetry(),
-        ca_store: test_ca_store(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();

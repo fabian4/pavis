@@ -375,7 +375,7 @@ impl ProxyHttp for Proxy {
                             upstream = %upstream_name.0,
                             ca_path = %path.0,
                             ca_count = ca_bundle.len(),
-                            "Setting custom CA bundle for upstream TLS verification (NOTE: Currently not used by pingora rustls connector)"
+                            "Setting custom CA bundle for upstream TLS verification"
                         );
                         peer.options.ca = Some(ca_bundle);
                     } else {
