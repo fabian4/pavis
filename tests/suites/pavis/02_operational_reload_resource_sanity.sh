@@ -46,7 +46,7 @@ write_config() {
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v${version}"]]
+	          set_headers: [["X-Backend-Version", "v${version}"]]
 	        destinations:
 	          - upstream: "backend"
 	            weight: 1
@@ -111,7 +111,7 @@ for v in $(seq 2 $((RELOAD_COUNT+1))); do
     attempt=0
     for attempt in $(seq 1 20); do
         headers=$(curl -sI "http://127.0.0.1:$PORT_PAVIS/echo")
-        if echo "$headers" | grep -qi "^X-Pavis-Version: v${v}"; then
+        if echo "$headers" | grep -qi "^X-Backend-Version: v${v}"; then
             break
         fi
         sleep 0.2

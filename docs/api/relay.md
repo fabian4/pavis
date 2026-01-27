@@ -76,7 +76,7 @@ Fetches the current Last Known Good (LKG) configuration with optional long-polli
 **Request:**
 ```http
 GET /v1/config?wait_ms=30000 HTTP/1.1
-X-Pavis-Version: 41
+If-None-Match: "sha256:abc123..."
 ```
 
 **Query Parameters:**
@@ -85,13 +85,14 @@ X-Pavis-Version: 41
   - Default: `0` (no long-poll)
 
 **Request Headers:**
-- `X-Pavis-Version` (optional, u64): Client's current version
+- `If-None-Match` (optional): Strong ETag (`"sha256:<lowercase-hex>"`)
 
 **Response (200 OK):**
 ```http
 HTTP/1.1 200 OK
-X-Pavis-Version: 42
-X-Pavis-Checksum: sha256:abc123...
+ETag: "sha256:abc123..."
+x-config-version: 42
+x-config-size: 1234
 Content-Type: application/octet-stream
 Content-Length: 1234
 
@@ -101,21 +102,21 @@ Content-Length: 1234
 **Response (304 Not Modified):**
 ```http
 HTTP/1.1 304 Not Modified
-X-Pavis-Version: 42
+ETag: "sha256:abc123..."
 ```
 
 Returned when:
-- Client version matches server version
-- Long-poll timeout expires without update
+- `wait_ms=0` and the conditional ETag matches the current artifact
 
 **Semantics:**
-- If `client_version < server_version` → Immediate 200 OK with artifact
-- If `client_version == server_version` → Long-poll behavior:
+- If `If-None-Match` is missing or invalid → unconditional GET (200 OK)
+- If `If-None-Match` does not match current ETag → immediate 200 OK with artifact
+- If `If-None-Match` matches current ETag and `wait_ms > 0` → long-poll:
   - Register waiter
   - Block up to `wait_ms` milliseconds
-  - On new publish → 200 OK with new artifact
-  - On timeout → 304 Not Modified
-- If `client_version > server_version` → Immediate 304 Not Modified
+  - On publish with different checksum → 200 OK with new artifact
+  - On timeout → 204 No Content
+- If `If-None-Match` matches current ETag and `wait_ms = 0` → 304 Not Modified
 
 **Example:**
 ```bash
@@ -124,7 +125,7 @@ curl http://127.0.0.1:8080/v1/config
 
 # Long-poll (blocks up to 30s if no update)
 curl http://127.0.0.1:8080/v1/config?wait_ms=30000 \
-  -H "X-Pavis-Version: 41"
+  -H 'If-None-Match: "sha256:abc123..."'
 ```
 
 ---
@@ -141,8 +142,10 @@ GET /v1/artifacts/42 HTTP/1.1
 **Response (200 OK):**
 ```http
 HTTP/1.1 200 OK
-X-Pavis-Version: 42
+X-Config-Version: 42
 X-Pavis-Checksum: sha256:abc123...
+X-Pavis-Checksum-Alg: sha256
+X-Pavis-Generated-At: 2026-01-18T08:00:00Z
 Content-Type: application/octet-stream
 Content-Length: 1234
 
@@ -168,11 +171,16 @@ Returns relay status and metadata.
 **Response (200 OK):**
 ```json
 {
+  "status": "healthy",
+  "uptime_s": 3600,
   "current_version": 42,
-  "uptime_seconds": 3600,
-  "lkg_path": "/var/lib/pavis-relay/lkg/config.pvs",
-  "lkg_size": 1234,
-  "lkg_checksum": "sha256:abc123..."
+  "lkg": {
+    "version": 42,
+    "size": 1234,
+    "checksum": "sha256:abc123...",
+    "published_at": "2026-01-18T08:00:00Z"
+  },
+  "history_count": 10
 }
 ```
 
@@ -183,8 +191,8 @@ Returns relay status and metadata.
 Liveness probe for health checks.
 
 **Response (200 OK):**
-```json
-{"status": "healthy"}
+```
+ok
 ```
 
 **Semantics:**
@@ -202,17 +210,21 @@ Prometheus-formatted metrics endpoint.
 # TYPE pavis_relay_version gauge
 pavis_relay_version 42
 
-# TYPE pavis_relay_publishes_total counter
-pavis_relay_publishes_total 100
+# TYPE pavis_relay_publish_ok_total counter
+pavis_relay_publish_ok_total 100
 
-# TYPE pavis_relay_longpoll_active gauge
-pavis_relay_longpoll_active 5
+# TYPE pavis_relay_publish_fail_total counter
+pavis_relay_publish_fail_total 2
+
+# TYPE pavis_relay_longpoll_wait_total counter
+pavis_relay_longpoll_wait_total 5
 ```
 
 **Key Metrics:**
 - `pavis_relay_version`: Current configuration version (gauge)
-- `pavis_relay_publishes_total`: Total successful publishes (counter)
-- `pavis_relay_longpoll_active`: Number of active long-poll waiters (gauge)
+- `pavis_relay_publish_ok_total`: Total successful publishes (counter)
+- `pavis_relay_publish_fail_total`: Total failed publishes (counter)
+- `pavis_relay_longpoll_wait_total`: Long-poll waits (counter)
 
 ---
 

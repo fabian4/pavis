@@ -8,7 +8,7 @@
 
 use crate::regex_validator::CompiledRegex;
 use anyhow::{Context, Result};
-use pavis_core::limits::RegexLimits;
+use pavis_core::RegexLimits;
 use pavis_core::{HeaderPredicates, MethodPredicate, PathMatch, VirtualHost};
 use regex::Regex;
 use std::collections::HashMap;

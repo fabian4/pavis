@@ -1,341 +1,30 @@
-use crate::proxy::context::{RequestId, RouterContext, TracingSpan};
+use crate::proxy::context::{RouterContext, TracingSpan};
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
 use crate::retry::RetryContext;
-use crate::state::RuntimeStateHandle;
-use crate::telemetry::Telemetry;
 use crate::upstream::cluster::{CircuitBreakerRejection, PoolRejection, UpstreamOutcome};
-use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use http::Uri;
-use pavis_core::{
-    ConnectTimeout, Discovery, EndpointAddr, HeadersPolicy, Hostname, HttpVersion, PathMatch,
-    RetryPolicy, RouteAction, Timeout, TryTimeout,
-};
+use pavis_core::{HeadersPolicy, HttpVersion, RetryPolicy, RouteAction, Timeout};
 use pingora::ErrorType;
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::protocols::Digest;
 use pingora::proxy::{ProxyHttp, Session};
-use rand::Rng;
-use rustls::RootCertStore;
-use std::borrow::Cow;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-pub struct Proxy {
-    pub state: Arc<RuntimeStateHandle>,
-    pub telemetry: Arc<Telemetry>,
-    pub ca_store: Arc<ArcSwap<RootCertStore>>,
-}
+use super::request_planning::{
+    HeaderInjector, apply_route_headers, calculate_path_rewrite, endpoint_host_for_sni,
+    extract_client_identity, generate_request_id, is_authorized, resolve_endpoint_addr,
+    resolve_per_try_timeout, resolve_route_timeout, resolve_sni, reuse_key_hash, route_path,
+};
+use super::state::Proxy;
 
-impl Proxy {}
-
-struct HeaderInjector<'a>(&'a mut RequestHeader);
-
-impl opentelemetry::propagation::Injector for HeaderInjector<'_> {
-    fn set(&mut self, key: &str, value: String) {
-        if let (Ok(name), Ok(value)) = (
-            http::header::HeaderName::try_from(key),
-            value.parse::<http::header::HeaderValue>(),
-        ) {
-            let _ = self.0.insert_header(name, value);
-        }
-    }
-}
-
-static CLOCK_UNDERFLOW_WARNED: AtomicBool = AtomicBool::new(false);
-static POOL_KEY_LOG_COUNTER: AtomicU64 = AtomicU64::new(0);
-static SNI_FRAGMENT_WARN_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn request_id_timestamp(now: std::time::SystemTime) -> u128 {
-    match now.duration_since(std::time::UNIX_EPOCH) {
-        Ok(duration) => duration.as_nanos(),
-        Err(err) => {
-            if !CLOCK_UNDERFLOW_WARNED.swap(true, Ordering::Relaxed) {
-                tracing::warn!(
-                    error = %err,
-                    "System clock is before UNIX_EPOCH; using 0 for request id timestamp"
-                );
-            }
-            0
-        }
-    }
-}
-
-fn generate_request_id() -> RequestId {
-    let now = request_id_timestamp(std::time::SystemTime::now());
-    let random_val: u32 = rand::rng().random();
-    RequestId::from_parts(now, random_val)
-}
-
-fn apply_route_headers(ctx: &mut RouterContext, route: &pavis_core::Route) {
-    ctx.request_headers = route.request_headers.clone();
-    ctx.response_headers = route.response_headers.clone();
-    ctx.route_timeout = route.timeout;
-    ctx.retry_policy = route.retry.clone();
-    ctx.retry_attempts = 0;
-}
-
-fn core_duration_to_std(duration: &pavis_core::Duration) -> Duration {
-    Duration::from_millis(duration.0.get() as u64)
-}
-
-fn reuse_key_hash(
-    addr: &SocketAddr,
-    sni: &str,
-    verify_mode: Option<pavis_core::TlsVerify>,
-    cert: Option<&pavis_core::ClientCert>,
-) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    addr.to_string().hash(&mut hasher);
-    sni.hash(&mut hasher);
-    let verify_tag = match verify_mode {
-        Some(pavis_core::TlsVerify::Disabled) => 0u8,
-        Some(pavis_core::TlsVerify::CaOnly) => 1u8,
-        Some(pavis_core::TlsVerify::Full) => 2u8,
-        _ => 3u8,
-    };
-    verify_tag.hash(&mut hasher);
-    match cert {
-        Some(pavis_core::ClientCert::Enabled {
-            cert_path,
-            key_path,
-            chain,
-        }) => {
-            1u8.hash(&mut hasher);
-            cert_path.0.hash(&mut hasher);
-            key_path.0.hash(&mut hasher);
-            match chain {
-                pavis_core::ClientCertChain::None => 0u8.hash(&mut hasher),
-                pavis_core::ClientCertChain::Embedded => 1u8.hash(&mut hasher),
-                pavis_core::ClientCertChain::File { path } => {
-                    2u8.hash(&mut hasher);
-                    path.0.hash(&mut hasher);
-                }
-                #[allow(unreachable_patterns)]
-                _ => 3u8.hash(&mut hasher),
-            };
-        }
-        Some(pavis_core::ClientCert::Disabled) | None => {
-            0u8.hash(&mut hasher);
-        }
-        #[allow(unreachable_patterns)]
-        _ => {
-            4u8.hash(&mut hasher);
-        }
-    }
-    hasher.finish()
-}
-
-fn resolve_route_timeout(timeout: Timeout) -> Option<Duration> {
-    match timeout {
-        Timeout::Enabled(duration) => Some(core_duration_to_std(&duration)),
-        Timeout::Disabled => None,
-        #[allow(unreachable_patterns)]
-        _ => None,
-    }
-}
-
-fn resolve_per_try_timeout(timeout: Timeout, retry: &RetryPolicy) -> Option<Duration> {
-    match retry {
-        RetryPolicy::Enabled { per_try, .. } => match per_try {
-            TryTimeout::Enabled(duration) => Some(core_duration_to_std(duration)),
-            TryTimeout::Inherit => resolve_route_timeout(timeout),
-            TryTimeout::Disabled => None,
-            _ => None,
-        },
-        RetryPolicy::Disabled => resolve_route_timeout(timeout),
-        _ => resolve_route_timeout(timeout),
-    }
-}
-
-fn calculate_path_rewrite(
-    route: &pavis_core::Route,
-    uri_path: &str,
-    uri_query: Option<&str>,
-) -> Option<Uri> {
-    match &route.rewrite.path {
-        pavis_core::RewritePath::Disabled => None,
-        pavis_core::RewritePath::Prefix { from: _, to } => {
-            let new_path = match &route.matcher.path {
-                PathMatch::Prefix { path } => {
-                    uri_path.strip_prefix(path.0.as_str()).map(|suffix| {
-                        let mut path = String::with_capacity(to.0.len() + suffix.len());
-                        path.push_str(&to.0);
-                        path.push_str(suffix);
-                        Cow::Owned(path)
-                    })
-                }
-                PathMatch::Exact { path } => {
-                    (uri_path == path.0.as_str()).then_some(Cow::Borrowed(to.0.as_str()))
-                }
-                PathMatch::Regex { .. } => None,
-                #[allow(unreachable_patterns)]
-                &_ => None,
-            };
-
-            match new_path {
-                Some(mut path) => {
-                    if let Some(query) = uri_query {
-                        let mut owned = match path {
-                            Cow::Borrowed(path) => {
-                                let mut owned = String::with_capacity(path.len() + 1 + query.len());
-                                owned.push_str(path);
-                                owned
-                            }
-                            Cow::Owned(mut owned) => {
-                                owned.reserve(1 + query.len());
-                                owned
-                            }
-                        };
-                        owned.push('?');
-                        owned.push_str(query);
-                        path = Cow::Owned(owned);
-                    }
-
-                    match Uri::builder().path_and_query(path.as_ref()).build() {
-                        Ok(uri) => Some(uri),
-                        Err(err) => {
-                            tracing::warn!(
-                                error = %err,
-                                rewrite = %to.0,
-                                "Failed to apply path rewrite"
-                            );
-                            None
-                        }
-                    }
-                }
-                None => {
-                    if matches!(route.matcher.path, PathMatch::Regex { .. }) {
-                        tracing::warn!(
-                            route = %route_path(route),
-                            "Skipping path rewrite for regex match"
-                        );
-                    } else {
-                        tracing::warn!(
-                            route = %route_path(route),
-                            path = %uri_path,
-                            "Skipping path rewrite due to unmatched prefix"
-                        );
-                    }
-                    None
-                }
-            }
-        }
-        #[allow(unreachable_patterns)]
-        &_ => None,
-    }
-}
-
-fn extract_client_identity(_session: &Session) -> Option<String> {
-    // TODO: Implement peer certificate extraction for Rustls mode in Pingora 0.6.0.
-    // The current Stream trait does not expose peer_certificate in a backend-agnostic way.
-    None
-}
-
-fn resolve_sni(
-    sni: &pavis_core::SniName,
-    authority_override: Option<&Hostname>,
-    endpoint_host: Option<&Hostname>,
-) -> Option<Hostname> {
-    match sni {
-        pavis_core::SniName::Name(name) => Some(name.clone()),
-        pavis_core::SniName::Auto => authority_override
-            .cloned()
-            .or_else(|| endpoint_host.cloned()),
-        pavis_core::SniName::Disabled => None,
-        #[allow(unreachable_patterns)]
-        _ => None,
-    }
-}
-
-fn endpoint_host_for_sni(
-    upstream: &pavis_core::Upstream,
-    endpoint: &pavis_core::Endpoint,
-) -> Option<Hostname> {
-    match &endpoint.address {
-        EndpointAddr::Dns { host, .. } => Some(host.clone()),
-        EndpointAddr::Ip { .. } => {
-            if matches!(
-                upstream.discovery,
-                Discovery::Logical | Discovery::Strict { .. }
-            ) {
-                let mut selected: Option<&Hostname> = None;
-                for endpoint in &upstream.endpoints {
-                    if let EndpointAddr::Dns { host, .. } = &endpoint.address {
-                        match selected {
-                            None => selected = Some(host),
-                            Some(existing) => {
-                                if existing.0 != host.0 {
-                                    return None;
-                                }
-                            }
-                        }
-                    }
-                }
-                selected.cloned()
-            } else {
-                None
-            }
-        }
-        #[allow(unreachable_patterns)]
-        _ => None,
-    }
-}
-
-fn resolve_endpoint_addr(endpoint: &pavis_core::Endpoint) -> Result<SocketAddr> {
-    match &endpoint.address {
-        EndpointAddr::Ip { address, port } => Ok(SocketAddr::new(*address, port.0.get())),
-        EndpointAddr::Dns { host, port } => {
-            let mut addrs = match (host.0.as_str(), port.0.get()).to_socket_addrs() {
-                Ok(addrs) => addrs,
-                Err(err) => {
-                    return Error::e_explain(
-                        InternalError,
-                        format!("DNS resolution failed for {}:{} ({})", host.0, port.0, err),
-                    );
-                }
-            };
-            match addrs.next() {
-                Some(addr) => Ok(addr),
-                None => Error::e_explain(
-                    InternalError,
-                    format!(
-                        "DNS resolution returned no addresses for {}:{}",
-                        host.0, port.0
-                    ),
-                ),
-            }
-        }
-        #[allow(unreachable_patterns)]
-        _ => Error::e_explain(InternalError, "Unknown endpoint address type"),
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn is_authorized(
-    principal: &pavis_core::Principal,
-    client_identity: Option<&str>,
-) -> bool {
-    match principal {
-        pavis_core::Principal::Any => true,
-        pavis_core::Principal::Authenticated { spiffe } => {
-            client_identity.is_some_and(|identity| identity == spiffe.as_str())
-        }
-        pavis_core::Principal::Prefix { prefix } => {
-            client_identity.is_some_and(|identity| identity.starts_with(prefix.as_str()))
-        }
-        #[allow(unreachable_patterns)]
-        _ => false,
-    }
-}
+static POOL_KEY_LOG_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SNI_FRAGMENT_WARN_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 #[async_trait]
 impl ProxyHttp for Proxy {
@@ -385,7 +74,6 @@ impl ProxyHttp for Proxy {
             None => return Error::e_explain(InternalError, "No upstream selected"),
         };
 
-        // O(1) lookup using Manager; runtime state must be pinned by request_filter.
         let state = match ctx.runtime_state.clone() {
             Some(state) => state,
             None => {
@@ -408,14 +96,11 @@ impl ProxyHttp for Proxy {
         if let Some(retry_ctx) = &ctx.retry_ctx
             && retry_ctx.attempt > 1
         {
-            // IMPORTANT: Release permits from previous attempt before waiting for new ones.
-            // This prevents deadlocks where retrying requests hold all slots while waiting for backoff.
             ctx.pool_permit = None;
             ctx.circuit_breaker_permit = None;
 
             retry_ctx.apply_backoff().await;
 
-            // Check global deadline
             if retry_ctx.is_deadline_exceeded() {
                 return Error::e_explain(
                     ErrorType::HTTPStatus(504),
@@ -423,7 +108,6 @@ impl ProxyHttp for Proxy {
                 );
             }
 
-            // Check body replayability
             if let Some(body) = &ctx.buffered_body
                 && let pavis_core::RetryPolicy::Enabled {
                     fail_on_non_replayable_retry,
@@ -651,19 +335,15 @@ impl ProxyHttp for Proxy {
                 }
                 #[allow(unreachable_patterns)]
                 _ => {
-                    // Default to disabled for unknown verify modes
                     peer.options.verify_hostname = false;
                     peer.options.verify_cert = false;
                 }
             }
         }
 
-        // Configure client certificate for outbound mTLS
         if let Some(cert_config) = cert {
             match cert_config {
-                pavis_core::ClientCert::Disabled => {
-                    // No client certificate
-                }
+                pavis_core::ClientCert::Disabled => {}
                 pavis_core::ClientCert::Enabled {
                     cert_path,
                     key_path,
@@ -680,29 +360,16 @@ impl ProxyHttp for Proxy {
                     peer.client_cert_key = Some(client_cert_key);
                 }
                 #[allow(unreachable_patterns)]
-                _ => {
-                    // Unknown client cert configuration
-                }
+                _ => {}
             }
         }
 
-        // Configure CA bundle for upstream TLS verification
-        // TODO: Pingora's rustls connector does not currently support per-peer CA certificates.
-        // See: https://github.com/cloudflare/pingora/blob/main/pingora-core/src/connectors/tls/rustls/mod.rs
-        // The rustls connector has a TODO comment: "setup CA/verify cert store from peer"
-        // Currently, the CA bundle is set here but will be ignored by the connector.
-        // Options to fix:
-        // 1. Wait for pingora to implement this feature
-        // 2. Switch to OpenSSL backend (features = ["proxy", "openssl"])
-        // 3. Implement a custom rustls connector that respects peer.get_ca()
         if let Some(ca_config) = ca {
             match ca_config {
                 pavis_core::UpstreamCa::System => {
-                    // Use system CA bundle (default)
                     tracing::debug!("Using system CA bundle for upstream TLS verification");
                 }
                 pavis_core::UpstreamCa::File { path } => {
-                    // Load CA bundle from cluster
                     if let Some(ca_bundle) = cluster.ca_bundle() {
                         tracing::debug!(
                             upstream = %upstream_name.0,
@@ -720,22 +387,18 @@ impl ProxyHttp for Proxy {
                     }
                 }
                 #[allow(unreachable_patterns)]
-                _ => {
-                    // Unknown CA configuration
-                }
+                _ => {}
             }
         }
 
-        // Configure HTTP version
         match upstream.protocol {
             HttpVersion::H1 => peer.options.set_http_version(1, 1),
             HttpVersion::H2 => peer.options.set_http_version(2, 2),
             HttpVersion::H2H1 => peer.options.set_http_version(2, 1),
             #[allow(unreachable_patterns)]
-            _ => peer.options.set_http_version(1, 1), // Default to H1
+            _ => peer.options.set_http_version(1, 1),
         }
 
-        // Configure connection pooling
         peer.options.idle_timeout = match upstream.pool.idle {
             pavis_core::IdleTimeout::Disabled => None,
             pavis_core::IdleTimeout::Enabled(duration) => {
@@ -745,8 +408,8 @@ impl ProxyHttp for Proxy {
             _ => None,
         };
         peer.options.connection_timeout = match upstream.pool.connect {
-            ConnectTimeout::Disabled => None,
-            ConnectTimeout::Enabled(duration) => {
+            pavis_core::ConnectTimeout::Disabled => None,
+            pavis_core::ConnectTimeout::Enabled(duration) => {
                 Some(Duration::from_millis(duration.0.get() as u64))
             }
             #[allow(unreachable_patterns)]
@@ -756,7 +419,6 @@ impl ProxyHttp for Proxy {
         peer.options.read_timeout = per_try_timeout;
         peer.options.write_timeout = per_try_timeout;
 
-        // Track upstream timing
         ctx.start_upstream();
         ctx.pool_permit = pool_permit;
 
@@ -795,18 +457,12 @@ impl ProxyHttp for Proxy {
         let host_header = req_header.headers.get("Host").and_then(|h| h.to_str().ok());
         let uri_path = req_header.uri.path();
 
-        // Check if tracing is initialized AND enabled in current config
         let state = self.state.load();
         ctx.runtime_state = Some(state.clone());
 
         let tracing_enabled = if let pavis_core::TracingPolicy::Enabled { sampling, .. } =
             &state.config.telemetry.tracing
         {
-            // Simple sampling check (0 or >0) for enabling the span creation.
-            // Detailed sampling happens in the OTel SDK, but if sampling is 0, we can skip span creation.
-            // However, we need the span for context propagation even if not sampled?
-            // If sampling is 0, the sampler will drop it.
-            // But we check self.telemetry.tracing to see if the RUNTIME is available.
             self.telemetry.tracing.get().is_some() && sampling.0 > 0
         } else {
             false
@@ -858,7 +514,6 @@ impl ProxyHttp for Proxy {
 
             apply_route_headers(ctx, route);
 
-            // RBAC Authorization
             if !is_authorized(&route.principal, ctx.client_identity.as_deref()) {
                 tracing::info!(
                     request_id = %ctx.req_id,
@@ -871,7 +526,6 @@ impl ProxyHttp for Proxy {
                 return Ok(true);
             }
 
-            // Handle path rewrite
             if let Some(new_uri) = calculate_path_rewrite(route, uri_path, req_header.uri.query()) {
                 tracing::debug!(
                     original = %uri_path,
@@ -881,7 +535,6 @@ impl ProxyHttp for Proxy {
                 ctx.rewritten_uri = Some(new_uri);
             }
 
-            // Handle host rewrite
             if let pavis_core::RewriteHost::Literal { host } = &route.rewrite.host {
                 tracing::debug!(
                     original = ?host_header,
@@ -891,7 +544,6 @@ impl ProxyHttp for Proxy {
                 ctx.rewritten_host = Some(host.clone());
             }
 
-            // Initialize RetryContext if enabled
             if let pavis_core::RetryPolicy::Enabled {
                 max_request_body_buffer_bytes,
                 ..
@@ -899,7 +551,6 @@ impl ProxyHttp for Proxy {
             {
                 let upstream_name = match &route.action {
                     RouteAction::Forward(destinations) if !destinations.is_empty() => {
-                        // We use the first upstream for the context; load balancing happens per-try
                         destinations[0].upstream.0.clone()
                     }
                     _ => "unknown".to_string(),
@@ -907,7 +558,7 @@ impl ProxyHttp for Proxy {
 
                 let request_timeout_ms = resolve_route_timeout(ctx.route_timeout)
                     .map(|d| d.as_millis() as u64)
-                    .unwrap_or(60000); // Default to 60s if no timeout configured
+                    .unwrap_or(60000);
 
                 ctx.retry_ctx = Some(RetryContext::new(
                     ctx.retry_policy.clone(),
@@ -916,15 +567,11 @@ impl ProxyHttp for Proxy {
                     upstream_name.clone(),
                 ));
 
-                // Buffer request body for replay if it exists
-                // Note: Pingora 0.6.0 session doesn't have is_body_empty,
-                // we'll try to read and see.
                 let mut body_bytes = Vec::new();
                 let limit = *max_request_body_buffer_bytes;
 
                 while let Some(chunk) = session.read_request_body().await? {
                     if (body_bytes.len() as u64) + (chunk.len() as u64) > limit {
-                        // Body exceeds buffer limit, stop buffering and mark as streaming
                         tracing::debug!(
                             limit = limit,
                             upstream = %upstream_name,
@@ -953,7 +600,7 @@ impl ProxyHttp for Proxy {
                     }
 
                     let mut rng = rand::rng();
-                    let mut pick = rng.random_range(0..total_weight);
+                    let mut pick = rand::Rng::random_range(&mut rng, 0..total_weight);
 
                     for dest in destinations {
                         let weight = dest.weight.0.get() as u32;
@@ -1093,10 +740,7 @@ impl ProxyHttp for Proxy {
                 let reason = if matches!(e.etype(), ErrorType::ReadTimedout) {
                     pavis_core::RetryReason::ReadTimeout
                 } else {
-                    // For other errors while proxying, we might not want to retry
-                    // unless it is a reset and the policy allows it.
-                    // Current simple mapping:
-                    pavis_core::RetryReason::StatusCode // Placeholder
+                    pavis_core::RetryReason::StatusCode
                 };
 
                 if retry_ctx.is_retryable(reason) && retry_ctx.can_retry() {
@@ -1106,7 +750,6 @@ impl ProxyHttp for Proxy {
             }
         }
 
-        // Preserve reuse safety by avoiding retries when the buffer is truncated.
         if session.as_ref().retry_buffer_truncated() {
             e.set_retry(false);
         }
@@ -1287,149 +930,3 @@ impl ProxyHttp for Proxy {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn request_id_timestamp_handles_underflow() {
-        let before_epoch = std::time::UNIX_EPOCH - std::time::Duration::from_secs(1);
-        let timestamp = request_id_timestamp(before_epoch);
-        assert_eq!(timestamp, 0);
-
-        let id = RequestId::from_parts(timestamp, 1);
-        assert!(id.as_str().starts_with("req-0-"));
-    }
-
-    #[test]
-    fn test_calculate_path_rewrite() {
-        use pavis_core::{
-            HeadersPolicy, PathMatch, RetryPolicy, Rewrite, RewriteHost, RewritePath, Route,
-            RouteAction, RouteMatcher, Timeout,
-        };
-
-        let make_route = |path_match: PathMatch, rewrite: Option<RewritePath>| Route {
-            matcher: RouteMatcher {
-                path: path_match,
-                method: pavis_core::MethodPredicate::Any,
-                headers: pavis_core::HeaderPredicates::None,
-            },
-            timeout: Timeout::Disabled,
-            retry: RetryPolicy::Disabled,
-            request_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
-            response_headers: std::sync::Arc::new(HeadersPolicy::Disabled),
-            rewrite: Rewrite {
-                path: rewrite.unwrap_or(RewritePath::Disabled),
-                host: RewriteHost::Disabled,
-            },
-            principal: pavis_core::Principal::Any,
-            action: RouteAction::Direct {
-                status: 200,
-                body: Default::default(),
-            },
-        };
-
-        // Prefix rewrite
-        let route = make_route(
-            PathMatch::Prefix {
-                path: pavis_core::Path("/api".to_string()),
-            },
-            Some(RewritePath::Prefix {
-                from: pavis_core::Path("/api".to_string()),
-                to: pavis_core::Path("/v1".to_string()),
-            }),
-        );
-        let uri = calculate_path_rewrite(&route, "/api/users", Some("q=1"));
-        let uri = uri.expect("should rewrite");
-        assert_eq!(uri.path(), "/v1/users");
-        assert_eq!(uri.query(), Some("q=1"));
-
-        // Exact match rewrite
-        let route = make_route(
-            PathMatch::Exact {
-                path: pavis_core::Path("/exact".to_string()),
-            },
-            Some(RewritePath::Prefix {
-                from: pavis_core::Path("/exact".to_string()),
-                to: pavis_core::Path("/new".to_string()),
-            }),
-        );
-        let uri = calculate_path_rewrite(&route, "/exact", None);
-        let uri = uri.expect("should rewrite");
-        assert_eq!(uri.path(), "/new");
-
-        // No match
-        let route = make_route(
-            PathMatch::Exact {
-                path: pavis_core::Path("/exact".to_string()),
-            },
-            Some(RewritePath::Prefix {
-                from: pavis_core::Path("/exact".to_string()),
-                to: pavis_core::Path("/new".to_string()),
-            }),
-        );
-        let uri = calculate_path_rewrite(&route, "/other", None);
-        assert!(uri.is_none());
-    }
-
-    #[test]
-    fn test_resolve_timeouts() {
-        use pavis_core::{Duration as CoreDuration, RetryPolicy, Timeout, TryTimeout};
-        use std::num::{NonZeroU16, NonZeroU32};
-        use std::time::Duration;
-
-        let t5s = Timeout::Enabled(CoreDuration(NonZeroU32::new(5000).unwrap()));
-        let t1s = TryTimeout::Enabled(CoreDuration(NonZeroU32::new(1000).unwrap()));
-
-        assert_eq!(
-            resolve_route_timeout(t5s),
-            Some(Duration::from_millis(5000))
-        );
-        assert_eq!(resolve_route_timeout(Timeout::Disabled), None);
-
-        let retry_enabled = RetryPolicy::Enabled {
-            max_attempts: NonZeroU16::new(3).unwrap(),
-            per_try: t1s,
-            retryable_reasons: vec![],
-            retryable_status_codes: None,
-            retry_non_idempotent: false,
-            backoff: pavis_core::BackoffStrategy::Fixed { base_ms: 100 },
-            fail_on_non_replayable_retry: false,
-            max_request_body_buffer_bytes: 1024,
-        };
-
-        assert_eq!(
-            resolve_per_try_timeout(t5s, &retry_enabled),
-            Some(Duration::from_millis(1000))
-        );
-
-        let retry_inherit = RetryPolicy::Enabled {
-            max_attempts: NonZeroU16::new(3).unwrap(),
-            per_try: TryTimeout::Inherit,
-            retryable_reasons: vec![],
-            retryable_status_codes: None,
-            retry_non_idempotent: false,
-            backoff: pavis_core::BackoffStrategy::Fixed { base_ms: 100 },
-            fail_on_non_replayable_retry: false,
-            max_request_body_buffer_bytes: 1024,
-        };
-        assert_eq!(
-            resolve_per_try_timeout(t5s, &retry_inherit),
-            Some(Duration::from_millis(5000))
-        );
-    }
-}
-
-fn route_path(route: &pavis_core::Route) -> &str {
-    match &route.matcher.path {
-        PathMatch::Prefix { path } => path.0.as_str(),
-        PathMatch::Exact { path } => path.0.as_str(),
-        PathMatch::Regex { path } => path.0.as_str(),
-        #[allow(unreachable_patterns)]
-        &_ => "",
-    }
-}
-
-#[cfg(test)]
-mod service_tests;

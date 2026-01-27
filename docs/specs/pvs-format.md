@@ -51,17 +51,21 @@ The PVS format enforces three critical invariants:
 | Offset | Size | Type | Description |
 |--------|------|------|-------------|
 | `0x00` | 4 | `[u8; 4]` | **Magic Bytes**: `0x50 41 56 53` ("PAVS") |
-| `0x04` | 4 | `u32` | **Schema Version**: Monotonically increasing. Mismatches MUST fail fast. |
+| `0x04` | 4 | `u32` | **PVS Format Version (`format_version`)**: Strict ABI identifier for the PVS ABI. Mismatches MUST fail fast. |
 | `0x08` | 4 | `u32` | **Algorithm ID**: `0x01` = SHA256 (default), `0x02` = XXHash3 |
 | `0x0C` | 32 | `[u8; 32]` | **Checksum**: Hash of payload bytes (`0x40`...EOF) |
-| `0x2C` | 20 | `[u8; 20]` | **Reserved/Padding**: Must be `0x00`. Ensures 64-byte header alignment. |
+| `0x2C` | 20 | `[u8; 20]` | **Reserved/Padding**: MUST be `0x00` for `format_version = 0` and MUST be validated. Future use requires a new `format_version` that redefines the header layout. |
 | `0x40` | N | `Bytes` | **Payload**: The archived `RuntimeConfig` using `rkyv` |
+
+The Algorithm ID field is part of the PVS ABI. Its interpretation MUST remain frozen for a given `format_version`; changing checksum algorithm semantics or security properties SHALL trigger a `format_version` bump even if the numeric value or header layout stays the same.
 
 **Constants:**
 - `HEADER_LEN = 0x40` (64 bytes)
 - `PAYLOAD_OFFSET = 0x40`
 - `PAVIS_MAGIC = [0x50, 0x41, 0x56, 0x53]` ("PAVS")
 - `PAVIS_VERSION = 0` (current)
+
+The PVS Format Version (also referred to as the PVS ABI Version) is the strict ABI identifier for `.pvs` artifacts. It covers the header layout, payload layout, validation rules, checksum semantics and security properties, and runtime execution semantics. Any change that alters binary layout, payload structure, validation behavior, checksum algorithm semantics or security properties, or runtime execution semantics MUST bump `format_version` and result in a new ABI release.
 
 ### Payload Format
 
@@ -77,7 +81,7 @@ The payload uses `rkyv`'s relative pointer architecture for zero-copy deserializ
 
 PVS artifacts undergo three-stage verification:
 
-1. **Header Validation**: Magic bytes, version, algorithm checks
+1. **Header Validation**: Magic bytes, version, algorithm, and reserved-byte checks (reserved bytes MUST be all zero when `format_version = 0`)
 2. **Checksum Verification**: Recompute payload hash and compare
 3. **Archive Validation**: `rkyv::check_bytes()` for layout integrity
 
@@ -100,6 +104,25 @@ Artifact creation follows this sequence:
 
 ---
 
+## Versioning Policy
+
+`format_version` is the canonical ABI selector for the Frozen Data Plane. The runtime is the executor of exactly one frozen schema version and MUST only accept artifacts whose `format_version` equals `PAVIS_VERSION`.
+
+Each runtime build defines exactly one supported `format_version`. Runtimes MUST NOT maintain version whitelists (for example `SUPPORTED=[0,1]`) or advertise multi-version acceptance; the ABI is singular and fixed at compile time.
+
+The runtime MUST NOT:
+- accept multiple PVS versions concurrently (no dual-read or side-by-side parsing)
+- attempt forward or backward compatibility parsing or inference
+- ignore unknown fields or reserved bytes
+- apply defaults for missing fields at runtime
+- perform schema migration or mutation of archived data
+
+Unsupported `format_version` values MUST be rejected deterministically. The runtime MUST continue executing the last-known-good (LKG) artifact, MUST NOT crash or terminate, MUST NOT overwrite or clear LKG state, and MUST continue polling for new artifacts even while rejecting incompatible inputs. Version mismatches are therefore non-recoverable at the artifact level but non-fatal at the system level and require operator intervention (runtime upgrade or artifact regeneration).
+
+Any change that alters checksum algorithm semantics or security properties, even if the header layout remains byte-for-byte identical, MUST bump `format_version`.
+
+---
+
 ## Version Compatibility
 
 The runtime enforces strict version matching:
@@ -108,7 +131,7 @@ The runtime enforces strict version matching:
 - **Older version** → Runtime refuses to load (regenerate artifact required)
 - **Matching version** → Proceed with loading
 
-Version mismatches are **non-recoverable** and require either runtime upgrade or artifact regeneration.
+Version mismatches are **non-recoverable** for the rejected artifact but the runtime remains on the last-known-good image until operators upgrade the runtime or regenerate the artifact.
 
 ---
 
@@ -142,13 +165,7 @@ Version mismatches are **non-recoverable** and require either runtime upgrade or
 
 ### Future Extensions
 
-The reserved 20 bytes (`0x2C` to `0x3F`) provide space for protocol extensions:
-
-- Signature fields for authenticity verification
-- Compression algorithm indicators
-- Additional metadata (timestamps, author)
-
-Current version (`0`) requires all reserved bytes to be zero.
+The reserved 20 bytes (`0x2C` to `0x3F`) exist solely so that a future ABI revision can redefine the header layout. In `format_version = 0` they MUST be zeroed, and runtimes MUST validate their value. Concepts such as signature fields, compression indicators, or metadata MAY be introduced only alongside a new `format_version` that explicitly redefines these bytes; they MUST NOT be activated silently within the current version.
 
 ---
 

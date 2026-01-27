@@ -117,8 +117,9 @@ curl http://localhost:8080/metrics
 
 **Key Metrics:**
 - `pavis_relay_version`: Monitor for config changes
-- `pavis_relay_publishes_total`: Track publish rate
-- `pavis_relay_longpoll_active`: Monitor connected clients
+- `pavis_relay_publish_ok_total`: Track successful publish rate
+- `pavis_relay_publish_fail_total`: Track failed publishes
+- `pavis_relay_longpoll_wait_total`: Long-poll waits (counter)
 
 ### Logs
 ```bash
@@ -185,9 +186,11 @@ curl http://localhost:8080/v1/status | jq '.current_version'
 
 **Verify long-poll:**
 ```bash
+ETAG=$(curl -sS -D - http://localhost:8080/v1/config -o /dev/null \
+  | awk 'tolower($1)=="etag:" {print $2}' | tr -d '\r')
 curl -v http://localhost:8080/v1/config?wait_ms=5000 \
-  -H "X-Pavis-Version: 999999"
-# Should block for 5 seconds then return 304
+  -H "If-None-Match: $ETAG"
+# Should block for 5 seconds then return 204
 ```
 
 ---

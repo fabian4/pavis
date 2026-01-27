@@ -9,10 +9,13 @@
 > **Focus**: Phase 7 (Operational Lifecycle)
 > **Reference**: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
+Pavis is a **Frozen Data Plane execution system**. Multiple ingest frontends (File, xDS, Kubernetes, and future adapters) feed a single semantic compiler pipeline (Codec ➝ RuntimeConfig ➝ PVS). The Relay component is a dumb artifact distributor, and the Runtime is a dumb artifact executor. There is **no runtime interpretation, no dynamic policy evaluation, and no runtime code generation**—all semantics are decided before artifacts are sealed.
+
 This roadmap distinguishes between **Delivery Phases** (user-visible capabilities) and **Technical Debt** (engineering health and optimization).
 
-## Feature Verification Follow-ups (Code-Based)
+## Feature Verification Follow-ups (Semantic Closure)
 
+_Release blockers_: Phases 4 and 7 cannot be marked complete until every item below is resolved; these items codify the Frozen Data Plane contract.
 
 ### P0 – Safety & Correctness
 - [x] **Header/Method Routing Gap**: Router matcher now accepts method/header predicates with multiple header support (AND logic). Unit tests cover combinations, E2E tests prove method-scoped and header-scoped routing behavior. Implementation: `pavis/src/router.rs`, tests: `pavis/tests/routing.rs`, `tests/suites/pavis/52_routing_method_header_predicates.sh`.
@@ -52,13 +55,13 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 2: Protocol & Tooling (The PVS Format)
 > **Goal**: A zero-copy, verifiable binary configuration protocol.
-> **Status**: ✅ Complete
+> **Status**: ⚠️ Incomplete (Versioning policy not frozen)
 
 - [x] **Schema**: `pavis-core` RuntimeConfig with `rkyv` derivation.
 - [x] **Integrity**: Magic Bytes (`PAVS`), versioning, and checksum verification.
 - [x] **Tooling**: `pavctl` commands for generation (`gen`), inspection (`view`), check (`check`), and reverse conversion (`convert`).
 - [x] **Safety**: Graceful rejection of invalid, corrupt, or version-mismatched binaries.
-- [ ] [MUST] **Versioning Policy**: Define strict forward/backward compatibility rules for .pvs artifacts.
+- [ ] [MUST] **Versioning Policy**: Define strict forward/backward compatibility rules for .pvs artifacts. _No public release is permitted until these rules are frozen._
 
 ## Phase 3: Dynamic Configuration (The Control Loop)
 > **Goal**: Live, hitless reconfiguration via atomic artifact swapping.
@@ -86,7 +89,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 4: Security & Identity (Critical Path)
 > **Goal**: Enterprise-grade security via frozen policies.
-> **Status**: ⚠️ Partial (TLS Backend Limitations)
+> **Status**: ⚠️ Partial (Blocked by rustls backend parity)
 
 - [x] **TLS Termination**: Server-side TLS with single certificate per listener (No SNI).
 - [ ] **Inbound mTLS (Client Cert Validation)**: Blocked on Pingora rustls backend. Available with OpenSSL backend.
@@ -94,7 +97,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 - [x] **Authorization (RBAC)**: Static Path/Method based policies (Deny-by-default).
 - [x] **Identity**: Integration with SPIRE/SPIFFE workload identities (SPIFFE ID extraction available with OpenSSL backend).
 
-**TLS Backend Note**: The current default build uses Pingora's rustls connector, which does not support inbound client certificate authentication or per-peer CA verification. These features are available when building with the OpenSSL/BoringSSL backend. Pavis is waiting for upstream Pingora to add rustls support for these capabilities.
+**TLS Backend Note**: The current default build uses Pingora's rustls connector, which does not support inbound client certificate authentication or per-peer CA verification. These features are available when building with the OpenSSL/BoringSSL backend. Pavis is waiting for upstream Pingora to add rustls support for these capabilities. _Phase 4 cannot be signed off until Phase 7.5 closes the rustls gaps._
 
 ## Phase 5: Observability (Critical Path)
 > **Goal**: Deep visibility into proxy behavior required for Operations.
@@ -116,25 +119,40 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 
 ## Phase 7: Operational Lifecycle
 > **Goal**: Production readiness and ease of operation.
-> **Status**: ✅ Complete
+> **Status**: ⚠️ Conditionally Complete (OpenSSL backend only)
 
 - [x] **Graceful Shutdown**: Connection draining sequences with configurable timeout.
 - [x] **Admin API**: Read-only runtime inspection endpoints (`/health`, `/stats`).
 
-## Phase 8: xDS & Service Mesh Integration
-> **Goal**: Compile-time adaptation of external control planes.
-> **Status**: ⚠️ Deferred (Blocked by Security & Observability)
+_Phase 7 readiness is contingent on backend parity: rustls builds remain blocked until Phase 7.5 closes semantic gaps identified in the Feature Verification Follow-ups._
 
-- [ ] **xDS Ingest**: gRPC-based ADS (Aggregated Discovery Service) implementation.
-- [ ] **xDS Codec**: Map LDS, RDS, CDS, and EDS into `RuntimeConfig` (Compiler pass).
-- [ ] **State Synchronization**: Handle snapshot consistency and resource tracking.
+## Phase 7.5: Semantic Closure & Backend Parity
+> **Goal**: Make all runtime semantics explicit, deterministic, and backend-consistent.
+> **Status**: 🚧 In Progress (Active)
 
-## Phase 9: Kubernetes Integration
+- [ ] **Reject unsupported TLS configs when rustls backend is selected**: inbound mTLS, outbound custom CA bundles.
+- [ ] **Backend-aware E2E support table**: CI publishes Supported / Rejected / Skipped matrix per TLS backend (rustls / OpenSSL).
+- [ ] **Fail-fast validation** for parsed-but-ignored or backend-blocked fields.
+- [ ] **CI gating on backend parity regressions** across rustls and OpenSSL builds.
+
+## Phase 8: xDS Ingest & Codec (Envoy Control Plane → Frozen Data Plane)
+> **Goal**: Compile-time adaptation of xDS control planes into Frozen Data Plane artifacts.
+> **Status**: ⚠️ Deferred (Blocked by prerequisites)
+
+- [ ] **xDS Ingest Adapter**: gRPC ADS client that captures LDS/RDS/CDS/EDS snapshots but never runs inside the runtime.
+- [ ] **xDS Codec Pass**: Compile LDS/RDS/CDS/EDS resources into `RuntimeConfig`, then seal into `.pvs` artifacts; runtime never speaks xDS or ADS.
+- [ ] **State Synchronization**: Ensure snapshot consistency, deterministic ordering, and artifact publication via Relay.
+
+_Runtime must NOT speak xDS or run ADS; compiled artifacts are the only interface presented to executors._
+
+_Blockers_: PVS versioning policy not frozen (Phase 2), backend parity incomplete (Phase 7.5), and codec/runtime semantics not frozen (Phase 3.5 guardrails must be revalidated for xDS inputs).
+
+## Phase 9: Kubernetes Ingest & Publishing Pipeline (CRDs → Frozen Data Plane)
 > **Goal**: Native Kubernetes operator and deployment models.
 > **Status**: ⏳ Planned
 
-- [ ] **Operator**: Controller for `PavisConfig` and `PavisGateway` CRDs.
-- [ ] **Deployment**: Sidecar injector webhook and Helm charts.
+- [ ] **Operator**: Controller for `PavisConfig` and `PavisGateway` CRDs; CRDs are compiled into `RuntimeConfig`, then sealed into `.pvs` artifacts.
+- [ ] **Deployment**: Sidecar injector webhook and Helm charts; Relay distributes generated artifacts, and the runtime performs zero mutation or dynamic policy logic.
 
 ---
 
@@ -157,7 +175,7 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 - [x] **[Safety] Strict Format Sniffing**: Verify file content type bytes, not just extension. (Trigger: Phase 4)
 
 ### TD-3: Architectural Coupling (Relay)
-- [ ] **[Arch] Reclassified to Phase 3.5**: Architecture Convergence & Boundary Hardening is mandatory before Phase 4.
+_Phase 3.5 is the authoritative gate for compiler/runtime boundary hardening; TD-3 now tracks only post-gate relay polish._
 - [ ] **[DX] Binary Size/Compile-Time Polish**: Optimize relay build after feature gating is in place. (Trigger: After Phase 3.5)
 
 ### TD-4: Performance Optimizations
@@ -198,6 +216,20 @@ This roadmap is strictly bounded by the Frozen Data Plane architecture. Features
 Deterministic testing of crash windows during configuration publish and apply operations could validate persistence atomicity guarantees:
 - **Publish crash windows**: Verify Last-Known-Good (LKG) invariants when crashes occur during relay publish operations (write, fsync, rename).
 - **Apply crash windows**: Test runtime startup reconciliation when crashes occur during proxy config application.
+
+## Non-Goals / Out of Scope
+- No WASM
+- No Lua
+- No runtime xDS
+- No dynamic policy logic
+- No global rate limiting
+- No SNI multi-cert
+- No external auth (OIDC)
+- No WAF
+
+## Phase Gates (Hard)
+- **Phase 4** is blocked until Phase 7.5 (Semantic Closure & Backend Parity) is complete.
+- **Phase 8** is blocked until the PVS versioning policy is frozen (Phase 2), backend parity is achieved (Phase 7.5), and codec/runtime semantics are frozen per Phase 3.5 guardrails.
 - **Invariant validation**: Ensure history log integrity, startup recovery semantics, and LKG fallback behavior under abnormal termination.
 
 ### Why Deferred

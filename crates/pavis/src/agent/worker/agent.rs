@@ -165,8 +165,8 @@ impl ConfigAgent {
         *guard = Some(handle);
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_for_tests(
+    #[doc(hidden)]
+    pub fn new_for_tests(
         relay_base: String,
         lkg_path: PathBuf,
         state: Arc<RuntimeStateHandle>,
@@ -401,8 +401,8 @@ impl ConfigAgent {
         err
     }
 
-    #[cfg(test)]
-    pub(crate) async fn apply_update_for_tests(
+    #[doc(hidden)]
+    pub async fn apply_update_for_tests(
         &self,
         bytes: Vec<u8>,
         etag: String,
@@ -411,8 +411,8 @@ impl ConfigAgent {
         self.apply_update(bytes, etag, version).await
     }
 
-    #[cfg(test)]
-    pub(crate) fn last_applied_etag_for_tests(&self) -> Option<String> {
+    #[doc(hidden)]
+    pub fn last_applied_etag_for_tests(&self) -> Option<String> {
         let guard = self
             .last_applied_etag
             .lock()
@@ -420,8 +420,8 @@ impl ConfigAgent {
         guard.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_last_applied_etag_for_tests(&self, value: Option<String>) {
+    #[doc(hidden)]
+    pub fn set_last_applied_etag_for_tests(&self, value: Option<String>) {
         let mut guard = self
             .last_applied_etag
             .lock()
@@ -429,8 +429,8 @@ impl ConfigAgent {
         *guard = value;
     }
 
-    #[cfg(test)]
-    pub(crate) fn last_rejected_etag_for_tests(&self) -> Option<String> {
+    #[doc(hidden)]
+    pub fn last_rejected_etag_for_tests(&self) -> Option<String> {
         let guard = self
             .last_rejected_etag
             .lock()
@@ -438,8 +438,8 @@ impl ConfigAgent {
         guard.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_last_rejected_etag_for_tests(&self, value: Option<String>) {
+    #[doc(hidden)]
+    pub fn set_last_rejected_etag_for_tests(&self, value: Option<String>) {
         let mut guard = self
             .last_rejected_etag
             .lock()

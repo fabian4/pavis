@@ -3,8 +3,8 @@
 //! This module enforces regex syntax validation and compilation limits at config apply time,
 //! ensuring deterministic ACCEPT/REJECT behavior before the config becomes active.
 
+use pavis_core::RegexLimits;
 use pavis_core::RuntimeConfig;
-use pavis_core::limits::RegexLimits;
 use regex::bytes::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;

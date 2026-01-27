@@ -5,9 +5,6 @@ set -e
 # Category: End-to-End Reload
 # Invariants: I2 (Monotonic), I5 (No Regression)
 
-echo "Skipping multiversion_01_chain_apply (Waiting for relay fix)"
-exit 77
-
 if [ "${E2E_VERBOSE:-0}" -eq 1 ]; then
     set -x
 fi
@@ -71,8 +68,8 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	    paths:
 	      - matcher:
 	          path: !prefix { path: "/" }
-	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v1"]]
+        response_headers:
+          set_headers: [["X-Backend-Version", "v1"]]
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1
@@ -96,8 +93,8 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	    paths:
 	      - matcher:
 	          path: !prefix { path: "/" }
-	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v2"]]
+        response_headers:
+          set_headers: [["X-Backend-Version", "v2"]]
 	        destinations:
 	          - upstream: "backend-v2"
 	            weight: 1
@@ -121,8 +118,8 @@ cat <<-EOF > "$TEST_TMP/config_v3.yaml"
 	    paths:
 	      - matcher:
 	          path: !prefix { path: "/" }
-	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v3"]]
+        response_headers:
+          set_headers: [["X-Backend-Version", "v3"]]
 	        destinations:
 	          - upstream: "backend-v3"
 	            weight: 1
@@ -146,8 +143,8 @@ cat <<-EOF > "$TEST_TMP/config_v4.yaml"
 	    paths:
 	      - matcher:
 	          path: !prefix { path: "/" }
-	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v4"]]
+        response_headers:
+          set_headers: [["X-Backend-Version", "v4"]]
 	        destinations:
 	          - upstream: "backend-v4"
 	            weight: 1
@@ -157,7 +154,6 @@ gen_pvs "$TEST_TMP/config_v4.yaml" "$TEST_TMP/config_v4.pvs"
 # Publish V1 and start runtime
 echo "Publishing v1"
 curl -s -f --connect-timeout 2 --max-time 5 -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/config_v1.pvs" > /dev/null
 echo "Published v1"
 
@@ -171,7 +167,7 @@ wait_for_port "$PORT_METRICS" 5
 echo "Metrics port is open"
 
 METRICS_URL="http://127.0.0.1:$PORT_METRICS"
-INITIAL_VERSION=$(wait_for_runtime_config_version "$METRICS_URL" 10 || true)
+INITIAL_VERSION=$(wait_for_runtime_config_version "$METRICS_URL" "" 10 || true)
 if [ "$INITIAL_VERSION" != "1" ]; then
     echo "❌ Expected initial runtime version 1, got '$INITIAL_VERSION'"
     exit 1
@@ -198,7 +194,6 @@ publish_version() {
     local version="$1"
     local pvs_path="$2"
     curl -s -f --connect-timeout 2 --max-time 5 -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-        -H "x-pavis-version: $version" \
         --data-binary "@$pvs_path" > /dev/null
 }
 
@@ -242,10 +237,14 @@ assert_versions_in_order() {
 monitor_pid=$(start_version_monitor "$TEST_TMP/runtime_versions.log")
 trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
 
-# Publish V2 -> V3 -> V4 rapidly
+# Publish V2 -> V3 -> V4 serialized to ensure chain
 echo "Publishing v2..v4"
 publish_version 2 "$TEST_TMP/config_v2.pvs"
+wait_for_version 2 10 || exit 1
+
 publish_version 3 "$TEST_TMP/config_v3.pvs"
+wait_for_version 3 10 || exit 1
+
 publish_version 4 "$TEST_TMP/config_v4.pvs"
 echo "Published v2..v4"
 

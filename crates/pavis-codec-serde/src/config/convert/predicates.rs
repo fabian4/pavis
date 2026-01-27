@@ -6,7 +6,7 @@
 use anyhow::{Result, anyhow};
 use compact_str::CompactString;
 use pavis_core::HttpMethod;
-use pavis_core::limits::RegexLimits;
+use pavis_core::RegexLimits;
 use pavis_core::matcher::{HeaderMatcher, MethodMatcher, PredicateNode};
 
 use crate::config::types::{HeaderMatcherDTO, HeaderPredicate, PredicateNodeDTO};

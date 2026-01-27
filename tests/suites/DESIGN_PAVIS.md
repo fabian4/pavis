@@ -80,7 +80,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 **Assertions**:
 - Zero failed requests (100% success rate)
 - Atomic switch: once V2 appears, V1 never appears again (sequential monotonicity)
-- Header removal: after switch, `X-Pavis-Version` absent
+- Header removal: after switch, `X-Backend-Version` absent
 - SUT process ID unchanged (no restart)
 - Process still alive after reload
 
@@ -95,12 +95,12 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 **Maturity**: L3
 
 **Scenario**:
-1. Start with V1 (header `X-Pavis-Version: v1`, backend-v1)
+1. Start with V1 (header `X-Backend-Version: v1`, backend-v1)
 2. Run sustained traffic during a rapid publish storm V2..V10
 3. After each publish, wait for version marker to appear, then sample post-switch requests
 
 **Oracle**:
-- Response headers (`X-Pavis-Version`)
+- Response headers (`X-Backend-Version`)
 - Upstream echo (`instance_id`)
 - Request success/failure
 
@@ -120,13 +120,13 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 **Maturity**: L3
 
 **Scenario**:
-1. Start with V1 (header `X-Pavis-Version: v1`, backend-v1)
+1. Start with V1 (header `X-Backend-Version: v1`, backend-v1)
 2. Open a single keep-alive connection and issue one request
-3. Publish V2 (header `X-Pavis-Version: v2`, backend-v2)
+3. Publish V2 (header `X-Backend-Version: v2`, backend-v2)
 4. On the same connection, issue a series of post-reload requests
 
 **Oracle**:
-- Response headers (`X-Pavis-Version`)
+- Response headers (`X-Backend-Version`)
 - Upstream echo (`instance_id`)
 - Connection continuity (no errors)
 
@@ -146,12 +146,12 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 **Maturity**: L3
 
 **Scenario**:
-1. Start with V1 (header `X-Pavis-Version: v1`, backend-v1)
+1. Start with V1 (header `X-Backend-Version: v1`, backend-v1)
 2. Issue a slow request (`/delay?ms=1500`) and trigger reload to V2 mid-flight
 3. After completion, issue a post-reload request
 
 **Oracle**:
-- Response headers (`X-Pavis-Version`)
+- Response headers (`X-Backend-Version`)
 - Delay response body (`delayed_ms`)
 
 **Assertions**:
@@ -816,12 +816,12 @@ Tests comprehensive routing semantics in single artifact:
 
 **Scenario**:
 1. Start with V1 (backend-v1)
-2. Publish V2..V7 sequentially (header `X-Pavis-Version: vN`)
+2. Publish V2..V7 sequentially (header `X-Backend-Version: vN`)
 3. After each reload, sample resource indicators (FD count, RSS) when /proc is available; otherwise log info and exit
 
 **Oracle**:
 - Process resource indicators (`/proc/<pid>/fd`, `/proc/<pid>/status`)
-- Response headers (`X-Pavis-Version`)
+- Response headers (`X-Backend-Version`)
 
 **Assertions**:
 - Reloads apply successfully

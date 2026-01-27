@@ -55,7 +55,6 @@ gen_pvs "$TEST_TMP/config.yaml" "$TEST_TMP/config.pvs"
 
 # Publish V1 (ver 1)
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/config.pvs" > /dev/null
 
 # Start Pavis
@@ -93,7 +92,6 @@ done
 
 # Publish SAME V1 again (ver 2)
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 2" \
     --data-binary "@$TEST_TMP/config.pvs" > /dev/null
 
 wait $TRAFFIC_PID

@@ -16,8 +16,6 @@ source "$SCRIPT_DIR/../../scripts/lib/env.sh"
 
 RELAY_NAMESPACE="${BENCH_NAMESPACE:-bench-system}"
 
-PAVIS_VERSION_HEADER="x-pavis-version"
-
 resolve_pavctl_bin() {
   local pavctl
   pavctl="$(resolve_bin PAVIS_BIN pavctl "${BENCH_ROOT}/target/release/pavctl")"
@@ -117,7 +115,6 @@ publish_to_pavis_relay() {
     http_code=$(http_request_full "$relay_url" "$temp_response" \
       -X POST \
       -H "Content-Type: application/octet-stream" \
-      -H "${PAVIS_VERSION_HEADER}: ${attempt_version}" \
       --data-binary "@${temp_pvs}")
 
     local request_status=$?
@@ -128,7 +125,7 @@ publish_to_pavis_relay() {
     fi
 
     if [[ "$http_code" == "200" ]]; then
-      log_info "Published config version ${attempt_version} to pavis-relay"
+      log_info "Published config to pavis-relay (version assigned by relay)"
       PAVIS_PUBLISHED_VERSION="${attempt_version}"
       export PAVIS_PUBLISHED_VERSION
       rm -f "$temp_response"

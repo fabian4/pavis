@@ -201,6 +201,13 @@ fn validate_header(header: &PvsHeader) -> PvsResult<()> {
         });
     }
 
+    if header._reserved.iter().any(|&byte| byte != 0) {
+        return Err(PvsError::NonZeroReservedBytes {
+            version: header.version,
+        });
+    }
+
+    // Algorithm ID semantics are ABI-frozen for each `format_version`.
     if header.algorithm != PAVIS_HASH_ALGORITHM_SHA256 {
         return Err(PvsError::UnsupportedAlgorithm(header.algorithm));
     }
@@ -308,7 +315,7 @@ mod tests {
             version: PAVIS_VERSION,
             algorithm: PAVIS_HASH_ALGORITHM_SHA256,
             checksum,
-            _reserved: [1; 20],
+            _reserved: [0; 20],
         };
 
         let mut bytes = Vec::with_capacity(HEADER_SIZE + payload.len());
@@ -350,6 +357,30 @@ mod tests {
         bytes[8..12].copy_from_slice(&(PAVIS_HASH_ALGORITHM_SHA256 + 1).to_le_bytes());
         let err = verify_bytes(&bytes).expect_err("unsupported algorithm");
         assert!(matches!(err, PvsError::UnsupportedAlgorithm(_)));
+    }
+
+    #[test]
+    fn verify_bytes_rejects_non_zero_reserved_bytes() {
+        let payload = b"payload";
+        let checksum = compute_checksum(payload);
+        let header = PvsHeader {
+            magic: *PAVIS_MAGIC,
+            version: PAVIS_VERSION,
+            algorithm: PAVIS_HASH_ALGORITHM_SHA256,
+            checksum,
+            _reserved: [1; 20],
+        };
+
+        let mut bytes = Vec::with_capacity(HEADER_SIZE + payload.len());
+        bytes.extend_from_slice(&header.magic);
+        bytes.extend_from_slice(&header.version.to_le_bytes());
+        bytes.extend_from_slice(&header.algorithm.to_le_bytes());
+        bytes.extend_from_slice(&header.checksum);
+        bytes.extend_from_slice(&header._reserved);
+        bytes.extend_from_slice(payload);
+
+        let err = verify_bytes(&bytes).expect_err("reserved bytes must be zero");
+        assert!(matches!(err, PvsError::NonZeroReservedBytes { .. }));
     }
 
     #[test]

@@ -40,7 +40,7 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v1"]]
+	          set_headers: [["X-Backend-Version", "v1"]]
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1
@@ -85,8 +85,8 @@ fi
 
 V1_HEADERS="$TEST_TMP/v1.headers"
 pavis_curl_headers "$V1_HEADERS" "http://127.0.0.1:$PORT_PAVIS/echo"
-if ! grep -qi "^X-Pavis-Version: v1" "$V1_HEADERS"; then
-    echo "❌ Expected X-Pavis-Version: v1 header on V1"
+if ! grep -qi "^X-Backend-Version: v1" "$V1_HEADERS"; then
+    echo "❌ Expected X-Backend-Version: v1 header on V1"
     exit 1
 fi
 
@@ -122,7 +122,7 @@ for i in $(seq 1 $BURST_COUNT); do
     if [ "$instance" = "backend-v2" ]; then
         V2_COUNT=$((V2_COUNT+1))
         V2_STARTED=1
-        if grep -qi "^X-Pavis-Version:" "$TEST_TMP/burst_$i.headers"; then
+        if grep -qi "^X-Backend-Version:" "$TEST_TMP/burst_$i.headers"; then
             echo "❌ Header removed in V2, but still present during reload"
             exit 1
         fi
@@ -151,7 +151,7 @@ for attempt in $(seq 1 20); do
     body="$TEST_TMP/switch.body"
     if curl -sS -D "$headers" -o "$body" "http://127.0.0.1:$PORT_PAVIS/echo"; then
         instance=$(json_get_string "instance_id" < "$body")
-        if [ "$instance" = "backend-v2" ] && ! grep -qi "^X-Pavis-Version:" "$headers"; then
+        if [ "$instance" = "backend-v2" ] && ! grep -qi "^X-Backend-Version:" "$headers"; then
             SWITCHED=1
             break
         fi
@@ -175,7 +175,7 @@ for i in $(seq 1 $POST_COUNT); do
         echo "❌ Post-switch request saw $instance"
         exit 1
     fi
-    if grep -qi "^X-Pavis-Version:" "$headers"; then
+    if grep -qi "^X-Backend-Version:" "$headers"; then
         echo "❌ Removed header still present after switch"
         exit 1
     fi

@@ -3,10 +3,10 @@ use sha2::{Digest, Sha256};
 /// Magic Bytes "PAVS" (Pavilion) to identify valid PVS files.
 pub const PAVIS_MAGIC: &[u8; 4] = b"PAVS";
 
-/// Current protocol version. Increment this when breaking changes occur.
+/// Current PVS ABI version supported by this runtime build.
 pub const PAVIS_VERSION: u32 = 0;
 
-/// Hash algorithm ID for SHA-256.
+/// Hash algorithm ID for SHA-256 (ABI-frozen for `format_version = 0`).
 pub const PAVIS_HASH_ALGORITHM_SHA256: u32 = 1;
 
 /// Serialized header size in bytes.

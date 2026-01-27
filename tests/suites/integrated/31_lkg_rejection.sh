@@ -56,7 +56,6 @@ EOF
 gen_pvs "$TEST_TMP/config_v1.yaml" "$TEST_TMP/config_v1.pvs"
 
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/config_v1.pvs" > /dev/null
 
 cp "$TEST_TMP/config_v1.pvs" "$TEST_TMP/initial.pvs"
@@ -106,7 +105,6 @@ gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
 
 echo "Publishing invalid config (missing certs)..."
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 2" \
     --data-binary "@$TEST_TMP/config_v2.pvs" > /dev/null
 
 echo "Waiting for runtime validation failure..."

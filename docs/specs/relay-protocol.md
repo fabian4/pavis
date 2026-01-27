@@ -50,37 +50,38 @@ Reserved. First successful publish assigns version 1.
 
 The relay uses `tokio::sync::Notify` to implement efficient long-polling without thread-per-connection overhead.
 
-### Client Behavior
+### Client Behavior (ETag/If-None-Match)
 
 ```
-1. Runtime sends GET /v1/config?wait_ms=30000 with X-Pavis-Version: 42
-2. If server_version > client_version → immediate 200 OK with new artifact
-3. If server_version == client_version → register waiter, block up to 30s
-4. On new publish → notify all waiters → 200 OK with new artifact
-5. On timeout → 304 Not Modified
+1. Runtime sends GET /v1/config?wait_ms=30000 with If-None-Match: "sha256:<etag>"
+2. If server_etag != client_etag → immediate 200 OK with new artifact
+3. If server_etag == client_etag (+ wait_ms > 0) → register waiter, block up to 30s
+4. On new publish with different checksum → notify waiters → 200 OK with new artifact
+5. On timeout → 204 No Content
 ```
 
-### Server State Machine
+### Server State Machine (ETag)
 
 ```
-┌─ GET /v1/config ─────────────────────────────────┐
-│                                                   │
-├─ Parse X-Pavis-Version header                    │
-│                                                   │
-├─ Compare with current_version                    │
-│   │                                               │
-│   ├─ client_ver < current_ver                    │
-│   │  └→ Immediate 200 OK + current artifact     │
-│   │                                               │
-│   ├─ client_ver == current_ver (+ wait_ms > 0)  │
-│   │  └→ Register waiter                          │
-│   │     ├─ Await Notify OR Timeout               │
-│   │     ├─ On Notify → 200 OK + new artifact    │
-│   │     └─ On Timeout → 304 Not Modified        │
-│   │                                               │
-│   └─ client_ver > current_ver                    │
-│      └→ Immediate 304 Not Modified               │
-└───────────────────────────────────────────────────┘
+┌─ GET /v1/config ────────────────────────────────────────┐
+│                                                         │
+├─ Parse If-None-Match (strict ETag validation)           │
+│   └─ Invalid/missing → unconditional GET                │
+│                                                         │
+├─ Compare with current ETag (sha256:<hex>)               │
+│   │                                                     │
+│   ├─ client_etag != current_etag                        │
+│   │  └→ Immediate 200 OK + current artifact             │
+│   │                                                     │
+│   ├─ client_etag == current_etag (+ wait_ms > 0)        │
+│   │  └→ Register waiter                                 │
+│   │     ├─ Await Notify OR Timeout                      │
+│   │     ├─ On Notify (etag changed) → 200 OK + artifact │
+│   │     └─ On Timeout → 204 No Content                  │
+│   │                                                     │
+│   └─ client_etag == current_etag (wait_ms = 0)          │
+│      └→ Immediate 304 Not Modified                      │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ### Notification Mechanism
@@ -92,7 +93,7 @@ The relay uses `tokio::sync::Notify` to implement efficient long-polling without
 3. Increment version atomically
 4. Update in-memory state (Arc<RwLock>)
 5. Persist LKG to disk
-6. notify_waiters() → wakes ALL long-poll waiters
+6. notify_waiters() → wakes ALL long-poll waiters if checksum changes
 7. Return 200 OK to publisher
 ```
 
@@ -217,9 +218,25 @@ Zero-copy serve: Arc<Bytes> (shared ownership)
 
 | Scenario | Response | Retry Strategy |
 |----------|----------|----------------|
-| Long-poll timeout | 304 Not Modified | Immediate retry with same version |
+| Long-poll timeout | 204 No Content | Immediate retry with same ETag |
 | Network error | - | Exponential backoff |
 | Server unavailable | - | Exponential backoff |
+
+---
+
+## Protocol Headers
+
+### Request
+
+- `If-None-Match` (optional): Must be a single strong ETag of form `"sha256:<lowercase-hex>"`.
+  - Invalid formats (weak, wildcard, multiple, wrong prefix, wrong length) are ignored and treated as unconditional GET.
+
+### Response
+
+- `ETag`: Strong ETag string (`"sha256:<lowercase-hex>"`)
+- `x-config-version`: Relay-generated monotonic version
+- `x-config-size`: Size of the artifact in bytes
+- `Cache-Control: no-store`
 
 ---
 

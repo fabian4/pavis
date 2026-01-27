@@ -14,9 +14,6 @@ source "$(dirname "$0")/../../scripts/assert.sh"
 # shellcheck source=tests/scripts/wait_helpers.sh
 source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 
-echo "Skipping (Runtime behavior requires clarification)"
-exit 77
-
 setup_test "60_resilience_restart"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
@@ -54,10 +51,10 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
 	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V1} }] }]
-	routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: "backend", weight: 1 }] }] }]
+	routes: [{ host: "*", paths: [{ matcher: { path: !prefix { path: "/" } }, destinations: [{ upstream: "backend", weight: 1 }] }] }]
 EOF
 gen_pvs "$TEST_TMP/config_v1.yaml" "$TEST_TMP/config_v1.pvs"
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" -H "x-pavis-version: 1" --data-binary "@$TEST_TMP/config_v1.pvs" > /dev/null
+curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" --data-binary "@$TEST_TMP/config_v1.pvs" > /dev/null
 
 # Wait for V1 to be active
 MAX_RETRIES=50
@@ -85,10 +82,10 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
 	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }] }]
-	routes: [{ host: "*", paths: [{ matcher: !prefix { path: "/" }, destinations: [{ upstream: "backend", weight: 1 }] }] }]
+	routes: [{ host: "*", paths: [{ matcher: { path: !prefix { path: "/" } }, destinations: [{ upstream: "backend", weight: 1 }] }] }]
 EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" -H "x-pavis-version: 2" --data-binary "@$TEST_TMP/config_v2.pvs" > /dev/null
+curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" --data-binary "@$TEST_TMP/config_v2.pvs" > /dev/null
 
 # 6. Assert Runtime picks up V2
 MAX_RETRIES=50

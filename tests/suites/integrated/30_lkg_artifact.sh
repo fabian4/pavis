@@ -56,7 +56,6 @@ EOF
 gen_pvs "$TEST_TMP/config.yaml" "$TEST_TMP/config.pvs"
 
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/config.pvs" > /dev/null
 
 cp "$TEST_TMP/config.pvs" "$TEST_TMP/initial.pvs"
@@ -65,7 +64,7 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
 wait_for_port "$PORT_METRICS" 5
 
 METRICS_URL="http://127.0.0.1:$PORT_METRICS"
-BASELINE_RUNTIME_VERSION=$(wait_for_runtime_config_version "$METRICS_URL" 10 || true)
+BASELINE_RUNTIME_VERSION=$(wait_for_runtime_config_version "$METRICS_URL" "" 10 || true)
 if [ -z "$BASELINE_RUNTIME_VERSION" ]; then
     echo "❌ Missing runtime config version metric"
     exit 1
@@ -78,7 +77,6 @@ assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
 # The relay MUST reject corrupt artifacts (magic/checksum validation).
 echo "CORRUPT" > "$TEST_TMP/corrupt.pvs"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 2" \
     --data-binary "@$TEST_TMP/corrupt.pvs")
 
 echo "Publish response: $RESP"
@@ -132,7 +130,7 @@ EOF
 
 gen_pvs "$TEST_TMP/config_v3.yaml" "$TEST_TMP/config_v3.pvs"
 
-curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" -H "x-pavis-version: 3" --data-binary "@$TEST_TMP/config_v3.pvs" > /dev/null
+curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" --data-binary "@$TEST_TMP/config_v3.pvs" > /dev/null
 
 # 6. Assert Switch to V3
 

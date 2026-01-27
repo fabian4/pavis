@@ -3,7 +3,7 @@ mod common;
 use common::base_config;
 use pavis::regex_validator::validate_and_compile_regexes;
 use pavis::router::Router;
-use pavis_core::limits::RegexLimits;
+use pavis_core::RegexLimits;
 use pavis_core::{
     Destination, HeaderMatch, HeaderPredicate, HeaderPredicates, Host, HttpMethod, MethodPredicate,
     Path, PathMatch, RetryPolicy, Rewrite, RewriteHost, RewritePath, RouteAction, RouteMatcher,

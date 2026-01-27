@@ -133,7 +133,7 @@ pub(crate) struct RelayOptions {
 impl Default for RelayOptions {
     fn default() -> Self {
         Self {
-            version_header: axum::http::HeaderName::from_static(pavis_pvs::PAVIS_VERSION_HEADER),
+            version_header: axum::http::HeaderName::from_static(pavis_core::CONFIG_VERSION_HEADER),
             checksum_header: axum::http::HeaderName::from_static(pavis_pvs::PAVIS_CHECKSUM_HEADER),
             checksum_alg_header: axum::http::HeaderName::from_static(
                 pavis_pvs::PAVIS_CHECKSUM_ALG_HEADER,

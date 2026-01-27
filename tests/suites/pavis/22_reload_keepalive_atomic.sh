@@ -41,7 +41,7 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v1"]]
+	          set_headers: [["X-Backend-Version", "v1"]]
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1
@@ -67,7 +67,7 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v2"]]
+	          set_headers: [["X-Backend-Version", "v2"]]
 	        destinations:
 	          - upstream: "backend-v2"
 	            weight: 1
@@ -89,7 +89,7 @@ wait_for_version() {
         headers="$TEST_TMP/wait.headers"
         body="$TEST_TMP/wait.body"
         if curl -sS -D "$headers" -o "$body" "http://127.0.0.1:$PORT_PAVIS/echo"; then
-            got_version=$(awk 'tolower($1)=="x-pavis-version:" {print $2}' "$headers" | tr -d '\r')
+            got_version=$(awk 'tolower($1)=="x-backend-version:" {print $2}' "$headers" | tr -d '\r')
             got_instance=$(json_get_string "instance_id" < "$body")
             if [ "$got_version" = "$expected_version" ] && [ "$got_instance" = "$expected_instance" ]; then
                 return 0

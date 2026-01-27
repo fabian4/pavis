@@ -12,6 +12,8 @@ pub enum PvsError {
     VersionMismatch { file: u32, expected: u32 },
     #[error("Unsupported or missing hash algorithm: {0}")]
     UnsupportedAlgorithm(u32),
+    #[error("Reserved bytes must be zero for format version {version}")]
+    NonZeroReservedBytes { version: u32 },
     #[error("Checksum mismatch! Expected: {expected}, Found: {found}")]
     ChecksumMismatch { expected: String, found: String },
     #[error("Binary integrity check failed: {0}")]

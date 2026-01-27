@@ -19,8 +19,6 @@ setup_test "41_validation_runtime_env_rejection"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
 
-echo "⏭️ SKIP: apply-time bind-conflict preflight validation not implemented"
-exit 77
 
 PORT_PAVIS=$(get_free_port)
 PORT_RELAY=$(get_free_port)

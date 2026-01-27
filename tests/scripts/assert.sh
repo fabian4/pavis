@@ -273,7 +273,7 @@ wait_for_runtime_config_version() {
     local retries=$((timeout * 4))
     local backoff=0.25
 
-    echo "DEBUG: wait_for_runtime_config_version looking for '$expected_version' at $metrics_url"
+    echo "DEBUG: wait_for_runtime_config_version looking for '$expected_version' at $metrics_url" >&2
 
     for i in $(seq 1 $retries); do
         local metrics
@@ -281,13 +281,13 @@ wait_for_runtime_config_version() {
         
         if [ -n "$expected_version" ]; then
             if echo "$metrics" | grep -q "pavis_runtime_config_version{version=\"$expected_version\"}"; then
-                echo "DEBUG: Found version $expected_version at retry $i"
+                echo "DEBUG: Found version $expected_version at retry $i" >&2
                 echo "$expected_version"
                 return 0
             fi
             if [ $((i % 4)) -eq 0 ]; then
-                echo "DEBUG: Retry $i, version $expected_version not found yet. Current metrics (subset):"
-                echo "$metrics" | grep "pavis_runtime_config_version" | head -n 5
+                echo "DEBUG: Retry $i, version $expected_version not found yet. Current metrics (subset):" >&2
+                echo "$metrics" | grep "pavis_runtime_config_version" | head -n 5 >&2
             fi
         else
             # If no specific version expected, return the first one found

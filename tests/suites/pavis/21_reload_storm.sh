@@ -51,7 +51,7 @@ write_config() {
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v${version}"]]
+	          set_headers: [["X-Backend-Version", "v${version}"]]
 	        destinations:
 	          - upstream: "${upstream}"
 	            weight: 1
@@ -109,7 +109,7 @@ TOTAL_TRAFFIC=1000
             echo "curl failed" > "$TEST_TMP/traffic_${i}.fail"
             continue
         fi
-        version=$(grep -i "^X-Pavis-Version:" "$headers" | awk '{print $2}' | tr -d '\r')
+        version=$(grep -i "^X-Backend-Version:" "$headers" | awk '{print $2}' | tr -d '\r')
         if [ -z "$version" ]; then
             echo "missing version header" > "$TEST_TMP/traffic_${i}.fail"
             continue

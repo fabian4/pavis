@@ -441,8 +441,6 @@ jobs:
       - bench_image
       - bench
       - bench_report
-      - codeql
-      - coverage
     steps:
       - name: Pipeline summary
         run: |

@@ -28,8 +28,7 @@ spec:
               sleep 2
             done
             echo "Fetching initial config from relay..."
-            until curl -sf -H "X-Pavis-Version: 0" \
-              http://pavis-relay:8090/v1/config \
+            until curl -sf http://pavis-relay:8090/v1/config \
               -o /config/bootstrap.pvs; do
               echo "Config fetch failed, retrying in 2s..."
               sleep 2

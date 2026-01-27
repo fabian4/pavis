@@ -1,7 +1,5 @@
 mod admin;
-mod headers;
 mod routes;
-mod server;
 mod upstreams;
 
 use crate::runtime::{RuntimeConfig, UpstreamName, ValidatedRuntimeConfig};
@@ -94,7 +92,28 @@ pub fn validate_runtime(config: RuntimeConfig) -> CoreValidationResult<Validated
                 listener.name.0.clone(),
             ));
         }
-        server::validate_server(listener.address, &listener.tls)?;
+
+        // Inline validate_server logic
+        if let crate::runtime::TlsConfig::Enabled {
+            cert_path,
+            key_path,
+            client_auth,
+        } = &listener.tls
+        {
+            if cert_path.0.is_empty() || key_path.0.is_empty() {
+                return Err(CoreValidationError::MissingTlsFiles);
+            }
+
+            match client_auth {
+                crate::runtime::ClientAuth::Disabled => {}
+                crate::runtime::ClientAuth::Optional { ca_path }
+                | crate::runtime::ClientAuth::Required { ca_path } => {
+                    if ca_path.0.is_empty() {
+                        return Err(CoreValidationError::MissingTlsFiles);
+                    }
+                }
+            }
+        }
     }
 
     // Validate virtual host domain uniqueness

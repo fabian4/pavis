@@ -41,7 +41,7 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v1"]]
+	          set_headers: [["X-Backend-Version", "v1"]]
 	        destinations:
 	          - upstream: "backend-v1"
 	            weight: 1
@@ -67,7 +67,7 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        response_headers:
-	          set_headers: [["X-Pavis-Version", "v2"]]
+	          set_headers: [["X-Backend-Version", "v2"]]
 	        destinations:
 	          - upstream: "backend-v2"
 	            weight: 1
@@ -88,7 +88,7 @@ publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
 
 wait $INFLIGHT_PID
 
-if ! grep -qi "^X-Pavis-Version: v1" "$TEST_TMP/inflight.headers"; then
+if ! grep -qi "^X-Backend-Version: v1" "$TEST_TMP/inflight.headers"; then
     echo "❌ In-flight response did not preserve v1 header"
     exit 1
 fi
@@ -103,7 +103,7 @@ attempt=0
 for attempt in $(seq 1 20); do
     curl -sS -D "$TEST_TMP/post.headers" -o "$TEST_TMP/post.body" \
         "http://127.0.0.1:$PORT_PAVIS/delay?ms=10"
-    if grep -qi "^X-Pavis-Version: v2" "$TEST_TMP/post.headers"; then
+    if grep -qi "^X-Backend-Version: v2" "$TEST_TMP/post.headers"; then
         SWITCHED=1
         break
     fi

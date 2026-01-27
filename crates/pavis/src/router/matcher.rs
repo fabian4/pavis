@@ -1,6 +1,6 @@
 use crate::regex_validator::CompiledRegex;
 use crate::router::{CompiledVirtualHost, RouteZone, Router};
-use pavis_core::limits::RegexLimits;
+use pavis_core::RegexLimits;
 use pavis_core::{HeaderMatch, HeaderPredicates, MethodPredicate, PathMatch, Route, VirtualHost};
 use std::collections::HashMap;
 

@@ -198,7 +198,7 @@ fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
     }
 
     Ok(RelayOptions {
-        version_header: axum::http::HeaderName::from_static(pavis_pvs::PAVIS_VERSION_HEADER),
+        version_header: axum::http::HeaderName::from_static(pavis_core::CONFIG_VERSION_HEADER),
         checksum_header: axum::http::HeaderName::from_static(pavis_pvs::PAVIS_CHECKSUM_HEADER),
         checksum_alg_header: axum::http::HeaderName::from_static(
             pavis_pvs::PAVIS_CHECKSUM_ALG_HEADER,
@@ -284,7 +284,7 @@ mod tests {
         let options = build_options(&config).expect("options");
         assert_eq!(
             options.version_header.as_str(),
-            pavis_pvs::PAVIS_VERSION_HEADER
+            pavis_core::CONFIG_VERSION_HEADER
         );
         assert_eq!(
             options.checksum_header.as_str(),

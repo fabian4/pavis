@@ -73,7 +73,6 @@ gen_pvs "$TEST_TMP/config_v1.yaml" "$TEST_TMP/config_v1.pvs"
 
 # Publish to Relay (Real Relay API)
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
-    -H "x-pavis-version: 1" \
     --data-binary "@$TEST_TMP/config_v1.pvs" > /dev/null
 
 # 4. Assert Traffic (Wait for propagation)
