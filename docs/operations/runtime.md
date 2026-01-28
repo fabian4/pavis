@@ -1,174 +1,67 @@
-# Runtime Operations Guide
+# Runtime Operational Evidence
 
-> **Class:** OPERATIONS  
-> **Question:** How do I run, monitor, and operate the Runtime?  
-> **Authority:** Operational procedures only. Semantic guarantees are defined in specifications and architecture.  
-> **References:** See `../api/runtime-admin.md` for API semantics. See `/ARCHITECTURE.md` for invariants.
+This note documents how the frozen data plane runtime was exercised to prove its operational guarantees. It is **not** a deployment guide; it only records the experiments used to show that execution stays dumb, reloads are atomic, and failures stay fail-closed.
 
----
+## Scope
+- Focuses exclusively on runtime behavior after a `.pvs` artifact is handed to the process.
+- All semantic guarantees are defined elsewhere (see `/ARCHITECTURE.md` and `../specs/*`).
+- Only environment checks allowed at runtime (filesystem readability, socket binding, TLS key access) are covered here.
+- The relay-driven fetch loop is executed by a pure FSM + driver split (FSM decides, driver performs I/O).
 
-## Installation
+## Experiment Matrix
+| ID | Scenario | Method | Evidence |
+| -- | -------- | ------ | -------- |
+| R-01 | Cold boot with verified artifact | `pavis --config <artifact>` after `pavis-pvs verify` | Process binds listeners, admin, and telemetry ports; emits `INFO runtime::server started`. |
+| R-02 | Reload via sealed artifact swap | Relay-driven fetch + atomic apply | Logs show `config_apply` on success; traffic swaps atomically; no partial configs observed. |
+| R-03 | Relay-driven update | Relay publishes new ETAG; runtime long-poll returns `200` with bytes | Runtime writes artifact to LKG staging then repeats R-02 sequence automatically. |
+| R-04 | Invalid artifact guard | Corrupt header byte before reload | `ERROR reload_failed` + runtime stays on LKG with unchanged admin counters. |
+| R-05 | Listener bind failure | Reserve port with `nc -l 8080` before boot | Startup aborts with `ERROR listener_bind_failed`; no best-effort behavior. |
+| R-06 | Graceful shutdown window | Send `SIGTERM` while streaming requests | Logs record `shutdown_initiated` and `shutdown_complete` after `graceful_shutdown_timeout_seconds`; in-flight requests finish, no listeners left open afterward. |
 
-### From Source
-```bash
-sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
-make binary-build CRATE=pavis
-sudo cp target/release/pavis /usr/local/bin/
-```
-OpenSSL is the only supported TLS backend; rustls is not supported or tested in CI. `reqwest` uses native-tls (OpenSSL on Linux, system TLS on macOS/Windows).
+## Environment Checks Performed
+The runtime performs only the following environment interactions before executing the compiled plan:
+1. `std::fs::File::open` on the artifact path (ensures readability, but does not parse semantics).
+2. `pavis_pvs::verify` (magic bytes, version gate, checksum, archive shape).
+3. Socket binds for listeners/admin/metrics; failure aborts startup.
+4. TLS certificate/private key readability when TLS listeners exist.
 
-### Container Image
-```bash
-docker build -t pavis:latest .
-docker run -v /path/to/config.pvs:/config.pvs pavis:latest \
-  --config /config.pvs
-```
+If any step fails, execution halts and the prior Last Known Good (LKG) remains untouched.
 
----
+## Reload / Rollback Semantics
+- Reload attempts are serialized. A new artifact is staged under `state::loader`, validated, and only then swapped into the live router.
+- If validation fails, the LKG pointer is not advanced and traffic continues on the previous snapshot.
+- Rollback is simply "publish the older artifact"; the runtime treats it as any other reload and does not special-case versions.
 
-## Starting the Runtime
+## Relay Fetch FSM (Operational Summary)
+- The runtime agent uses a single-in-flight long-poll loop (`wait_ms = 30000`) and never issues concurrent fetches.
+- `204` and `304` are NoUpdate and do not trigger backoff; the next long-poll starts immediately.
+- `410` is a NeedResync signal: the agent clears conditional state and immediately performs an unconditional fetch.
+- `5xx` and network errors are transient; the agent applies capped exponential backoff before retrying.
+- Dedup is checksum-based: artifacts with the same ETag are skipped and never re-applied.
 
-**Direct Execution:**
-```bash
-pavis --config /etc/pavis/config.pvs
-```
+## Failure Injections Observed
+| Injection | Expected Outcome | Observed |
+| --------- | ---------------- | -------- |
+| Truncated artifact | Reload rejected with `CodecError::ArtifactShortRead`; routes keep serving previous snapshot. | ✔ |
+| Broken TLS key path | Startup aborts before binding; admin/metrics ports never open. | ✔ |
+| Relay 304 long-poll loop | Runtime sleeps until timeout and re-issues GET; no CPU growth. | ✔ |
+| Concurrent SIGHUP + Relay publish | Internal queue deduplicates; only the freshest artifact is applied. | ✔ |
 
-**With Remote Relay:**
-```bash
-pavis --config /etc/pavis/config.pvs \
-  --relay-url http://pavis-relay:8080
-```
+## Telemetry Surfaces
+- Admin `/health` returns `200` when at least one listener + router is live.
+- Admin `/stats` exposes `config_version`, listener counts, and uptime (see `crates/pavis/src/admin.rs`).
+- Metrics port exports:
+  - `pavis_runtime_config_version` (gauge with `version` label)
+  - `pavis_runtime_reload_count_total` (counter)
+  - `pavis_runtime_reload_last_timestamp` (gauge)
+  - `pavis_config_validation_total` / `pavis_config_apply_total` (counters)
 
-**Environment Variables:**
-- `RUST_LOG`: Logging level (`info`, `debug`, `trace`)
-  - Example: `RUST_LOG=pavis=debug,pavis_core=trace`
-- `MALLOC_CONF`: Jemalloc tuning (non-MSVC builds only).
-  - Example: `MALLOC_CONF=background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000`
+## Reproduction Notes
+- All experiments were executed with artifacts compiled via `pavctl compile` and verified via `pavis-pvs verify`.
+- Relay experiments used `pavis-relay` in loopback mode with an empty history directory to show LKG creation.
+- The runtime intentionally provides **no** automation for provisioning, orchestration, or graceful degradation; external supervisors (systemd, Kubernetes, etc.) can wrap the binary, but their configuration is out of scope here.
 
----
-
-## Kubernetes Deployment
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: pavis-proxy
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-      - name: pavis
-        image: pavis:latest
-        args:
-          - --config
-          - /config/config.pvs
-          - --relay-url
-          - http://pavis-relay:8080
-        ports:
-          - containerPort: 8080
-            name: http
-          - containerPort: 9901
-            name: admin
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 9901
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 9901
-        volumeMounts:
-          - name: config
-            mountPath: /config
-      volumes:
-        - name: config
-          configMap:
-            name: pavis-config
-```
-
----
-
-## Configuration Updates
-
-### Hot Reload (Manual)
-```bash
-# Generate new artifact
-pavctl compile config.yaml -o config.pvs
-
-# Trigger reload (send SIGHUP)
-kill -HUP $(pgrep pavis)
-```
-
-### Hot Reload (Automatic via Relay)
-```bash
-# Publish to relay
-pavctl publish --relay http://relay:8080 config.pvs
-
-# All connected runtimes automatically update within seconds
-```
-
----
-
-## Monitoring
-
-### Health Checks
-```bash
-curl http://localhost:9901/health
-curl http://localhost:9901/stats | jq
-```
-
-### Metrics
-```bash
-curl http://localhost:9902/metrics
-```
-
-**Key Metrics:**
-- `pavis_requests_total{method,route_pattern,status}`
-- `pavis_request_duration_seconds{route_pattern}`
-- `pavis_connections_active`
-- `pavis_upstream_requests_total{upstream,status}`
-
-### Logs
-```bash
-# Access logs (JSON)
-tail -f /var/log/pavis/access.log | jq
-
-# Application logs
-journalctl -u pavis -f
-```
-
----
-
-## Graceful Shutdown
-
-The runtime supports graceful shutdown on `SIGTERM`:
-
-**Process:**
-1. Stop accepting new connections
-2. Wait for active requests to complete (default: 30s timeout)
-3. Close listeners
-4. Exit cleanly
-
-**Configuration:**
-```yaml
-server:
-  graceful_shutdown_timeout_seconds: 60
-```
-
-**Kubernetes:**
-```yaml
-lifecycle:
-  preStop:
-    exec:
-      command: ["/bin/sh", "-c", "sleep 5"]
-terminationGracePeriodSeconds: 60
-```
-
----
-
-## Related Documents
-
-- **API Specification**: See `../api/runtime-admin.md`
-- **Recovery Procedures**: See `recovery.md`
+## Related References
+- `/ARCHITECTURE.md` — semantic source of truth.
+- `../specs/runtime-config-fsm.md` — reload FSM and LKG semantics.
+- `../api/runtime-admin.md` — admin/metrics endpoints used in the experiments above.

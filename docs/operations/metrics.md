@@ -56,11 +56,11 @@
 | `pavis_upstream_pool_key_cardinality_approx` | gauge | keys | `upstream` | Approx cardinality of pool reuse keys (capped) | Def: `metrics.rs::record_pool_key_cardinality`; Emit: `proxy/service.rs::get_peer` (via `PoolKeyCardinalityTracker`) |
 | `pavis_upstream_connection_reused_total` | counter | connections | `upstream` | Reused upstream connections | Def: `metrics.rs::record_connection_reused`; Emit: `proxy/service.rs::connected_to_upstream` |
 | `pavis_upstream_connection_new_total` | counter | connections | `upstream`, `reason` (currently `new_connection`) | New upstream connections created | Def: `metrics.rs::record_connection_new`; Emit: `proxy/service.rs::connected_to_upstream` |
-| `pavis_runtime_config_version` | gauge | version | `version` | Current config version (set to 1.0 for active version label) | Def: `metrics.rs::update_config_stats`; Emit: `agent/worker/agent.rs::record_config_stats` |
-| `pavis_runtime_config_size_bytes` | gauge | bytes | (none) | Size of current runtime config | Def: `metrics.rs::update_config_stats`; Emit: `agent/worker/agent.rs::record_config_stats` |
-| `pavis_runtime_reload_last_timestamp` | gauge | unix seconds | (none) | Last config reload time (epoch seconds) | Def: `metrics.rs::update_config_stats`; Emit: `agent/worker/agent.rs::record_config_stats` |
-| `pavis_config_validation_total` | counter | validations | `result` (`ok`/`fail`), `reason` (`parse`/`version`/`runtime`/`semantic`) | Config validation outcomes | Def: `metrics.rs::record_config_validation`; Emit: `agent/worker/agent.rs::record_validation` |
-| `pavis_config_apply_total` | counter | applies | `result` (`ok`/`fail`) | Config apply outcomes | Def: `metrics.rs::record_config_apply`; Emit: `agent/worker/agent.rs::record_apply` |
+| `pavis_runtime_config_version` | gauge | version | `version` | Current config version (set to 1.0 for active version label) | Def: `metrics.rs::update_config_stats`; Emit: `agent/driver.rs::record_config_stats` |
+| `pavis_runtime_config_size_bytes` | gauge | bytes | (none) | Size of current runtime config | Def: `metrics.rs::update_config_stats`; Emit: `agent/driver.rs::record_config_stats` |
+| `pavis_runtime_reload_last_timestamp` | gauge | unix seconds | (none) | Last config reload time (epoch seconds) | Def: `metrics.rs::update_config_stats`; Emit: `agent/driver.rs::record_config_stats` |
+| `pavis_config_validation_total` | counter | validations | `result` (`ok`/`fail`), `reason` (`parse`/`version`/`runtime`/`semantic`) | Config validation outcomes | Def: `metrics.rs::record_config_validation`; Emit: `agent/driver.rs::record_validation` |
+| `pavis_config_apply_total` | counter | applies | `result` (`ok`/`fail`) | Config apply outcomes | Def: `metrics.rs::record_config_apply`; Emit: `agent/driver.rs::record_apply` |
 | `pavis_upstream_retries_total` | counter | retries | `upstream`, `reason` (`status_code`/`connect_timeout`/`read_timeout`/`per_try_timeout`/`pool_full`/`connect_error`), `attempt` | Retry attempts | Def: `metrics.rs::record_retry`; Emit: `retry.rs::RetryContext::next_attempt` |
 | `pavis_upstream_retry_outcome_total` | counter | retries | `upstream`, `outcome` (`success`/`exhausted`) | Final retry outcome | Def: `metrics.rs::record_retry_outcome`; Emit: `retry.rs::RetryContext::record_outcome` |
 | `pavis_upstream_retry_body_buffer_size_bytes` | histogram | bytes | `upstream` | Buffered body size for retry replay | Def: `metrics.rs::record_retry_body_buffered`; Emit: `retry.rs` body buffer path |
@@ -69,7 +69,7 @@
 | `pavis_telemetry_tracing_export_errors_total` | counter | errors | (none) | Trace export errors (per export batch) | Def: `metrics.rs::record_tracing_export_error`; Emit: `telemetry/tracing.rs::MetricsSpanExporter::export` |
 | `pavis_telemetry_tracing_spans_created_total` | counter | spans | (none) | Spans created (request-level, tracing enabled) | Def: `metrics.rs::record_span_created`; Emit: `telemetry/tracing.rs::SpanMetricsLayer::on_new_span` |
 | `pavis_telemetry_tracing_spans_exported_total` | counter | spans | (none) | Spans exported (per export batch) | Def: `metrics.rs::record_span_exported`; Emit: `telemetry/tracing.rs::MetricsSpanExporter::export` |
-| `pavis_runtime_reload_count_total` | counter | reloads | (none) | Config reload count | Def: `metrics.rs::increment_reload_count`; Emit: `agent/worker/agent.rs::apply_update` |
+| `pavis_runtime_reload_count_total` | counter | reloads | (none) | Config reload count | Def: `metrics.rs::increment_reload_count`; Emit: `agent/driver.rs::apply_update` |
 | `pavis_relay_version` | gauge | version | (none) | Relay current config version | Def/Emit: `crates/pavis-relay/src/handlers.rs::get_metrics` |
 | `pavis_relay_publish_ok_total` | counter | publishes | (none) | Successful publishes | Def: `handlers.rs::get_metrics` (formatting); Emit: `runtime.rs::publish_auto`, `runtime.rs::publish_bytes` |
 | `pavis_relay_publish_fail_total` | counter | publishes | (none) | Failed publishes | Def: `handlers.rs::get_metrics`; Emit: `handlers.rs::post_publish` |

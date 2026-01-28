@@ -32,8 +32,7 @@ This document defines the runtime-side configuration fetch/reload state machine 
    - Meaning: artifact is being applied and persisted.
 
 5) **BackoffSleeping**  
-   - Fields:
-     - `deadline` (monotonic time)  
+   - Fields: none  
    - Meaning: a backoff timer is active.
 
 6) **Stopped**  
@@ -86,7 +85,6 @@ The FSM may request only these effects:
 - **FetchUnconditional(wait_ms)**
 - **Verify(artifact_bytes, etag)**
 - **Apply(artifact_bytes, etag)**
-- **PersistLocalLKG(artifact_bytes, etag)**
 - **ScheduleTimer(duration)**
 - **EmitMetrics/Logs(event_name, fields)** (optional but normative minimum defined in §12)
 
@@ -100,8 +98,6 @@ A complete transition table is defined below. “Effects” may include multiple
 
 ### From Idle
 - Start → Idle. Effects:
-  - Load and verify local LKG from `local_lkg_path`.
-  - If valid, Apply local LKG (via Verify/Apply effects as in §9).
   - Immediately initiate FetchUnconditional(wait_ms=WAIT_MS).
 - TimerFired → Fetching(Unconditional, wait_ms=WAIT_MS). Effects: FetchUnconditional(WAIT_MS).
 - Shutdown → Stopped. Effects: none.
@@ -109,38 +105,37 @@ A complete transition table is defined below. “Effects” may include multiple
 
 ### From Fetching
 - Response(NewArtifact) → Verifying unless rejected-ETag skip applies (see §6.1). Effects: Verify or none.
-- Response(NoUpdate) → Idle. Effects: FetchConditional or FetchUnconditional (immediate next long-poll, no backoff).
-- Response(NeedResync) → Idle. Effects:
+- Response(NoUpdate) → Fetching. Effects: FetchConditional or FetchUnconditional (immediate next long-poll, no backoff).
+- Response(NeedResync) → Fetching. Effects:
   - Clear `last_applied_etag`, `last_rejected_etag`, `last_rejected_until`, `backoff_attempt`.
   - FetchUnconditional(wait_ms=WAIT_MS).
-- Response(TransientUnavailable) → BackoffSleeping. Effects: ScheduleTimer(backoff_delay), set deadline.
+- Response(TransientUnavailable) → BackoffSleeping. Effects: ScheduleTimer(backoff_delay).
 - Shutdown → Stopped. Effects: cancel in-flight request.
 - VerifyOk/VerifyFail/ApplyOk/ApplyFail/TimerFired → Fetching (no-op). Effects: none.
 
 ### From Verifying
-- VerifyOk → Applying if dedup passes; otherwise Idle with immediate next long-poll. Effects:
+- VerifyOk → Applying if dedup passes; otherwise Fetching with immediate next long-poll. Effects:
   - If `etag == last_applied_etag`, skip Apply and immediately FetchConditional/FetchUnconditional.
   - Else Apply.
-- VerifyFail → Idle. Effects:
+- VerifyFail → Fetching. Effects:
   - Set `last_rejected_etag = etag`, `last_rejected_until = now + REJECT_TTL`.
   - Immediately FetchConditional/FetchUnconditional.
 - Shutdown → Stopped. Effects: none.
 - Response/TimerFired/ApplyOk/ApplyFail → Verifying (no-op). Effects: none.
 
 ### From Applying
-- ApplyOk → Idle. Effects:
-  - PersistLocalLKG(artifact_bytes, etag).
+- ApplyOk → Fetching. Effects:
   - Set `last_applied_etag = etag`.
   - If `last_rejected_etag == etag`, clear it.
   - Immediately FetchConditional/FetchUnconditional.
-- ApplyFail → Idle. Effects:
+- ApplyFail → Fetching. Effects:
   - Set `last_rejected_etag = etag`, `last_rejected_until = now + REJECT_TTL`.
   - Immediately FetchConditional/FetchUnconditional.
 - Shutdown → Stopped. Effects: none.
 - Response/VerifyOk/VerifyFail/TimerFired → Applying (no-op). Effects: none.
 
 ### From BackoffSleeping
-- TimerFired → Idle. Effects: FetchConditional/FetchUnconditional.
+- TimerFired → Fetching. Effects: FetchConditional/FetchUnconditional.
 - Shutdown → Stopped. Effects: none.
 - Response/VerifyOk/VerifyFail/ApplyOk/ApplyFail → BackoffSleeping (no-op). Effects: none.
 
@@ -198,11 +193,11 @@ Rules:
 
 ## 10) Local Runtime LKG Semantics (Normative)
 
-- On startup, the runtime MUST attempt to load a local LKG from `local_lkg_path`.
+- On startup, the runtime MUST attempt to load a local LKG from `local_lkg_path` before emitting Start to the FSM.
 - The local LKG MUST be verified using the same verification rules before use.
 - If valid, the runtime MAY apply it immediately before the first fetch.
 - The runtime MUST begin relay polling immediately after startup regardless of local LKG.
-- The runtime MUST persist the newly applied artifact as local LKG after ApplyOk.
+- The runtime MUST persist the newly applied artifact as local LKG as part of Apply.
 - Local LKG usage MUST NOT delay or replace Relay fetching.
 
 ## 11) Error Mapping

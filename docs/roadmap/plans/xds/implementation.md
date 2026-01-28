@@ -1,6 +1,8 @@
-# Implementation Plan: Pavis xDS Readiness (Revised)
+# Implementation Plan: xDS Codec (Design-Only)
 
-This document outlines the remaining work required to complete full compatibility with the `pavis-codec-xds` transformation layer.
+> **Status:** Optional exploratory ingest adapter. Execution of this plan is **not** required for thesis closure and remains gated on the PVS versioning contract.
+
+This document captures the speculative work required to make the `pavis-codec-xds` transformation layer viable if the project chooses to pursue an Envoy-compatible ingest adapter in the future.
 
 ## 1. Remaining Work: xDS Codec (`pavis-codec-xds`)
 
@@ -118,3 +120,10 @@ The codec follows a structured background transformation pipeline:
 - **Performance**: Compilation of a 10MB xDS snapshot must be efficient (zero-copy where feasible, minimal cloning).
 - **Security**: Rejects malformed Protobuf or `Any` types that do not match the expected schema.
 - **Compatibility**: Rejects protocol versions other than Envoy v3.
+
+---
+
+## Status & Gate
+- Work is **blocked** on defining the long-term PVS versioning contract (see `docs/roadmap/roadmap.md`).
+- No runtime changes may begin until the codec proves that it can emit artifacts identical to existing serde inputs.
+- If pursued, this plan should be implemented as an external ingest adapter crate so the frozen data plane runtime remains unaware of xDS semantics.

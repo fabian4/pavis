@@ -1,6 +1,8 @@
-# Test Plan: Pavis xDS Readiness
+# Test Plan: xDS Codec (Dormant)
 
-This document defines the comprehensive test strategy for validating the `pavis-core` and `pavis` runtime changes required for full xDS compatibility. It serves as the authoritative source for test case implementation.
+> **Status:** Optional exploratory ingest adapter. The tests below are dormant until the xDS codec plan is reactivated and the PVS versioning gate is cleared.
+
+This document defines the strategy that *would* be executed to validate `pavis-core` and runtime interactions if xDS ingest becomes a priority again. It is preserved here as a reference, not as an active commitment.
 
 ## 1. Test Strategy Overview
 
@@ -170,3 +172,9 @@ This checklist tracks the full scope of unit, integration, and e2e tests for xDS
 *   Rewrite + header append interaction.
 *   Runtime reload with active DNS resolver.
 *   Weighted split between static and DNS upstreams.
+
+---
+
+## Activation Gate
+- Do not implement or run these tests until the xDS codec plan is funded and the artifact versioning policy allows new ingest adapters.
+- Any future execution must prove that existing serde/YAML paths remain untouched; xDS is an additive ingest surface only.

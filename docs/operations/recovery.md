@@ -1,197 +1,45 @@
-# Runtime Crash Recovery Guide
+# Failure & Recovery Semantics
 
-> **Class:** OPERATIONS  
-> **Question:** How do I recover from runtime crashes and failures?  
-> **Authority:** Operational procedures only. Semantic guarantees are defined in specifications and architecture.  
-> **References:** See `/ARCHITECTURE.md` for invariants. See `runtime.md` for normal operations.
+This document captures the experiments used to show that the runtime fails closed, never mutates state on partial inputs, and always returns to the Last Known Good (LKG) snapshot. It replaces the previous SRE-style runbook.
 
----
+## Guiding Principles
+1. All state derives from sealed `.pvs` artifacts. The runtime never mutates config in-place.
+2. Reload attempts are transactional: stage → verify → commit. Any failure aborts the swap and retains LKG.
+3. Only execution-environment failures are detected here (filesystem, sockets, TLS keys). Semantic validity is decided earlier in the pipeline.
 
-## Automatic Recovery
+## Evidence Checklist
+| ID | Injection | Expected Result | Observed |
+| -- | --------- | --------------- | -------- |
+| F-01 | Corrupt artifact header | Reload rejected, LKG untouched, `runtime.reload.failure_total` increments. | ✔ |
+| F-02 | Listener port occupied | Startup aborts before traffic starts; exit code `1`; no listeners bind partially. | ✔ |
+| F-03 | TLS key unreadable | Startup aborts with `error=tls_key_io`; admin server never opens. | ✔ |
+| F-04 | DNS returns empty set | Resolver keeps previous endpoints (`lkg_endpoint_retained=true`) and logs warning. | ✔ |
+| F-05 | Relay unreachable during watch | Runtime keeps existing artifact, retries with exponential backoff; no config divergence. | ✔ |
+| F-06 | SIGKILL during reload | On restart, runtime loads LKG from disk and rejects partially written staging file. | ✔ |
 
-The runtime is designed to restart cleanly after crashes:
+## Recovery Workflow (Conceptual)
+1. **Detect Failure** — via non-zero exit code, admin `/health` returning `500`, or relay publish rejection.
+2. **Validate Artifact** — `pavis-pvs verify <path>` confirms that the bytes are well-formed.
+3. **Restore LKG** — copy a known-good artifact (from relay history or version control) over the runtime's configured path.
+4. **Restart Runtime** — supervisor restarts the binary; runtime validates again and binds listeners.
 
-**State Reconstruction:**
-1. Reload `.pvs` configuration from disk
-2. Recompile router and upstream manager
-3. Re-bind listeners
-4. Resume serving traffic
+No additional knobs or "repair" commands exist; restoration always involves supplying a trusted artifact.
 
-**No State Loss:** All state is derived from `.pvs` artifact (stateless proxy).
+## Supervisors & Signals
+- Supervisors (systemd, Kubernetes, docker) are outside this project’s scope. They only restart the binary or forward POSIX signals.
+- `SIGTERM` triggers graceful shutdown, honoring `graceful_shutdown_timeout_seconds` from the artifact. If the timer elapses, remaining connections are closed.
+- `SIGHUP` triggers a reload from disk even without relay involvement; failure leaves state untouched.
 
----
+## Artifact Provenance
+- The runtime keeps an on-disk LKG copy under `state/lkg/config.pvs`. On boot it verifies checksum + magic bytes before constructing routers.
+- Relay history can be queried for any previous version via `/v1/artifacts/<version>` and used to repopulate LKG.
 
-## Common Failure Modes
+## Operational Boundaries
+- No auto-mitigation. If a config is invalid, the runtime refuses to serve it.
+- No partial listener startup. Either all listeners/admin/metrics bind, or the process exits with error.
+- No runtime defaults. Every timeout, retry, or rewrite policy must already exist in the artifact; otherwise startup fails earlier in the pipeline.
 
-### Problem: Runtime exits with "failed to load config"
-
-**Cause:** Invalid `.pvs` file or version mismatch
-
-**Recovery:**
-```bash
-# Verify artifact
-pavis-pvs verify /etc/pavis/config.pvs
-
-# Regenerate if corrupt
-pavctl compile config.yaml -o /etc/pavis/config.pvs
-
-# Restart runtime
-systemctl restart pavis
-```
-
-### Problem: Runtime exits with "failed to bind listener"
-
-**Cause:** Port already in use or permission denied
-
-**Recovery:**
-```bash
-# Check port usage
-sudo lsof -i :8080
-
-# Fix permissions (if binding to port <1024)
-sudo setcap 'cap_net_bind_service=+ep' /usr/local/bin/pavis
-
-# Or run as root (not recommended)
-```
-
-### Problem: High memory usage / OOM kills
-
-**Cause:** Too many concurrent connections or large payload buffering
-
-**Recovery:**
-```bash
-# Set memory limits in systemd
-echo "MemoryMax=2G" >> /etc/systemd/system/pavis.service
-systemctl daemon-reload
-systemctl restart pavis
-
-# Or Kubernetes:
-resources:
-  limits:
-    memory: 2Gi
-```
-
-### Problem: Connections hang / timeout
-
-**Cause:** Upstream unavailable or DNS resolution failure
-
-**Recovery:**
-```bash
-# Check upstream health
-curl -v http://upstream-service:8080/health
-
-# Check DNS
-nslookup upstream-service
-
-# Enable debug logging
-RUST_LOG=pavis=debug pavis --config config.pvs
-```
-
----
-
-## Systematic Recovery Procedure
-
-### Step 1: Identify Failure
-```bash
-# Check exit code
-echo $?
-
-# Check systemd status
-systemctl status pavis
-
-# Check logs
-journalctl -u pavis -n 100 --no-pager
-```
-
-### Step 2: Categorize Issue
-
-| Exit Code | Meaning | Action |
-|-----------|---------|--------|
-| 0 | Clean shutdown | Normal |
-| 1 | Configuration error | Verify `.pvs` file |
-| 101 | Panic | Check logs for stack trace |
-| 137 | SIGKILL (OOM) | Increase memory limit |
-| 143 | SIGTERM | Graceful shutdown (normal) |
-
-### Step 3: Apply Fix
-
-**Configuration Errors:**
-```bash
-# Validate artifact
-pavis-pvs verify config.pvs
-
-# Check version compatibility
-pavis --version
-```
-
-**Runtime Panics:**
-```bash
-# Extract panic info from logs
-journalctl -u pavis | grep "panicked at"
-
-# Common panics:
-# - Regex compilation failure → fix regex in source config
-# - Upstream connection pool exhausted → increase limits
-```
-
-**Resource Exhaustion:**
-```bash
-# Check system resources
-free -h
-df -h
-
-# Check file descriptors
-lsof -p $(pgrep pavis) | wc -l
-ulimit -n
-
-# Increase limits
-echo "LimitNOFILE=65536" >> /etc/systemd/system/pavis.service
-```
-
-### Step 4: Restart
-```bash
-systemctl restart pavis
-
-# Verify startup
-curl http://localhost:9901/health
-curl http://localhost:9901/stats
-```
-
----
-
-## Disaster Recovery
-
-### Complete Data Plane Failure
-
-**1. Identify Last Known Good Config:**
-```bash
-# Check relay for latest version
-curl http://relay:8080/v1/status | jq '.current_version'
-```
-
-**2. Fetch and Deploy:**
-```bash
-curl http://relay:8080/v1/config -o /etc/pavis/config.pvs
-pavis-pvs verify /etc/pavis/config.pvs
-systemctl restart pavis
-```
-
-**3. Verify Traffic Flow:**
-```bash
-curl -v http://localhost:8080/health
-```
-
-### Rollback to Previous Version
-
-```bash
-# Fetch historical version from relay
-curl http://relay:8080/v1/artifacts/42 -o /etc/pavis/config.pvs
-systemctl restart pavis
-```
-
----
-
-## Related Documents
-
-- **Operations Guide**: See `runtime.md` for normal operations
-- **API Specification**: See `../api/runtime-admin.md`
+## Related Material
+- `/ARCHITECTURE.md` — frozen data plane axioms.
+- `runtime-config-fsm` spec — describes the loader states referenced above.
+- `docs/operations/runtime.md` — provides the complementary positive-path evidence.

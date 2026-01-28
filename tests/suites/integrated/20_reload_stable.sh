@@ -126,4 +126,9 @@ if [ "$BAD_CONTENT_COUNT" -gt 0 ]; then
     fail "Traffic saw unexpected content during idempotent update: $BAD_CONTENT_COUNT requests"
 fi
 
-echo "✅ reload_02_idempotent_update passed"
+APPLY_COUNT=$(grep -c 'event="config_apply" result="ok"' "$TEST_TMP/logs/pavis.log" || true)
+if [ "${APPLY_COUNT:-0}" -gt 0 ]; then
+    fail "Reload applied on identical publish (config_apply count: $APPLY_COUNT)"
+fi
+
+echo "✅ 20_reload_stable passed"

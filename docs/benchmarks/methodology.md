@@ -15,9 +15,9 @@ This document provides a comprehensive guide to Pavis benchmarking methodology a
 
 ### 1.1. Introduction
 
-Naive benchmarking of network proxies focuses almost exclusively on "max throughput" (Requests Per Second) under ideal conditions. While useful for marketing, this metric is insufficient for engineering robust proxy infrastructure. A proxy that pushes 100k RPS but imposes 500ms tail latency during garbage collection, or consumes 4GB of RAM to handle a traffic spike, is operationally unfit for production.
+Naive benchmarking of network proxies focuses almost exclusively on "max throughput" (Requests Per Second) under ideal conditions. While useful for marketing, this metric is insufficient for proving the frozen data plane thesis. A proxy that pushes 100k RPS but imposes 500ms tail latency during garbage collection, or consumes 4GB of RAM to handle a traffic spike, cannot be considered a closed, deterministic executor.
 
-This document establishes a rigorous, multidimensional framework for evaluating **production-grade Pavis sidecars**. It distinguishes between *kernel development benchmarks* (micro-benchmarks of packet forwarding) and *productization benchmarks* (macro-benchmarks of full protocol stacks).
+This document establishes a rigorous, multidimensional framework for evaluating **the frozen data plane implementation**. It distinguishes between *kernel development benchmarks* (micro-benchmarks of packet forwarding) and *system-level benchmarks* (macro-benchmarks of full protocol stacks).
 
 Our goal is not merely to measure speed, but to quantify predictability, efficiency, and safety. All future performance evaluations must adhere to the dimensions and constraints defined herein.
 
@@ -55,7 +55,7 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 
 #### 1.3.1. Performance Ceiling (Capacity)
 *   **The Question:** At what point does the system fail to process requests successfully?
-*   **Production Relevance:** Determines the absolute maximum capacity of a standard unit of infrastructure (e.g., 1 CPU core), guiding capacity planning and autoscaling triggers.
+*   **Engineering Relevance:** Determines the absolute maximum capacity of a standard unit of infrastructure (e.g., 1 CPU core), guiding capacity planning and autoscaling triggers.
 *   **Primary Metrics:**
     *   **Max Sustainable RPS:** The highest load where success rate is >99.9% and P99 latency remains within defined SLOs.
     *   **Saturation Point:** The load at which CPU reaches 100% utilization.
@@ -63,7 +63,7 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 
 #### 1.3.2. Tail Latency Quality
 *   **The Question:** What is the worst-case experience for a user request?
-*   **Production Relevance:** In microservices architectures, tail latencies compound across call chains. A "fast average" with a "slow tail" results in unacceptable system-wide performance.
+*   **Engineering Relevance:** In microservices architectures, tail latencies compound across call chains. A "fast average" with a "slow tail" results in unacceptable system-wide performance.
 *   **Primary Metrics:**
     *   **P99 and P99.9 Latency:** Measured in milliseconds.
     *   **Max Latency:** The absolute worst-case request time during the sample window.
@@ -71,7 +71,7 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 
 #### 1.3.3. Stability & Variance
 *   **The Question:** Is performance predictable over time?
-*   **Production Relevance:** Jitter makes autoscaling algorithms unstable and causes "thundering herd" issues in upstream services. A boring proxy is a good proxy.
+*   **Engineering Relevance:** Jitter makes autoscaling algorithms unstable and causes "thundering herd" issues in upstream services. A boring proxy is a good proxy.
 *   **Primary Metrics:**
     *   **Latency Standard Deviation:** Deviation from the mean.
     *   **Coefficient of Variation (CV):** Ratio of standard deviation to the mean.
@@ -80,7 +80,7 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 
 #### 1.3.4. Resource Efficiency
 *   **The Question:** What is the infrastructure cost per unit of work?
-*   **Production Relevance:** Directly dictates the Total Cost of Ownership (TCO) of the runtime.
+*   **Engineering Relevance:** Directly dictates the Total Cost of Ownership (TCO) of the runtime.
 *   **Primary Metrics:**
     *   **CPU/RPS Ratio:** Millicores consumed per 1,000 requests.
     *   **Memory Footprint:** RSS memory usage at specific load tiers.
@@ -88,7 +88,7 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 
 #### 1.3.5. Stress Behavior (Under Load)
 *   **The Question:** How does the system degrade when pushed beyond its limit?
-*   **Production Relevance:** Systems must degrade gracefully. Hard crashes, hanging connections, or memory exhaustion (OOM) during traffic spikes cause cascading failures.
+*   **Engineering Relevance:** Systems must degrade gracefully. Hard crashes, hanging connections, or memory exhaustion (OOM) during traffic spikes cause cascading failures.
 *   **Primary Metrics:**
     *   **Goodput vs. Offered Load:** Does the system shed load or queue it indefinitely?
     *   **Error Distribution:** Immediate fast-fail (503) vs. connection timeouts.
@@ -96,7 +96,7 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 
 #### 1.3.6. Operational Characteristics
 *   **The Question:** What is the impact of control-plane operations on data-plane traffic?
-*   **Production Relevance:** Dynamic environments constantly push configuration updates. These updates must not cause packet drops or latency spikes.
+*   **Engineering Relevance:** Dynamic environments constantly push configuration updates. These updates must not cause packet drops or latency spikes.
 *   **Primary Metrics:**
     *   **Reload Latency Impact:** Delta in P99 latency during configuration reload.
     *   **Convergence Time:** Time from config push to traffic shifting.
@@ -104,7 +104,7 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 
 #### 1.3.7. Scenario Consistency
 *   **The Question:** Does the system perform reliably across different traffic patterns?
-*   **Production Relevance:** Ensures the proxy is general-purpose and not over-optimized for a single synthetic use case (e.g., 64-byte payloads).
+*   **Engineering Relevance:** Ensures the proxy is general-purpose and not over-optimized for a single synthetic use case (e.g., 64-byte payloads).
 *   **Primary Metrics:**
     *   **Performance Delta:** Variance in throughput/latency between small (1KB) and large (1MB) payloads.
     *   **Protocol Overhead:** degradation moving from HTTP/1.1 to HTTP/2 or gRPC.
@@ -117,13 +117,13 @@ The following seven dimensions constitute the primary axes of evaluation. Every 
 Derived dimensions are not independent tests; they are specific analytical cuts of data gathered during the Core dimension tests.
 
 #### Derived Dimension A: Feature Tax
-**Feature Tax** is the quantified performance cost of enabling production-essential features compared to a "naked" baseline.
+**Feature Tax** is the quantified performance cost of enabling required runtime features compared to a "naked" baseline.
 
 *   **Definition:** `(Performance_Baseline - Performance_Feature) / Performance_Baseline`
 *   **Mandatory Analysis Areas:**
     *   **TLS Tax:** The cryptographic overhead of HTTPS versus plain HTTP. This contrast may include standard HTTPS or be extended to mutual TLS (mTLS) to evaluate the additional handshake and certificate validation costs.
     *   **Observability Tax:** The CPU/Latency cost of generating high-cardinality metrics and distributed tracing spans.
-*   **Usage:** Feature Tax should be applied to *Performance Ceiling* and *Resource Efficiency* analysis to set realistic production expectations.
+*   **Usage:** Feature Tax should be applied to *Performance Ceiling* and *Resource Efficiency* analysis to set realistic thesis acceptance criteria.
 
 #### Derived Dimension B: Recovery & Hysteresis
 **Recovery** measures the system's ability to return to baseline state *after* a stress event has concluded.
@@ -142,7 +142,7 @@ This dimension is computationally expensive and is reserved for major release ca
 
 #### Durability / Soak Testing
 *   **The Question:** Does the system degrade over extended periods of operation?
-*   **Production Relevance:** Detects slow memory leaks, resource handle exhaustion (file descriptors), and integer overflow issues that micro-benchmarks miss.
+*   **Engineering Relevance:** Detects slow memory leaks, resource handle exhaustion (file descriptors), and integer overflow issues that micro-benchmarks miss.
 *   **Scope:** Multi-hour (e.g., 8+ hours) continuous load runs.
 *   **Pass Criteria:**
     *   **Zero Monotonic Growth:** Memory usage must plateau and not show linear growth trend.
@@ -170,7 +170,7 @@ By adhering to this framework, we ensure:
 *   **Standardization:** A shared language for discussing performance across engineering teams.
 *   **Integrity:** Prevention of "benchmark gaming" or cherry-picking favorable scenarios.
 
-This methodology defines the standard of quality required for the project to be considered production-ready.
+This methodology defines the standard of quality required for the project to be considered semantically closed.
 
 ---
 
@@ -372,4 +372,5 @@ System Mode does **NOT** aim to:
 *   Evaluate micro-architectural dataplane efficiency.
 
 ---
+
 

@@ -3,8 +3,10 @@ use crate::relay::types::ArtifactMeta;
 use axum::extract::FromRef;
 use bytes::Bytes;
 use pavis_pvs::compute_checksum;
+use serde::Serialize;
 use std::fmt::Write as _;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{RwLock, watch};
 
 #[derive(Clone, FromRef)]
@@ -17,22 +19,38 @@ pub struct AppState {
 pub struct RelayState {
     inner: Arc<RwLock<InnerState>>,
     notifier: watch::Sender<u64>, // sends 'rev'
+    mode: Option<MockMode>,
+    script_counter: Arc<AtomicUsize>,
 }
 
 struct InnerState {
     data: Option<Bytes>,
     meta: Option<ArtifactMeta>,
+    requests: Vec<RequestRecord>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct RequestRecord {
+    pub wait_ms: Option<u64>,
+    pub if_none_match: Option<String>,
 }
 
 impl RelayState {
     pub fn new() -> Self {
+        Self::new_with_mode(None)
+    }
+
+    pub fn new_with_mode(mode: Option<MockMode>) -> Self {
         let (tx, _) = watch::channel(0);
         Self {
             inner: Arc::new(RwLock::new(InnerState {
                 data: None,
                 meta: None,
+                requests: Vec::new(),
             })),
             notifier: tx,
+            mode,
+            script_counter: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -79,8 +97,51 @@ impl RelayState {
         inner.meta.clone()
     }
 
+    pub async fn record_request(&self, wait_ms: Option<u64>, if_none_match: Option<String>) {
+        const MAX_REQUEST_LOG: usize = 1024;
+        let mut inner = self.inner.write().await;
+        if inner.requests.len() >= MAX_REQUEST_LOG {
+            inner.requests.remove(0);
+        }
+        inner.requests.push(RequestRecord {
+            wait_ms,
+            if_none_match,
+        });
+    }
+
+    pub async fn get_requests(&self) -> Vec<RequestRecord> {
+        let inner = self.inner.read().await;
+        inner.requests.clone()
+    }
+
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.notifier.subscribe()
+    }
+
+    pub fn mock_mode(&self) -> Option<MockMode> {
+        self.mode
+    }
+
+    pub fn next_script_attempt(&self) -> usize {
+        self.script_counter.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum MockMode {
+    ResyncOnce,
+    CorruptOnce,
+    CorruptRepeat,
+}
+
+impl MockMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "resync-once" => Some(Self::ResyncOnce),
+            "corrupt-once" => Some(Self::CorruptOnce),
+            "corrupt-repeat" => Some(Self::CorruptRepeat),
+            _ => None,
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+#[allow(dead_code)]
 pub struct Backoff {
     base: Duration,
     max: Duration,
@@ -15,6 +16,7 @@ impl Backoff {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn next_delay(&self, attempt: u32) -> Duration {
         let factor = 1u32.checked_shl(attempt.min(10)).unwrap_or(u32::MAX);
         let exp = self.base.saturating_mul(factor);

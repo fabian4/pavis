@@ -1,5 +1,5 @@
 use crate::common::cli::RelayArgs;
-use crate::relay::state::RelayState;
+use crate::relay::state::{MockMode, RelayState};
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
@@ -30,9 +30,29 @@ pub async fn handler(
     Query(params): Query<LongPollQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let client_etag = parse_if_none_match(&headers).unwrap_or_default();
+    let client_if_none_match = parse_if_none_match(&headers);
+    let client_etag = client_if_none_match.clone().unwrap_or_default();
     let timeout_val = params.wait_ms.unwrap_or(args.default_timeout_ms);
     let timeout_dur = Duration::from_millis(timeout_val);
+    state
+        .record_request(params.wait_ms, client_if_none_match)
+        .await;
+
+    if let Some(mode) = args.mode.as_deref().and_then(MockMode::parse) {
+        let attempt = state.next_script_attempt();
+        match mode {
+            MockMode::ResyncOnce if attempt == 0 => {
+                return (StatusCode::GONE, "").into_response();
+            }
+            MockMode::CorruptOnce if attempt == 0 => {
+                return response_with_bytes(corrupt_bytes(), 1);
+            }
+            MockMode::CorruptRepeat => {
+                return response_with_bytes(corrupt_bytes(), 1);
+            }
+            _ => {}
+        }
+    }
 
     // Check immediate
     if let Some((meta, data)) = state.get_current().await
@@ -87,4 +107,46 @@ fn response_with_meta(meta: &crate::relay::types::ArtifactMeta, data: bytes::Byt
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     (headers, data).into_response()
+}
+
+fn response_with_bytes(data: bytes::Bytes, rev: u64) -> Response {
+    let mut headers = HeaderMap::new();
+    let checksum = checksum_for_bytes(&data);
+    let etag = match HeaderValue::from_str(&format!("\"{}\"", checksum)) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!(error = %err, "invalid etag header");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "").into_response();
+        }
+    };
+    headers.insert(header::ETAG, etag);
+    headers.insert(
+        "x-config-version",
+        HeaderValue::from_str(&rev.to_string()).unwrap(),
+    );
+    headers.insert(
+        "x-config-size",
+        HeaderValue::from_str(&data.len().to_string()).unwrap(),
+    );
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    (headers, data).into_response()
+}
+
+fn corrupt_bytes() -> bytes::Bytes {
+    bytes::Bytes::from(vec![0u8; 100])
+}
+
+fn checksum_for_bytes(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let digest = pavis_pvs::compute_checksum(bytes);
+    let mut out = String::with_capacity(digest.len() * 2 + "sha256:".len());
+    out.push_str("sha256:");
+    for byte in digest {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }

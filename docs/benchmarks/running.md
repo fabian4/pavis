@@ -1,8 +1,8 @@
-# Pavis Benchmark System
+# Benchmark Execution Guide
 
-This directory contains the orchestration, configuration, and tooling for the Pavis performance evaluation suite. This system is designed to provide scientifically rigorous, reproducible measurements of proxy behavior based on the [7+2+1 Benchmark Methodology](../docs/benchmarks/methodology.md).
+This directory contains the orchestration, configuration, and tooling used to reproduce the performance evidence that backs the frozen data plane thesis. All procedures tie directly to the [7+2+1 Benchmark Methodology](../docs/benchmarks/methodology.md) and are scoped strictly to `pavis` binaries.
 
-Side-by-side benchmarks are managed in a separate repository; this repo runs Pavis-only CI health/regression benchmarks.
+Side-by-side benchmarks live elsewhere; this repository only exercises Pavis itself for regression signal and thesis documentation.
 
 ## 1. Dual-Mode Evaluation Model
 
@@ -17,7 +17,7 @@ Pavis benchmarks are split into two non-overlapping modes to isolate micro-archi
 
 ### B. System / Kubernetes (kind) Mode
 *   **Purpose**: Measure system-level lifecycle behavior, configuration convergence, and durability.
-*   **Environment**: Kubernetes (`kind`).
+*   **Environment**: Kubernetes (`kind`) sandbox used purely for experiments; this is **not** an endorsed deployment path.
 *   **Configuration**: Dynamic; requires active control-plane participation (Pavis Relay).
 *   **Scope**: Covers Dimension #6 (Operational Characteristics), Derived B (Recovery), and the Durability gate.
 *   **Output**: Event-correlated timelines and threshold-based validation (e.g., "Reload converged within 2s").
@@ -81,9 +81,9 @@ Ad-hoc or generic load tests are rejected by design. Every benchmark case script
 
 ## 4. Performance Integrity Disclaimer
 
-Authoritative performance claims require hardware isolation that CI environments cannot provide. The project strictly prohibits using CI-generated metrics for public claims. 
+Authoritative performance claims require hardware isolation that CI environments cannot provide. The project strictly prohibits using CI-generated metrics for public claims or roadmap promises.
 
-Published reports must be derived from the **Standalone Dataplane Mode** executed on a tuned **Workstation** with verified CPU pinning.
+Published reports that appear in the thesis must be derived from the **Standalone Dataplane Mode** executed on a tuned **Workstation** with verified CPU pinning.
 
 ---
 

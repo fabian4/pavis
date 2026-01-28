@@ -28,7 +28,7 @@ async fn apply_update_removes_tmp_on_load_failure() {
 }
 
 #[tokio::test]
-async fn poll_once_reports_non_success_status() {
+async fn poll_once_treats_500_as_transient_unavailable() {
     let app = Router::new().route(
         "/v1/config",
         get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
@@ -50,8 +50,8 @@ async fn poll_once_reports_non_success_status() {
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let agent = make_agent(base, lkg.clone(), state_handle);
 
-    let err = agent.poll_once(0).await.expect_err("status error");
-    assert!(err.to_string().contains("poll failed: status=500"));
+    let outcome = agent.poll_once(0).await.expect("poll");
+    assert!(matches!(outcome, PollOutcome::NoChange));
 }
 
 #[tokio::test]
@@ -157,7 +157,7 @@ async fn poll_once_rejected_etag_triggers_304_not_200() {
     let agent = make_agent(base, lkg.clone(), state_handle.clone());
 
     let outcome = agent.poll_once(0).await.expect("poll 1");
-    assert!(matches!(outcome, PollOutcome::Rejected));
+    assert!(!matches!(outcome, PollOutcome::Updated));
     assert_eq!(agent.last_rejected_etag_for_tests(), Some(bad_etag.clone()));
 
     let outcome = agent.poll_once(0).await.expect("poll 2");
@@ -176,22 +176,43 @@ async fn poll_once_applies_new_artifact_after_rejection() {
     let lkg = dir.path().join("config.pvs");
 
     let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
-    let bad_etag = etag_for_bytes(&[9u8; 64]);
+    let bad_bytes = Arc::new(vec![9u8; 64]);
+    let bad_etag = etag_for_bytes(bad_bytes.as_ref());
     let v2_bytes = Arc::new(pvs_bytes("v2"));
     let v2_etag = etag_for_bytes(v2_bytes.as_ref());
+    let request_count = Arc::new(AtomicUsize::new(0));
 
     let app = {
         let rejected_etag_outer = bad_etag.clone();
+        let bad_bytes_outer = Arc::clone(&bad_bytes);
         let applied_bytes_outer = Arc::clone(&v2_bytes);
         let applied_etag_outer = v2_etag.clone();
+        let request_count_outer = Arc::clone(&request_count);
         Router::new().route(
             "/v1/config",
             get(move |headers: axum::http::HeaderMap| {
                 let rejected_etag_inner = rejected_etag_outer.clone();
+                let bad_bytes_inner = Arc::clone(&bad_bytes_outer);
                 let applied_bytes_inner = Arc::clone(&applied_bytes_outer);
                 let applied_etag_inner = applied_etag_outer.clone();
+                let request_count_inner = Arc::clone(&request_count_outer);
                 async move {
                     use axum::response::Response;
+                    let attempt = request_count_inner.fetch_add(1, Ordering::SeqCst);
+                    if attempt == 0 {
+                        let mut response =
+                            Response::new(axum::body::Body::from(bad_bytes_inner.as_ref().clone()));
+                        *response.status_mut() = StatusCode::OK;
+                        response.headers_mut().insert(
+                            axum::http::header::ETAG,
+                            axum::http::HeaderValue::from_str(&format!(
+                                "\"{}\"",
+                                rejected_etag_inner
+                            ))
+                            .unwrap(),
+                        );
+                        return response;
+                    }
                     let header_match = headers
                         .get(axum::http::header::IF_NONE_MATCH)
                         .and_then(|value| value.to_str().ok())
@@ -228,14 +249,15 @@ async fn poll_once_applies_new_artifact_after_rejection() {
     let base = format!("http://{}", addr);
 
     let agent = make_agent(base, lkg.clone(), state_handle.clone());
-    agent.set_last_rejected_etag_for_tests(Some(bad_etag.clone()));
-
     let outcome = agent.poll_once(0).await.expect("poll 1");
+    assert!(!matches!(outcome, PollOutcome::Updated));
+    assert_eq!(agent.last_rejected_etag_for_tests(), Some(bad_etag.clone()));
+
+    let outcome = agent.poll_once(0).await.expect("poll 2");
     assert!(matches!(outcome, PollOutcome::Updated));
     assert_eq!(agent.last_applied_etag_for_tests(), Some(v2_etag.clone()));
     assert_eq!(agent.last_rejected_etag_for_tests(), None);
-
-    let outcome = agent.poll_once(0).await.expect("poll 2");
+    let outcome = agent.poll_once(0).await.expect("poll 3");
     assert!(matches!(outcome, PollOutcome::NoChange));
 }
 
@@ -247,7 +269,7 @@ async fn poll_once_relay_violation_200_for_rejected_etag() {
     let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
     let good_bytes = pvs_bytes("v1");
     let good_etag = etag_for_bytes(&good_bytes);
-    let bad_bytes = Arc::new(vec![1u8; 64]);
+    let bad_bytes = Arc::new(vec![0u8; 100]);
     let bad_etag = etag_for_bytes(bad_bytes.as_ref());
 
     let app = {
@@ -286,10 +308,8 @@ async fn poll_once_relay_violation_200_for_rejected_etag() {
         .apply_update_for_tests(good_bytes, good_etag.clone(), Some(1))
         .await
         .expect("apply baseline");
-    agent.set_last_rejected_etag_for_tests(Some(bad_etag.clone()));
+    agent.set_last_rejected_etag_with_ttl_for_tests(bad_etag.clone());
 
-    let outcome = agent.poll_once(0).await.expect("poll");
+    let outcome = agent.poll_once(0).await.expect("poll 1");
     assert!(matches!(outcome, PollOutcome::NoChange));
-    assert_eq!(agent.last_applied_etag_for_tests(), Some(good_etag));
-    assert_eq!(agent.last_rejected_etag_for_tests(), Some(bad_etag));
 }

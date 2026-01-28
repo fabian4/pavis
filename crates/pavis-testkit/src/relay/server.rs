@@ -7,7 +7,11 @@ use crate::relay::routes::router;
 use crate::relay::state::{AppState, RelayState};
 
 pub async fn run(args: RelayArgs) -> Result<()> {
-    let state = RelayState::new();
+    let mode = args
+        .mode
+        .as_deref()
+        .and_then(crate::relay::state::MockMode::parse);
+    let state = RelayState::new_with_mode(mode);
     let app_state = AppState {
         state,
         args: args.clone(),

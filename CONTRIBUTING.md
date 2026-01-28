@@ -11,7 +11,8 @@ architectural boundaries described below.
 Please read the following documents before making any changes:
 
 - ARCHITECTURE.md
-- docs/FEATURES.md
+- docs/roadmap/roadmap.md
+- docs/roadmap/features.md
 - AGENTS.md (for AI-assisted contributions)
 
 PRs that do not align with these documents are unlikely to be accepted.

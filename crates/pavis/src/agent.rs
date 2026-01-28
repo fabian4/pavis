@@ -1,4 +1,6 @@
 mod backoff;
+mod driver;
+mod fsm;
 mod lkg;
 mod worker;
 
@@ -6,5 +8,5 @@ mod worker;
 pub use worker::test_exports;
 
 pub use backoff::Backoff;
+pub use driver::{ConfigAgent, ConfigAgentWorker, PollOutcome};
 pub use lkg::{lkg_version, load_lkg_config};
-pub use worker::{ConfigAgent, ConfigAgentWorker, PollOutcome};

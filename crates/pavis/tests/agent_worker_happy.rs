@@ -2,7 +2,6 @@ mod common;
 
 use axum::Router;
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use axum::routing::get;
 use common::*;
 use pavis::agent::PollOutcome;
@@ -99,14 +98,19 @@ async fn test_apply_update_success() {
 
 #[tokio::test]
 async fn poll_once_no_change_on_matching_etag() {
-    let etag_val = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let config = minimal_config("v1");
+    let pvs = pavis_pvs::encode(&config).expect("encode");
+    let etag_val = etag_for_bytes(&pvs);
     let etag_val_clone = etag_val.to_string();
+    let pvs_clone = pvs.clone();
     let app = Router::new().route(
         "/v1/config",
         get(move || {
             let etag_inner = etag_val_clone.clone();
+            let body = pvs_clone.clone();
             async move {
-                let mut res = StatusCode::OK.into_response();
+                let mut res = axum::response::Response::new(axum::body::Body::from(body));
+                *res.status_mut() = StatusCode::OK;
                 res.headers_mut().insert(
                     axum::http::header::ETAG,
                     axum::http::HeaderValue::from_str(&format!("\"{}\"", etag_inner)).unwrap(),

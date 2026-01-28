@@ -1,5 +1,6 @@
 mod agent;
 
+#[allow(unused_imports)]
 pub use agent::{ConfigAgent, ConfigAgentWorker, PollOutcome};
 
 #[doc(hidden)]

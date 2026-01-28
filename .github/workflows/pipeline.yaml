@@ -12,7 +12,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_LOG: debug
+  RUST_LOG: info
   BENCH_VERBOSE: 0
   LOADGEN_WARN: 0
 
@@ -395,10 +395,13 @@ jobs:
 
       - name: Build (explicit)
         run: |
-          cargo build --workspace --all-targets --all-features --locked
+          cargo build --workspace --locked --bins --lib --message-format=short
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
+        with:
+          ram: 8192
+          threads: 2
 
   coverage:
     name: coverage (tarpaulin)

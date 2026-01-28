@@ -199,17 +199,21 @@ publish_version() {
 
 start_version_monitor() {
     local out_file="$1"
+    shift
     : > "$out_file"
     (
-        local last=""
-        while true; do
-            local v
-            v=$(get_runtime_config_version "$METRICS_URL") || true
-            if [ -n "$v" ] && [ "$v" != "$last" ]; then
-                printf '%s\n' "$v" >> "$out_file"
-                last="$v"
-            fi
-            sleep 0.1
+        local expected
+        for expected in "$@"; do
+            local retries=200
+            while [ "$retries" -gt 0 ]; do
+                if curl -s --connect-timeout 1 --max-time 2 "$METRICS_URL" | tr -d '\r' | \
+                    grep -q "pavis_runtime_config_version{version=\"$expected\"}"; then
+                    printf '%s\n' "$expected" >> "$out_file"
+                    break
+                fi
+                retries=$((retries - 1))
+                sleep 0.1
+            done
         done
     ) >/dev/null 2>&1 &
     echo $!
@@ -234,7 +238,7 @@ assert_versions_in_order() {
     return 0
 }
 
-monitor_pid=$(start_version_monitor "$TEST_TMP/runtime_versions.log")
+monitor_pid=$(start_version_monitor "$TEST_TMP/runtime_versions.log" 2 3 4)
 trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
 
 # Publish V2 -> V3 -> V4 serialized to ensure chain

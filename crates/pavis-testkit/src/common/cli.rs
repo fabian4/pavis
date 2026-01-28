@@ -91,4 +91,7 @@ pub struct RelayArgs {
 
     #[arg(long, env = "MOCK_RELAY_MAX_BODY", default_value_t = 10485760)]
     pub max_body: usize,
+
+    #[arg(long, env = "MOCK_RELAY_MODE")]
+    pub mode: Option<String>,
 }

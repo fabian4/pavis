@@ -20,6 +20,7 @@ trap cleanup_trap EXIT
 
 PORT_PAVIS=$(get_free_port)
 PORT_RELAY=$(get_free_port)
+PORT_METRICS=$(get_free_port)
 
 # 1. Start Full Path
 # Relay
@@ -41,15 +42,19 @@ cat <<-EOF > "$TEST_TMP/bootstrap.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
 	upstreams: []
 	routes: []
-	telemetry: { service_name: "bootstrap" }
+	telemetry:
+	  service_name: "bootstrap"
+	  metrics: "127.0.0.1:$PORT_METRICS"
 EOF
 gen_pvs "$TEST_TMP/bootstrap.yaml" "$TEST_TMP/bootstrap.pvs"
 run_pavis "$TEST_TMP/bootstrap.pvs" "http://127.0.0.1:$PORT_RELAY"
 wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 5
+wait_for_port "$PORT_METRICS" 5
 
 # Publish V1
 cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
+	telemetry: { metrics: "127.0.0.1:$PORT_METRICS" }
 	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V1} }] }]
 	routes: [{ host: "*", paths: [{ matcher: { path: !prefix { path: "/" } }, destinations: [{ upstream: "backend", weight: 1 }] }] }]
 EOF
@@ -73,6 +78,7 @@ for _ in {1..5}; do
     assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
     sleep 0.1
 done
+sleep 2
 
 # 4. Restart Relay
 run_relay "$TEST_TMP/relay.yaml"
@@ -81,6 +87,7 @@ wait_for_url "http://127.0.0.1:$PORT_RELAY/health" 5
 # 5. Publish V2
 cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	listeners: [{ name: "default", address: "127.0.0.1:$PORT_PAVIS" }]
+	telemetry: { metrics: "127.0.0.1:$PORT_METRICS" }
 	upstreams: [{ name: "backend", endpoints: [{ ip: "127.0.0.1", port: ${UPSTREAM_HTTP_PORT_V2} }] }]
 	routes: [{ host: "*", paths: [{ matcher: { path: !prefix { path: "/" } }, destinations: [{ upstream: "backend", weight: 1 }] }] }]
 EOF

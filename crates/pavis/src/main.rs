@@ -184,7 +184,7 @@ fn main() -> Result<()> {
     let telemetry = Arc::new(telemetry);
 
     let config_agent = args.relay_url.as_ref().map(|relay| {
-        let backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 200);
+        let backoff = Backoff::new(Duration::from_millis(250), Duration::from_millis(5_000), 10);
         let agent = ConfigAgent::new(
             relay.to_string(),
             PathBuf::from(&args.config),

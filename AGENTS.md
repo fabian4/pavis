@@ -75,8 +75,8 @@ Every agent MUST adhere to the "Zero-Option" configuration philosophy when modif
 | ----------------------------- | ---------------------------------------- |
 | [README.md](../README.md)     | Project overview and quick start         |
 | [ARCHITECTURE.md](../ARCHITECTURE.md) | System design and protocol details |
-| [ROADMAP.md](../docs/project/roadmap.md)   | Development phases and progress          |
-| [docs/project/features.md](../docs/project/features.md) | Feature status tracking |
+| [roadmap.md](../docs/roadmap/roadmap.md)   | Development phases and progress          |
+| [docs/roadmap/features.md](../docs/roadmap/features.md) | Feature status tracking |
 | [Cargo.toml](../Cargo.toml)   | Workspace configuration and dependencies |
 
 ---
@@ -301,8 +301,8 @@ Is behavior documented in spec/protocol?
 5. **Documentation Updates (MANDATORY)**: After ANY code change, always consider and update relevant documentation:
    - **ARCHITECTURE.md**: For protocol changes, new components, or architectural decisions
    - **README.md**: For user-facing features, API changes, or usage instructions
-   - **docs/project/roadmap.md**: For completed features or milestones (must refresh summary at top)
-   - **docs/project/features.md**: For new features, status updates (✅/⏳/⚠️/❌), or explicitly dropped features
+   - **docs/roadmap/roadmap.md**: For completed features or milestones (must refresh summary at top)
+   - **docs/roadmap/features.md**: For new features, status updates (✅/⚠️/🧊/❌), or explicitly dropped features
    - **Code comments**: For complex logic, rationale, or non-obvious implementation details
    - **Module docs (`//!`)**: When adding new modules or changing module responsibilities
    - **Function docs (`///`)**: For public APIs and complex functions
@@ -419,8 +419,8 @@ Derived from Rust Readability Standards. Verify before completion.
 ### 9. Documentation & Roadmap (MANDATORY)
 - [ ] **Project Docs**: Updated `ARCHITECTURE.md` for protocol/architectural changes?
 - [ ] **User Docs**: Updated `README.md` for user-facing features or API changes?
-- [ ] **Roadmap**: Updated `docs/project/roadmap.md` for completed milestones (with summary refresh)?
-- [ ] **Features**: Updated `docs/project/features.md` for new features, status changes (✅/⏳/⚠️/❌), or dropped features?
+- [ ] **Roadmap**: Updated `docs/roadmap/roadmap.md` for completed milestones (with summary refresh)?
+- [ ] **Features**: Updated `docs/roadmap/features.md` for new features, status changes (✅/⚠️/🧊/❌), or dropped features?
 - [ ] **Code Docs**: Added/updated `///` docs for public functions and structs?
 - [ ] **Module Docs**: Added/updated `//!` docs for new or modified modules?
 - [ ] **Inline Comments**: Added comments explaining "why" for complex logic?
