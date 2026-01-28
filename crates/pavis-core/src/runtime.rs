@@ -28,9 +28,9 @@ pub use telemetry::{
     AccessLogPolicy, LogLevel, Metrics, Telemetry, TracingPolicy, TracingProvider,
 };
 pub use types::{
-    ConnectTimeout, ConsecutiveErrors, Duration, HeaderName, HeaderValue, Host, Hostname,
-    IdleTimeout, ListenerName, MaxConnections, MaxPendingRequests, Path, Port, SampleRate,
-    ServiceName, Timeout, TryTimeout, UpstreamId, UpstreamName, Weight,
+    ConfigVersion, ConnectTimeout, ConsecutiveErrors, Duration, HeaderName, HeaderValue, Host,
+    Hostname, IdleTimeout, ListenerName, MaxConnections, MaxPendingRequests, Path, Port,
+    SampleRate, ServiceName, SpiffeId, Timeout, TryTimeout, UpstreamId, UpstreamName, Weight,
 };
 pub use upstream::{
     ActiveHealthCheck, CanonicalSni, CircuitBreakerPolicy, ClientCert, ClientCertChain,

@@ -2,7 +2,7 @@ mod common;
 
 use common::*;
 use opentelemetry::propagation::Injector;
-use pavis::proxy::context::RouterContext;
+use pavis::proxy::context::{RequestTelemetry, RouterContext};
 use pavis::proxy::service::test_exports::{HeaderInjector, Proxy, apply_route_headers};
 use pavis::state::{RuntimeState, RuntimeStateHandle};
 use pavis::upstream::Manager;
@@ -78,6 +78,7 @@ fn apply_route_headers_populates_router_context() {
         }]),
     };
     let mut ctx = RouterContext {
+        telemetry: RequestTelemetry::new("req-123".parse().unwrap()),
         upstream_name: None,
         upstream_endpoint: None,
         request_headers: Arc::new(HeadersPolicy::Disabled),
@@ -91,8 +92,6 @@ fn apply_route_headers_populates_router_context() {
         retry_attempts: 0,
         upstream_timing: pavis::proxy::context::UpstreamTiming::NotStarted,
         route_pattern: pavis::proxy::context::RoutePattern::NotMatched,
-        req_id: "req-123".parse().unwrap(),
-        span: pavis::proxy::context::TracingSpan::Disabled,
         pool_permit: None,
         circuit_breaker_permit: None,
         runtime_state: None,
@@ -118,12 +117,11 @@ fn apply_route_headers_populates_router_context() {
 
 #[tokio::test]
 async fn upstream_response_filter_applies_headers() {
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
-        upstream_manager: Manager::new(&[]).expect("manager"),
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+        Manager::new(&[]).expect("manager"),
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,
@@ -159,12 +157,11 @@ async fn upstream_response_filter_applies_headers() {
 #[tokio::test]
 async fn test_upstream_request_filter() {
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[]).expect("manager"),
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            Manager::new(&[]).expect("manager"),
+        ))),
         telemetry: test_telemetry(),
     };
     let mut ctx = proxy.new_ctx();
@@ -238,12 +235,11 @@ async fn test_request_filter_direct_response_with_headers() {
     }];
 
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(routes).unwrap()),
-            upstream_manager: Manager::new(&[]).expect("manager"),
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(routes).unwrap()),
+            Manager::new(&[]).expect("manager"),
+        ))),
         telemetry: test_telemetry(),
     };
 

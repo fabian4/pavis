@@ -1,4 +1,4 @@
-use crate::telemetry::metrics::MetricsHandle;
+use crate::telemetry::metrics::MetricsRegistry;
 use async_trait::async_trait;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::{SpanExporter as OtlpSpanExporter, WithExportConfig};
@@ -39,17 +39,17 @@ pub trait TracingMetricsRecorder: Send + Sync {
 
 type DynTracingMetrics = Arc<dyn TracingMetricsRecorder>;
 
-impl TracingMetricsRecorder for MetricsHandle {
+impl TracingMetricsRecorder for MetricsRegistry {
     fn record_span_created(&self) {
-        MetricsHandle::record_span_created(self);
+        MetricsRegistry::record_span_created(self);
     }
 
     fn record_span_exported(&self) {
-        MetricsHandle::record_span_exported(self);
+        MetricsRegistry::record_span_exported(self);
     }
 
     fn record_tracing_export_error(&self) {
-        MetricsHandle::record_tracing_export_error(self);
+        MetricsRegistry::record_tracing_export_error(self);
     }
 }
 
@@ -296,7 +296,7 @@ pub fn maybe_init_tracing(
     service_name: &str,
     reload_handle: Option<&ReloadHandle>,
     runtime_slot: &Arc<OnceLock<TracingRuntime>>,
-    metrics: Option<Arc<MetricsHandle>>,
+    metrics: Option<Arc<MetricsRegistry>>,
 ) {
     let pavis_core::TracingPolicy::Enabled {
         sampling,
@@ -476,7 +476,7 @@ pub struct TracingService {
     service_name: String,
     reload_handle: Option<ReloadHandle>,
     runtime_slot: Arc<OnceLock<TracingRuntime>>,
-    metrics: Option<Arc<MetricsHandle>>,
+    metrics: Option<Arc<MetricsRegistry>>,
 }
 
 impl TracingService {
@@ -485,7 +485,7 @@ impl TracingService {
         service_name: String,
         reload_handle: Option<ReloadHandle>,
         runtime_slot: Arc<OnceLock<TracingRuntime>>,
-        metrics: Option<Arc<MetricsHandle>>,
+        metrics: Option<Arc<MetricsRegistry>>,
     ) -> Self {
         // Set global propagator for context propagation (sync)
         opentelemetry::global::set_text_map_propagator(

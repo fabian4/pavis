@@ -5,7 +5,7 @@
 ### Metrics scraping (Pavis)
 - **Exporter**: Prometheus text format via `metrics_exporter_prometheus`.
 - **Bind address**: `telemetry.metrics = Metrics::Enabled { addr }` in runtime config (core type in `crates/pavis-core/src/runtime/telemetry.rs`, wired in `crates/pavis/src/telemetry.rs`).
-- **Server implementation**: `crates/pavis/src/telemetry/metrics.rs::MetricsWorker` binds a raw TCP listener and responds with Prometheus text to any HTTP request (path is ignored). For convention, scrape with `GET /metrics` on the configured addr.
+- **Server implementation**: `crates/pavis/src/telemetry/metrics.rs::PrometheusEndpoint` binds a raw TCP listener and responds with Prometheus text to any HTTP request (path is ignored). For convention, scrape with `GET /metrics` on the configured addr.
 - **Important note**: If the exporter fails to initialize, metrics are disabled and the worker logs a warning.
 
 ### Metrics scraping (Relay)
@@ -39,7 +39,7 @@
 
 | Metric name | Type | Unit | Labels | Meaning | Def / Emit (primary) |
 |---|---|---|---|---|---|
-| `pavis_route_match_attempts_total` | counter | requests | `result` (`matched`/`no_match`) | Total route match attempts | Def: `crates/pavis/src/telemetry/metrics.rs::MetricsHandle::record_route_match`; Emit: `crates/pavis/src/proxy/service.rs::request_filter` |
+| `pavis_route_match_attempts_total` | counter | requests | `result` (`matched`/`no_match`) | Total route match attempts | Def: `crates/pavis/src/telemetry/metrics.rs::MetricsRegistry::record_route_match`; Emit: `crates/pavis/src/proxy/service.rs::request_filter` |
 | `pavis_route_match_predicate_failures_total` | counter | predicate failures | `predicate_type` (`path`/`method`/`header`) | Failed predicate checks during routing | Def: `metrics.rs::record_route_match`; Emit: `proxy/service.rs::request_filter` |
 | `pavis_route_match_predicate_evaluations_total` | counter | predicate evals | `operator` (`exact`/`prefix`/`regex`/`present`/`absent`) | Predicate evaluations per operator | Def: `metrics.rs::record_route_match`; Emit: `proxy/service.rs::request_filter` |
 | `pavis_route_match_regex_input_too_large_total` | counter | rejections | (none) | Regex input rejected due to size limits | Def: `metrics.rs::record_route_match`; Emit: `proxy/service.rs::request_filter` |
@@ -84,7 +84,7 @@
 - **Labels**: `result` = `matched` or `no_match`
 - **Semantics**: incremented once per request after routing attempt.
 - **Cardinality notes**: low cardinality (2 values).
-- **Definition**: `crates/pavis/src/telemetry/metrics.rs::MetricsHandle::record_route_match`
+- **Definition**: `crates/pavis/src/telemetry/metrics.rs::MetricsRegistry::record_route_match`
 - **Primary emission**: `crates/pavis/src/proxy/service.rs::request_filter`
 - **PromQL**:
   - `sum(rate(pavis_route_match_attempts_total[5m])) by (result)`

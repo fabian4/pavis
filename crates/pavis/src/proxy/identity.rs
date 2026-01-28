@@ -3,17 +3,18 @@
 //! This module provides functionality to extract SPIFFE identities from
 //! client certificates presented during mTLS handshakes.
 
+use pavis_core::SpiffeId;
 use x509_parser::prelude::*;
 
 /// Extracts the SPIFFE identity from a client certificate (DER encoded).
-pub fn extract_spiffe_id(cert_der: &[u8]) -> Option<String> {
+pub fn extract_spiffe_id(cert_der: &[u8]) -> Option<SpiffeId> {
     let (_, cert) = X509Certificate::from_der(cert_der).ok()?;
     extract_spiffe_id_from_cert(&cert)
 }
 
 /// Extracts the SPIFFE identity from a parsed X.509 certificate.
-pub fn extract_spiffe_id_from_cert(cert: &X509Certificate) -> Option<String> {
-    let mut spiffe_id: Option<String> = None;
+pub fn extract_spiffe_id_from_cert(cert: &X509Certificate) -> Option<SpiffeId> {
+    let mut spiffe_id: Option<SpiffeId> = None;
 
     // Iterate extensions to find SANs
     if let Some(san_ext) = cert.iter_extensions().find_map(|ext| {
@@ -42,7 +43,7 @@ pub fn extract_spiffe_id_from_cert(cert: &X509Certificate) -> Option<String> {
     spiffe_id
 }
 
-fn parse_spiffe_uri(uri: &str) -> Result<Option<String>, ()> {
+fn parse_spiffe_uri(uri: &str) -> Result<Option<SpiffeId>, ()> {
     let (scheme, rest) = match uri.split_once("://") {
         Some(parts) => parts,
         None => return Ok(None),
@@ -65,7 +66,7 @@ fn parse_spiffe_uri(uri: &str) -> Result<Option<String>, ()> {
         return Err(());
     }
 
-    Ok(Some(format!("spiffe://{}", rest)))
+    Ok(Some(SpiffeId(format!("spiffe://{}", rest))))
 }
 
 /// A cached identity extractor that memoizes extraction results.
@@ -81,7 +82,7 @@ impl IdentityExtractor {
     }
 
     /// Extracts the SPIFFE identity from the certificate bytes.
-    pub fn extract(&self, cert_der: &[u8]) -> Option<String> {
+    pub fn extract(&self, cert_der: &[u8]) -> Option<SpiffeId> {
         extract_spiffe_id(cert_der)
     }
 }
@@ -113,7 +114,10 @@ mod tests {
 
         let spiffe_id = "spiffe://example.org/ns/foo/sa/bar";
         let cert = build_cert_der(&[spiffe_id], 1);
-        assert_eq!(extract_spiffe_id(&cert), Some(spiffe_id.to_string()));
+        assert_eq!(
+            extract_spiffe_id(&cert),
+            Some(pavis_core::SpiffeId(spiffe_id.to_string()))
+        );
 
         let cert = build_cert_der(&["https://not-spiffe.com"], 2);
         assert_eq!(extract_spiffe_id(&cert), None);

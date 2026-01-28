@@ -160,7 +160,7 @@ pub fn from_runtime(routes: Vec<pavis_core::VirtualHost>) -> Result<Vec<VirtualH
             let principal = match p.principal {
                 pavis_core::Principal::Any => None,
                 pavis_core::Principal::Authenticated { spiffe } => {
-                    Some(crate::config::types::PrincipalConfig::Authenticated { spiffe })
+                    Some(crate::config::types::PrincipalConfig::Authenticated { spiffe: spiffe.0 })
                 }
                 pavis_core::Principal::Prefix { prefix } => {
                     Some(crate::config::types::PrincipalConfig::Prefix { prefix })

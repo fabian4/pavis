@@ -10,12 +10,11 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn logging_handles_disabled_access_log() {
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
-        upstream_manager: Manager::new(&[]).expect("manager"),
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+        Manager::new(&[]).expect("manager"),
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,
@@ -31,12 +30,11 @@ async fn logging_handles_disabled_access_log() {
 #[tokio::test]
 async fn test_proxy_logging_with_upstream() {
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[]).expect("manager"),
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            Manager::new(&[]).expect("manager"),
+        ))),
         telemetry: test_telemetry(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;

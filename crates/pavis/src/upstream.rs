@@ -6,148 +6,47 @@
 //! 2. **Atomic Updates**: Dynamic updates to upstream state must be atomic or eventually consistent without blocking readers.
 //! 3. **Distributed State**: Load balancing state (e.g., RR counters) should be distributed or aligned to prevent false sharing.
 
-use anyhow::{Context, Result};
-use pingora::protocols::tls::CaType;
-use pingora::tls::pkey::PKey;
-use pingora::tls::x509::X509;
-use pingora::utils::tls::CertKey;
+use anyhow::Result;
 use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
 use std::sync::Arc;
 
 use pavis_core::Upstream;
 
+mod client_identity;
 pub mod cluster;
 pub mod health;
 pub mod load_balance;
 pub mod resolver;
 
+use client_identity::ClientIdentityMaterializer;
 pub use cluster::Cluster;
 pub use health::UpstreamHealthMonitor;
 pub use resolver::UpstreamResolver;
 
 pub struct Manager {
-    clusters: HashMap<String, Cluster>,
+    clusters: HashMap<String, Arc<Cluster>>,
 }
 
 impl Manager {
     pub fn new(upstreams: &[Upstream]) -> Result<Self> {
         let mut clusters = HashMap::new();
-        for u in upstreams {
-            let (client_cert_key, ca_bundle) = match &u.tls {
-                pavis_core::TlsPolicy::Enabled { cert, ca, .. } => {
-                    let cert_key = match cert {
-                        pavis_core::ClientCert::Disabled => None,
-                        pavis_core::ClientCert::Enabled {
-                            cert_path,
-                            key_path,
-                            chain,
-                        } => Some(
-                            load_client_cert_key(
-                                Path::new(&cert_path.0),
-                                Path::new(&key_path.0),
-                                chain,
-                            )
-                            .with_context(|| {
-                                format!(
-                                    "failed to load client certificate for upstream {}",
-                                    u.name.0
-                                )
-                            })?,
-                        ),
-                        #[allow(unreachable_patterns)]
-                        _ => None,
-                    };
-                    let ca_bundle = match ca {
-                        pavis_core::UpstreamCa::System => None,
-                        pavis_core::UpstreamCa::File { path } => {
-                            Some(load_ca_bundle(Path::new(&path.0)).with_context(|| {
-                                format!("failed to load upstream CA bundle for {}", u.name.0)
-                            })?)
-                        }
-                        #[allow(unreachable_patterns)]
-                        _ => None,
-                    };
-                    (cert_key, ca_bundle)
-                }
-                _ => (None, None),
-            };
-            clusters.insert(
-                u.name.0.clone(),
-                Cluster::new_with_client_cert(u.clone(), client_cert_key, ca_bundle),
-            );
+        for upstream in upstreams {
+            let materials = ClientIdentityMaterializer::materialize(upstream)?;
+            let cluster = Cluster::new_with_tls_materials(upstream.clone(), materials);
+            clusters.insert(upstream.name.0.clone(), Arc::new(cluster));
         }
         Ok(Self { clusters })
     }
 
-    pub fn get(&self, name: &str) -> Option<&Cluster> {
-        self.clusters.get(name)
+    pub fn get(&self, name: &str) -> Option<Arc<Cluster>> {
+        self.clusters.get(name).map(Arc::clone)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &Cluster)> {
-        self.clusters.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&String, Arc<Cluster>)> {
+        self.clusters
+            .iter()
+            .map(|(name, cluster)| (name, Arc::clone(cluster)))
     }
-}
-
-fn load_client_cert_key(
-    cert_path: &Path,
-    key_path: &Path,
-    chain: &pavis_core::ClientCertChain,
-) -> Result<Arc<CertKey>> {
-    let cert_pem = fs::read(cert_path)
-        .with_context(|| format!("failed to read client cert {}", cert_path.display()))?;
-    let certs =
-        X509::stack_from_pem(&cert_pem).context("failed to parse client cert PEM bundle")?;
-
-    if certs.is_empty() {
-        anyhow::bail!("client cert bundle is empty");
-    }
-
-    let mut selected = match chain {
-        pavis_core::ClientCertChain::Embedded => certs,
-        pavis_core::ClientCertChain::None | pavis_core::ClientCertChain::File { .. } => {
-            if certs.len() != 1 {
-                anyhow::bail!("client cert must contain exactly one certificate");
-            }
-            vec![certs[0].clone()]
-        }
-        #[allow(unreachable_patterns)]
-        _ => certs,
-    };
-
-    if let pavis_core::ClientCertChain::File { path } = chain {
-        let chain_pem = fs::read(Path::new(&path.0))
-            .with_context(|| format!("failed to read client cert chain {}", path.0.as_str()))?;
-        let chain_certs =
-            X509::stack_from_pem(&chain_pem).context("failed to parse client cert chain")?;
-
-        if chain_certs.is_empty() {
-            anyhow::bail!("client cert chain is empty");
-        }
-        selected.extend(chain_certs);
-    }
-
-    let key_pem = fs::read(key_path)
-        .with_context(|| format!("failed to read client key {}", key_path.display()))?;
-    let key = PKey::private_key_from_pem(&key_pem).context("failed to parse client key PEM")?;
-
-    Ok(Arc::new(CertKey::new(selected, key)))
-}
-
-fn load_ca_bundle(path: &Path) -> Result<Arc<CaType>> {
-    tracing::debug!(path = %path.display(), "loading upstream CA bundle");
-    let ca_pem =
-        fs::read(path).with_context(|| format!("failed to read CA bundle {}", path.display()))?;
-    let certs = X509::stack_from_pem(&ca_pem).context("failed to parse CA bundle")?;
-
-    if certs.is_empty() {
-        anyhow::bail!("CA bundle is empty at {}", path.display());
-    }
-
-    tracing::debug!(count = certs.len(), "parsed certificates from CA bundle");
-    let ca_list: CaType = certs.into_boxed_slice();
-    Ok(Arc::new(ca_list))
 }
 
 #[cfg(test)]

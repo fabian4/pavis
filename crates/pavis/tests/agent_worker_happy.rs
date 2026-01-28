@@ -6,6 +6,8 @@ use axum::routing::get;
 use common::*;
 use pavis::agent::PollOutcome;
 use pavis::state::{RuntimeState, RuntimeStateHandle};
+use pavis_core::ConfigVersion;
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -241,7 +243,11 @@ async fn poll_once_skips_intermediate_versions_entirely() {
 
     let agent = make_agent(base, lkg.clone(), state_handle.clone());
     agent
-        .apply_update_for_tests(v1_bytes, v1_etag, Some(1))
+        .apply_update_for_tests(
+            v1_bytes,
+            v1_etag,
+            Some(ConfigVersion(NonZeroU64::new(1).unwrap())),
+        )
         .await
         .expect("apply v1");
 

@@ -142,7 +142,9 @@ pub fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<CoreVirtualHost>> {
                 None => pavis_core::Principal::Any,
                 Some(PrincipalConfig::Any) => pavis_core::Principal::Any,
                 Some(PrincipalConfig::Authenticated { spiffe }) => {
-                    pavis_core::Principal::Authenticated { spiffe }
+                    pavis_core::Principal::Authenticated {
+                        spiffe: pavis_core::SpiffeId(spiffe),
+                    }
                 }
                 Some(PrincipalConfig::Prefix { prefix }) => {
                     if prefix.is_empty() {

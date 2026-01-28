@@ -1,5 +1,5 @@
 use crate::proxy::context::RequestId;
-use crate::telemetry::metrics::MetricsHandle;
+use crate::telemetry::metrics::MetricsRegistry;
 use async_trait::async_trait;
 use pavis_core::AccessLogPolicy;
 use pingora::protocols::l4::socket::SocketAddr;
@@ -15,7 +15,7 @@ use tokio::time::Duration;
 pub struct AccessLog {
     tx: mpsc::Sender<LogEntry>,
     enabled: bool,
-    metrics: Mutex<Option<Arc<MetricsHandle>>>,
+    metrics: Mutex<Option<Arc<MetricsRegistry>>>,
 }
 
 pub struct AccessLogWorker {
@@ -123,7 +123,7 @@ impl AccessLog {
         )
     }
 
-    pub fn set_metrics_handle(&self, handle: Option<Arc<MetricsHandle>>) {
+    pub fn set_metrics_handle(&self, handle: Option<Arc<MetricsRegistry>>) {
         let mut guard = self
             .metrics
             .lock()
@@ -191,7 +191,7 @@ impl AccessLog {
             response_time,
             bytes_sent,
             client_ip,
-            request_id: ctx.req_id,
+            request_id: ctx.request_id(),
             rbac_denied: ctx.rbac_denied,
             route_pattern: route_pattern.to_string(),
             upstream_duration_ms,
@@ -377,7 +377,9 @@ mod tests {
 
     #[tokio::test]
     async fn access_log_emits_entry_for_request() {
-        use crate::proxy::context::{RoutePattern, RouterContext, TracingSpan, UpstreamTiming};
+        use crate::proxy::context::{
+            RequestTelemetry, RoutePattern, RouterContext, UpstreamTiming,
+        };
         use pavis_core::{HeadersPolicy, RetryPolicy, Timeout, UpstreamName};
         use std::sync::Arc;
         use std::time::Instant;
@@ -394,6 +396,7 @@ mod tests {
         session.read_request().await.expect("read request");
 
         let ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-1".parse().unwrap()),
             upstream_name: Some(UpstreamName("upstream-a".to_string())),
             upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Disabled),
@@ -409,8 +412,6 @@ mod tests {
             route_pattern: RoutePattern::Matched {
                 pattern: Arc::from("/api/*"),
             },
-            req_id: "req-1".parse().unwrap(),
-            span: TracingSpan::Disabled,
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,

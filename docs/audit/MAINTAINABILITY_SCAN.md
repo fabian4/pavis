@@ -1,5 +1,8 @@
 # Maintainability Scan (2026-01-28)
 
+Update note:
+- The runtime reload agent has been refactored into a pure FSM plus driver (`crates/pavis/src/agent/*`) with expanded unit/integration/E2E coverage. Findings here remain focused on the non-agent risk map.
+
 ## Top Risk Map
 1. `crates/pavis/src/main.rs` – Bootstrap logic, telemetry wiring, relay setup, and Pingora lifecycle live in one 300+ line function that obscures ordering guarantees.
 2. `crates/pavis/src/proxy/service/request_planning.rs` – Routing policy, retries, TLS decisions, and DNS resolution are interleaved, so every feature edit risks collateral damage.
@@ -239,9 +242,9 @@
 - **Location:** `crates/pavis/src/telemetry/metrics.rs:L12-L90`
 - **Evidence:**
   ```rust
-  pub fn new(addr: SocketAddr) -> (Self, Option<MetricsHandle>) {
+  pub fn new(addr: SocketAddr) -> (Self, Option<MetricsRegistry>) {
       let builder = PrometheusBuilder::new();
-      match builder.install_recorder() { Ok(handle) => (Self { addr, handle: Some(handle.clone()) }, Some(MetricsHandle { .. })), Err(e) => .. }
+      match builder.install_recorder() { Ok(handle) => (Self { addr, handle: Some(handle.clone()) }, Some(MetricsRegistry { .. })), Err(e) => .. }
   }
   async fn start_service(&mut self, ..) {
       let listener = tokio::net::TcpListener::bind(self.addr).await?;

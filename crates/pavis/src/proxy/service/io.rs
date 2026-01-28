@@ -1,9 +1,11 @@
-use crate::proxy::context::{RouterContext, TracingSpan};
+use crate::proxy::context::{RequestTelemetry, RouterContext, TracingSpan};
 use crate::proxy::header_ops::{apply_request_headers, apply_response_headers};
 use crate::retry::RetryContext;
 use crate::upstream::cluster::{CircuitBreakerRejection, PoolRejection, UpstreamOutcome};
 use async_trait::async_trait;
-use pavis_core::{HeadersPolicy, HttpVersion, RetryPolicy, RouteAction, Timeout};
+use pavis_core::{
+    HeadersPolicy, Hostname, HttpVersion, RetryPolicy, RouteAction, Timeout, UpstreamName,
+};
 use pingora::ErrorType;
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
@@ -32,6 +34,7 @@ impl ProxyHttp for Proxy {
 
     fn new_ctx(&self) -> Self::CTX {
         RouterContext {
+            telemetry: RequestTelemetry::new(generate_request_id()),
             upstream_name: None,
             upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Disabled),
@@ -45,8 +48,6 @@ impl ProxyHttp for Proxy {
             retry_attempts: 0,
             upstream_timing: crate::proxy::context::UpstreamTiming::NotStarted,
             route_pattern: crate::proxy::context::RoutePattern::NotMatched,
-            req_id: generate_request_id(),
-            span: crate::proxy::context::TracingSpan::Disabled,
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
@@ -82,7 +83,9 @@ impl ProxyHttp for Proxy {
                     InternalError,
                     format!(
                         "missing runtime snapshot: request_id={} route={} upstream={}",
-                        ctx.req_id, route, upstream_name.0
+                        ctx.request_id(),
+                        route,
+                        upstream_name.0
                     ),
                 );
             }
@@ -204,220 +207,16 @@ impl ProxyHttp for Proxy {
             "forwarding request"
         );
 
-        let (use_tls, sni_value, verify_mode, cert, ca) = match &upstream.tls {
-            pavis_core::TlsPolicy::Disabled => (false, None, None, None, None),
-            pavis_core::TlsPolicy::Enabled {
-                verify,
-                sni,
-                cert,
-                ca,
-                canonical_sni,
-                reuse_across_sni,
-            } => {
-                let canonical = match canonical_sni {
-                    pavis_core::CanonicalSni::Disabled => None,
-                    pavis_core::CanonicalSni::Enabled { name } => Some(name.clone()),
-                    #[allow(unreachable_patterns)]
-                    _ => None,
-                };
-
-                let sni_value = if let Some(name) = canonical {
-                    tracing::info!(
-                        upstream = %upstream_name.0,
-                        sni = %name.0,
-                        "Using canonical SNI for upstream"
-                    );
-                    Some(name)
-                } else if matches!(reuse_across_sni, pavis_core::ReuseAcrossSni::Enabled) {
-                    let fixed = match sni {
-                        pavis_core::SniName::Name(name) => Some(name.clone()),
-                        pavis_core::SniName::Auto => endpoint_host.clone(),
-                        pavis_core::SniName::Disabled => None,
-                        #[allow(unreachable_patterns)]
-                        _ => None,
-                    };
-                    if SNI_FRAGMENT_WARN_COUNTER
-                        .fetch_add(1, Ordering::Relaxed)
-                        .is_multiple_of(2048)
-                    {
-                        tracing::warn!(
-                            upstream = %upstream_name.0,
-                            sni_mode = ?sni,
-                            "reuse_across_sni enabled; upstream will reuse connections across SNI values"
-                        );
-                    }
-                    fixed
-                } else {
-                    match sni {
-                        pavis_core::SniName::Name(name) => {
-                            tracing::info!(
-                                upstream = %upstream_name.0,
-                                sni = %name.0,
-                                "Using explicit SNI for upstream"
-                            );
-                            Some(name.clone())
-                        }
-                        pavis_core::SniName::Auto => {
-                            if ctx.sni_override.is_some()
-                                && SNI_FRAGMENT_WARN_COUNTER
-                                    .fetch_add(1, Ordering::Relaxed)
-                                    .is_multiple_of(2048)
-                            {
-                                tracing::warn!(
-                                    upstream = %upstream_name.0,
-                                    "SNI override active without canonical SNI; connection reuse may fragment"
-                                );
-                            }
-                            resolve_sni(sni, ctx.sni_override.as_ref(), endpoint_host.as_ref())
-                        }
-                        _ => resolve_sni(sni, ctx.sni_override.as_ref(), endpoint_host.as_ref()),
-                    }
-                };
-
-                (true, sni_value, Some(*verify), Some(cert), Some(ca))
-            }
-            #[allow(unreachable_patterns)]
-            _ => (false, None, None, None, None),
-        };
-
-        if use_tls
-            && matches!(verify_mode, Some(pavis_core::TlsVerify::Full))
-            && sni_value.is_none()
-        {
-            return Error::e_explain(
-                InternalError,
-                "TLS verify=full requires SNI (auto or explicit)",
-            );
-        }
-        let sni_label = sni_value.as_ref().map(|name| name.0.as_str()).unwrap_or("");
-        if let Some(tracker) = self.telemetry.pool_key_tracker.as_ref() {
-            let snapshot = tracker.record(
-                upstream_name.0.as_str(),
-                reuse_key_hash(&addr, sni_label, verify_mode, cert),
-            );
-            if let Some(metrics) = &self.telemetry.metrics {
-                metrics.record_pool_key_cardinality(
-                    upstream_name.0.as_str(),
-                    snapshot.cardinality,
-                    snapshot.saturated,
-                );
-            }
-            if POOL_KEY_LOG_COUNTER
-                .fetch_add(1, Ordering::Relaxed)
-                .is_multiple_of(4096)
-            {
-                tracing::debug!(
-                    upstream = %upstream_name.0,
-                    endpoint = %addr,
-                    sni = %sni_label,
-                    verify = ?verify_mode,
-                    "Observed upstream pool reuse key"
-                );
-            }
-        }
-
-        let sni_string = sni_value.map(|name| name.0).unwrap_or_else(String::new);
-        let mut peer = HttpPeer::new(addr, use_tls, sni_string);
-
-        if let Some(mode) = verify_mode {
-            match mode {
-                pavis_core::TlsVerify::Disabled => {
-                    peer.options.verify_hostname = false;
-                    peer.options.verify_cert = false;
-                }
-                pavis_core::TlsVerify::CaOnly => {
-                    peer.options.verify_hostname = false;
-                    peer.options.verify_cert = true;
-                }
-                pavis_core::TlsVerify::Full => {
-                    peer.options.verify_hostname = true;
-                    peer.options.verify_cert = true;
-                }
-                #[allow(unreachable_patterns)]
-                _ => {
-                    peer.options.verify_hostname = false;
-                    peer.options.verify_cert = false;
-                }
-            }
-        }
-
-        if let Some(cert_config) = cert {
-            match cert_config {
-                pavis_core::ClientCert::Disabled => {}
-                pavis_core::ClientCert::Enabled {
-                    cert_path,
-                    key_path,
-                    ..
-                } => {
-                    tracing::debug!(
-                        cert_path = %cert_path.0,
-                        key_path = %key_path.0,
-                        "Configuring client certificate for upstream connection"
-                    );
-                    let client_cert_key = cluster.client_cert_key().ok_or_else(|| {
-                        Error::explain(InternalError, "Client certificate not loaded")
-                    })?;
-                    peer.client_cert_key = Some(client_cert_key);
-                }
-                #[allow(unreachable_patterns)]
-                _ => {}
-            }
-        }
-
-        if let Some(ca_config) = ca {
-            match ca_config {
-                pavis_core::UpstreamCa::System => {
-                    tracing::debug!("Using system CA bundle for upstream TLS verification");
-                }
-                pavis_core::UpstreamCa::File { path } => {
-                    if let Some(ca_bundle) = cluster.ca_bundle() {
-                        tracing::debug!(
-                            upstream = %upstream_name.0,
-                            ca_path = %path.0,
-                            ca_count = ca_bundle.len(),
-                            "Setting custom CA bundle for upstream TLS verification"
-                        );
-                        peer.options.ca = Some(ca_bundle);
-                    } else {
-                        tracing::warn!(
-                            upstream = %upstream_name.0,
-                            ca_path = %path.0,
-                            "CA bundle configured but not loaded in cluster"
-                        );
-                    }
-                }
-                #[allow(unreachable_patterns)]
-                _ => {}
-            }
-        }
-
-        match upstream.protocol {
-            HttpVersion::H1 => peer.options.set_http_version(1, 1),
-            HttpVersion::H2 => peer.options.set_http_version(2, 2),
-            HttpVersion::H2H1 => peer.options.set_http_version(2, 1),
-            #[allow(unreachable_patterns)]
-            _ => peer.options.set_http_version(1, 1),
-        }
-
-        peer.options.idle_timeout = match upstream.pool.idle {
-            pavis_core::IdleTimeout::Disabled => None,
-            pavis_core::IdleTimeout::Enabled(duration) => {
-                Some(Duration::from_millis(duration.0.get() as u64))
-            }
-            #[allow(unreachable_patterns)]
-            _ => None,
-        };
-        peer.options.connection_timeout = match upstream.pool.connect {
-            pavis_core::ConnectTimeout::Disabled => None,
-            pavis_core::ConnectTimeout::Enabled(duration) => {
-                Some(Duration::from_millis(duration.0.get() as u64))
-            }
-            #[allow(unreachable_patterns)]
-            _ => None,
-        };
-        let per_try_timeout = resolve_per_try_timeout(ctx.route_timeout, &ctx.retry_policy);
-        peer.options.read_timeout = per_try_timeout;
-        peer.options.write_timeout = per_try_timeout;
+        let builder = UpstreamPeerBuilder::new(&self.telemetry);
+        let peer = builder.build(
+            ctx,
+            upstream_name,
+            upstream,
+            cluster.as_ref(),
+            &endpoint,
+            endpoint_host,
+            addr,
+        )?;
 
         ctx.start_upstream();
         ctx.pool_permit = pool_permit;
@@ -458,7 +257,7 @@ impl ProxyHttp for Proxy {
         let uri_path = req_header.uri.path();
 
         let state = self.state.load();
-        ctx.runtime_state = Some(state.clone());
+        let request_id = ctx.request_id();
 
         let tracing_enabled = if let pavis_core::TracingPolicy::Enabled { sampling, .. } =
             &state.config.telemetry.tracing
@@ -468,17 +267,20 @@ impl ProxyHttp for Proxy {
             false
         };
 
-        if tracing_enabled {
-            let span = tracing::info_span!(
-                "http_request",
-                http.method = %req_header.method,
-                http.target = %uri_path,
-                http.host = ?host_header,
-                http.request_id = %ctx.req_id,
-                otel.kind = "server",
-            );
-
-            ctx.span = TracingSpan::Active(span);
+        {
+            let mut phase = ctx.routing_phase();
+            phase.attach_runtime(state.clone());
+            if tracing_enabled {
+                let span = tracing::info_span!(
+                    "http_request",
+                    http.method = %req_header.method,
+                    http.target = %uri_path,
+                    http.host = ?host_header,
+                    http.request_id = %request_id,
+                    otel.kind = "server",
+                );
+                phase.enable_tracing(span);
+            }
         }
 
         tracing::debug!(
@@ -502,125 +304,124 @@ impl ProxyHttp for Proxy {
         if let Some((vhost, route)) = verdict.selection {
             tracing::trace!(host = %vhost.host.0, path = %route_path(route), "matched route");
 
-            ctx.route_pattern = crate::proxy::context::RoutePattern::Matched {
-                pattern: Arc::from(route_path(route)),
-            };
-
-            if let crate::proxy::context::RoutePattern::Matched { ref pattern } = ctx.route_pattern
-                && let TracingSpan::Active(ref span) = ctx.span
             {
-                span.record("route.pattern", pattern.as_ref());
-            }
+                let mut route_phase = ctx
+                    .routing_phase()
+                    .record_route(Arc::from(route_path(route)));
 
-            apply_route_headers(ctx, route);
+                route_phase.record_route_span();
 
-            if !is_authorized(&route.principal, ctx.client_identity.as_deref()) {
-                tracing::info!(
-                    request_id = %ctx.req_id,
-                    principal = ?route.principal,
-                    client_identity = ?ctx.client_identity,
-                    "RBAC access denied"
-                );
-                ctx.rbac_denied = true;
-                let _ = session.respond_error(403).await;
-                return Ok(true);
-            }
+                apply_route_headers(route_phase.ctx_mut(), route);
 
-            if let Some(new_uri) = calculate_path_rewrite(route, uri_path, req_header.uri.query()) {
-                tracing::debug!(
-                    original = %uri_path,
-                    rewritten = %new_uri.path(),
-                    "Calculated path rewrite"
-                );
-                ctx.rewritten_uri = Some(new_uri);
-            }
-
-            if let pavis_core::RewriteHost::Literal { host } = &route.rewrite.host {
-                tracing::debug!(
-                    original = ?host_header,
-                    rewritten = %host.0,
-                    "Calculated host rewrite"
-                );
-                ctx.rewritten_host = Some(host.clone());
-            }
-
-            if let pavis_core::RetryPolicy::Enabled {
-                max_request_body_buffer_bytes,
-                ..
-            } = &ctx.retry_policy
-            {
-                let upstream_name = match &route.action {
-                    RouteAction::Forward(destinations) if !destinations.is_empty() => {
-                        destinations[0].upstream.0.clone()
-                    }
-                    _ => "unknown".to_string(),
-                };
-
-                let request_timeout_ms = resolve_route_timeout(ctx.route_timeout)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(60000);
-
-                ctx.retry_ctx = Some(RetryContext::new(
-                    ctx.retry_policy.clone(),
-                    request_timeout_ms,
-                    self.telemetry.metrics.clone(),
-                    upstream_name.clone(),
-                ));
-
-                let mut body_bytes = Vec::new();
-                let limit = *max_request_body_buffer_bytes;
-
-                while let Some(chunk) = session.read_request_body().await? {
-                    if (body_bytes.len() as u64) + (chunk.len() as u64) > limit {
-                        tracing::debug!(
-                            limit = limit,
-                            upstream = %upstream_name,
-                            "Request body exceeds buffer limit, marking as non-replayable"
-                        );
-                        body_bytes.extend_from_slice(&chunk);
-                        break;
-                    }
-                    body_bytes.extend_from_slice(&chunk);
+                if !is_authorized(&route.principal, route_phase.client_identity()) {
+                    tracing::info!(
+                        request_id = %route_phase.request_id(),
+                        principal = ?route.principal,
+                        client_identity = ?route_phase.client_identity(),
+                        "RBAC access denied"
+                    );
+                    route_phase.mark_rbac_denied();
+                    let _ = session.respond_error(403).await;
+                    return Ok(true);
                 }
 
-                ctx.buffered_body = Some(crate::retry::BufferedBody::new(
-                    body_bytes,
-                    limit,
-                    self.telemetry.metrics.clone(),
-                    &upstream_name,
-                ));
-            }
+                if let Some(new_uri) =
+                    calculate_path_rewrite(route, uri_path, req_header.uri.query())
+                {
+                    tracing::debug!(
+                        original = %uri_path,
+                        rewritten = %new_uri.path(),
+                        "Calculated path rewrite"
+                    );
+                    route_phase.set_rewritten_uri(new_uri);
+                }
 
-            match &route.action {
-                RouteAction::Forward(destinations) => {
+                if let pavis_core::RewriteHost::Literal { host } = &route.rewrite.host {
+                    tracing::debug!(
+                        original = ?host_header,
+                        rewritten = %host.0,
+                        "Calculated host rewrite"
+                    );
+                    route_phase.set_rewritten_host(host.clone());
+                }
+
+                let retry_policy = route_phase.retry_policy().clone();
+                if let pavis_core::RetryPolicy::Enabled {
+                    max_request_body_buffer_bytes,
+                    ..
+                } = &retry_policy
+                {
+                    let route_timeout = route_phase.route_timeout();
+                    let upstream_name = match &route.action {
+                        RouteAction::Forward(destinations) if !destinations.is_empty() => {
+                            destinations[0].upstream.0.clone()
+                        }
+                        _ => "unknown".to_string(),
+                    };
+
+                    let request_timeout_ms = resolve_route_timeout(route_timeout)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(60000);
+
+                    route_phase.set_retry_context(RetryContext::new(
+                        retry_policy.clone(),
+                        request_timeout_ms,
+                        self.telemetry.metrics.clone(),
+                        upstream_name.clone(),
+                    ));
+
+                    let mut body_bytes = Vec::new();
+                    let limit = *max_request_body_buffer_bytes;
+
+                    while let Some(chunk) = session.read_request_body().await? {
+                        if (body_bytes.len() as u64) + (chunk.len() as u64) > limit {
+                            tracing::debug!(
+                                limit = limit,
+                                upstream = %upstream_name,
+                                "Request body exceeds buffer limit, marking as non-replayable"
+                            );
+                            body_bytes.extend_from_slice(&chunk);
+                            break;
+                        }
+                        body_bytes.extend_from_slice(&chunk);
+                    }
+
+                    let buffered = crate::retry::BufferedBody::new(
+                        body_bytes,
+                        limit,
+                        self.telemetry.metrics.clone(),
+                        &upstream_name,
+                    );
+                    route_phase.set_buffered_body(buffered);
+                }
+
+                if let RouteAction::Forward(destinations) = &route.action {
                     let total_weight: u32 =
                         destinations.iter().map(|d| d.weight.0.get() as u32).sum();
                     if total_weight == 0 {
                         return Ok(false);
                     }
 
+                    let mut attempt = route_phase.into_upstream_attempt();
                     let mut rng = rand::rng();
                     let mut pick = rand::Rng::random_range(&mut rng, 0..total_weight);
 
                     for dest in destinations {
                         let weight = dest.weight.0.get() as u32;
                         if pick < weight {
-                            ctx.upstream_name = Some(dest.upstream.clone());
-                            tracing::debug!(
-                                upstream = %dest.upstream.0,
-                                "Selected upstream"
-                            );
-
-                            if let TracingSpan::Active(ref span) = ctx.span {
-                                span.record("upstream", dest.upstream.0.as_str());
-                            }
-
+                            attempt.set_upstream(dest.upstream.clone());
+                            tracing::debug!(upstream = %dest.upstream.0, "Selected upstream");
+                            attempt.record_upstream_span(dest.upstream.0.as_str());
                             break;
                         }
                         pick -= weight;
                     }
+
                     return Ok(false);
                 }
+            }
+
+            match &route.action {
                 RouteAction::Redirect { status, location } => {
                     let status_code = *status;
                     let location_url = location.clone();
@@ -769,7 +570,7 @@ impl ProxyHttp for Proxy {
         if let Some(host) = &ctx.rewritten_host {
             upstream_request.insert_header("Host", host.0.as_str())?;
         }
-        if let TracingSpan::Active(ref span) = ctx.span {
+        if let TracingSpan::Active(span) = ctx.span() {
             let context = span.context();
             opentelemetry::global::get_text_map_propagator(|propagator| {
                 propagator.inject_context(&context, &mut HeaderInjector(upstream_request))
@@ -914,7 +715,7 @@ impl ProxyHttp for Proxy {
         ctx.pool_permit.take();
         ctx.circuit_breaker_permit.take();
 
-        if let TracingSpan::Active(ref span) = ctx.span
+        if let TracingSpan::Active(span) = ctx.span()
             && let Some(response) = session.response_written()
         {
             let status_code = response.status.as_u16();
@@ -928,5 +729,245 @@ impl ProxyHttp for Proxy {
                 span.record("error.type", "client_error");
             }
         }
+    }
+}
+
+struct UpstreamPeerBuilder<'a> {
+    telemetry: &'a Arc<crate::telemetry::Telemetry>,
+}
+
+impl<'a> UpstreamPeerBuilder<'a> {
+    fn new(telemetry: &'a Arc<crate::telemetry::Telemetry>) -> Self {
+        Self { telemetry }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        &self,
+        ctx: &RouterContext,
+        upstream_name: &UpstreamName,
+        upstream: &pavis_core::Upstream,
+        cluster: &crate::upstream::cluster::Cluster,
+        _endpoint: &pavis_core::Endpoint,
+        endpoint_host: Option<Hostname>,
+        addr: std::net::SocketAddr,
+    ) -> Result<HttpPeer> {
+        let (use_tls, sni_value, verify_mode, cert, ca) = match &upstream.tls {
+            pavis_core::TlsPolicy::Disabled => (false, None, None, None, None),
+            pavis_core::TlsPolicy::Enabled {
+                verify,
+                sni,
+                cert,
+                ca,
+                canonical_sni,
+                reuse_across_sni,
+            } => {
+                let canonical = match canonical_sni {
+                    pavis_core::CanonicalSni::Disabled => None,
+                    pavis_core::CanonicalSni::Enabled { name } => Some(name.clone()),
+                    #[allow(unreachable_patterns)]
+                    _ => None,
+                };
+
+                let sni_value = if let Some(name) = canonical {
+                    tracing::info!(
+                        upstream = %upstream_name.0,
+                        sni = %name.0,
+                        "Using canonical SNI for upstream"
+                    );
+                    Some(name)
+                } else if matches!(reuse_across_sni, pavis_core::ReuseAcrossSni::Enabled) {
+                    let fixed = match sni {
+                        pavis_core::SniName::Name(name) => Some(name.clone()),
+                        pavis_core::SniName::Auto => endpoint_host.clone(),
+                        pavis_core::SniName::Disabled => None,
+                        #[allow(unreachable_patterns)]
+                        _ => None,
+                    };
+                    if SNI_FRAGMENT_WARN_COUNTER
+                        .fetch_add(1, Ordering::Relaxed)
+                        .is_multiple_of(2048)
+                    {
+                        tracing::warn!(
+                            upstream = %upstream_name.0,
+                            sni_mode = ?sni,
+                            "reuse_across_sni enabled; upstream will reuse connections across SNI values"
+                        );
+                    }
+                    fixed
+                } else {
+                    match sni {
+                        pavis_core::SniName::Name(name) => {
+                            tracing::info!(
+                                upstream = %upstream_name.0,
+                                sni = %name.0,
+                                "Using explicit SNI for upstream"
+                            );
+                            Some(name.clone())
+                        }
+                        pavis_core::SniName::Auto => {
+                            if ctx.sni_override.is_some()
+                                && SNI_FRAGMENT_WARN_COUNTER
+                                    .fetch_add(1, Ordering::Relaxed)
+                                    .is_multiple_of(2048)
+                            {
+                                tracing::warn!(
+                                    upstream = %upstream_name.0,
+                                    "SNI override active without canonical SNI; connection reuse may fragment"
+                                );
+                            }
+                            resolve_sni(sni, ctx.sni_override.as_ref(), endpoint_host.as_ref())
+                        }
+                        _ => resolve_sni(sni, ctx.sni_override.as_ref(), endpoint_host.as_ref()),
+                    }
+                };
+
+                (true, sni_value, Some(*verify), Some(cert), Some(ca))
+            }
+            #[allow(unreachable_patterns)]
+            _ => (false, None, None, None, None),
+        };
+
+        if use_tls
+            && matches!(verify_mode, Some(pavis_core::TlsVerify::Full))
+            && sni_value.is_none()
+        {
+            return Error::e_explain(
+                InternalError,
+                "TLS verify=full requires SNI (auto or explicit)",
+            );
+        }
+
+        let sni_label = sni_value.as_ref().map(|name| name.0.as_str()).unwrap_or("");
+        if let Some(tracker) = self.telemetry.pool_key_tracker.as_ref() {
+            let snapshot = tracker.record(
+                upstream_name.0.as_str(),
+                reuse_key_hash(&addr, sni_label, verify_mode, cert),
+            );
+            if let Some(metrics) = &self.telemetry.metrics {
+                metrics.record_pool_key_cardinality(
+                    upstream_name.0.as_str(),
+                    snapshot.cardinality,
+                    snapshot.saturated,
+                );
+            }
+            if POOL_KEY_LOG_COUNTER
+                .fetch_add(1, Ordering::Relaxed)
+                .is_multiple_of(4096)
+            {
+                tracing::debug!(
+                    upstream = %upstream_name.0,
+                    endpoint = %addr,
+                    sni = %sni_label,
+                    verify = ?verify_mode,
+                    "Observed upstream pool reuse key"
+                );
+            }
+        }
+
+        let sni_string = sni_value.map(|name| name.0).unwrap_or_else(String::new);
+        let mut peer = HttpPeer::new(addr, use_tls, sni_string);
+
+        if let Some(mode) = verify_mode {
+            match mode {
+                pavis_core::TlsVerify::Disabled => {
+                    peer.options.verify_hostname = false;
+                    peer.options.verify_cert = false;
+                }
+                pavis_core::TlsVerify::CaOnly => {
+                    peer.options.verify_hostname = false;
+                    peer.options.verify_cert = true;
+                }
+                pavis_core::TlsVerify::Full => {
+                    peer.options.verify_hostname = true;
+                    peer.options.verify_cert = true;
+                }
+                #[allow(unreachable_patterns)]
+                _ => {
+                    peer.options.verify_hostname = false;
+                    peer.options.verify_cert = false;
+                }
+            }
+        }
+
+        if let Some(cert_config) = cert {
+            match cert_config {
+                pavis_core::ClientCert::Disabled => {}
+                pavis_core::ClientCert::Enabled {
+                    cert_path,
+                    key_path,
+                    ..
+                } => {
+                    tracing::debug!(
+                        cert_path = %cert_path.0,
+                        key_path = %key_path.0,
+                        "Configuring client certificate for upstream connection"
+                    );
+                    let client_cert_key = cluster.client_cert_key().ok_or_else(|| {
+                        Error::explain(InternalError, "Client certificate not loaded")
+                    })?;
+                    peer.client_cert_key = Some(client_cert_key);
+                }
+                #[allow(unreachable_patterns)]
+                _ => {}
+            }
+        }
+
+        if let Some(ca_config) = ca {
+            match ca_config {
+                pavis_core::UpstreamCa::System => {
+                    tracing::debug!("Using system CA bundle for upstream TLS verification");
+                }
+                pavis_core::UpstreamCa::File { path } => {
+                    if let Some(ca_bundle) = cluster.ca_bundle() {
+                        tracing::debug!(
+                            upstream = %upstream_name.0,
+                            ca_path = %path.0,
+                            ca_count = ca_bundle.len(),
+                            "Setting custom CA bundle for upstream TLS verification"
+                        );
+                        peer.options.ca = Some(ca_bundle);
+                    } else {
+                        tracing::warn!(
+                            upstream = %upstream_name.0,
+                            ca_path = %path.0,
+                            "CA bundle configured but not loaded in cluster"
+                        );
+                    }
+                }
+                #[allow(unreachable_patterns)]
+                _ => {}
+            }
+        }
+
+        match upstream.protocol {
+            HttpVersion::H1 => peer.options.set_http_version(1, 1),
+            HttpVersion::H2 => peer.options.set_http_version(2, 2),
+            HttpVersion::H2H1 => peer.options.set_http_version(2, 1),
+            #[allow(unreachable_patterns)]
+            _ => peer.options.set_http_version(1, 1),
+        }
+
+        peer.options.idle_timeout = match upstream.pool.idle {
+            pavis_core::IdleTimeout::Disabled => None,
+            pavis_core::IdleTimeout::Enabled(duration) => {
+                Some(Duration::from_millis(duration.0.get() as u64))
+            }
+            #[allow(unreachable_patterns)]
+            _ => None,
+        };
+        peer.options.connection_timeout = match upstream.pool.connect {
+            pavis_core::ConnectTimeout::Disabled => None,
+            pavis_core::ConnectTimeout::Enabled(duration) => {
+                Some(Duration::from_millis(duration.0.get() as u64))
+            }
+            #[allow(unreachable_patterns)]
+            _ => None,
+        };
+        let per_try_timeout = resolve_per_try_timeout(ctx.route_timeout, &ctx.retry_policy);
+        peer.options.read_timeout = per_try_timeout;
+        peer.options.write_timeout = per_try_timeout;
+
+        Ok(peer)
     }
 }

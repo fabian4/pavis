@@ -48,12 +48,11 @@ async fn request_filter_selects_weighted_destination() {
     }];
     let manager =
         Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]).expect("manager");
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(routes).expect("routes")),
-        upstream_manager: manager,
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(routes).expect("routes")),
+        manager,
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,
@@ -80,12 +79,11 @@ async fn request_filter_selects_weighted_destination() {
 #[tokio::test]
 async fn request_filter_returns_404_when_no_route_matches() {
     let manager = Manager::new(&[]).expect("manager");
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
-        upstream_manager: manager,
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+        manager,
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,
@@ -142,12 +140,11 @@ async fn request_filter_applies_rewrite_policy() {
         }],
     }];
     let manager = Manager::new(&[upstream("backend", 1, 8081)]).expect("manager");
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(routes).expect("routes")),
-        upstream_manager: manager,
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(routes).expect("routes")),
+        manager,
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,
@@ -205,12 +202,11 @@ async fn request_filter_skips_selection_when_no_destinations() {
     }];
     let manager =
         Manager::new(&[upstream("blue", 1, 8081), upstream("green", 2, 8082)]).expect("manager");
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(routes).expect("routes")),
-        upstream_manager: manager,
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(routes).expect("routes")),
+        manager,
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,
@@ -370,12 +366,11 @@ async fn request_filter_handles_redirect_action() {
         }],
     }];
 
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(routes).unwrap()),
-        upstream_manager: Manager::new(&[]).expect("manager"),
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(routes).unwrap()),
+        Manager::new(&[]).expect("manager"),
+    );
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
@@ -425,12 +420,11 @@ async fn request_filter_handles_direct_action() {
         }],
     }];
 
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(routes).unwrap()),
-        upstream_manager: Manager::new(&[]).expect("manager"),
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(routes).unwrap()),
+        Manager::new(&[]).expect("manager"),
+    );
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
@@ -481,12 +475,11 @@ async fn request_filter_redirect_with_different_status_codes() {
         }],
     }];
 
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(routes).unwrap()),
-        upstream_manager: Manager::new(&[]).expect("manager"),
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(routes).unwrap()),
+        Manager::new(&[]).expect("manager"),
+    );
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
@@ -536,12 +529,11 @@ async fn request_filter_direct_with_custom_status() {
         }],
     }];
 
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(routes).unwrap()),
-        upstream_manager: Manager::new(&[]).expect("manager"),
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(routes).unwrap()),
+        Manager::new(&[]).expect("manager"),
+    );
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(state)),
         telemetry: test_telemetry(),
@@ -629,12 +621,11 @@ async fn request_filter_applies_rewrite_and_preserves_query() {
         }],
     }];
     let manager = Manager::new(&[upstream("backend", 1, 8081)]).expect("manager");
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(routes).expect("routes")),
-        upstream_manager: manager,
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(routes).expect("routes")),
+        manager,
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,

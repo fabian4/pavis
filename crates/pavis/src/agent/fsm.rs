@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use pavis_core::ConfigVersion;
+
 pub const WAIT_MS: u64 = 30_000;
 pub const REJECT_TTL: Duration = Duration::from_secs(10 * 60);
 const BACKOFF_BASE: Duration = Duration::from_millis(250);
@@ -14,7 +16,7 @@ pub struct Context {
     pub last_rejected_etag: Option<String>,
     pub last_rejected_until: Option<Instant>,
     pub backoff_attempt: u32,
-    pub observed_version: Option<u64>,
+    pub observed_version: Option<ConfigVersion>,
     pub local_lkg_path: PathBuf,
 }
 
@@ -74,7 +76,7 @@ pub enum State {
 #[derive(Debug, Clone)]
 pub struct VerifyingData {
     pub etag: String,
-    pub version: Option<u64>,
+    pub version: Option<ConfigVersion>,
     pub size: Option<u64>,
     pub bytes: Vec<u8>,
 }
@@ -83,7 +85,7 @@ pub struct VerifyingData {
 #[derive(Debug, Clone)]
 pub struct VerifiedUpdate {
     pub etag: String,
-    pub version: Option<u64>,
+    pub version: Option<ConfigVersion>,
     pub size: Option<u64>,
     pub tmp_path: PathBuf,
 }
@@ -92,7 +94,7 @@ pub struct VerifiedUpdate {
 pub enum Response {
     NewArtifact {
         etag: String,
-        version: Option<u64>,
+        version: Option<ConfigVersion>,
         size: Option<u64>,
         bytes: Vec<u8>,
     },
@@ -120,7 +122,7 @@ pub enum Event {
     },
     ApplyOk {
         etag: String,
-        version: Option<u64>,
+        version: Option<ConfigVersion>,
         now: Instant,
     },
     ApplyFail {
@@ -144,7 +146,7 @@ pub enum Effect {
     },
     Verify {
         etag: String,
-        version: Option<u64>,
+        version: Option<ConfigVersion>,
         size: Option<u64>,
         bytes: Vec<u8>,
     },
@@ -166,7 +168,7 @@ pub struct StateSummary {
     pub last_applied_etag: Option<String>,
     pub last_rejected_etag: Option<String>,
     pub backoff_attempt: u32,
-    pub observed_version: Option<u64>,
+    pub observed_version: Option<ConfigVersion>,
     pub local_lkg_path: PathBuf,
 }
 

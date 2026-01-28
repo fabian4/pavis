@@ -6,11 +6,11 @@ use pavis::state::{RuntimeState, RuntimeStateHandle};
 use pavis::upstream::Manager;
 use pavis_core::{
     ConnectTimeout, ConnectionLimit, Discovery, Duration, Endpoint, EndpointAddr, Hostname,
-    HttpVersion, IdleTimeout, LoadBalancer, Pool, PoolQueue, Port, SniName, TlsPolicy,
+    HttpVersion, IdleTimeout, LoadBalancer, Pool, PoolQueue, Port, SniName, TlsPolicy, Upstream,
     UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName, Weight,
 };
 use pingora::prelude::ProxyHttp;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::num::{NonZeroU16, NonZeroU32};
 use std::sync::Arc;
 
@@ -46,12 +46,11 @@ async fn upstream_peer_defaults_sni() {
         .build()
         .expect("upstream");
     let manager = Manager::new(&[upstream_cfg]).expect("manager");
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
-        upstream_manager: manager,
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+        manager,
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,
@@ -103,13 +102,14 @@ async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
         })
         .build()
         .expect("upstream");
-    let manager = Manager::new(&[upstream_cfg]).expect("manager");
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
-        upstream_manager: manager,
-        config_version: None,
-    };
+    let upstreams = vec![upstream_cfg];
+    let manager = Manager::new(&upstreams).expect("manager");
+    materialize_test_upstreams(&manager, &upstreams);
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+        manager,
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,
@@ -133,12 +133,11 @@ async fn upstream_peer_auto_sni_uses_dns_endpoint_host() {
 #[tokio::test]
 async fn upstream_peer_fails_when_no_upstream_in_ctx() {
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[]).expect("manager"),
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            Manager::new(&[]).expect("manager"),
+        ))),
         telemetry: test_telemetry(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -156,12 +155,11 @@ async fn upstream_peer_fails_when_no_upstream_in_ctx() {
 #[tokio::test]
 async fn upstream_peer_fails_when_upstream_not_found() {
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[]).expect("manager"),
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            Manager::new(&[]).expect("manager"),
+        ))),
         telemetry: test_telemetry(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -196,12 +194,11 @@ async fn upstream_peer_fails_when_no_endpoints() {
         .expect("upstream");
     let manager = Manager::new(&[upstream_cfg]).expect("manager");
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: manager,
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            manager,
+        ))),
         telemetry: test_telemetry(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -246,12 +243,11 @@ async fn upstream_peer_returns_503_when_pool_full() {
         .expect("upstream");
     let manager = Manager::new(&[upstream_cfg]).expect("manager");
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: manager,
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            manager,
+        ))),
         telemetry: test_telemetry(),
     };
 
@@ -311,12 +307,11 @@ async fn upstream_peer_returns_503_when_pool_wait_times_out() {
         .expect("upstream");
     let manager = Manager::new(&[upstream_cfg]).expect("manager");
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: manager,
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            manager,
+        ))),
         telemetry: test_telemetry(),
     };
 
@@ -351,17 +346,16 @@ async fn upstream_peer_returns_503_when_pool_wait_times_out() {
 async fn upstream_peer_errors_without_snapshot() {
     let upstream_cfg = upstream("backend", 1, 8080);
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[upstream_cfg]).expect("manager"),
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            Manager::new(&[upstream_cfg]).expect("manager"),
+        ))),
         telemetry: test_telemetry(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
-    ctx.req_id = "req-missing".parse().unwrap();
+    ctx.set_request_id("req-missing".parse().unwrap());
     ctx.upstream_name = Some(UpstreamName("backend".to_string()));
     ctx.route_pattern = pavis::proxy::context::RoutePattern::Matched {
         pattern: Arc::from("/missing"),
@@ -380,23 +374,21 @@ async fn upstream_peer_errors_without_snapshot() {
 
 #[tokio::test]
 async fn upstream_peer_uses_pinned_state_over_latest() {
-    let proxy_state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-        upstream_manager: Manager::new(&[upstream("new", 1, 8080)]).expect("manager"),
-        config_version: None,
-    };
+    let proxy_state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+        Manager::new(&[upstream("new", 1, 8080)]).expect("manager"),
+    );
     let proxy = Proxy {
         state: Arc::new(RuntimeStateHandle::new(proxy_state)),
         telemetry: test_telemetry(),
     };
 
-    let pinned_state = Arc::new(RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-        upstream_manager: Manager::new(&[]).expect("manager"),
-        config_version: None,
-    });
+    let pinned_state = Arc::new(RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+        Manager::new(&[]).expect("manager"),
+    ));
 
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
@@ -435,12 +427,11 @@ async fn test_upstream_peer_tls_verify_variants() {
         }
 
         let proxy = Proxy {
-            state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-                config: RuntimeState::default().config,
-                router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-                upstream_manager: Manager::new(&[u]).expect("manager"),
-                config_version: None,
-            })),
+            state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+                RuntimeState::default().config,
+                Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+                Manager::new(&[u]).expect("manager"),
+            ))),
             telemetry: test_telemetry(),
         };
 
@@ -469,12 +460,11 @@ async fn upstream_peer_sets_client_cert_key() {
     let upstream_cfg = mtls_upstream("secure", 1, 8443, cert_path, key_path);
     let manager = Manager::new(&[upstream_cfg]).expect("manager");
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
-            upstream_manager: manager,
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+            manager,
+        ))),
         telemetry: test_telemetry(),
     };
 
@@ -511,14 +501,15 @@ async fn upstream_peer_dns_supported() {
         })
         .build()
         .expect("upstream");
-    let manager = Manager::new(&[upstream_cfg]).expect("manager");
+    let upstreams = vec![upstream_cfg];
+    let manager = Manager::new(&upstreams).expect("manager");
+    materialize_test_upstreams(&manager, &upstreams);
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: manager,
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            manager,
+        ))),
         telemetry: test_telemetry(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -545,12 +536,11 @@ async fn upstream_peer_tls_and_pool_variants() {
     upstream_cfg.pool.connect = ConnectTimeout::Enabled(Duration(NonZeroU32::new(2000).unwrap()));
 
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: Manager::new(&[upstream_cfg]).expect("manager"),
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            Manager::new(&[upstream_cfg]).expect("manager"),
+        ))),
         telemetry: test_telemetry(),
     };
     let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
@@ -605,12 +595,11 @@ async fn upstream_peer_sni_fallback_warning() {
     let manager = Manager::new(&[upstream_cfg]).expect("manager");
 
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: manager,
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            manager,
+        ))),
         telemetry: test_telemetry(),
     };
 
@@ -658,12 +647,11 @@ async fn upstream_peer_sni_override_prevents_fallback() {
     let manager = Manager::new(&[upstream_cfg]).expect("manager");
 
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: manager,
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            manager,
+        ))),
         telemetry: test_telemetry(),
     };
 
@@ -713,12 +701,11 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
     let manager = Manager::new(&[upstream_cfg]).expect("manager");
 
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(vec![]).unwrap()),
-            upstream_manager: manager,
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(vec![]).unwrap()),
+            manager,
+        ))),
         telemetry: test_telemetry(),
     };
 
@@ -730,4 +717,36 @@ async fn upstream_peer_explicit_sni_prevents_fallback() {
     let peer = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
     assert!(peer.is_tls());
     assert_eq!(peer.sni, "explicit.com");
+}
+
+fn materialize_test_upstreams(manager: &Manager, upstreams: &[Upstream]) {
+    for upstream in upstreams {
+        if let Some(cluster) = manager.get(upstream.name.0.as_str()) {
+            let endpoints = upstream
+                .endpoints
+                .iter()
+                .flat_map(resolve_endpoint_for_tests)
+                .collect::<Vec<_>>();
+            cluster.update_endpoints(endpoints);
+        }
+    }
+}
+
+fn resolve_endpoint_for_tests(endpoint: &Endpoint) -> Vec<Endpoint> {
+    match &endpoint.address {
+        EndpointAddr::Ip { .. } => vec![endpoint.clone()],
+        EndpointAddr::Dns { host, port } => (host.0.as_str(), port.0.get())
+            .to_socket_addrs()
+            .expect("failed to resolve test DNS endpoint")
+            .map(|addr| Endpoint {
+                address: EndpointAddr::Ip {
+                    address: addr.ip(),
+                    port: *port,
+                },
+                weight: endpoint.weight,
+            })
+            .collect(),
+        #[allow(unreachable_patterns)]
+        _ => vec![endpoint.clone()],
+    }
 }

@@ -1,7 +1,8 @@
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::num::{NonZeroU16, NonZeroU32};
+use std::fmt;
+use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
 
 #[derive(
     Archive,
@@ -204,6 +205,40 @@ pub struct Path(pub String);
     Hash,
 )]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[rkyv(compare(PartialEq))]
+pub struct SpiffeId(pub String);
+
+impl SpiffeId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SpiffeId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<SpiffeId> for String {
+    fn from(value: SpiffeId) -> Self {
+        value.0
+    }
+}
+
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[rkyv(compare(PartialEq))]
 pub struct ServiceName(pub String);
 
@@ -314,6 +349,34 @@ pub struct Port(pub NonZeroU16);
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[rkyv(compare(PartialEq))]
 pub struct Weight(pub NonZeroU16);
+
+#[derive(
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[rkyv(compare(PartialEq))]
+pub struct ConfigVersion(pub NonZeroU64);
+
+impl ConfigVersion {
+    pub fn get(&self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for ConfigVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(
     Archive,

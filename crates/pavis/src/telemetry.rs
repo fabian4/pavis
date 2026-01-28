@@ -16,7 +16,7 @@ pub mod tracing;
 
 pub struct Telemetry {
     pub access_log: Arc<access_log::AccessLog>,
-    pub metrics: Option<Arc<metrics::MetricsHandle>>,
+    pub metrics: Option<Arc<metrics::MetricsRegistry>>,
     pub pool_key_tracker: Option<Arc<metrics::PoolKeyCardinalityTracker>>,
     // Tracing runtime is initialized asynchronously in TracingService.
     pub tracing: Arc<OnceLock<tracing::TracingRuntime>>,
@@ -29,7 +29,7 @@ impl Telemetry {
     ) -> (
         Self,
         access_log::AccessLogWorker,
-        Option<metrics::MetricsWorker>,
+        Option<metrics::PrometheusEndpoint>,
         tracing::TracingService,
     ) {
         let (access_log, access_log_worker) = access_log::AccessLog::new(&config.access_log);
@@ -37,7 +37,7 @@ impl Telemetry {
         let (metrics_worker, metrics_handle) = match &config.metrics {
             pavis_core::Metrics::Disabled => (None, None),
             pavis_core::Metrics::Enabled { addr } => {
-                let (worker, handle) = metrics::MetricsWorker::new(*addr);
+                let (worker, handle) = metrics::PrometheusEndpoint::new(*addr);
                 (Some(worker), handle.map(Arc::new))
             }
             #[allow(unreachable_patterns)]

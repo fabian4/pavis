@@ -7,7 +7,7 @@
 //! - Idempotency constraint enforcement
 //! - Retry metrics and observability
 
-use crate::telemetry::metrics::MetricsHandle;
+use crate::telemetry::metrics::MetricsRegistry;
 use pavis_core::{BackoffStrategy, BodyReplayability, MethodIdempotency, RetryPolicy, RetryReason};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,7 +25,7 @@ pub struct RetryContext {
     /// Retry policy
     pub policy: RetryPolicy,
     /// Metrics handle for recording retry stats
-    pub metrics: Option<Arc<MetricsHandle>>,
+    pub metrics: Option<Arc<MetricsRegistry>>,
     /// Upstream name for metrics
     pub upstream_name: String,
 }
@@ -35,7 +35,7 @@ impl RetryContext {
     pub fn new(
         policy: RetryPolicy,
         request_timeout_ms: u64,
-        metrics: Option<Arc<MetricsHandle>>,
+        metrics: Option<Arc<MetricsRegistry>>,
         upstream_name: String,
     ) -> Self {
         let global_deadline = Instant::now() + Duration::from_millis(request_timeout_ms);
@@ -213,7 +213,7 @@ impl BufferedBody {
     pub fn new(
         bytes: Vec<u8>,
         max_buffer_size: u64,
-        metrics: Option<Arc<MetricsHandle>>,
+        metrics: Option<Arc<MetricsRegistry>>,
         upstream_name: &str,
     ) -> Self {
         let replayability = if bytes.is_empty() {

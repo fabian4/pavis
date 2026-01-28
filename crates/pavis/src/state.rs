@@ -1,39 +1,103 @@
 use crate::regex_validator::validate_and_compile_regexes;
 use crate::router::Router;
 use crate::upstream::Manager;
+use anyhow::Context;
 use arc_swap::ArcSwap;
 use pavis_core::{
-    AccessLogPolicy, ListenerBuilder, ListenerName, Metrics, RuntimeConfigBuilder, ServiceName,
-    Telemetry, ValidatedRuntimeConfig, WorkerCount,
+    AccessLogPolicy, ConfigVersion, Discovery, Endpoint, EndpointAddr, Hostname, ListenerBuilder,
+    ListenerName, Metrics, Port, RuntimeConfigBuilder, ServiceName, Telemetry, Upstream,
+    ValidatedRuntimeConfig, WorkerCount,
 };
+use std::collections::HashMap;
+use std::net::{SocketAddr, ToSocketAddrs};
+use std::ops::Deref;
 use std::sync::Arc;
+use tracing::warn;
 
-pub struct RuntimeState {
-    pub config: ValidatedRuntimeConfig,
+pub struct MaterializedRuntimeConfig {
     pub router: Arc<Router>,
     pub upstream_manager: Manager,
-    pub config_version: Option<u64>,
 }
 
-impl RuntimeState {
-    pub fn from_config(config: &ValidatedRuntimeConfig) -> anyhow::Result<Self> {
-        // P2: Enforce regex limits and pre-compile patterns
+impl MaterializedRuntimeConfig {
+    pub fn build(config: &ValidatedRuntimeConfig) -> anyhow::Result<Self> {
         let regex_limits = config.features.regex_limits.clone();
         let regex_cache = validate_and_compile_regexes(config, &regex_limits)
             .map_err(|e| anyhow::anyhow!("Regex validation failed: {}", e))?;
-
         let router = Arc::new(Router::with_regex(
             config.routes.clone(),
             regex_cache,
             regex_limits,
         )?);
+        let resolved_endpoints = materialize_upstreams(&config.upstreams)?;
         let upstream_manager = Manager::new(&config.upstreams)?;
+        for (name, endpoints) in &resolved_endpoints {
+            if let Some(cluster) = upstream_manager.get(name) {
+                cluster.update_endpoints(endpoints.clone());
+            }
+        }
         Ok(Self {
-            config: config.clone(),
             router,
             upstream_manager,
+        })
+    }
+
+    pub fn from_components(router: Arc<Router>, upstream_manager: Manager) -> Self {
+        Self {
+            router,
+            upstream_manager,
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            router: Arc::new(Router::new(vec![]).expect("empty router")),
+            upstream_manager: Manager::new(&[]).expect("empty upstream manager"),
+        }
+    }
+}
+
+pub struct RuntimeState {
+    pub config: ValidatedRuntimeConfig,
+    materialized: Arc<MaterializedRuntimeConfig>,
+    pub config_version: Option<ConfigVersion>,
+}
+
+impl RuntimeState {
+    pub fn from_config(config: &ValidatedRuntimeConfig) -> anyhow::Result<Self> {
+        let materialized = MaterializedRuntimeConfig::build(config)?;
+        Ok(Self {
+            config: config.clone(),
+            materialized: Arc::new(materialized),
             config_version: None,
         })
+    }
+
+    pub fn with_components(
+        config: ValidatedRuntimeConfig,
+        router: Arc<Router>,
+        upstream_manager: Manager,
+    ) -> Self {
+        Self {
+            config,
+            materialized: Arc::new(MaterializedRuntimeConfig::from_components(
+                router,
+                upstream_manager,
+            )),
+            config_version: None,
+        }
+    }
+
+    pub fn materialized(&self) -> &MaterializedRuntimeConfig {
+        &self.materialized
+    }
+}
+
+impl Deref for RuntimeState {
+    type Target = MaterializedRuntimeConfig;
+
+    fn deref(&self) -> &Self::Target {
+        &self.materialized
     }
 }
 
@@ -65,8 +129,7 @@ impl Default for RuntimeState {
         let config = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(empty_config) };
         Self {
             config,
-            router: Arc::new(Router::new(vec![]).expect("empty router")),
-            upstream_manager: Manager::new(&[]).expect("empty upstream manager"),
+            materialized: Arc::new(MaterializedRuntimeConfig::empty()),
             config_version: None,
         }
     }
@@ -90,4 +153,100 @@ impl RuntimeStateHandle {
     pub fn store(&self, state: RuntimeState) {
         self.inner.store(Arc::new(state));
     }
+}
+
+fn materialize_upstreams(upstreams: &[Upstream]) -> anyhow::Result<HashMap<String, Vec<Endpoint>>> {
+    let mut resolved = HashMap::new();
+    for upstream in upstreams {
+        let endpoints = match upstream.discovery {
+            Discovery::Logical => materialize_logical_upstream(upstream)?,
+            _ => materialize_all_endpoints(upstream)?,
+        };
+        resolved.insert(upstream.name.0.clone(), endpoints);
+    }
+    Ok(resolved)
+}
+
+fn materialize_logical_upstream(upstream: &Upstream) -> anyhow::Result<Vec<Endpoint>> {
+    if let Some(ip_endpoint) = upstream
+        .endpoints
+        .iter()
+        .find(|endpoint| matches!(endpoint.address, EndpointAddr::Ip { .. }))
+    {
+        return Ok(vec![ip_endpoint.clone()]);
+    }
+
+    let dns_endpoint = upstream
+        .endpoints
+        .iter()
+        .find(|endpoint| matches!(endpoint.address, EndpointAddr::Dns { .. }))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Logical DNS upstream {} must define at least one DNS endpoint",
+                upstream.name.0
+            )
+        })?;
+
+    let mut resolved = materialize_endpoint(dns_endpoint)?;
+    if resolved.is_empty() {
+        anyhow::bail!(
+            "DNS resolution returned no addresses for logical upstream {}",
+            upstream.name.0
+        );
+    }
+    if resolved.len() > 1 {
+        warn!(
+            upstream = %upstream.name.0,
+            resolved = resolved.len(),
+            "Logical DNS upstream resolved to multiple addresses; selecting the first"
+        );
+    }
+    Ok(vec![resolved.remove(0)])
+}
+
+fn materialize_all_endpoints(upstream: &Upstream) -> anyhow::Result<Vec<Endpoint>> {
+    let mut resolved = Vec::new();
+    for endpoint in &upstream.endpoints {
+        resolved.extend(materialize_endpoint(endpoint)?);
+    }
+    if resolved.is_empty() {
+        anyhow::bail!("Upstream {} has no resolvable endpoints", upstream.name.0);
+    }
+    Ok(resolved)
+}
+
+fn materialize_endpoint(endpoint: &Endpoint) -> anyhow::Result<Vec<Endpoint>> {
+    match &endpoint.address {
+        EndpointAddr::Ip { .. } => Ok(vec![endpoint.clone()]),
+        EndpointAddr::Dns { host, port } => {
+            let addresses = resolve_dns_once(host, *port)?;
+            Ok(addresses
+                .into_iter()
+                .map(|addr| Endpoint {
+                    address: EndpointAddr::Ip {
+                        address: addr.ip(),
+                        port: *port,
+                    },
+                    weight: endpoint.weight,
+                })
+                .collect())
+        }
+        #[allow(unreachable_patterns)]
+        _ => Ok(vec![endpoint.clone()]),
+    }
+}
+
+fn resolve_dns_once(host: &Hostname, port: Port) -> anyhow::Result<Vec<SocketAddr>> {
+    let addrs: Vec<SocketAddr> = (host.0.as_str(), port.0.get())
+        .to_socket_addrs()
+        .with_context(|| format!("DNS resolution failed for {}:{}", host.0, port.0.get()))?
+        .collect();
+    if addrs.is_empty() {
+        anyhow::bail!(
+            "DNS resolution returned no addresses for {}:{}",
+            host.0,
+            port.0.get()
+        );
+    }
+    Ok(addrs)
 }

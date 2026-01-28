@@ -1,6 +1,6 @@
 use crate::runtime::HeadersPolicy;
 use crate::runtime::retry::RetryPolicy;
-use crate::runtime::types::{Host, Hostname, Path, Timeout, UpstreamName, Weight};
+use crate::runtime::types::{Host, Hostname, Path, SpiffeId, Timeout, UpstreamName, Weight};
 use compact_str::CompactString;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
@@ -33,7 +33,7 @@ pub struct Route {
 #[non_exhaustive]
 pub enum Principal {
     Any,
-    Authenticated { spiffe: String },
+    Authenticated { spiffe: SpiffeId },
     Prefix { prefix: String },
 }
 
@@ -414,7 +414,7 @@ mod tests {
     fn test_principal_variants() {
         let p1 = Principal::Any;
         let p2 = Principal::Authenticated {
-            spiffe: "spiffe://example.org/ns/foo/sa/bar".to_string(),
+            spiffe: SpiffeId("spiffe://example.org/ns/foo/sa/bar".to_string()),
         };
         let p3 = Principal::Prefix {
             prefix: "admin-".to_string(),

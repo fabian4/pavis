@@ -43,7 +43,7 @@ Expose the internal state of the connection pool to differentiate between "pool 
     - `pavis_upstream_pool_key_cardinality_approx` (Gauge, labeled by `upstream`)
     - `pavis_upstream_connection_reused_total` (Counter, labeled by `upstream`)
     - `pavis_upstream_connection_new_total` (Counter, labeled by `upstream`, `reason`)
-  - Added `MetricsHandle` helpers:
+  - Added `MetricsRegistry` helpers:
     - `record_pool_key_cardinality(upstream, cardinality, saturated)`
     - `record_connection_reused(upstream)`
     - `record_connection_new(upstream, reason)` (currently `reason="new_connection"`)

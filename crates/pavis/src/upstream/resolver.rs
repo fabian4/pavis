@@ -382,13 +382,11 @@ mod tests {
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
@@ -404,13 +402,11 @@ mod tests {
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
@@ -426,13 +422,11 @@ mod tests {
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
@@ -463,13 +457,11 @@ mod tests {
 
         let manager = crate::upstream::Manager::new(&[config]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
 
         let resolver =
@@ -491,13 +483,11 @@ mod tests {
     async fn test_resolve_dns_success() {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let _resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
         // Note: this relies on system DNS, might be flaky if no network
@@ -512,13 +502,11 @@ mod tests {
     async fn test_resolve_dns_failure() {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
         // Invalid hostname should fail fast without network dependency.
@@ -534,13 +522,11 @@ mod tests {
         }
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let _resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
         // SAFETY: test is single-threaded and controls env var scope.
@@ -573,13 +559,11 @@ mod tests {
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
@@ -593,13 +577,11 @@ mod tests {
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
         let res = resolve_upstream(
@@ -619,13 +601,11 @@ mod tests {
 
         let manager = crate::upstream::Manager::new(&[config]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
 
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
@@ -647,13 +627,11 @@ mod tests {
 
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
 
@@ -669,13 +647,11 @@ mod tests {
     async fn test_upstream_resolver_service_lifecycle() {
         let manager = crate::upstream::Manager::new(&[]).expect("manager");
         let state = Arc::new(crate::state::RuntimeStateHandle::new(
-            crate::state::RuntimeState {
-                config: crate::state::RuntimeState::default().config,
-                router: Arc::new(crate::router::Router::new(vec![]).unwrap()),
-                upstream_manager: manager,
-
-                config_version: None,
-            },
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
         ));
         let mut resolver =
             UpstreamResolver::new(state, Duration::from_millis(10)).expect("resolver");

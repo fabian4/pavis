@@ -24,11 +24,17 @@ The runtime performs only the following environment interactions before executin
 2. `pavis_pvs::verify` (magic bytes, version gate, checksum, archive shape).
 3. Socket binds for listeners/admin/metrics; failure aborts startup.
 4. TLS certificate/private key readability when TLS listeners exist.
+5. `BootstrapPlan::build` materializes telemetry, resolvers, admin/metrics, and listener services (via `listener::tls::TlsRuntime`) before `Server::run_forever` executes, so any dependency failure aborts the boot atomically.
+6. `RuntimeState::from_config` resolves every DNS endpoint exactly once per reload and stores the resolved sockets inside the upstream manager so request threads never perform DNS.
+7. `ClientIdentityMaterializer` loads listener + upstream TLS assets once per reload and shares the resulting identities/CA bundles with both the proxy and health monitor, so probes never touch PEM files after startup.
+8. `UpstreamHealthMonitor` converts runtime config into `HealthProbePlan` structs. A scheduler enforces per-upstream intervals and an executor drives probes via `tokio::spawn`, guaranteeing that disabled checks schedule nothing and interval math never drifts under load.
 
 If any step fails, execution halts and the prior Last Known Good (LKG) remains untouched.
 
 ## Reload / Rollback Semantics
 - Reload attempts are serialized. A new artifact is staged under `state::loader`, validated, and only then swapped into the live router.
+- `MaterializedRuntimeConfig` now captures the router + upstream managers as a unit so telemetry, admin, and proxy threads always see a coherent view of the data plane.
+- Config versions are represented by the `ConfigVersion` newtype; `/stats` and `pavis_runtime_config_version` always use the same stringified label once the runtime accepts a version.
 - If validation fails, the LKG pointer is not advanced and traffic continues on the previous snapshot.
 - Rollback is simply "publish the older artifact"; the runtime treats it as any other reload and does not special-case versions.
 
@@ -50,6 +56,7 @@ If any step fails, execution halts and the prior Last Known Good (LKG) remains u
 ## Telemetry Surfaces
 - Admin `/health` returns `200` when at least one listener + router is live.
 - Admin `/stats` exposes `config_version`, listener counts, and uptime (see `crates/pavis/src/admin.rs`).
+- Metrics port is served by `telemetry::metrics::PrometheusEndpoint`, which uses a pluggable transport (Tokio TCP in production) so tests can stub the listener. If the exporter fails to install or the bind fails, startup aborts before any traffic flows.
 - Metrics port exports:
   - `pavis_runtime_config_version` (gauge with `version` label)
   - `pavis_runtime_reload_count_total` (counter)

@@ -1,341 +1,26 @@
+use super::client_identity::ClientIdentityMaterials;
 use super::load_balance;
 use arc_swap::ArcSwap;
-use metrics::{counter, gauge};
 use pavis_core::{
     ActiveHealthCheck, CircuitBreakerPolicy, Endpoint, EndpointAddr, OutlierDetectionPolicy,
     Upstream,
 };
 use pingora::protocols::tls::CaType;
 use pingora::utils::tls::CertKey;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tokio::time::timeout;
 
-#[repr(align(64))]
-#[derive(Debug)]
-pub(crate) struct AlignedCounter(pub AtomicUsize);
+mod health;
+mod pool;
+mod state;
+mod tls;
 
-#[derive(Debug)]
-struct ClusterState {
-    endpoints: Vec<Endpoint>,
-    cumulative_weights: Vec<u32>,
-    total_weight: u32,
-}
+use health::HealthState;
+use pool::PoolController;
+use state::{AlignedCounter, ClusterState, build_state_parts};
+use tls::TlsMaterials;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct EndpointKey(String);
-
-impl EndpointKey {
-    fn from_endpoint(endpoint: &Endpoint) -> Self {
-        Self::from_addr(&endpoint.address)
-    }
-
-    fn from_addr(addr: &EndpointAddr) -> Self {
-        match addr {
-            EndpointAddr::Ip { address, port } => {
-                EndpointKey(format!("{}:{}", address, port.0.get()))
-            }
-            EndpointAddr::Dns { host, port } => EndpointKey(format!("{}:{}", host.0, port.0.get())),
-            #[allow(unreachable_patterns)]
-            _ => EndpointKey("unknown".to_string()),
-        }
-    }
-}
-
-const METRIC_POOL_QUEUE_CAPACITY: &str = "pavis_upstream_pool_queue_capacity";
-const METRIC_POOL_QUEUE_DEPTH: &str = "pavis_upstream_pool_queue_depth";
-const METRIC_POOL_SIZE: &str = "pavis_upstream_pool_size";
-const METRIC_POOL_REJECTIONS: &str = "pavis_upstream_pool_rejections_total";
-const REASON_QUEUE_FULL: &str = "queue_full";
-const REASON_QUEUE_TIMEOUT: &str = "queue_timeout";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ActiveHealth {
-    Healthy,
-    Unhealthy,
-}
-
-#[derive(Debug, Clone)]
-struct EndpointStatus {
-    consecutive_errors: u32,
-    ejected_until: Option<Instant>,
-    active_health: ActiveHealth,
-}
-
-impl Default for EndpointStatus {
-    fn default() -> Self {
-        Self {
-            consecutive_errors: 0,
-            ejected_until: None,
-            active_health: ActiveHealth::Healthy,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum PoolRejection {
-    QueueFull,
-    QueueTimeout,
-    Closed,
-}
-
-#[derive(Debug)]
-struct PoolController {
-    upstream: Arc<str>,
-    limiter: Arc<PoolLimiter>,
-}
-
-/// Pool limiter with semaphore-based connection gating.
-/// All pools are now limited per P0 plan (no unlimited variant).
-#[derive(Debug)]
-struct PoolLimiter {
-    permits: Arc<Semaphore>,
-    queue_capacity: u32,
-    queue_timeout: Duration,
-    queued: AtomicU32,
-    active_conns: AtomicU32,
-}
-
-/// A wrapper around OwnedSemaphorePermit that tracks the pool size metric on drop.
-#[derive(Debug)]
-pub struct PoolPermit {
-    _permit: OwnedSemaphorePermit,
-    limiter: Arc<PoolLimiter>,
-    upstream: Arc<str>,
-}
-
-impl Drop for PoolPermit {
-    fn drop(&mut self) {
-        self.limiter.finish_pool_use(self.upstream.as_ref());
-    }
-}
-
-impl PoolController {
-    fn new(config: &Upstream) -> Self {
-        let upstream = Arc::<str>::from(config.name.0.clone());
-        record_queue_capacity_metric(upstream.as_ref(), config.pool.queue.capacity);
-        record_queue_depth_metric(upstream.as_ref(), 0);
-        record_pool_size_metric(upstream.as_ref(), 0);
-
-        let limit = config.pool.max.0;
-        let permits = Arc::new(Semaphore::new(limit.get() as usize));
-        let limiter = Arc::new(PoolLimiter {
-            permits,
-            queue_capacity: config.pool.queue.capacity,
-            queue_timeout: Duration::from_millis(config.pool.queue.timeout_ms as u64),
-            queued: AtomicU32::new(0),
-            active_conns: AtomicU32::new(0),
-        });
-
-        Self { upstream, limiter }
-    }
-
-    async fn acquire(&self) -> Result<PoolPermit, PoolRejection> {
-        let permit = self.limiter.acquire(self.upstream.as_ref()).await?;
-        Ok(PoolPermit {
-            _permit: permit,
-            limiter: self.limiter.clone(),
-            upstream: self.upstream.clone(),
-        })
-    }
-
-    fn record_rejection(upstream: &str, reason: &'static str) {
-        let upstream = upstream.to_string();
-        counter!(METRIC_POOL_REJECTIONS, "upstream" => upstream, "reason" => reason).increment(1);
-    }
-}
-
-impl PoolLimiter {
-    async fn acquire(&self, upstream: &str) -> Result<OwnedSemaphorePermit, PoolRejection> {
-        if let Ok(permit) = self.permits.clone().try_acquire_owned() {
-            self.start_pool_use(upstream);
-            return Ok(permit);
-        }
-
-        if self.queue_capacity == 0 {
-            PoolController::record_rejection(upstream, REASON_QUEUE_FULL);
-            return Err(PoolRejection::QueueFull);
-        }
-
-        if self.queue_timeout.is_zero() {
-            PoolController::record_rejection(upstream, REASON_QUEUE_TIMEOUT);
-            return Err(PoolRejection::QueueTimeout);
-        }
-
-        let queued_before = self.queued.fetch_add(1, Ordering::SeqCst);
-        if queued_before >= self.queue_capacity {
-            self.queued.fetch_sub(1, Ordering::SeqCst);
-            PoolController::record_rejection(upstream, REASON_QUEUE_FULL);
-            return Err(PoolRejection::QueueFull);
-        }
-        record_queue_depth_metric(upstream, queued_before + 1);
-
-        let result = timeout(self.queue_timeout, self.permits.clone().acquire_owned()).await;
-        match result {
-            Ok(Ok(permit)) => {
-                self.finish_queue_wait(upstream);
-                self.start_pool_use(upstream);
-                Ok(permit)
-            }
-            Ok(Err(_)) => {
-                self.finish_queue_wait(upstream);
-                Err(PoolRejection::Closed)
-            }
-            Err(_) => {
-                self.finish_queue_wait(upstream);
-                PoolController::record_rejection(upstream, REASON_QUEUE_TIMEOUT);
-                Err(PoolRejection::QueueTimeout)
-            }
-        }
-    }
-
-    fn start_pool_use(&self, upstream: &str) {
-        let active = self.active_conns.fetch_add(1, Ordering::SeqCst) + 1;
-        record_pool_size_metric(upstream, active);
-    }
-
-    fn finish_pool_use(&self, upstream: &str) {
-        let active = self
-            .active_conns
-            .fetch_sub(1, Ordering::SeqCst)
-            .saturating_sub(1);
-        record_pool_size_metric(upstream, active);
-    }
-
-    fn finish_queue_wait(&self, upstream: &str) {
-        let remaining = self.queued.fetch_sub(1, Ordering::SeqCst).saturating_sub(1);
-        record_queue_depth_metric(upstream, remaining);
-    }
-}
-
-fn record_queue_capacity_metric(upstream: &str, capacity: u32) {
-    let upstream = upstream.to_string();
-    gauge!(METRIC_POOL_QUEUE_CAPACITY, "upstream" => upstream).set(capacity as f64);
-}
-
-fn record_queue_depth_metric(upstream: &str, depth: u32) {
-    let upstream = upstream.to_string();
-    gauge!(METRIC_POOL_QUEUE_DEPTH, "upstream" => upstream).set(depth as f64);
-}
-
-fn record_pool_size_metric(upstream: &str, size: u32) {
-    let upstream = upstream.to_string();
-    gauge!(METRIC_POOL_SIZE, "upstream" => upstream).set(size as f64);
-}
-
-#[derive(Debug)]
-struct HealthState {
-    endpoints: Vec<Endpoint>,
-    statuses: HashMap<EndpointKey, EndpointStatus>,
-}
-
-impl HealthState {
-    fn new(endpoints: Vec<Endpoint>) -> Self {
-        let statuses = endpoints
-            .iter()
-            .map(|ep| (EndpointKey::from_endpoint(ep), EndpointStatus::default()))
-            .collect();
-        Self {
-            endpoints,
-            statuses,
-        }
-    }
-
-    fn update_endpoints(&mut self, endpoints: Vec<Endpoint>) {
-        let mut statuses = HashMap::new();
-        for endpoint in &endpoints {
-            let key = EndpointKey::from_endpoint(endpoint);
-            let status = self.statuses.remove(&key).unwrap_or_default();
-            statuses.insert(key, status);
-        }
-        self.endpoints = endpoints;
-        self.statuses = statuses;
-    }
-
-    fn mark_active_health(&mut self, endpoint: &EndpointAddr, healthy: bool) -> bool {
-        let key = EndpointKey::from_addr(endpoint);
-        if let Some(status) = self.statuses.get_mut(&key) {
-            let next = if healthy {
-                ActiveHealth::Healthy
-            } else {
-                ActiveHealth::Unhealthy
-            };
-            if status.active_health != next {
-                status.active_health = next;
-                return true;
-            }
-        }
-        false
-    }
-
-    fn record_success(&mut self, endpoint: &EndpointAddr) -> bool {
-        let key = EndpointKey::from_addr(endpoint);
-        if let Some(status) = self.statuses.get_mut(&key)
-            && status.consecutive_errors != 0
-        {
-            status.consecutive_errors = 0;
-            return true;
-        }
-        false
-    }
-
-    fn record_failure(
-        &mut self,
-        endpoint: &EndpointAddr,
-        threshold: u32,
-        eject_for: std::time::Duration,
-    ) -> bool {
-        let key = EndpointKey::from_addr(endpoint);
-        if let Some(status) = self.statuses.get_mut(&key) {
-            status.consecutive_errors = status.consecutive_errors.saturating_add(1);
-            if status.consecutive_errors >= threshold && status.ejected_until.is_none() {
-                status.consecutive_errors = 0;
-                status.ejected_until = Some(Instant::now() + eject_for);
-                return true;
-            }
-        }
-        false
-    }
-
-    fn clear_expired_ejections(&mut self) -> bool {
-        let now = Instant::now();
-        let mut changed = false;
-        for status in self.statuses.values_mut() {
-            if let Some(until) = status.ejected_until
-                && now >= until
-            {
-                status.ejected_until = None;
-                status.consecutive_errors = 0;
-                changed = true;
-            }
-        }
-        changed
-    }
-
-    fn eligible_endpoints(&self) -> Vec<Endpoint> {
-        let now = Instant::now();
-        self.endpoints
-            .iter()
-            .filter(|ep| {
-                let key = EndpointKey::from_endpoint(ep);
-                self.statuses
-                    .get(&key)
-                    .map(|status| {
-                        status.active_health == ActiveHealth::Healthy
-                            && status
-                                .ejected_until
-                                .map(|until| now >= until)
-                                .unwrap_or(true)
-                    })
-                    .unwrap_or(true)
-            })
-            .cloned()
-            .collect()
-    }
-}
+pub use pool::{PoolPermit, PoolRejection};
 
 #[derive(Debug)]
 enum CircuitBreaker {
@@ -361,26 +46,26 @@ pub enum UpstreamOutcome {
 #[derive(Debug)]
 pub struct Cluster {
     pub(crate) config: Upstream,
-    // Co-located state
     pub(crate) rr_counter: AlignedCounter,
     state: ArcSwap<ClusterState>,
     health: Mutex<HealthState>,
     pool: PoolController,
     breaker: CircuitBreaker,
-    client_cert_key: Option<Arc<CertKey>>,
-    ca_bundle: Option<Arc<CaType>>,
+    tls: TlsMaterials,
 }
 
 impl Cluster {
     pub fn new(config: Upstream) -> Self {
-        Self::new_with_client_cert(config, None, None)
+        Self::new_with_tls_materials(config, ClientIdentityMaterials::default())
     }
 
-    pub fn new_with_client_cert(
-        config: Upstream,
-        client_cert_key: Option<Arc<CertKey>>,
-        ca_bundle: Option<Arc<CaType>>,
-    ) -> Self {
+    pub fn new_with_tls_materials(config: Upstream, materials: ClientIdentityMaterials) -> Self {
+        let ClientIdentityMaterials {
+            client_cert_key,
+            ca_bundle,
+            health_identity,
+            health_root_certificates,
+        } = materials;
         let health = HealthState::new(config.endpoints.clone());
         let eligible = health.eligible_endpoints();
         let (endpoints, cumulative_weights, total_weight) = build_state_parts(eligible);
@@ -404,24 +89,37 @@ impl Cluster {
             #[allow(unreachable_patterns)]
             _ => CircuitBreaker::Disabled,
         };
+
         Self {
             config,
-            rr_counter: AlignedCounter(AtomicUsize::new(0)),
+            rr_counter: AlignedCounter(std::sync::atomic::AtomicUsize::new(0)),
             state: ArcSwap::from_pointee(state),
             health: Mutex::new(health),
             pool,
             breaker,
-            client_cert_key,
-            ca_bundle,
+            tls: TlsMaterials::new(
+                client_cert_key,
+                ca_bundle,
+                health_identity,
+                health_root_certificates,
+            ),
         }
     }
 
     pub fn client_cert_key(&self) -> Option<Arc<CertKey>> {
-        self.client_cert_key.clone()
+        self.tls.client_cert_key()
     }
 
     pub fn ca_bundle(&self) -> Option<Arc<CaType>> {
-        self.ca_bundle.clone()
+        self.tls.ca_bundle()
+    }
+
+    pub fn health_identity(&self) -> Option<Arc<reqwest::Identity>> {
+        self.tls.health_identity()
+    }
+
+    pub fn health_root_certificates(&self) -> Arc<Vec<reqwest::Certificate>> {
+        self.tls.health_root_certificates()
     }
 
     pub async fn acquire_pool_permit(&self) -> Result<Option<PoolPermit>, PoolRejection> {
@@ -454,8 +152,7 @@ impl Cluster {
         self.health
             .lock()
             .expect("health lock poisoned")
-            .endpoints
-            .clone()
+            .clone_endpoints()
     }
 
     pub fn set_active_health(&self, endpoint: &EndpointAddr, healthy: bool) {
@@ -540,16 +237,6 @@ impl Cluster {
     }
 }
 
-fn build_state_parts(endpoints: Vec<Endpoint>) -> (Vec<Endpoint>, Vec<u32>, u32) {
-    let mut cumulative_weights = Vec::with_capacity(endpoints.len());
-    let mut sum = 0u32;
-    for e in &endpoints {
-        sum += e.weight.0.get() as u32;
-        cumulative_weights.push(sum);
-    }
-    (endpoints, cumulative_weights, sum)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Cluster, PoolRejection};
@@ -560,10 +247,8 @@ mod tests {
         Port, TlsPolicy, UpstreamBuilder, UpstreamId, UpstreamName, Weight,
     };
     use std::net::{IpAddr, Ipv4Addr};
-    use std::num::NonZeroU16;
-    use std::num::NonZeroU32;
+    use std::num::{NonZeroU16, NonZeroU32};
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
     use std::time::Duration as StdDuration;
 
     fn make_endpoint(ip: Ipv4Addr, port: u16, weight: u16) -> Endpoint {
@@ -694,7 +379,10 @@ mod tests {
             h.join().unwrap();
         }
 
-        let count = cluster.rr_counter.0.load(Ordering::Relaxed);
+        let count = cluster
+            .rr_counter
+            .0
+            .load(std::sync::atomic::Ordering::Relaxed);
         assert_eq!(count, 1000);
     }
 

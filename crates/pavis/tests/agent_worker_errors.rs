@@ -7,6 +7,8 @@ use axum::routing::get;
 use common::*;
 use pavis::agent::PollOutcome;
 use pavis::state::{RuntimeState, RuntimeStateHandle};
+use pavis_core::ConfigVersion;
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -305,7 +307,11 @@ async fn poll_once_relay_violation_200_for_rejected_etag() {
 
     let agent = make_agent(base, lkg.clone(), state_handle.clone());
     agent
-        .apply_update_for_tests(good_bytes, good_etag.clone(), Some(1))
+        .apply_update_for_tests(
+            good_bytes,
+            good_etag.clone(),
+            Some(ConfigVersion(NonZeroU64::new(1).unwrap())),
+        )
         .await
         .expect("apply baseline");
     agent.set_last_rejected_etag_with_ttl_for_tests(bad_etag.clone());

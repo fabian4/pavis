@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use pingora::services::Service;
 use reqwest::Client;
 use std::collections::VecDeque;
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,11 +24,12 @@ use tokio::sync::watch;
 use crate::agent::fsm::{Effect, Event, Fsm, Response, VerifiedUpdate};
 use crate::agent::lkg::{load_lkg_config, tmp_path_for, write_atomic};
 use crate::state::{RuntimeState, RuntimeStateHandle};
-use crate::telemetry::metrics::MetricsHandle;
+use crate::telemetry::metrics::MetricsRegistry;
 use crate::validate_env::{self, RuntimeEnvError};
 
 use pavis_core::{
-    CONFIG_SIZE_HEADER, CONFIG_VERSION_HEADER, CoreValidationError, ETAG_HEADER, RuntimeConfig,
+    CONFIG_SIZE_HEADER, CONFIG_VERSION_HEADER, ConfigVersion, CoreValidationError, ETAG_HEADER,
+    RuntimeConfig,
 };
 use pavis_pvs::{PvsError, compute_checksum};
 
@@ -45,7 +47,7 @@ pub struct ConfigAgent {
     _backoff: Backoff,
     state: Arc<RuntimeStateHandle>,
     on_update_callback: Mutex<Option<UpdateCallback>>,
-    metrics: Arc<Mutex<Option<Arc<MetricsHandle>>>>,
+    metrics: Arc<Mutex<Option<Arc<MetricsRegistry>>>>,
     fsm: Mutex<Fsm>,
 }
 
@@ -131,7 +133,7 @@ impl ConfigAgent {
         guard.current_state()
     }
 
-    pub fn set_metrics_handle(&self, handle: Arc<MetricsHandle>) {
+    pub fn set_metrics_handle(&self, handle: Arc<MetricsRegistry>) {
         let mut guard = self
             .metrics
             .lock()
@@ -211,7 +213,7 @@ impl ConfigAgent {
         &self,
         bytes: Vec<u8>,
         etag: String,
-        version: Option<u64>,
+        version: Option<ConfigVersion>,
     ) -> anyhow::Result<()> {
         let update = self
             .verify_update(bytes, etag.clone(), version, None)
@@ -322,7 +324,7 @@ impl ConfigAgent {
         Ok(outcome)
     }
 
-    fn metrics_handle(&self) -> Option<Arc<MetricsHandle>> {
+    fn metrics_handle(&self) -> Option<Arc<MetricsRegistry>> {
         self.metrics
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -341,14 +343,20 @@ impl ConfigAgent {
         }
     }
 
-    fn record_config_stats(&self, version: Option<u64>, size_bytes: Option<u64>, reason: &str) {
+    fn record_config_stats(
+        &self,
+        version: Option<ConfigVersion>,
+        size_bytes: Option<u64>,
+        reason: &str,
+    ) {
         let (Some(handle), Some(version), Some(size_bytes)) =
             (self.metrics_handle(), version, size_bytes)
         else {
             tracing::debug!(reason, "skipping config stats update");
             return;
         };
-        handle.update_config_stats(&version.to_string(), size_bytes);
+        let version_label = version.to_string();
+        handle.update_config_stats(&version_label, size_bytes);
     }
 
     fn record_validation_failure(&self, err: anyhow::Error) -> anyhow::Error {
@@ -624,7 +632,7 @@ impl ConfigAgent {
         &self,
         bytes: Vec<u8>,
         expected_etag: String,
-        config_version: Option<u64>,
+        config_version: Option<ConfigVersion>,
         config_size: Option<u64>,
     ) -> anyhow::Result<VerifiedUpdate> {
         let actual_etag = checksum_for_bytes(&bytes);
@@ -677,7 +685,10 @@ impl ConfigAgent {
         })
     }
 
-    async fn apply_update(&self, update: VerifiedUpdate) -> anyhow::Result<(String, Option<u64>)> {
+    async fn apply_update(
+        &self,
+        update: VerifiedUpdate,
+    ) -> anyhow::Result<(String, Option<ConfigVersion>)> {
         let tmp_path = update.tmp_path.clone();
         let mut state = match pavis_pvs::load(&tmp_path) {
             Ok(config) => {
@@ -771,8 +782,13 @@ fn checksum_for_bytes(bytes: &[u8]) -> String {
     out
 }
 
-fn parse_config_version_header(value: &str) -> Option<u64> {
-    value.trim().parse::<u64>().ok()
+fn parse_config_version_header(value: &str) -> Option<ConfigVersion> {
+    value
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .and_then(NonZeroU64::new)
+        .map(ConfigVersion)
 }
 
 fn parse_etag_header(value: &str) -> anyhow::Result<String> {

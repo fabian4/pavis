@@ -9,37 +9,74 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-pub struct MetricsWorker {
-    addr: SocketAddr,
-    handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
+#[async_trait]
+pub trait MetricsTransport: Send + Sync {
+    async fn bind(addr: SocketAddr) -> std::io::Result<Self>
+    where
+        Self: Sized;
+    async fn accept(&self) -> std::io::Result<tokio::net::TcpStream>;
 }
 
-impl MetricsWorker {
-    pub fn new(addr: SocketAddr) -> (Self, Option<MetricsHandle>) {
+pub struct TcpMetricsTransport {
+    listener: tokio::net::TcpListener,
+}
+
+#[async_trait]
+impl MetricsTransport for TcpMetricsTransport {
+    async fn bind(addr: SocketAddr) -> std::io::Result<Self> {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        Ok(Self { listener })
+    }
+
+    async fn accept(&self) -> std::io::Result<tokio::net::TcpStream> {
+        let (stream, _) = self.listener.accept().await?;
+        Ok(stream)
+    }
+}
+
+pub struct PrometheusEndpoint<T: MetricsTransport = TcpMetricsTransport> {
+    addr: SocketAddr,
+    handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
+    _transport: std::marker::PhantomData<T>,
+}
+
+impl<T: MetricsTransport> PrometheusEndpoint<T> {
+    pub fn new(addr: SocketAddr) -> (Self, Option<MetricsRegistry>) {
         let builder = PrometheusBuilder::new();
         match builder.install_recorder() {
             Ok(handle) => {
-                let metrics_handle = MetricsHandle {
+                let registry = MetricsRegistry {
                     _handle: Arc::new(handle),
                 };
                 (
                     Self {
                         addr,
-                        handle: Some(metrics_handle._handle.as_ref().clone()),
+                        handle: Some(registry._handle.as_ref().clone()),
+                        _transport: std::marker::PhantomData,
                     },
-                    Some(metrics_handle),
+                    Some(registry),
                 )
             }
             Err(e) => {
                 tracing::error!(error = %e, "Failed to initialize Prometheus exporter");
-                (Self { addr, handle: None }, None)
+                (
+                    Self {
+                        addr,
+                        handle: None,
+                        _transport: std::marker::PhantomData,
+                    },
+                    None,
+                )
             }
         }
     }
 }
 
 #[async_trait]
-impl Service for MetricsWorker {
+impl<T> Service for PrometheusEndpoint<T>
+where
+    T: MetricsTransport + Send + Sync + 'static,
+{
     async fn start_service(
         &mut self,
         _fds: Option<Arc<tokio::sync::Mutex<pingora::server::Fds>>>,
@@ -49,13 +86,13 @@ impl Service for MetricsWorker {
         let handle = match &self.handle {
             Some(h) => h.clone(),
             None => {
-                tracing::warn!("Metrics worker started but exporter not initialized");
+                tracing::warn!("Metrics endpoint started but exporter not initialized");
                 return;
             }
         };
 
-        let listener = match tokio::net::TcpListener::bind(self.addr).await {
-            Ok(l) => l,
+        let transport = match T::bind(self.addr).await {
+            Ok(t) => t,
             Err(e) => {
                 tracing::error!(addr = %self.addr, error = %e, "Failed to bind metrics endpoint");
                 return;
@@ -67,12 +104,12 @@ impl Service for MetricsWorker {
         loop {
             tokio::select! {
                 _ = shutdown.changed() => {
-                    tracing::info!("Metrics worker shutting down");
+                    tracing::info!("Metrics endpoint shutting down");
                     break;
                 }
-                accept_result = listener.accept() => {
+                accept_result = transport.accept() => {
                     match accept_result {
-                        Ok((stream, _)) => {
+                        Ok(stream) => {
                             let handle = handle.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = serve_metrics(stream, handle).await {
@@ -128,7 +165,7 @@ async fn serve_metrics(
 }
 
 #[derive(Clone)]
-pub struct MetricsHandle {
+pub struct MetricsRegistry {
     _handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
 }
 
@@ -216,7 +253,7 @@ impl PoolKeyCardinalityTracker {
     }
 }
 
-impl MetricsHandle {
+impl MetricsRegistry {
     pub fn record_route_match(&self, verdict: &MatchVerdict<'_>) {
         let result = if verdict.selection.is_some() {
             "matched"
@@ -469,8 +506,10 @@ mod tests {
 
     #[test]
     fn metrics_worker_second_install_returns_none_when_recorder_exists() {
-        let (_first, first_handle) = MetricsWorker::new("127.0.0.1:9090".parse().unwrap());
-        let (_second, second_handle) = MetricsWorker::new("127.0.0.1:9091".parse().unwrap());
+        let (_first, first_handle) =
+            PrometheusEndpoint::<TcpMetricsTransport>::new("127.0.0.1:9090".parse().unwrap());
+        let (_second, second_handle) =
+            PrometheusEndpoint::<TcpMetricsTransport>::new("127.0.0.1:9091".parse().unwrap());
         if first_handle.is_some() {
             assert!(second_handle.is_none());
         }
@@ -478,7 +517,8 @@ mod tests {
 
     #[test]
     fn metrics_handle_methods_do_not_panic() {
-        let (_worker, handle) = MetricsWorker::new("127.0.0.1:9092".parse().unwrap());
+        let (_worker, handle) =
+            PrometheusEndpoint::<TcpMetricsTransport>::new("127.0.0.1:9092".parse().unwrap());
 
         if let Some(handle) = handle {
             handle.record_request("GET", "/users/:id", 200, "backend-1", 0.1);

@@ -29,12 +29,11 @@ fn resolve_route_timeout_maps_enabled() {
 #[test]
 fn new_ctx_defaults_are_empty() {
     let manager = Manager::new(&[]).expect("manager");
-    let state = RuntimeState {
-        config: RuntimeState::default().config,
-        router: Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
-        upstream_manager: manager,
-        config_version: None,
-    };
+    let state = RuntimeState::with_components(
+        RuntimeState::default().config,
+        Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+        manager,
+    );
     let state_handle = Arc::new(RuntimeStateHandle::new(state));
     let proxy = Proxy {
         state: state_handle,
@@ -140,6 +139,22 @@ fn test_resolve_endpoint_addr_ip() {
     };
     let addr = resolve_endpoint_addr(&ep).unwrap();
     assert_eq!(addr.to_string(), "127.0.0.1:8080");
+}
+
+#[test]
+fn resolve_endpoint_addr_rejects_dns() {
+    let ep = Endpoint {
+        address: EndpointAddr::Dns {
+            host: Hostname("example.com".to_string()),
+            port: Port(NonZeroU16::new(80).unwrap()),
+        },
+        weight: Weight(NonZeroU16::new(1).unwrap()),
+    };
+    let err = resolve_endpoint_addr(&ep).expect_err("dns endpoints should fail");
+    assert!(
+        err.to_string()
+            .contains("DNS endpoint example.com:80 was not materialized")
+    );
 }
 
 #[test]

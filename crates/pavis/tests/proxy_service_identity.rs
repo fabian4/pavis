@@ -6,8 +6,8 @@ use pavis::state::{RuntimeState, RuntimeStateHandle};
 use pavis::upstream::Manager;
 use pavis_core::{
     Destination, HeaderPredicates, Host, Path, PathMatch, Principal, RetryPolicy, Rewrite,
-    RewriteHost, RewritePath, RouteAction, RouteMatcher, Timeout, UpstreamName, VirtualHost,
-    Weight,
+    RewriteHost, RewritePath, RouteAction, RouteMatcher, SpiffeId, Timeout, UpstreamName,
+    VirtualHost, Weight,
 };
 use pingora::prelude::ProxyHttp;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ async fn request_filter_denies_when_principal_not_any() {
             request_headers: pavis_core::HeadersPolicy::Disabled.into(),
             response_headers: pavis_core::HeadersPolicy::Disabled.into(),
             principal: Principal::Authenticated {
-                spiffe: "spiffe://cluster.local/ns/default/sa/admin".to_string(),
+                spiffe: SpiffeId("spiffe://cluster.local/ns/default/sa/admin".to_string()),
             },
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
@@ -43,12 +43,11 @@ async fn request_filter_denies_when_principal_not_any() {
     }];
 
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(routes).unwrap()),
-            upstream_manager: Manager::new(&[]).expect("manager"),
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(routes).unwrap()),
+            Manager::new(&[]).expect("manager"),
+        ))),
         telemetry: test_telemetry(),
     };
 
@@ -84,7 +83,7 @@ async fn request_filter_allows_with_matching_identity() {
             request_headers: pavis_core::HeadersPolicy::Disabled.into(),
             response_headers: pavis_core::HeadersPolicy::Disabled.into(),
             principal: Principal::Authenticated {
-                spiffe: "spiffe://cluster.local/ns/default/sa/admin".to_string(),
+                spiffe: SpiffeId("spiffe://cluster.local/ns/default/sa/admin".to_string()),
             },
             rewrite: Rewrite {
                 path: RewritePath::Disabled,
@@ -98,19 +97,20 @@ async fn request_filter_allows_with_matching_identity() {
     }];
 
     let proxy = Proxy {
-        state: Arc::new(RuntimeStateHandle::new(RuntimeState {
-            config: RuntimeState::default().config,
-            router: Arc::new(pavis::router::Router::new(routes).unwrap()),
-            upstream_manager: Manager::new(&[upstream("backend", 1, 8080)]).expect("manager"),
-            config_version: None,
-        })),
+        state: Arc::new(RuntimeStateHandle::new(RuntimeState::with_components(
+            RuntimeState::default().config,
+            Arc::new(pavis::router::Router::new(routes).unwrap()),
+            Manager::new(&[upstream("backend", 1, 8080)]).expect("manager"),
+        ))),
         telemetry: test_telemetry(),
     };
 
     let (mut session, _client) =
         session_for_request(b"GET /secure HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
     let mut ctx = proxy.new_ctx();
-    ctx.client_identity = Some("spiffe://cluster.local/ns/default/sa/admin".to_string());
+    ctx.client_identity = Some(SpiffeId(
+        "spiffe://cluster.local/ns/default/sa/admin".to_string(),
+    ));
 
     let should_respond = proxy.request_filter(&mut session, &mut ctx).await.unwrap();
     assert!(!should_respond);
@@ -122,20 +122,25 @@ async fn request_filter_allows_with_matching_identity() {
 fn test_is_authorized_principal_variants() {
     let any = Principal::Any;
     let auth = Principal::Authenticated {
-        spiffe: "admin".to_string(),
+        spiffe: SpiffeId("admin".to_string()),
     };
     let prefix = Principal::Prefix {
         prefix: "spiffe://".to_string(),
     };
 
+    let admin_id = SpiffeId("admin".to_string());
+    let user_id = SpiffeId("user".to_string());
+    let spiffe_foo = SpiffeId("spiffe://foo".to_string());
+    let spiffe_bar = SpiffeId("spiffe://abc".to_string());
+
     assert!(is_authorized(&any, None));
-    assert!(is_authorized(&any, Some("spiffe://foo")));
-    assert!(is_authorized(&auth, Some("admin")));
-    assert!(!is_authorized(&auth, Some("user")));
+    assert!(is_authorized(&any, Some(&spiffe_foo)));
+    assert!(is_authorized(&auth, Some(&admin_id)));
+    assert!(!is_authorized(&auth, Some(&user_id)));
     assert!(!is_authorized(&auth, None));
 
-    assert!(is_authorized(&prefix, Some("spiffe://abc")));
-    assert!(!is_authorized(&prefix, Some("https://foo")));
+    assert!(is_authorized(&prefix, Some(&spiffe_bar)));
+    assert!(!is_authorized(&prefix, Some(&admin_id)));
     assert!(!is_authorized(&prefix, None));
 }
 

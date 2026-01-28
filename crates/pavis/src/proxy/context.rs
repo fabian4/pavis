@@ -1,7 +1,9 @@
 use crate::retry::{BufferedBody, RetryContext};
 use crate::state::RuntimeState;
 use http::Uri;
-use pavis_core::{EndpointAddr, HeadersPolicy, Hostname, RetryPolicy, Timeout, UpstreamName};
+use pavis_core::{
+    EndpointAddr, HeadersPolicy, Hostname, RetryPolicy, SpiffeId, Timeout, UpstreamName,
+};
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -118,7 +120,49 @@ impl Serialize for RequestId {
     }
 }
 
+#[derive(Debug)]
+pub enum TracingSpan {
+    Disabled,
+    Active(tracing::Span),
+}
+
+#[derive(Debug)]
+pub struct RequestTelemetry {
+    request_id: RequestId,
+    span: TracingSpan,
+}
+
+impl RequestTelemetry {
+    pub fn new(request_id: RequestId) -> Self {
+        Self {
+            request_id,
+            span: TracingSpan::Disabled,
+        }
+    }
+
+    pub fn request_id(&self) -> RequestId {
+        self.request_id
+    }
+
+    pub fn set_request_id(&mut self, request_id: RequestId) {
+        self.request_id = request_id;
+    }
+
+    pub fn span(&self) -> &TracingSpan {
+        &self.span
+    }
+
+    pub fn span_mut(&mut self) -> &mut TracingSpan {
+        &mut self.span
+    }
+
+    pub fn replace_span(&mut self, span: TracingSpan) {
+        self.span = span;
+    }
+}
+
 pub struct RouterContext {
+    pub telemetry: RequestTelemetry,
     pub upstream_name: Option<UpstreamName>,
     pub upstream_endpoint: Option<EndpointAddr>,
     pub request_headers: Arc<HeadersPolicy>,
@@ -126,14 +170,12 @@ pub struct RouterContext {
     pub sni_override: Option<Hostname>,
     pub start_time: Instant,
     pub upstream_timing: UpstreamTiming,
-    pub client_identity: Option<String>,
+    pub client_identity: Option<SpiffeId>,
     pub rbac_denied: bool,
     pub route_timeout: Timeout,
     pub retry_policy: RetryPolicy,
     pub retry_attempts: u16,
     pub route_pattern: RoutePattern,
-    pub req_id: RequestId,
-    pub span: TracingSpan,
     pub pool_permit: Option<crate::upstream::cluster::PoolPermit>,
     pub circuit_breaker_permit: Option<OwnedSemaphorePermit>,
     /// Pinned configuration snapshot for this request.
@@ -148,6 +190,120 @@ pub struct RouterContext {
     pub rewritten_uri: Option<Uri>,
     /// Optional Host after host rewrite
     pub rewritten_host: Option<Hostname>,
+}
+
+// Phase-typed wrappers enforce request lifecycle transitions.
+pub struct RoutingContext<'ctx> {
+    ctx: &'ctx mut RouterContext,
+}
+
+pub struct RouteMatch<'ctx> {
+    ctx: &'ctx mut RouterContext,
+}
+
+pub struct UpstreamAttempt<'ctx> {
+    ctx: &'ctx mut RouterContext,
+}
+
+impl<'ctx> RoutingContext<'ctx> {
+    pub fn attach_runtime(&mut self, state: Arc<RuntimeState>) {
+        self.ctx.runtime_state = Some(state);
+    }
+
+    pub fn enable_tracing(&mut self, span: tracing::Span) {
+        self.ctx.telemetry.replace_span(TracingSpan::Active(span));
+    }
+
+    pub fn record_route(self, pattern: Arc<str>) -> RouteMatch<'ctx> {
+        self.ctx.route_pattern = RoutePattern::Matched { pattern };
+        RouteMatch { ctx: self.ctx }
+    }
+}
+
+impl<'ctx> RouteMatch<'ctx> {
+    pub fn ctx(&self) -> &RouterContext {
+        self.ctx
+    }
+
+    pub fn ctx_mut(&mut self) -> &mut RouterContext {
+        self.ctx
+    }
+
+    pub fn client_identity(&self) -> Option<&SpiffeId> {
+        self.ctx.client_identity.as_ref()
+    }
+
+    pub fn request_id(&self) -> RequestId {
+        self.ctx.request_id()
+    }
+
+    pub fn retry_policy(&self) -> &RetryPolicy {
+        &self.ctx.retry_policy
+    }
+
+    pub fn route_timeout(&self) -> Timeout {
+        self.ctx.route_timeout
+    }
+
+    pub fn record_route_span(&self) {
+        if let RoutePattern::Matched { ref pattern } = self.ctx.route_pattern
+            && let TracingSpan::Active(span) = self.ctx.span()
+        {
+            span.record("route.pattern", pattern.as_ref());
+        }
+    }
+
+    pub fn mark_rbac_denied(&mut self) {
+        self.ctx.rbac_denied = true;
+    }
+
+    pub fn set_rewritten_uri(&mut self, uri: Uri) {
+        self.ctx.rewritten_uri = Some(uri);
+    }
+
+    pub fn set_rewritten_host(&mut self, host: Hostname) {
+        self.ctx.rewritten_host = Some(host);
+    }
+
+    pub fn set_retry_context(&mut self, retry: RetryContext) {
+        self.ctx.retry_ctx = Some(retry);
+    }
+
+    pub fn set_buffered_body(&mut self, body: BufferedBody) {
+        self.ctx.buffered_body = Some(body);
+    }
+
+    pub fn into_upstream_attempt(self) -> UpstreamAttempt<'ctx> {
+        UpstreamAttempt { ctx: self.ctx }
+    }
+}
+
+impl<'ctx> UpstreamAttempt<'ctx> {
+    pub fn set_upstream(&mut self, upstream: UpstreamName) {
+        self.ctx.upstream_name = Some(upstream);
+    }
+
+    pub fn record_upstream_span(&self, name: &str) {
+        if let TracingSpan::Active(span) = self.ctx.span() {
+            span.record("upstream", name);
+        }
+    }
+
+    pub fn set_endpoint(&mut self, endpoint: EndpointAddr) {
+        self.ctx.upstream_endpoint = Some(endpoint);
+    }
+
+    pub fn store_pool_permit(&mut self, permit: crate::upstream::cluster::PoolPermit) {
+        self.ctx.pool_permit = Some(permit);
+    }
+
+    pub fn store_breaker_permit(&mut self, permit: OwnedSemaphorePermit) {
+        self.ctx.circuit_breaker_permit = Some(permit);
+    }
+
+    pub fn start_upstream(&mut self) {
+        self.ctx.start_upstream();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -187,19 +343,33 @@ impl RoutePattern {
     }
 }
 
-#[derive(Debug)]
-pub enum TracingSpan {
-    Disabled,
-    Active(tracing::Span),
-}
-
 impl RouterContext {
+    pub fn routing_phase(&mut self) -> RoutingContext<'_> {
+        RoutingContext { ctx: self }
+    }
+
     pub fn request_duration(&self) -> std::time::Duration {
         self.start_time.elapsed()
     }
 
     pub fn upstream_latency(&self) -> Option<std::time::Duration> {
         self.upstream_timing.elapsed()
+    }
+
+    pub fn request_id(&self) -> RequestId {
+        self.telemetry.request_id()
+    }
+
+    pub fn set_request_id(&mut self, request_id: RequestId) {
+        self.telemetry.set_request_id(request_id);
+    }
+
+    pub fn span(&self) -> &TracingSpan {
+        self.telemetry.span()
+    }
+
+    pub fn span_mut(&mut self) -> &mut TracingSpan {
+        self.telemetry.span_mut()
     }
 
     pub fn start_upstream(&mut self) {
@@ -222,6 +392,7 @@ mod tests {
     #[test]
     fn router_context_holds_fields() {
         let ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-123".parse().unwrap()),
             upstream_name: Some(UpstreamName("backend".to_string())),
             upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Enabled {
@@ -245,8 +416,6 @@ mod tests {
             retry_attempts: 0,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::NotMatched,
-            req_id: "req-123".parse().unwrap(),
-            span: TracingSpan::Disabled,
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
@@ -279,6 +448,7 @@ mod tests {
     #[test]
     fn upstream_label_returns_dash_when_not_selected() {
         let ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-1".parse().unwrap()),
             upstream_name: None,
             upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Disabled),
@@ -292,8 +462,6 @@ mod tests {
             retry_attempts: 0,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::NotMatched,
-            req_id: "req-1".parse().unwrap(),
-            span: TracingSpan::Disabled,
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
@@ -309,6 +477,7 @@ mod tests {
     #[test]
     fn start_upstream_updates_timing() {
         let mut ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-1".parse().unwrap()),
             upstream_name: Some(UpstreamName("backend".to_string())),
             upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Disabled),
@@ -324,8 +493,6 @@ mod tests {
             route_pattern: RoutePattern::Matched {
                 pattern: Arc::from("/api"),
             },
-            req_id: "req-1".parse().unwrap(),
-            span: TracingSpan::Disabled,
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
@@ -348,6 +515,7 @@ mod tests {
     #[test]
     fn request_duration_calculates_elapsed_time() {
         let ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-1".parse().unwrap()),
             upstream_name: None,
             upstream_endpoint: None,
             request_headers: Arc::new(HeadersPolicy::Disabled),
@@ -361,8 +529,6 @@ mod tests {
             retry_attempts: 0,
             upstream_timing: UpstreamTiming::NotStarted,
             route_pattern: RoutePattern::NotMatched,
-            req_id: "req-1".parse().unwrap(),
-            span: TracingSpan::Disabled,
             pool_permit: None,
             circuit_breaker_permit: None,
             runtime_state: None,
@@ -375,6 +541,84 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         let duration = ctx.request_duration();
         assert!(duration >= std::time::Duration::from_millis(10));
+    }
+
+    #[test]
+    fn routing_phase_attaches_runtime_state_and_sets_pattern() {
+        let state = Arc::new(RuntimeState::default());
+        let mut ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-ctx".parse().unwrap()),
+            upstream_name: None,
+            upstream_endpoint: None,
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
+            sni_override: None,
+            start_time: Instant::now(),
+            client_identity: None,
+            rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
+            upstream_timing: UpstreamTiming::NotStarted,
+            route_pattern: RoutePattern::NotMatched,
+            pool_permit: None,
+            circuit_breaker_permit: None,
+            runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
+        };
+
+        {
+            let mut phase = ctx.routing_phase();
+            phase.attach_runtime(state.clone());
+            let _match = phase.record_route(Arc::from("/plan"));
+        }
+
+        assert!(ctx.runtime_state.is_some());
+        assert_eq!(ctx.route_pattern.as_label(), "/plan");
+    }
+
+    #[test]
+    fn route_match_transitions_to_upstream_attempt() {
+        let mut ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-upstream".parse().unwrap()),
+            upstream_name: None,
+            upstream_endpoint: None,
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
+            sni_override: None,
+            start_time: Instant::now(),
+            client_identity: None,
+            rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
+            upstream_timing: UpstreamTiming::NotStarted,
+            route_pattern: RoutePattern::NotMatched,
+            pool_permit: None,
+            circuit_breaker_permit: None,
+            runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
+        };
+
+        {
+            let route = ctx.routing_phase().record_route(Arc::from("/ready"));
+            let mut attempt = route.into_upstream_attempt();
+            attempt.set_upstream(UpstreamName("backend".to_string()));
+            attempt.set_endpoint(EndpointAddr::Dns {
+                host: pavis_core::Hostname("example.com".to_string()),
+                port: pavis_core::Port(std::num::NonZeroU16::new(443).unwrap()),
+            });
+            attempt.start_upstream();
+        }
+
+        assert_eq!(ctx.upstream_label(), "backend");
+        assert!(matches!(ctx.upstream_timing, UpstreamTiming::Started(_)));
     }
 
     #[test]
