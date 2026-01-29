@@ -29,6 +29,7 @@ hickory-resolver = "0.25.2"
 x509-parser = "0.16"
 compact_str = "0.9"
 tikv-jemallocator = "0.6"
+tempfile = "3.24.0"
 
 # Observability (Phase 5)
 metrics = "0.24"
@@ -43,5 +44,4 @@ futures-util = "0.3"
 pavis-core = { path = "../pavis-core" }
 pavis-pvs = { path = "../pavis-pvs" }
 axum = { version = "0.8", features = ["macros"] }
-rcgen = "0.13" # Pure-Rust replacement for OpenSSL cert generation
-tempfile = "3.24.0"
+rcgen = "0.14"

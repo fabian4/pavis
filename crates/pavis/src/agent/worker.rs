@@ -6,7 +6,6 @@ pub use agent::{ConfigAgent, ConfigAgentWorker, PollOutcome};
 #[doc(hidden)]
 pub mod test_exports {
     use super::agent;
-    use crate::agent::backoff::Backoff;
     use crate::state::RuntimeStateHandle;
     use reqwest::Client;
     use std::path::PathBuf;
@@ -17,8 +16,7 @@ pub mod test_exports {
         lkg_path: PathBuf,
         state: Arc<RuntimeStateHandle>,
         client: Client,
-        backoff: Backoff,
     ) -> agent::ConfigAgent {
-        agent::ConfigAgent::new_for_tests(relay_base, lkg_path, state, client, backoff)
+        agent::ConfigAgent::new_for_tests(relay_base, lkg_path, state, client)
     }
 }

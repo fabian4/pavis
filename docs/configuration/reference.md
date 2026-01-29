@@ -64,7 +64,7 @@ Defines how the proxy accepts inbound traffic.
   - `optional: { ca_path: "..." }`: Client certificate requested but not required.
   - `required: { ca_path: "..." }`: Valid client certificate mandatory.
 - **Validation**: Runtime validates `ca_path` exists and is readable.
-- **Backend Constraints**: Peer certificate extraction for Rustls mode is currently unimplemented (TODO in code).
+- **Backend Constraints**: Peer certificate extraction for Rustls mode remains unsupported in this runtime; client-auth flows rely on OpenSSL.
 
 ---
 
@@ -553,4 +553,4 @@ Inferred if `status` and `body` fields are present.
 
 - **Rustls (Default TLS)**:
   - `upstreams[].tls.ca_bundle_path`: Parsed but ignored by the connector.
-  - `listeners[].tls.client_auth`: Peer certificate extraction is currently a TODO.
+  - `listeners[].tls.client_auth`: Peer certificate extraction for Rustls mode is not implemented in this build; enable OpenSSL for mandatory client certificates.

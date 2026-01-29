@@ -1,5 +1,5 @@
 use crate::admin;
-use crate::agent::{Backoff, ConfigAgent};
+use crate::agent::ConfigAgent;
 use crate::listener::tls::TlsRuntime;
 use crate::proxy::Proxy;
 use crate::state::{RuntimeState, RuntimeStateHandle};
@@ -188,13 +188,11 @@ fn build_config_agent(
     telemetry: Arc<Telemetry>,
     reload_handle: ReloadHandle,
 ) -> Result<Arc<ConfigAgent>> {
-    let backoff = Backoff::new(Duration::from_millis(250), Duration::from_millis(5_000), 10);
     let agent = ConfigAgent::new(
         relay_url,
         config_path,
         state_handle,
         Duration::from_secs(60),
-        backoff,
     )?;
 
     let tracing_slot = telemetry.tracing.clone();

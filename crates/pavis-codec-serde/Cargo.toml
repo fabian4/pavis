@@ -13,7 +13,7 @@ pavis-ingest-api = { path = "../pavis-ingest-api" }
 
 # Serialization / Input Formats
 serde = { workspace = true, features = ["derive"] }
-serde_yaml = "0.9" # TODO(tech-debt): replace deprecated serde_yaml when alternative is ready
+serde_yaml = "0.9"
 serde_json = "1.0"
 humantime-serde = "1.1.1"
 

@@ -104,7 +104,7 @@ mod tests {
             let mut params = rcgen::CertificateParams::new(vec!["test".to_string()]).unwrap();
             params.serial_number = Some((serial as u64).into());
             for uri in uris {
-                let ia5 = rcgen::Ia5String::try_from(*uri).unwrap();
+                let ia5 = rcgen::string::Ia5String::try_from(*uri).unwrap();
                 params.subject_alt_names.push(rcgen::SanType::URI(ia5));
             }
             let key_pair = rcgen::KeyPair::generate().unwrap();

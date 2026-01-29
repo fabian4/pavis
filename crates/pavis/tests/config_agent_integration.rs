@@ -2,7 +2,7 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue};
 use axum::response::IntoResponse;
 use axum::{Router, routing::get};
-use pavis::agent::{Backoff, ConfigAgent, PollOutcome};
+use pavis::agent::{ConfigAgent, PollOutcome};
 use pavis::state::{RuntimeState, RuntimeStateHandle};
 use pavis_core::{
     AccessLogPolicy, ListenerBuilder, ListenerName, Metrics, RuntimeConfig, RuntimeConfigBuilder,
@@ -231,11 +231,6 @@ async fn poller_updates_lkg_on_checksum_change() {
             lkg_path.clone(),
             state_handle.clone(),
             std::time::Duration::from_secs(5),
-            Backoff::new(
-                std::time::Duration::from_secs(1),
-                std::time::Duration::from_secs(30),
-                0,
-            ),
         )
         .unwrap(),
     );
@@ -292,11 +287,6 @@ async fn poller_records_wait_ms_and_conditional_headers() {
             lkg_path.clone(),
             state_handle.clone(),
             std::time::Duration::from_secs(5),
-            Backoff::new(
-                std::time::Duration::from_secs(1),
-                std::time::Duration::from_secs(30),
-                0,
-            ),
         )
         .unwrap(),
     );
@@ -344,11 +334,6 @@ async fn poller_clears_conditional_state_on_resync() {
             lkg_path.clone(),
             state_handle.clone(),
             std::time::Duration::from_secs(5),
-            Backoff::new(
-                std::time::Duration::from_secs(1),
-                std::time::Duration::from_secs(30),
-                0,
-            ),
         )
         .unwrap(),
     );
@@ -396,11 +381,6 @@ async fn poller_treats_5xx_as_transient_unavailable() {
             lkg_path.clone(),
             state_handle.clone(),
             std::time::Duration::from_secs(5),
-            Backoff::new(
-                std::time::Duration::from_secs(1),
-                std::time::Duration::from_secs(30),
-                0,
-            ),
         )
         .unwrap(),
     );
@@ -436,7 +416,6 @@ async fn worker_enforces_single_inflight_fetch() {
             lkg_path,
             state_handle,
             Duration::from_secs(5),
-            Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 0),
         )
         .unwrap(),
     );
@@ -485,7 +464,6 @@ async fn worker_applies_backoff_after_5xx() {
             lkg_path,
             state_handle,
             Duration::from_secs(5),
-            Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 0),
         )
         .unwrap(),
     );

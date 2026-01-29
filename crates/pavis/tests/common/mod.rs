@@ -98,13 +98,36 @@ pub fn write_pem(path: &StdPath, bytes: &[u8]) {
 }
 
 pub fn build_self_signed_cert() -> (String, String) {
-    let mut params = rcgen::CertificateParams::new(vec!["client".to_string()]).unwrap();
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, "client");
-    let key_pair = rcgen::KeyPair::generate().unwrap();
-    let cert = params.self_signed(&key_pair).unwrap();
-    (key_pair.serialize_pem(), cert.pem())
+    use openssl::asn1::Asn1Time;
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::X509NameBuilder;
+
+    let rsa = Rsa::generate(2048).unwrap();
+    let key = PKey::from_rsa(rsa).unwrap();
+
+    let mut name_builder = X509NameBuilder::new().unwrap();
+    name_builder.append_entry_by_text("CN", "client").unwrap();
+    let name = name_builder.build();
+
+    let mut builder = openssl::x509::X509::builder().unwrap();
+    builder.set_version(2).unwrap();
+    builder.set_subject_name(&name).unwrap();
+    builder.set_issuer_name(&name).unwrap();
+    builder.set_pubkey(&key).unwrap();
+    builder
+        .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+        .unwrap();
+    builder
+        .set_not_after(&Asn1Time::days_from_now(1).unwrap())
+        .unwrap();
+    builder.sign(&key, MessageDigest::sha256()).unwrap();
+    let cert = builder.build();
+
+    let cert_pem = String::from_utf8(cert.to_pem().unwrap()).unwrap();
+    let key_pem = String::from_utf8(key.private_key_to_pem_pkcs8().unwrap()).unwrap();
+    (key_pem, cert_pem)
 }
 
 pub fn mtls_upstream(
@@ -266,10 +289,5 @@ pub fn make_agent(
         lkg_path.clone(),
         state,
         client,
-        pavis::agent::Backoff::new(
-            std::time::Duration::from_secs(1),
-            std::time::Duration::from_secs(30),
-            0,
-        ),
     ))
 }

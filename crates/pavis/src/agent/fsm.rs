@@ -17,7 +17,6 @@ pub struct Context {
     pub last_rejected_until: Option<Instant>,
     pub backoff_attempt: u32,
     pub observed_version: Option<ConfigVersion>,
-    pub local_lkg_path: PathBuf,
 }
 
 impl Context {
@@ -28,7 +27,6 @@ impl Context {
             last_rejected_until: None,
             backoff_attempt: 0,
             observed_version: None,
-            local_lkg_path: PathBuf::new(),
         }
     }
 
@@ -169,7 +167,6 @@ pub struct StateSummary {
     pub last_rejected_etag: Option<String>,
     pub backoff_attempt: u32,
     pub observed_version: Option<ConfigVersion>,
-    pub local_lkg_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -187,12 +184,10 @@ impl Fsm {
         }
     }
 
-    pub fn new_with_lkg_path(local_lkg_path: PathBuf) -> Self {
-        let mut ctx = Context::new();
-        ctx.local_lkg_path = local_lkg_path;
+    pub fn new_with_lkg_path(_local_lkg_path: PathBuf) -> Self {
         Self {
             state: State::Idle,
-            ctx,
+            ctx: Context::new(),
         }
     }
 
@@ -211,7 +206,6 @@ impl Fsm {
             last_rejected_etag: self.ctx.last_rejected_etag.clone(),
             backoff_attempt: self.ctx.backoff_attempt,
             observed_version: self.ctx.observed_version,
-            local_lkg_path: self.ctx.local_lkg_path.clone(),
         }
     }
 
@@ -248,7 +242,9 @@ impl Fsm {
             (State::Idle, Event::VerifyFail { .. }) => {}
             (State::Idle, Event::ApplyOk { .. }) => {}
             (State::Idle, Event::ApplyFail { .. }) => {}
-            (State::Idle, Event::Shutdown) => {}
+            (State::Idle, Event::Shutdown) => {
+                self.state = State::Stopped;
+            }
             (State::Stopped, _) => {}
             (State::Fetching, Event::Response { response, now }) => {
                 self.ctx.clear_rejected_if_expired(now);
@@ -645,5 +641,12 @@ mod tests {
         let max = BACKOFF_CAP + Duration::from_millis(jitter_range as u64);
         assert!(duration >= min);
         assert!(duration <= max);
+    }
+
+    #[test]
+    fn shutdown_from_idle_transitions_to_stopped() {
+        let mut fsm = Fsm::new();
+        fsm.tick(Event::Shutdown);
+        assert!(matches!(fsm.state, State::Stopped));
     }
 }

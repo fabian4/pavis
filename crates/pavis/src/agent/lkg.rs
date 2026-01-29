@@ -34,14 +34,36 @@ pub(crate) async fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(path, bytes).await?;
+
+    let mut tmp_path = path.to_path_buf();
+    let tmp_name = format!(
+        ".{}.tmp",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("atomic_write")
+    );
+    tmp_path.set_file_name(tmp_name);
+
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::File::create(&tmp_path).await?;
+        file.write_all(bytes).await?;
+        file.sync_all().await?;
+    }
+
+    tokio::fs::rename(&tmp_path, path).await?;
     Ok(())
 }
 
 #[allow(dead_code)] // Retained for tests and potential version metadata support.
 pub(crate) async fn write_version(path: &Path, version: u64) -> anyhow::Result<()> {
     let tmp = path.with_extension("tmp");
-    tokio::fs::write(&tmp, version.to_string()).await?;
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::File::create(&tmp).await?;
+        file.write_all(version.to_string().as_bytes()).await?;
+        file.sync_all().await?;
+    }
     tokio::fs::rename(&tmp, path).await?;
     Ok(())
 }

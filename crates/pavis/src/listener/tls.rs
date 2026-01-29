@@ -86,28 +86,27 @@ mod tests {
     }
 
     // Pure-Rust replacement for OpenSSL cert generation
-    fn build_ca_cert() -> (rcgen::KeyPair, rcgen::Certificate, String) {
+    fn build_ca_cert() -> (rcgen::CertifiedIssuer<'static, rcgen::KeyPair>, String) {
         let mut params = rcgen::CertificateParams::new(vec!["Pavis Test CA".to_string()]).unwrap();
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         params
             .distinguished_name
             .push(rcgen::DnType::CommonName, "Pavis Test CA");
         let key_pair = rcgen::KeyPair::generate().unwrap();
-        let cert = params.self_signed(&key_pair).unwrap();
-        let pem = cert.pem();
-        (key_pair, cert, pem)
+        let issuer = rcgen::CertifiedIssuer::self_signed(params, key_pair).unwrap();
+        let pem = issuer.pem();
+        (issuer, pem)
     }
 
     fn build_server_cert(
-        ca_cert: &rcgen::Certificate,
-        ca_key: &rcgen::KeyPair,
+        ca_issuer: &rcgen::CertifiedIssuer<'_, rcgen::KeyPair>,
     ) -> (String, String) {
         let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).unwrap();
         params
             .distinguished_name
             .push(rcgen::DnType::CommonName, "localhost");
         let key_pair = rcgen::KeyPair::generate().unwrap();
-        let cert = params.signed_by(&key_pair, ca_cert, ca_key).unwrap();
+        let cert = params.signed_by(&key_pair, ca_issuer).unwrap();
         (key_pair.serialize_pem(), cert.pem())
     }
 
@@ -128,8 +127,8 @@ mod tests {
         let cert_path = dir.join("server.pem");
         let key_path = dir.join("server.key");
 
-        let (ca_key, ca_cert_obj, ca_cert_pem) = build_ca_cert();
-        let (server_key_pem, server_cert_pem) = build_server_cert(&ca_cert_obj, &ca_key);
+        let (ca_issuer, ca_cert_pem) = build_ca_cert();
+        let (server_key_pem, server_cert_pem) = build_server_cert(&ca_issuer);
 
         write_pem(&ca_path, ca_cert_pem.as_bytes());
         write_pem(&cert_path, server_cert_pem.as_bytes());
@@ -158,8 +157,8 @@ mod tests {
         let cert_path = dir.join("server.pem");
         let key_path = dir.join("server.key");
 
-        let (ca_key, ca_cert_obj, ca_cert_pem) = build_ca_cert();
-        let (server_key_pem, server_cert_pem) = build_server_cert(&ca_cert_obj, &ca_key);
+        let (ca_issuer, ca_cert_pem) = build_ca_cert();
+        let (server_key_pem, server_cert_pem) = build_server_cert(&ca_issuer);
 
         write_pem(&ca_path, ca_cert_pem.as_bytes());
         write_pem(&cert_path, server_cert_pem.as_bytes());

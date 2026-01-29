@@ -11,7 +11,7 @@ This roadmap records semantic closure for an engineering thesis. It is not a fea
 **Goal:** `.pvs` is the only contract between compiler, relay, and runtime. **Status:** closed for structure and tooling. Magic bytes, checksums, corruption rejection, and `pavctl` generation/inspection flows are in place; relay handles artifacts opaquely.
 
 ### Execution & Reload Semantics
-**Goal:** fail-closed, atomic reload with deterministic recovery. **Status:** closed. File ingest, ETag distribution, ArcSwap reloads, LKG persistence, graceful shutdown, admin API, and lineage tracking are implemented and exercised.
+**Goal:** fail-closed, atomic reload with deterministic recovery. **Status:** closed. File ingest, ETag distribution, ArcSwap reloads, LKG persistence, graceful shutdown, admin API, lineage tracking, and the modular runtime architecture (isolated bootstrap, phase-typed contexts, and pre-resolved DNS) are implemented and exercised.
 
 ### Security & Identity
 **Goal:** freeze TLS, mTLS, RBAC, and SPIFFE semantics. **Status:** closed. OpenSSL-only runtime, client-auth enforcement, outbound CA bundles, deny-by-default RBAC, and workload identity extraction ship as compiled artifacts with TLS E2E coverage.

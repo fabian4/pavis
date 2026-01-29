@@ -33,7 +33,6 @@ use pavis_core::{
 };
 use pavis_pvs::{PvsError, compute_checksum};
 
-use crate::agent::backoff::Backoff;
 use crate::agent::fsm::REJECT_TTL;
 
 type UpdateCallback = Box<dyn Fn(&RuntimeConfig) + Send + Sync>;
@@ -44,7 +43,6 @@ pub struct ConfigAgent {
     relay_base: String,
     lkg_path: PathBuf,
     client: Client,
-    _backoff: Backoff,
     state: Arc<RuntimeStateHandle>,
     on_update_callback: Mutex<Option<UpdateCallback>>,
     metrics: Arc<Mutex<Option<Arc<MetricsRegistry>>>>,
@@ -86,7 +84,6 @@ impl ConfigAgent {
         lkg_path: PathBuf,
         state: Arc<RuntimeStateHandle>,
         timeout: Duration,
-        backoff: Backoff,
     ) -> anyhow::Result<Self> {
         let client = Client::builder()
             .timeout(timeout)
@@ -97,7 +94,6 @@ impl ConfigAgent {
             relay_base,
             lkg_path,
             client,
-            _backoff: backoff,
             state,
             on_update_callback: Mutex::new(None),
             metrics: Arc::new(Mutex::new(None)),
@@ -147,14 +143,12 @@ impl ConfigAgent {
         lkg_path: PathBuf,
         state: Arc<RuntimeStateHandle>,
         client: Client,
-        backoff: Backoff,
     ) -> Self {
         let fsm = Mutex::new(Fsm::new_with_lkg_path(lkg_path.clone()));
         Self {
             relay_base,
             lkg_path,
             client,
-            _backoff: backoff,
             state,
             on_update_callback: Mutex::new(None),
             metrics: Arc::new(Mutex::new(None)),

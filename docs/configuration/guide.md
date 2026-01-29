@@ -74,7 +74,7 @@ Upstreams are clusters of backend endpoints. They handle load balancing, protoco
 Applied at the listener level. Requires `cert_path` and `key_path`.
 
 ### Inbound mTLS (Client Auth)
-> **Backend Constraint**: Currently, while `client_auth` can be configured as `required` or `optional`, peer certificate extraction for Rustls mode is not fully wired in the runtime (marked as TODO).
+> **Backend Constraint**: Peer certificate extraction for Rustls mode is not available in this build; use the OpenSSL TLS implementation for client auth paths.
 
 ### Outbound TLS (Origination)
 Enable TLS for upstream connections by adding a `tls: {}` block to an upstream.

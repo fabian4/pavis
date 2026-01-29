@@ -317,7 +317,7 @@ fn stub_response(endpoint: &'static str) -> StubResponse {
     StubResponse {
         error: "not_implemented",
         endpoint,
-        note: "TODO",
+        note: "stub not implemented",
     }
 }
 

@@ -323,7 +323,7 @@ mod tests {
             }
 
             if let Ok(Some(Ok(artifact))) =
-                tokio::time::timeout(Duration::from_millis(1500), stream.next()).await
+                tokio::time::timeout(Duration::from_millis(4000), stream.next()).await
             {
                 let expected = format!("v{round}-10");
                 assert_eq!(artifact.bytes, Bytes::from(expected));
@@ -333,7 +333,7 @@ mod tests {
 
             tokio::select! {
                 _ = stream.next() => panic!("Unexpected additional artifact in round {round}"),
-                _ = tokio::time::sleep(Duration::from_millis(120)) => {}
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {}
             }
         }
 

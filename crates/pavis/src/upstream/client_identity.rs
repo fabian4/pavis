@@ -1,13 +1,14 @@
 use anyhow::{Context, Result, anyhow, bail};
 use openssl::pkey::PKey;
 use openssl::x509::X509;
-#[cfg(not(target_os = "macos"))]
-use openssl::{pkcs12::Pkcs12, stack::Stack};
+
 use pavis_core::{ClientCert, ClientCertChain, TlsPolicy, Upstream, UpstreamCa};
 use pingora::protocols::tls::CaType;
 use pingora::utils::tls::CertKey;
 use reqwest::{Certificate as ReqwestCertificate, Identity as ReqwestIdentity};
 use std::fs;
+#[cfg(not(target_os = "macos"))]
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -143,21 +144,40 @@ impl ClientIdentityMaterializer {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let mut chain = chain;
-            let mut builder = Pkcs12::builder();
-            builder.name("pavis-health").pkey(&key).cert(&leaf);
-            if !chain.is_empty() {
-                let mut ca_stack = Stack::new().context("failed to allocate CA stack")?;
-                for cert in chain.drain(..) {
-                    ca_stack.push(cert).context("failed to add chain cert")?;
-                }
-                builder.ca(ca_stack);
+            let mut cert_bundle = leaf
+                .to_pem()
+                .context("failed to encode leaf cert for health checks")?;
+
+            for cert in chain.iter() {
+                cert_bundle.extend_from_slice(
+                    &cert
+                        .to_pem()
+                        .context("failed to encode chain cert for health checks")?,
+                );
             }
-            const PKCS12_PASSWORD: &str = "pavis";
-            let pkcs12 = builder
-                .build2(PKCS12_PASSWORD)
-                .context("failed to build client PKCS12 identity")?;
-            let identity = ReqwestIdentity::from_pkcs12_der(&pkcs12.to_der()?, PKCS12_PASSWORD)
+
+            let key_pkcs8_pem = key
+                .private_key_to_pem_pkcs8()
+                .context("failed to convert client key to PKCS8 PEM")?;
+
+            // For debugging: write cert_bundle and key_pkcs8_pem to temp files
+            let mut temp_cert_file =
+                tempfile::NamedTempFile::new().context("failed to create temp cert file")?;
+            temp_cert_file
+                .write_all(&cert_bundle)
+                .context("failed to write cert bundle to temp file")?;
+            let mut temp_key_file =
+                tempfile::NamedTempFile::new().context("failed to create temp key file")?;
+            temp_key_file
+                .write_all(&key_pkcs8_pem)
+                .context("failed to write key to temp file")?;
+            println!("DEBUG: cert_bundle written to: {:?}", temp_cert_file.path());
+            println!(
+                "DEBUG: key_pkcs8_pem written to: {:?}",
+                temp_key_file.path()
+            );
+
+            let identity = ReqwestIdentity::from_pkcs8_pem(&cert_bundle, &key_pkcs8_pem)
                 .context("failed to parse client identity for health checks")?;
             Ok(Some(Arc::new(identity)))
         }

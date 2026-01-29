@@ -8,7 +8,7 @@ pub async fn handler(ctx: TestContext) -> Response {
         StubResponse {
             error: "not_implemented",
             endpoint: "/reset",
-            note: "TODO",
+            note: "stub not implemented",
         },
     )
 }

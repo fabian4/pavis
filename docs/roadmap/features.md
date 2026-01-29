@@ -14,6 +14,7 @@
 - ✅ **Header manipulation** — Insert/remove/overwrite policies are materialized ahead of time; constraint: no runtime templating.
 - ✅ **Redirects & direct responses** — Fixed HTTP responses and 3xx rewrites are encoded at compile time; constraint: no dynamic body generation.
 - ✅ **Host/path rewrite** — Literal host overrides and prefix path rewrites are supported; constraint: no regex substitution.
+- ✅ **Pre-resolved DNS** — Upstream endpoints are resolved during artifact load, eliminating per-request DNS lookups; constraint: only Strict/Logical discovery modes supported.
 - ✅ **Retries & timeouts** — Fixed retry budgets, error classes, per-try/backoff settings, and buffering rules are enforced; constraint: idempotency requirements must be encoded by the codec.
 - 🧊 **Traffic mirroring** — Shadow copies are intentionally absent; constraint: design-only until a compiler proof exists.
 - 🧊 **Local rate limiting** — No token-bucket or adaptive throttles are implemented; constraint: would require runtime state.
@@ -46,6 +47,7 @@
 
 ## Operational Lifecycle
 - ✅ **Hot reload** — Atomic pointer swaps via `ArcSwap` keep traffic flowing; constraint: entire artifacts swap or are rejected.
+- ✅ **Modularized bootstrap** — Startup and reload phases are isolated from core proxy logic; constraint: IO-layer is fully decoupled from config materialization.
 - ✅ **Graceful shutdown** — Draining behavior is encoded through the shutdown policy; constraint: no per-request overrides.
 - ✅ **LKG fallback** — Last-known-good artifacts remain live on rejection; constraint: manual rollback requires resealing a prior artifact.
 - ⚠️ **`.pvs` versioning policy** — Format exists but compatibility rules are not frozen; constraint: release is blocked until documented.
