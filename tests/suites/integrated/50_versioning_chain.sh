@@ -275,8 +275,21 @@ if ! wait_for_version 4 20; then
 fi
 echo "Runtime reached version 4"
 
-if ! wait "$monitor_pid"; then
-    echo "⚠️ Version monitor exited before capturing all updates" >&2
+# Wait for monitor to capture v4 (longer timeout for CI environments)
+if ! wait_for_monitor_log 4 "$TEST_TMP/runtime_versions.log" 20; then
+    echo "⚠️ Monitor failed to log v4 within 20s, checking if process exited"
+    if ! kill -0 "$monitor_pid" 2>/dev/null; then
+        echo "❌ Monitor process exited prematurely"
+        exit 1
+    fi
+fi
+
+# Give monitor extra time to flush writes in high-latency environments
+sleep 1
+
+# Check if monitor is still running before waiting
+if kill -0 "$monitor_pid" 2>/dev/null; then
+    wait "$monitor_pid" 2>/dev/null || true
 fi
 
 if ! assert_versions_in_order "$TEST_TMP/runtime_versions.log" "2 3 4"; then

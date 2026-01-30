@@ -217,7 +217,10 @@ impl ConfigAgent {
             .fsm
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.context_mut().last_applied_etag = Some(etag);
+        // Only save ETag if not in forced unconditional mode (after 410 resync)
+        if guard.context_mut().force_unconditional_count == 0 {
+            guard.context_mut().last_applied_etag = Some(etag);
+        }
         guard.context_mut().last_rejected_etag = None;
         guard.context_mut().last_rejected_until = None;
         guard.context_mut().backoff_attempt = 0;

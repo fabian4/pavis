@@ -238,11 +238,11 @@ pub(crate) async fn get_status(State(state): State<Arc<RelayRuntimeState>>) -> R
     let options = state.options();
     let uptime_seconds = uptime_seconds(state.started_at());
     let current_version = state.version().await;
-    let storage_root = options.storage_root.clone();
-    let history_count = crate::storage::history::list_history_versions(&storage_root)
+    let storage_root = &options.storage_root;
+    let history_count = crate::storage::history::list_history_versions(storage_root)
         .map(|versions| versions.len() as u64)
         .unwrap_or(0);
-    let lkg_meta = crate::storage::lkg::load_lkg_metadata(&storage_root)
+    let lkg_meta = crate::storage::lkg::load_lkg_metadata(storage_root)
         .ok()
         .flatten();
     let lkg = lkg_meta.map(|meta| StatusLkg {
@@ -376,6 +376,7 @@ fn uptime_seconds(started_at: std::time::SystemTime) -> u64 {
 mod tests {
     use super::*;
     use crate::runtime::RelayOptions;
+    use crate::storage::validated_path::ValidatedStorageRoot;
     use axum::body::Bytes;
 
     async fn response_bytes(response: Response) -> Bytes {
@@ -416,8 +417,9 @@ mod tests {
         let dir = std::env::temp_dir().join("relay_handlers_test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        let storage_root = ValidatedStorageRoot::new(dir.clone()).expect("validated storage root");
         let options = RelayOptions {
-            storage_root: dir.clone(),
+            storage_root,
             max_pvs_bytes: 1000,
             ..Default::default()
         };
@@ -450,8 +452,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&fail_dir);
         std::fs::create_dir_all(&fail_dir).unwrap();
         std::fs::write(fail_dir.join("lkg"), b"block").unwrap();
+        let fail_storage_root =
+            ValidatedStorageRoot::new(fail_dir.clone()).expect("validated storage root");
         let mut fail_opts = options.clone();
-        fail_opts.storage_root = fail_dir.clone();
+        fail_opts.storage_root = fail_storage_root;
         let fail_state = Arc::new(
             RelayRuntimeState::new_with_options(10, Bytes::new(), fail_opts).expect("state"),
         );

@@ -42,7 +42,7 @@ async fn publish_once(app: &axum::Router, bytes: Bytes) -> (StatusCode, Option<P
 async fn publish_monotonic_versions_and_persists_lkg_metadata() {
     let bytes = valid_pvs_bytes("publish_monotonic");
     let state = state_with_storage("publish_monotonic", 0, Bytes::new());
-    let storage_root = state.options().storage_root.clone();
+    let storage_root = &state.options().storage_root;
     let app = router(state.clone());
 
     let (_, first) = publish_once(&app, bytes.clone()).await;
@@ -55,7 +55,7 @@ async fn publish_monotonic_versions_and_persists_lkg_metadata() {
     assert_eq!(second.version, 2);
     assert_eq!(state.version().await, 2);
 
-    let lkg_meta = load_lkg_metadata(&storage_root)
+    let lkg_meta = load_lkg_metadata(storage_root)
         .expect("load lkg metadata")
         .expect("lkg metadata");
     assert_eq!(lkg_meta.version, second.version);

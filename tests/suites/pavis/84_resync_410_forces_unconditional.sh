@@ -48,14 +48,21 @@ wait_for_url "http://127.0.0.1:$PORT_PAVIS/healthz" 10
 
 echo "STEP: assert requests are unconditional after 410"
 REQ_URL="http://127.0.0.1:$PORT_RELAY/requests"
-MAX_RETRIES=20
+
+# Wait longer in Docker environments for services to fully stabilize
+if [ "${TEST_MODE:-binary}" = "docker" ]; then
+    echo "Docker mode detected, waiting for services to stabilize..."
+    sleep 2
+fi
+
+MAX_RETRIES=50
 for _ in $(seq 1 $MAX_RETRIES); do
     REQUESTS=$(curl -s "$REQ_URL" | tr -d '\r')
     COUNT=$(echo "$REQUESTS" | grep -o '"wait_ms"' | wc -l | tr -d ' ')
     if [ "$COUNT" -ge 2 ]; then
         break
     fi
-    sleep 0.2
+    sleep 0.3
 done
 
 if [ "${COUNT:-0}" -lt 2 ]; then

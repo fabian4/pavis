@@ -2,20 +2,21 @@ use crate::storage::history::{
     history_artifact_path, history_metadata_path, list_history_versions,
 };
 use crate::storage::metadata::ArtifactMetadata;
+use crate::storage::validated_path::ValidatedStorageRoot;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn lkg_artifact_path(base: &Path) -> PathBuf {
+pub(crate) fn lkg_artifact_path(base: &ValidatedStorageRoot) -> PathBuf {
     base.join("lkg").join("config.pvs")
 }
 
-pub(crate) fn lkg_metadata_path(base: &Path) -> PathBuf {
+pub(crate) fn lkg_metadata_path(base: &ValidatedStorageRoot) -> PathBuf {
     base.join("lkg").join("meta.json")
 }
 
 pub(crate) fn promote_to_lkg(
-    base: &Path,
+    base: &ValidatedStorageRoot,
     artifact: &[u8],
     meta: &ArtifactMetadata,
 ) -> anyhow::Result<()> {
@@ -32,7 +33,9 @@ pub(crate) fn promote_to_lkg(
     Ok(())
 }
 
-pub(crate) fn load_lkg(base: &Path) -> anyhow::Result<Option<(Vec<u8>, ArtifactMetadata)>> {
+pub(crate) fn load_lkg(
+    base: &ValidatedStorageRoot,
+) -> anyhow::Result<Option<(Vec<u8>, ArtifactMetadata)>> {
     let artifact_path = lkg_artifact_path(base);
     let metadata_path = lkg_metadata_path(base);
 
@@ -52,7 +55,9 @@ pub(crate) fn load_lkg(base: &Path) -> anyhow::Result<Option<(Vec<u8>, ArtifactM
     }
 }
 
-pub(crate) fn load_lkg_metadata(base: &Path) -> anyhow::Result<Option<ArtifactMetadata>> {
+pub(crate) fn load_lkg_metadata(
+    base: &ValidatedStorageRoot,
+) -> anyhow::Result<Option<ArtifactMetadata>> {
     let metadata_path = lkg_metadata_path(base);
     if !metadata_path.exists() {
         return Ok(None);
@@ -62,7 +67,7 @@ pub(crate) fn load_lkg_metadata(base: &Path) -> anyhow::Result<Option<ArtifactMe
     Ok(Some(meta))
 }
 
-pub(crate) fn repair_lkg(base: &Path) -> anyhow::Result<()> {
+pub(crate) fn repair_lkg(base: &ValidatedStorageRoot) -> anyhow::Result<()> {
     let artifact_path = lkg_artifact_path(base);
     let metadata_path = lkg_metadata_path(base);
 
@@ -93,12 +98,12 @@ pub(crate) fn repair_lkg(base: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn max_history_version(base: &Path) -> anyhow::Result<Option<u64>> {
+fn max_history_version(base: &ValidatedStorageRoot) -> anyhow::Result<Option<u64>> {
     let versions = list_history_versions(base)?;
     Ok(versions.into_iter().max())
 }
 
-fn recover_lkg_from_history(base: &Path, version: u64) -> anyhow::Result<()> {
+fn recover_lkg_from_history(base: &ValidatedStorageRoot, version: u64) -> anyhow::Result<()> {
     let artifact_path = history_artifact_path(base, version);
     let metadata_path = history_metadata_path(base, version);
 
@@ -140,7 +145,9 @@ mod tests {
     use crate::storage::metadata::ArtifactMetadata;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn temp_dir(name: &str) -> std::path::PathBuf {
+    use super::super::validated_path::ValidatedStorageRoot;
+
+    fn temp_dir(name: &str) -> ValidatedStorageRoot {
         let dir = std::env::temp_dir().join(format!(
             "relay_lkg_{name}_{}",
             SystemTime::now()
@@ -149,7 +156,7 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).expect("mkdir");
-        dir
+        ValidatedStorageRoot::new(dir).expect("validated path")
     }
 
     #[test]
@@ -164,7 +171,7 @@ mod tests {
         promote_to_lkg(&dir, b"pvs", &meta).expect("promote");
         assert!(lkg_artifact_path(&dir).exists());
         assert!(lkg_metadata_path(&dir).exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.as_path());
     }
 
     #[test]
@@ -172,7 +179,7 @@ mod tests {
         let dir = temp_dir("missing");
         let lkg = load_lkg(&dir).expect("load");
         assert!(lkg.is_none());
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.as_path());
     }
 
     #[test]
@@ -182,7 +189,7 @@ mod tests {
         std::fs::write(lkg_artifact_path(&dir), b"pvs").unwrap();
         let err = load_lkg(&dir).expect_err("error");
         assert!(err.to_string().contains("metadata"));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.as_path());
     }
 
     #[test]
@@ -198,7 +205,7 @@ mod tests {
         std::fs::write(lkg_metadata_path(&dir), serde_json::to_vec(&meta).unwrap()).unwrap();
         let err = load_lkg(&dir).expect_err("error");
         assert!(err.to_string().contains("artifact"));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.as_path());
     }
 
     #[test]
@@ -208,7 +215,7 @@ mod tests {
         std::fs::write(lkg_artifact_path(&dir), b"pvs").unwrap();
         repair_lkg(&dir).expect("repair");
         assert!(!lkg_artifact_path(&dir).exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.as_path());
     }
 
     #[test]
@@ -225,6 +232,6 @@ mod tests {
         std::fs::write(lkg_metadata_path(&dir), serde_json::to_vec(&meta).unwrap()).unwrap();
         repair_lkg(&dir).expect("repair");
         assert!(lkg_artifact_path(&dir).exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.as_path());
     }
 }

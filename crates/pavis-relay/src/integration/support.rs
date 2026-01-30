@@ -1,4 +1,5 @@
 use crate::runtime::{RelayOptions, RelayRuntimeState};
+use crate::storage::validated_path::ValidatedStorageRoot;
 use axum::body::Bytes;
 use pavis_core::{AccessLogPolicy, ListenerName, Metrics, ServiceName, Telemetry, WorkerCount};
 use std::net::SocketAddr;
@@ -15,8 +16,10 @@ pub(crate) fn temp_storage_root(label: &str) -> PathBuf {
 }
 
 pub(crate) fn state_with_storage(label: &str, version: u64, bytes: Bytes) -> RelayRuntimeState {
+    let storage_root =
+        ValidatedStorageRoot::new(temp_storage_root(label)).expect("validated storage root");
     let options = RelayOptions {
-        storage_root: temp_storage_root(label),
+        storage_root,
         ..Default::default()
     };
     RelayRuntimeState::new_with_options(version, bytes, options).expect("state")

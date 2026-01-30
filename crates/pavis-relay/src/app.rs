@@ -7,6 +7,7 @@ use crate::runtime::{RelayOptions, RelayRuntimeState};
 use crate::state::{RelayState, derive_state_from_lkg, load_state, save_state};
 use crate::storage::history::{find_corrupt_versions, find_orphaned_versions};
 use crate::storage::lkg::{lkg_artifact_path, load_lkg, repair_lkg};
+use crate::storage::validated_path::ValidatedStorageRoot;
 use anyhow::{Context, Result};
 use axum::body::Bytes;
 use std::net::SocketAddr;
@@ -41,13 +42,16 @@ fn init_state(
     let base_dir = resolve_data_dir(config, data_dir);
     ensure_storage_dirs(&base_dir)?;
 
-    repair_lkg(&base_dir).context("failed to repair LKG")?;
+    let storage_root = ValidatedStorageRoot::new(base_dir.clone())
+        .context("failed to validate storage root path")?;
+
+    repair_lkg(&storage_root).context("failed to repair LKG")?;
 
     let mut options = build_options(config).context("invalid relay config options")?;
-    options.lkg_path = Some(lkg_artifact_path(&base_dir));
-    options.storage_root = base_dir.clone();
+    options.lkg_path = Some(lkg_artifact_path(&storage_root));
+    options.storage_root = storage_root.clone();
 
-    let (bytes, lkg_meta) = match load_lkg(&base_dir) {
+    let (bytes, lkg_meta) = match load_lkg(&storage_root) {
         Ok(Some((bytes, meta))) => {
             if options.max_pvs_bytes > 0 && (bytes.len() as u64) > options.max_pvs_bytes {
                 anyhow::bail!(
@@ -73,20 +77,20 @@ fn init_state(
         .as_ref()
         .map(derive_state_from_lkg)
         .unwrap_or(RelayState { current_version: 0 });
-    let state_path = base_dir.join("state.json");
+    let state_path = storage_root.as_path().join("state.json");
     let cached_state = load_state(&state_path).context("failed to load state.json")?;
     if cached_state.as_ref() != Some(&derived_state) {
         save_state(&state_path, &derived_state).context("failed to persist state.json")?;
     }
 
-    let orphans = find_orphaned_versions(&base_dir, derived_state.current_version)
+    let orphans = find_orphaned_versions(&storage_root, derived_state.current_version)
         .context("failed to scan history for orphans")?;
     for version in orphans {
         warn!("history entry version {} exceeds LKG version", version);
     }
 
     let corrupt =
-        find_corrupt_versions(&base_dir).context("failed to scan history for corruption")?;
+        find_corrupt_versions(&storage_root).context("failed to scan history for corruption")?;
     for version in corrupt {
         warn!(
             "history entry version {} is missing .pvs or .meta.json",
@@ -197,6 +201,18 @@ fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
         anyhow::bail!("persistence.retry.backoff.max must be >= persistence.retry.backoff.min");
     }
 
+    // Note: storage_root will be set by init_state after validation
+    // Use a unique temporary path that will be replaced by init_state
+    let temp_storage = std::env::temp_dir().join(format!(
+        "pavis-relay-temp-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let storage_root = ValidatedStorageRoot::new(temp_storage)
+        .context("failed to create temporary storage root")?;
+
     Ok(RelayOptions {
         version_header: axum::http::HeaderName::from_static(pavis_core::CONFIG_VERSION_HEADER),
         checksum_header: axum::http::HeaderName::from_static(pavis_pvs::PAVIS_CHECKSUM_HEADER),
@@ -209,7 +225,7 @@ fn build_options(config: &config::RelayConfig) -> Result<RelayOptions> {
         long_poll_enabled: config.distribution.long_poll.enabled,
         identity_name: config.identity.name.clone(),
         lkg_path: None,
-        storage_root: PathBuf::new(),
+        storage_root,
         max_pvs_bytes: config.artifact.limits.max_pvs_bytes,
     })
 }
@@ -221,6 +237,7 @@ mod tests {
     use crate::state::load_state;
     use crate::storage::lkg::promote_to_lkg;
     use crate::storage::metadata::ArtifactMetadata;
+    use crate::storage::validated_path::ValidatedStorageRoot;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn minimal_config() -> RelayConfig {
@@ -344,7 +361,8 @@ mod tests {
             checksum: crate::storage::metadata::checksum_for_bytes(&pvs_bytes),
             size: pvs_bytes.len() as u64,
         };
-        promote_to_lkg(&dir, &pvs_bytes, &meta).unwrap();
+        let storage_root = ValidatedStorageRoot::new(dir.clone()).unwrap();
+        promote_to_lkg(&storage_root, &pvs_bytes, &meta).unwrap();
 
         let mut config = minimal_config();
 
@@ -441,7 +459,8 @@ mod tests {
             checksum: crate::storage::metadata::checksum_for_bytes(&pvs_bytes),
             size: pvs_bytes.len() as u64,
         };
-        promote_to_lkg(&dir, &pvs_bytes, &meta).unwrap();
+        let storage_root = ValidatedStorageRoot::new(dir.clone()).unwrap();
+        promote_to_lkg(&storage_root, &pvs_bytes, &meta).unwrap();
 
         let mut config = minimal_config();
         config.http.bind = "127.0.0.1:0".to_string();
@@ -474,7 +493,8 @@ mod tests {
             checksum: crate::storage::metadata::checksum_for_bytes(&pvs_bytes),
             size: pvs_bytes.len() as u64,
         };
-        promote_to_lkg(&dir, &pvs_bytes, &meta).unwrap();
+        let storage_root = ValidatedStorageRoot::new(dir.clone()).unwrap();
+        promote_to_lkg(&storage_root, &pvs_bytes, &meta).unwrap();
 
         let state_path = dir.join("state.json");
         crate::state::save_state(

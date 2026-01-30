@@ -2,6 +2,7 @@ use crate::runtime::{
     RelayError, RelayMeta, RelayMetrics, RelayOptions, RelayRuntimeState, execute_plan,
 };
 use crate::storage::metadata::checksum_for_bytes;
+use crate::storage::validated_path::ValidatedStorageRoot;
 use axum::body::Bytes;
 use pavis_core::{AccessLogPolicy, ListenerName, Metrics, ServiceName, Telemetry, WorkerCount};
 use std::net::SocketAddr;
@@ -45,8 +46,10 @@ fn temp_storage_root(label: &str) -> PathBuf {
 }
 
 fn state_with_storage(label: &str) -> RelayRuntimeState {
+    let storage_root =
+        ValidatedStorageRoot::new(temp_storage_root(label)).expect("validated storage root");
     let options = RelayOptions {
-        storage_root: temp_storage_root(label),
+        storage_root,
         ..Default::default()
     };
     RelayRuntimeState::new_with_options(0, Bytes::new(), options).expect("state")
@@ -282,10 +285,10 @@ async fn publish_invalid_pvs_no_version_increment() {
 async fn publish_persists_state_json() {
     let state = state_with_storage("publish_state_json");
     let bytes = valid_pvs_bytes();
-    let storage_root = state.options().storage_root.clone();
+    let storage_root = &state.options().storage_root;
 
     let meta = state.publish_bytes(bytes).await.expect("publish");
-    let state_path = storage_root.join("state.json");
+    let state_path = storage_root.as_path().join("state.json");
     let loaded = crate::state::load_state(&state_path)
         .expect("load state")
         .expect("state exists");
@@ -297,14 +300,14 @@ async fn publish_persists_state_json() {
 async fn publish_writes_history_and_lkg_metadata() {
     let state = state_with_storage("publish_history");
     let bytes = valid_pvs_bytes();
-    let storage_root = state.options().storage_root.clone();
+    let storage_root = &state.options().storage_root;
 
     let meta = state.publish_bytes(bytes).await.expect("publish");
     let history =
-        crate::storage::history::list_history_versions(&storage_root).expect("list history");
+        crate::storage::history::list_history_versions(storage_root).expect("list history");
     assert_eq!(history, vec![meta.version]);
 
-    let lkg_meta = crate::storage::lkg::load_lkg_metadata(&storage_root)
+    let lkg_meta = crate::storage::lkg::load_lkg_metadata(storage_root)
         .expect("load lkg metadata")
         .expect("lkg metadata");
     assert_eq!(lkg_meta.version, meta.version);
@@ -314,8 +317,10 @@ async fn publish_writes_history_and_lkg_metadata() {
 
 #[tokio::test]
 async fn publish_rejects_oversized_payload() {
+    let storage_root = ValidatedStorageRoot::new(temp_storage_root("publish_oversize"))
+        .expect("validated storage root");
     let mut options = RelayOptions {
-        storage_root: temp_storage_root("publish_oversize"),
+        storage_root,
         ..Default::default()
     };
     options.max_pvs_bytes = 1;

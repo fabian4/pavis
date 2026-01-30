@@ -17,6 +17,8 @@ pub struct Context {
     pub last_rejected_until: Option<Instant>,
     pub backoff_attempt: u32,
     pub observed_version: Option<ConfigVersion>,
+    /// After receiving 410, send this many unconditional requests before resuming conditional fetching
+    pub force_unconditional_count: u32,
 }
 
 impl Context {
@@ -27,11 +29,19 @@ impl Context {
             last_rejected_until: None,
             backoff_attempt: 0,
             observed_version: None,
+            force_unconditional_count: 0,
         }
     }
 
     pub fn conditional_etag(&mut self, now: Instant) -> Option<String> {
         self.clear_rejected_if_expired(now);
+
+        // If we're in forced unconditional mode (after 410), don't send ETag
+        if self.force_unconditional_count > 0 {
+            self.force_unconditional_count = self.force_unconditional_count.saturating_sub(1);
+            return None;
+        }
+
         if let Some(etag) = self.last_rejected_etag.as_deref() {
             return Some(etag.to_string());
         }
@@ -56,6 +66,8 @@ impl Context {
         self.last_applied_etag = None;
         self.last_rejected_etag = None;
         self.last_rejected_until = None;
+        // After 410, force at least 2 unconditional requests to ensure full resync
+        self.force_unconditional_count = 2;
     }
 }
 
@@ -360,7 +372,11 @@ impl Fsm {
             }
             (State::Verifying(_), _) => {}
             (State::Applying(_), Event::ApplyOk { etag, version, now }) => {
-                self.ctx.last_applied_etag = Some(etag);
+                // Only save the ETag if we're not in forced unconditional mode
+                // (after 410, we want to continue unconditional fetching for a few rounds)
+                if self.ctx.force_unconditional_count == 0 {
+                    self.ctx.last_applied_etag = Some(etag);
+                }
                 self.ctx.last_rejected_etag = None;
                 self.ctx.last_rejected_until = None;
                 self.ctx.backoff_attempt = 0;

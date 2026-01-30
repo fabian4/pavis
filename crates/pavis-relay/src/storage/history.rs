@@ -1,4 +1,5 @@
 use crate::storage::metadata::ArtifactMetadata;
+use crate::storage::validated_path::ValidatedStorageRoot;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
@@ -6,12 +7,12 @@ use std::path::{Path, PathBuf};
 
 const VERSION_WIDTH: usize = 10;
 
-pub(crate) fn history_artifact_path(base: &Path, version: u64) -> PathBuf {
+pub(crate) fn history_artifact_path(base: &ValidatedStorageRoot, version: u64) -> PathBuf {
     base.join("history")
         .join(format!("{version:0width$}.pvs", width = VERSION_WIDTH))
 }
 
-pub(crate) fn history_metadata_path(base: &Path, version: u64) -> PathBuf {
+pub(crate) fn history_metadata_path(base: &ValidatedStorageRoot, version: u64) -> PathBuf {
     base.join("history").join(format!(
         "{version:0width$}.meta.json",
         width = VERSION_WIDTH
@@ -20,7 +21,7 @@ pub(crate) fn history_metadata_path(base: &Path, version: u64) -> PathBuf {
 
 #[allow(dead_code)] // Used by publish flow in Phase 2 and tests.
 pub(crate) fn append_to_history(
-    base: &Path,
+    base: &ValidatedStorageRoot,
     version: u64,
     artifact: &[u8],
     meta: &ArtifactMetadata,
@@ -38,7 +39,7 @@ pub(crate) fn append_to_history(
     Ok(())
 }
 
-pub(crate) fn list_history_versions(base: &Path) -> anyhow::Result<Vec<u64>> {
+pub(crate) fn list_history_versions(base: &ValidatedStorageRoot) -> anyhow::Result<Vec<u64>> {
     let (artifact_versions, meta_versions) = scan_history_sets(base)?;
     let mut versions: Vec<u64> = artifact_versions
         .intersection(&meta_versions)
@@ -49,7 +50,7 @@ pub(crate) fn list_history_versions(base: &Path) -> anyhow::Result<Vec<u64>> {
 }
 
 pub(crate) fn find_orphaned_versions(
-    base: &Path,
+    base: &ValidatedStorageRoot,
     current_version: u64,
 ) -> anyhow::Result<Vec<u64>> {
     let versions = list_history_versions(base)?;
@@ -59,7 +60,7 @@ pub(crate) fn find_orphaned_versions(
         .collect())
 }
 
-pub(crate) fn find_corrupt_versions(base: &Path) -> anyhow::Result<Vec<u64>> {
+pub(crate) fn find_corrupt_versions(base: &ValidatedStorageRoot) -> anyhow::Result<Vec<u64>> {
     let (artifact_versions, meta_versions) = scan_history_sets(base)?;
     let mut corrupt: Vec<u64> = artifact_versions
         .symmetric_difference(&meta_versions)
@@ -69,7 +70,7 @@ pub(crate) fn find_corrupt_versions(base: &Path) -> anyhow::Result<Vec<u64>> {
     Ok(corrupt)
 }
 
-fn scan_history_sets(base: &Path) -> anyhow::Result<(HashSet<u64>, HashSet<u64>)> {
+fn scan_history_sets(base: &ValidatedStorageRoot) -> anyhow::Result<(HashSet<u64>, HashSet<u64>)> {
     let dir = base.join("history");
     if !dir.exists() {
         return Ok((HashSet::new(), HashSet::new()));
@@ -129,9 +130,10 @@ mod tests {
         list_history_versions,
     };
     use crate::storage::metadata::ArtifactMetadata;
+    use crate::storage::validated_path::ValidatedStorageRoot;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn temp_dir(name: &str) -> std::path::PathBuf {
+    fn temp_dir(name: &str) -> ValidatedStorageRoot {
         let dir = std::env::temp_dir().join(format!(
             "relay_history_{name}_{}",
             SystemTime::now()
@@ -140,7 +142,7 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).expect("mkdir");
-        dir
+        ValidatedStorageRoot::new(dir).expect("validated path")
     }
 
     #[test]
@@ -160,7 +162,7 @@ mod tests {
                 .with_extension("tmp")
                 .exists()
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.as_path());
     }
 
     #[test]
@@ -177,7 +179,7 @@ mod tests {
         append_to_history(&dir, 3, b"b", &meta3).expect("append");
         let versions = list_history_versions(&dir).expect("list");
         assert_eq!(versions, vec![2, 3]);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.as_path());
     }
 
     #[test]
@@ -194,6 +196,6 @@ mod tests {
         append_to_history(&dir, 6, b"b", &meta6).expect("append");
         let orphans = find_orphaned_versions(&dir, 5).expect("orphans");
         assert_eq!(orphans, vec![6]);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.as_path());
     }
 }

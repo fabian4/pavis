@@ -166,7 +166,7 @@ jobs:
   e2e_docker:
     name: e2e (docker) - ${{ matrix.suite }}
     runs-on: ubuntu-latest
-    needs: [images]
+    needs: [images, build]
     strategy:
       fail-fast: false
       matrix:

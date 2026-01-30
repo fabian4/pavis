@@ -27,6 +27,7 @@ struct InnerState {
     data: Option<Bytes>,
     meta: Option<ArtifactMeta>,
     requests: Vec<RequestRecord>,
+    resync_completed: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -47,6 +48,7 @@ impl RelayState {
                 data: None,
                 meta: None,
                 requests: Vec::new(),
+                resync_completed: false,
             })),
             notifier: tx,
             mode,
@@ -124,6 +126,16 @@ impl RelayState {
 
     pub fn next_script_attempt(&self) -> usize {
         self.script_counter.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub async fn check_and_mark_resync(&self, is_unconditional: bool) -> bool {
+        let mut inner = self.inner.write().await;
+        if is_unconditional && !inner.resync_completed {
+            inner.resync_completed = true;
+            false // Not yet resynced before this request
+        } else {
+            inner.resync_completed // Already resynced
+        }
     }
 }
 

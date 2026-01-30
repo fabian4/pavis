@@ -1,5 +1,6 @@
 use crate::routes::router;
 use crate::runtime::{RelayOptions, RelayRuntimeState};
+use crate::storage::validated_path::ValidatedStorageRoot;
 use axum::body::{Body, Bytes};
 use axum::http::HeaderName;
 use axum::http::{Request, StatusCode};
@@ -45,22 +46,16 @@ fn build_pvs_bytes(label: &str) -> Vec<u8> {
 }
 
 fn test_state() -> RelayRuntimeState {
+    let storage_root =
+        ValidatedStorageRoot::new(temp_storage_root("seed")).expect("validated storage root");
     let options = RelayOptions {
-        storage_root: temp_storage_root("seed"),
+        storage_root,
         ..Default::default()
     };
     RelayRuntimeState::new_with_options(7, valid_pvs_bytes("seed"), options).expect("state")
 }
 
 fn test_state_with_options(options: RelayOptions) -> RelayRuntimeState {
-    let options = if options.storage_root.as_os_str().is_empty() {
-        RelayOptions {
-            storage_root: temp_storage_root("seed"),
-            ..options
-        }
-    } else {
-        options
-    };
     RelayRuntimeState::new_with_options(7, valid_pvs_bytes("seed"), options).expect("state")
 }
 
@@ -460,10 +455,13 @@ async fn publish_updates_metrics() {
 
 #[tokio::test]
 async fn custom_headers_override_defaults() {
+    let storage_root = ValidatedStorageRoot::new(temp_storage_root("custom_headers"))
+        .expect("validated storage root");
     let options = RelayOptions {
         version_header: HeaderName::from_static("x-test-version"),
         checksum_header: HeaderName::from_static("x-test-checksum"),
         checksum_alg_header: HeaderName::from_static("x-test-checksum-alg"),
+        storage_root,
         ..Default::default()
     };
     let app = router(test_state_with_options(options));
@@ -490,11 +488,13 @@ async fn test_publish_updates_lkg_on_disk() {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let lkg_path = crate::storage::lkg::lkg_artifact_path(&dir);
+
+    let storage_root = ValidatedStorageRoot::new(dir.clone()).expect("validated storage root");
+    let lkg_path = crate::storage::lkg::lkg_artifact_path(&storage_root);
     std::fs::create_dir_all(lkg_path.parent().unwrap()).unwrap();
 
     let options = RelayOptions {
-        storage_root: dir.clone(),
+        storage_root,
         ..Default::default()
     };
     let state = RelayRuntimeState::new_with_options(0, Bytes::new(), options).expect("state");

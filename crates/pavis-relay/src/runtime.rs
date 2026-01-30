@@ -13,6 +13,7 @@ use crate::state::{RelayState, save_state};
 use crate::storage::history::{append_to_history, history_artifact_path, history_metadata_path};
 use crate::storage::lkg::promote_to_lkg;
 use crate::storage::metadata::{ArtifactMetadata, checksum_for_bytes};
+use crate::storage::validated_path::ValidatedStorageRoot;
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
@@ -126,12 +127,24 @@ pub(crate) struct RelayOptions {
     #[allow(dead_code)]
     pub identity_name: String,
     pub lkg_path: Option<PathBuf>,
-    pub storage_root: PathBuf,
+    pub storage_root: ValidatedStorageRoot,
     pub max_pvs_bytes: u64,
 }
 
 impl Default for RelayOptions {
     fn default() -> Self {
+        // Create a unique temporary directory for default storage root
+        // In practice, this should be set by the caller with a proper path
+        let temp_storage = std::env::temp_dir().join(format!(
+            "pavis-relay-default-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let storage_root =
+            ValidatedStorageRoot::new(temp_storage).expect("Failed to create default storage root");
+
         Self {
             version_header: axum::http::HeaderName::from_static(pavis_core::CONFIG_VERSION_HEADER),
             checksum_header: axum::http::HeaderName::from_static(pavis_pvs::PAVIS_CHECKSUM_HEADER),
@@ -144,7 +157,7 @@ impl Default for RelayOptions {
             long_poll_enabled: true,
             identity_name: String::new(),
             lkg_path: None,
-            storage_root: PathBuf::new(),
+            storage_root,
             max_pvs_bytes: 0,
         }
     }
@@ -329,12 +342,7 @@ impl RelayRuntimeState {
             schema_version: verified.version(),
         };
 
-        let storage_root = self.options.storage_root.clone();
-        if storage_root.as_os_str().is_empty() {
-            return Err(RelayError::Config(
-                "storage_root is not configured".to_string(),
-            ));
-        }
+        let storage_root = &self.options.storage_root;
 
         let proposed_version = self.version().await + 1;
         let published_at = SystemTime::now();
@@ -346,19 +354,19 @@ impl RelayRuntimeState {
             size: bytes.len() as u64,
         };
 
-        append_to_history(&storage_root, proposed_version, &bytes, &metadata)
+        append_to_history(storage_root, proposed_version, &bytes, &metadata)
             .map_err(|err| RelayError::Storage(std::io::Error::other(err)))?;
 
-        if let Err(err) = promote_to_lkg(&storage_root, &bytes, &metadata) {
-            let artifact_path = history_artifact_path(&storage_root, proposed_version);
-            let meta_path = history_metadata_path(&storage_root, proposed_version);
+        if let Err(err) = promote_to_lkg(storage_root, &bytes, &metadata) {
+            let artifact_path = history_artifact_path(storage_root, proposed_version);
+            let meta_path = history_metadata_path(storage_root, proposed_version);
             let _ = std::fs::remove_file(&artifact_path);
             let _ = std::fs::remove_file(&meta_path);
             return Err(RelayError::Storage(std::io::Error::other(err)));
         }
 
         if let Err(err) = save_state(
-            &storage_root.join("state.json"),
+            &storage_root.as_path().join("state.json"),
             &RelayState {
                 current_version: proposed_version,
             },

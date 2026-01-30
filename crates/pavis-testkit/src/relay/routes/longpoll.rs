@@ -35,22 +35,32 @@ pub async fn handler(
     let timeout_val = params.wait_ms.unwrap_or(args.default_timeout_ms);
     let timeout_dur = Duration::from_millis(timeout_val);
     state
-        .record_request(params.wait_ms, client_if_none_match)
+        .record_request(params.wait_ms, client_if_none_match.clone())
         .await;
 
     if let Some(mode) = args.mode.as_deref().and_then(MockMode::parse) {
-        let attempt = state.next_script_attempt();
         match mode {
-            MockMode::ResyncOnce if attempt == 0 => {
-                return (StatusCode::GONE, "").into_response();
+            MockMode::ResyncOnce => {
+                let attempt = state.next_script_attempt();
+                // Return 410 only on the very first request, then normal processing
+                if attempt == 0 {
+                    return (StatusCode::GONE, "").into_response();
+                }
+                // Fall through to normal processing after first 410
             }
-            MockMode::CorruptOnce if attempt == 0 => {
-                return response_with_bytes(corrupt_bytes(), 1);
+            MockMode::CorruptOnce => {
+                let attempt = state.next_script_attempt();
+                if attempt == 0 {
+                    return response_with_bytes(corrupt_bytes(), 1);
+                }
+                // Fall through to normal processing after first corrupt response
             }
             MockMode::CorruptRepeat => {
+                // Always return corrupt bytes, regardless of attempt count
+                // Increment counter to ensure proper request tracking in all environments
+                let _ = state.next_script_attempt();
                 return response_with_bytes(corrupt_bytes(), 1);
             }
-            _ => {}
         }
     }
 
