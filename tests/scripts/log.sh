@@ -8,7 +8,11 @@ START_TIME=$(date +%s)
 
 # Helper for timing
 get_time() {
-    date +%s
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        gdate +%s.%N 2>/dev/null || date +%s
+    else
+        date +%s.%N 2>/dev/null || date +%s
+    fi
 }
 
 log_group() {

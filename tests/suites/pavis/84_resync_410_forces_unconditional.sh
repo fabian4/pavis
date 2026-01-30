@@ -30,7 +30,9 @@ cat <<-EOF_CONF > "$TEST_TMP/config.yaml"
 	    address: "127.0.0.1:$PORT_PAVIS"
 	upstreams:
 	  - name: "dummy"
-	    endpoints: []
+	    endpoints:
+	      - ip: "127.0.0.1"
+	        port: 1
 	routes: []
 	telemetry:
 	  service_name: "pavis-test"

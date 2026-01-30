@@ -75,6 +75,36 @@ wait_for_version() {
     return 1
 }
 
+# Attempt to detect if a TCP port is accepting connections.
+# Tries Python socket first, falls back to nc for compatibility.
+port_is_open() {
+    local port="$1"
+    if command -v python3 >/dev/null 2>&1; then
+        PORT="$port" python3 - <<'PY' >/dev/null 2>&1
+import os
+import socket
+import sys
+
+port = int(os.environ["PORT"])
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.settimeout(0.25)
+try:
+    sock.connect(("127.0.0.1", port))
+except OSError:
+    sys.exit(1)
+finally:
+    sock.close()
+sys.exit(0)
+PY
+        return $?
+    fi
+    if command -v nc >/dev/null 2>&1; then
+        nc -z 127.0.0.1 "$port" >/dev/null 2>&1
+        return $?
+    fi
+    return 1
+}
+
 # Wait for port to be listening
 # Usage: wait_for_port 8080 10
 wait_for_port() {
@@ -85,7 +115,7 @@ wait_for_port() {
     local end_time=$((start_time + timeout))
 
     while [ "$(date +%s)" -lt "$end_time" ]; do
-        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+        if port_is_open "$port"; then
             return 0
         fi
         sleep 0.1
