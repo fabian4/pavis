@@ -34,3 +34,7 @@ The compiler pipeline, artifact sealing, runtime execution, security stack, obse
 - **`.pvs` versioning contract** — the compatibility rules for the binary artifact format must be written down and frozen before declaring the thesis complete.
 - **Release discipline** — automated multi-architecture CI/CD (linux/amd64 + linux/arm64) and Cargo publishing must be stood up to prove artifacts remain identical across builders.
 Refer to [docs/roadmap/roadmap.md](./docs/roadmap/roadmap.md) for the precise closure gates.
+
+
+---
+*Contributors: @DerekCoreBot*
