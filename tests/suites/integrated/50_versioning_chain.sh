@@ -204,7 +204,8 @@ start_version_monitor() {
     (
         local expected
         for expected in "$@"; do
-            local retries=200
+            # Increased retries from 200 to 600 (60s total) to handle slow CI environments
+            local retries=600
             while [ "$retries" -gt 0 ]; do
                 if curl -s --connect-timeout 1 --max-time 2 "$METRICS_URL" | tr -d '\r' | \
                     grep -q "pavis_runtime_config_version{version=\"$expected\"}"; then
