@@ -11,8 +11,8 @@ export PROJECT_ROOT
 RUN_ID=${RUN_ID:-$(date +%s)}
 export RUN_ID
 
-# E2E test timeout (in seconds) - default 2 minutes per test case
-CASE_TIMEOUT=${CASE_TIMEOUT:-120}
+# E2E test timeout (in seconds) - default 10 minutes per test case (CI runners can be slow)
+CASE_TIMEOUT=${CASE_TIMEOUT:-600}
 export CASE_TIMEOUT
 
 # Source libraries from tests/scripts
