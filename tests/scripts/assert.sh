@@ -73,8 +73,15 @@ assert_json_has_key() {
 
 wait_for_url() {
     local url="$1"
-    local timeout="${2:-30}"
+    local requested_timeout="${2:-30}"
     shift 2
+    
+    # Enforce minimum timeout of 30s to avoid flakes in CI/Docker
+    local timeout=30
+    if [ "$requested_timeout" -gt "$timeout" ]; then
+        timeout="$requested_timeout"
+    fi
+
     local extra_args=("$@")
     local start_time
     start_time=$(date +%s)
@@ -87,7 +94,7 @@ wait_for_url() {
         local current_time
         current_time=$(date +%s)
         if [ $((current_time - start_time)) -ge "$timeout" ]; then
-            echo "Timeout waiting for $url"
+            echo "Timeout waiting for $url (limit: ${timeout}s)"
             return 1
         fi
         sleep 0.5
