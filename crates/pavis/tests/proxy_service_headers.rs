@@ -149,6 +149,7 @@ async fn upstream_response_filter_applies_headers() {
 
     proxy
         .upstream_response_filter(&mut session, &mut resp, &mut ctx)
+        .await
         .expect("filter");
     assert!(resp.headers.get("x-drop").is_none());
     assert_eq!(resp.headers.get("x-added").unwrap().to_str().unwrap(), "ok");

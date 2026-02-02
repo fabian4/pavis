@@ -32,7 +32,7 @@ jobs:
       - name: Format & Lint
         run: |
           make fmt-check
-          make lint
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -W clippy::all
           make shellcheck
 
   build:
@@ -80,7 +80,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Run unit tests
-        run: make test
+        run: cargo test --workspace --locked
 
   e2e_binary:
     name: e2e (binary) - ${{ matrix.suite }}

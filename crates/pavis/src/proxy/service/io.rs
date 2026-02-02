@@ -579,7 +579,7 @@ impl ProxyHttp for Proxy {
         apply_request_headers(upstream_request, &ctx.request_headers)
     }
 
-    fn upstream_response_filter(
+    async fn upstream_response_filter(
         &self,
         _session: &mut Session,
         upstream_response: &mut ResponseHeader,
@@ -975,6 +975,8 @@ impl<'a> UpstreamPeerBuilder<'a> {
                 idle: Duration::from_millis(keepalive_ms),
                 interval: Duration::from_millis(keepalive_ms / 3), // RFC 1122 recommends interval < idle
                 count: 3,
+                #[cfg(target_os = "linux")]
+                user_timeout: Duration::from_secs(0), // 0 = use system default per Pingora docs
             });
         }
 
