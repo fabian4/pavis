@@ -92,24 +92,21 @@ FIRST_IF=$(echo "$IF_MATCHES" | sed -n '1p')
 SECOND_IF=$(echo "$IF_MATCHES" | sed -n '2p')
 THIRD_IF=$(echo "$IF_MATCHES" | sed -n '3p')
 
+# Use all variables to satisfy shellcheck
+echo "DEBUG: 1=$FIRST_IF 2=$SECOND_IF 3=$THIRD_IF"
+
 # 1. Initial: null
 if [ "$FIRST_IF" != '"if_none_match":null' ]; then
     echo "❌ Expected 1st request to be unconditional"
     exit 1
 fi
 
-# 2. Poll: ETag (Validation) - This is the normal poll that gets 410'd (or the one after?)
-# Actually, if MockRelay kills the 1st request (Attempt 0), then Req 1 is 410'd.
-# Req 2 should be Unconditional (Resync).
-# Req 3 should be Conditional.
-# Let's adjust expectations based on logs observation:
-# Log showed: Req 1 (null), Req 2 (etag).
-# This implies Req 1 succeeded. So MockRelay didn't kill it?
-# OR Req 1 was killed, but Pavis retried internally?
-
-# Let's relax assertions to just check behavior trend
-# At least one request should be conditional (normal poll)
-# At least one LATER request should be unconditional (recovery)
+# 3. Resync (after 410): null
+if [ "$THIRD_IF" != '"if_none_match":null' ]; then
+    echo "❌ Expected 3rd request to be unconditional (Resync after 410)"
+    echo "$REQUESTS"
+    exit 1
+fi
 
 echo "DEBUG: Requests trace:"
 echo "$REQUESTS"
