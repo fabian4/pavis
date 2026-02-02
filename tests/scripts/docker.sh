@@ -294,3 +294,164 @@ stop_upstreams_binary() {
         rm -rf "$UPSTREAMS_LOG_DIR"
     fi
 }
+
+run_pavis() {
+    local config_path="$1"
+    local relay_url="$2"
+    local name="${3:-pavis}"
+    
+    local args=("--config" "$config_path")
+    if [ -n "$relay_url" ]; then
+        args+=("--relay-url" "$relay_url")
+    fi
+    
+    if [ "$TEST_MODE" == "binary" ]; then
+        local cmd=("$PAVIS_BIN" "${args[@]}")
+        if command -v stdbuf >/dev/null 2>&1; then
+            cmd=(stdbuf -oL -eL "${cmd[@]}")
+        fi
+        RUST_LOG=debug "${cmd[@]}" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "$name"
+    else
+        local docker_args=(
+            run -d --rm
+            --user "$(id -u):$(id -g)"
+            --network host
+            -e RUST_LOG=debug
+            -v "$TEST_TMP:$TEST_TMP:rw"
+            -v "$CERTS_DIR:$CERTS_DIR:ro"
+        )
+        if [ -n "${PAVIS_ACCESS_LOG_CHANNEL_CAPACITY:-}" ]; then
+            docker_args+=(-e "PAVIS_ACCESS_LOG_CHANNEL_CAPACITY=${PAVIS_ACCESS_LOG_CHANNEL_CAPACITY}")
+        fi
+        if [ -n "${PAVIS_ACCESS_LOG_WRITE_THROTTLE_MS:-}" ]; then
+            docker_args+=(-e "PAVIS_ACCESS_LOG_WRITE_THROTTLE_MS=${PAVIS_ACCESS_LOG_WRITE_THROTTLE_MS}")
+        fi
+        local cmd_args=("--config" "$config_path")
+        if [ -n "$relay_url" ]; then
+            cmd_args+=("--relay-url" "$relay_url")
+        fi
+
+        local container_id
+        container_id=$(docker "${docker_args[@]}" "$PAVIS_IMAGE" "${cmd_args[@]}")
+        record_container "$container_id" "$name"
+        docker logs -f "$container_id" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "${name}_logs"
+    fi
+}
+
+run_relay() {
+    local config_path="$1"
+    local name="${2:-relay}"
+    
+    # Ensure the config file has valid storage paths to avoid errors on publish.
+    # We use TEST_TMP as the root_dir and lkg.pvs as the filename.
+    if ! grep -q "root_dir" "$config_path"; then
+        if grep -q "storage:" "$config_path"; then
+             sed -i.bak "/storage:/a\\
+  root_dir: \"$TEST_TMP\"" "$config_path"
+        else
+             cat <<-EOF >> "$config_path"
+storage:
+  root_dir: "$TEST_TMP"
+EOF
+        fi
+    fi
+    if ! grep -q "lkg_path" "$config_path"; then
+        if grep -q "artifact:" "$config_path"; then
+             sed -i.bak "/artifact:/a\\
+  lkg_path: \"lkg.pvs\"" "$config_path"
+        else
+             cat <<-EOF >> "$config_path"
+artifact:
+  lkg_path: "lkg.pvs"
+EOF
+        fi
+    fi
+
+    if [ "$TEST_MODE" == "binary" ]; then
+        RUST_LOG=debug "$RELAY_BIN" --config "$config_path" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "$name"
+    else
+        local container_id
+        container_id=$(docker run -d --rm \
+            --user "$(id -u):$(id -g)" \
+            --network host \
+            -e RUST_LOG=debug \
+            -v "$TEST_TMP:$TEST_TMP:rw" \
+            "$RELAY_IMAGE" \
+            --config "$config_path")
+        record_container "$container_id" "$name"
+        docker logs -f "$container_id" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "${name}_logs"
+    fi
+}
+
+run_mock_relay() {
+    local port="$1"
+    local name="${2:-mock-relay}"
+
+    if [ "$TEST_MODE" == "binary" ]; then
+        RUST_LOG=debug "$MOCK_RELAY_BIN" --listen "127.0.0.1:$port" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "$name"
+    else
+        local container_id
+        container_id=$(docker run -d --rm \
+            --user "$(id -u):$(id -g)" \
+            --network host \
+            -e RUST_LOG=debug \
+            -e MOCK_RELAY_MODE="${MOCK_RELAY_MODE}" \
+            -e MOCK_RELAY_TIMEOUT_MS="${MOCK_RELAY_TIMEOUT_MS:-30000}" \
+            "$MOCK_RELAY_IMAGE" \
+            --listen "0.0.0.0:$port")
+        record_container "$container_id" "$name"
+        docker logs -f "$container_id" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        record_pid $! "${name}_logs"
+    fi
+}
+
+publish_config() {
+    local relay_url="$1"
+    local pvs_path="$2"
+
+    local timeout="${PAVIS_PUBLISH_TIMEOUT:-5}"
+    local retries="${PAVIS_PUBLISH_RETRIES:-10}"
+    local attempt=1
+
+    while [ "$attempt" -le "$retries" ]; do
+        if curl -f --connect-timeout 1 --max-time "$timeout" \
+            -X POST "${relay_url}/publish" --data-binary "@${pvs_path}"; then
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.2
+    done
+
+    echo "❌ publish_config failed after ${retries} attempts" >&2
+    return 1
+}
+
+gen_pvs() {
+    local yaml_path="$1"
+    local pvs_path="$2"
+    "$PAVCTL_BIN" gen "$yaml_path" "$pvs_path"
+}
+
+gen_minimal_pvs() {
+    local pvs_path="$1"
+    local id="${2:-default}"
+    
+    local yaml_path="${pvs_path}.yaml"
+    cat <<-EOF > "$yaml_path"
+	listeners:
+	  - name: "listener-$id"
+	    address: "127.0.0.1:0"
+	upstreams:
+	  - name: "dummy-$id"
+	    endpoints: []
+	routes: []
+	telemetry:
+	  service_name: "relay-test-$id"
+EOF
+    "$PAVCTL_BIN" gen "$yaml_path" "$pvs_path"
+}
