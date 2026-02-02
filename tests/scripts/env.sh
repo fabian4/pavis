@@ -528,6 +528,7 @@ run_mock_relay() {
             --user "$(id -u):$(id -g)" \
             --network host \
             -e RUST_LOG=debug \
+            -e MOCK_RELAY_MODE \
             "$MOCK_RELAY_IMAGE" \
             --listen "0.0.0.0:$port")
         record_container "$container_id" "$name"
