@@ -2,7 +2,6 @@ use crate::common::cli::RelayArgs;
 use crate::relay::types::ArtifactMeta;
 use axum::extract::FromRef;
 use bytes::Bytes;
-use pavis_pvs::compute_checksum;
 use serde::Serialize;
 use std::fmt::Write as _;
 use std::sync::Arc;
