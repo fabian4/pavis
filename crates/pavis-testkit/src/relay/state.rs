@@ -28,6 +28,7 @@ struct InnerState {
     meta: Option<ArtifactMeta>,
     requests: Vec<RequestRecord>,
     resync_completed: bool,
+    gone_triggered: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -49,26 +50,18 @@ impl RelayState {
                 meta: None,
                 requests: Vec::new(),
                 resync_completed: false,
+                gone_triggered: false,
             })),
             notifier: tx,
             mode,
             script_counter: Arc::new(AtomicUsize::new(0)),
         }
     }
-}
 
-impl Default for RelayState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RelayState {
     pub async fn publish(&self, data: Bytes) -> ArtifactMeta {
         let mut inner = self.inner.write().await;
         let next_rev = inner.meta.as_ref().map(|m| m.rev).unwrap_or(0) + 1;
 
-        // Compute checksum in the same format as the agent expects
         let checksum = checksum_for_bytes(&data);
         let etag = checksum.clone();
 
@@ -132,10 +125,26 @@ impl RelayState {
         let mut inner = self.inner.write().await;
         if is_unconditional && !inner.resync_completed {
             inner.resync_completed = true;
-            false // Not yet resynced before this request
+            false 
         } else {
-            inner.resync_completed // Already resynced
+            inner.resync_completed
         }
+    }
+
+    pub async fn check_and_mark_gone(&self) -> bool {
+        let mut inner = self.inner.write().await;
+        if inner.gone_triggered {
+            true
+        } else {
+            inner.gone_triggered = true;
+            false
+        }
+    }
+}
+
+impl Default for RelayState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -158,7 +167,7 @@ impl MockMode {
 }
 
 fn checksum_for_bytes(bytes: &[u8]) -> String {
-    let digest = compute_checksum(bytes);
+    let digest = pavis_pvs::compute_checksum(bytes);
     let mut out = String::with_capacity(digest.len() * 2 + "sha256:".len());
     out.push_str("sha256:");
     for byte in digest {

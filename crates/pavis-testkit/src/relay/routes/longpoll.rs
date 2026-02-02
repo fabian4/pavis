@@ -41,12 +41,15 @@ pub async fn handler(
     if let Some(mode) = args.mode.as_deref().and_then(MockMode::parse) {
         match mode {
             MockMode::ResyncOnce => {
-                let attempt = state.next_script_attempt();
-                // Return 410 only on the very first request, then normal processing
-                if attempt == 0 {
-                    return (StatusCode::GONE, "").into_response();
+                // Return 410 only if client has an ETag (is polling) and we haven't triggered it yet
+                let has_etag = !client_etag.is_empty();
+                if has_etag {
+                    let already_triggered = state.check_and_mark_gone().await;
+                    if !already_triggered {
+                        return (StatusCode::GONE, "").into_response();
+                    }
                 }
-                // Fall through to normal processing after first 410
+                // Fall through to normal processing
             }
             MockMode::CorruptOnce => {
                 let attempt = state.next_script_attempt();
