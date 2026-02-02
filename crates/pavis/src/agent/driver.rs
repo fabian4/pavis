@@ -391,6 +391,7 @@ impl ConfigAgent {
 impl ConfigAgentWorker {
     async fn bootstrap_from_lkg(&self) -> anyhow::Result<()> {
         if !self.agent.lkg_path.exists() {
+            tracing::debug!("bootstrap_from_lkg: LKG path does not exist, skipping");
             return Ok(());
         }
 
@@ -407,6 +408,11 @@ impl ConfigAgentWorker {
         self.agent.state.store(state);
 
         let etag = checksum_for_bytes(&bytes);
+        tracing::info!(
+            etag = etag,
+            lkg_path = ?self.agent.lkg_path,
+            "bootstrap_from_lkg: setting initial last_applied_etag from LKG"
+        );
         let mut guard = self
             .agent
             .fsm
@@ -558,10 +564,19 @@ async fn fetch_effect(agent: Arc<ConfigAgent>, etag: Option<String>, wait_ms: u6
 
 impl ConfigAgent {
     async fn fetch_once(&self, wait_ms: u64, etag: Option<String>) -> anyhow::Result<Event> {
+        tracing::debug!(
+            wait_ms = wait_ms,
+            has_etag = etag.is_some(),
+            etag = ?etag,
+            "fetch_once: preparing HTTP request"
+        );
         let url = format!("{}/v1/config?wait_ms={wait_ms}", self.relay_base);
         let mut request = self.client.get(url);
         if let Some(etag) = etag.as_deref() {
             request = request.header("if-none-match", format!("\"{etag}\""));
+            tracing::debug!(etag = etag, "fetch_once: setting If-None-Match header");
+        } else {
+            tracing::debug!("fetch_once: unconditional request (no If-None-Match header)");
         }
         let response = request.send().await;
         let now = std::time::Instant::now();
@@ -610,10 +625,13 @@ impl ConfigAgent {
                 response: Response::NoUpdate,
                 now,
             }),
-            410 => Ok(Event::Response {
-                response: Response::NeedResync,
-                now,
-            }),
+            410 => {
+                tracing::info!("fetch_once: received 410 Gone from relay, triggering NeedResync");
+                Ok(Event::Response {
+                    response: Response::NeedResync,
+                    now,
+                })
+            }
             status if (500..=599).contains(&status) => Ok(Event::Response {
                 response: Response::TransientUnavailable,
                 now,

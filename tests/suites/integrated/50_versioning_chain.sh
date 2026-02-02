@@ -197,102 +197,89 @@ publish_version() {
         --data-binary "@$pvs_path" > /dev/null
 }
 
-start_version_monitor() {
-    local out_file="$1"
-    shift
-    : > "$out_file"
-    (
-        local expected
-        for expected in "$@"; do
-            local retries=200
-            while [ "$retries" -gt 0 ]; do
-                if curl -s --connect-timeout 1 --max-time 2 "$METRICS_URL" | tr -d '\r' | \
-                    grep -q "pavis_runtime_config_version{version=\"$expected\"}"; then
-                    printf '%s\n' "$expected" >> "$out_file"
-                    break
-                fi
-                retries=$((retries - 1))
-                sleep 0.1
-            done
-        done
-    ) >/dev/null 2>&1 &
-    echo $!
-}
-
-assert_versions_in_order() {
-    local out_file="$1"
-    local expected_sequence="$2"
-    local observed
-    observed=$(awk '{
-        if ($0 != last) {
-            seq = seq $0 " "
-            last = $0
-        }
-    } END { print seq }' "$out_file")
-    for expected in $expected_sequence; do
-        case " $observed " in
-            *" $expected "*) observed="${observed#* $expected }" ;;
-            *) echo "❌ Missing version $expected in monitor log"; return 1 ;;
-        esac
-    done
-    return 0
-}
-
-wait_for_monitor_log() {
-    local expected_version="$1"
-    local log_file="$2"
-    local timeout="${3:-10}"
+verify_version_sequence() {
+    local expected_sequence="$1"
+    local timeout="${2:-30}"
+    local observed_versions=""
+    local last_seen=""
     local retries=$((timeout * 10))
 
+    echo "DEBUG: Verifying version sequence: $expected_sequence"
+
     for _ in $(seq 1 $retries); do
-        if grep -q "^${expected_version}\$" "$log_file" 2>/dev/null; then
+        current=$(get_runtime_config_version "$METRICS_URL" 2>/dev/null || echo "")
+
+        # Record version transition (deduplicate)
+        if [ -n "$current" ] && [ "$current" != "$last_seen" ]; then
+            if [ -z "$observed_versions" ]; then
+                observed_versions="$current"
+            else
+                observed_versions="$observed_versions $current"
+            fi
+            last_seen="$current"
+            echo "DEBUG: Observed version transition: $observed_versions"
+        fi
+
+        # Check if we've seen all expected versions in order
+        local check_sequence="$observed_versions"
+        local all_found=true
+        for expected in $expected_sequence; do
+            case " $check_sequence " in
+                *" $expected "*)
+                    # Remove this version and everything before it
+                    check_sequence="${check_sequence#* $expected }"
+                    ;;
+                *)
+                    all_found=false
+                    break
+                    ;;
+            esac
+        done
+
+        if [ "$all_found" = true ]; then
+            echo "✓ Verified version sequence: $observed_versions"
             return 0
         fi
+
         sleep 0.1
     done
+
+    echo "❌ Version sequence verification failed"
+    echo "   Expected: $expected_sequence"
+    echo "   Observed: $observed_versions"
     return 1
 }
 
-monitor_pid=$(start_version_monitor "$TEST_TMP/runtime_versions.log" 2 3 4)
-trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+# Start observing version transitions from current state (v1)
+# This function will poll metrics and track version changes in real-time
+(
+    verify_version_sequence "2 3 4" 60 || exit 1
+) &
+VERIFY_PID=$!
+
+# Give verification process time to start monitoring
+sleep 0.5
 
 # Publish V2 -> V3 -> V4 serialized to ensure chain
 echo "Publishing v2..v4"
 publish_version 2 "$TEST_TMP/config_v2.pvs"
 wait_for_version 2 10 || exit 1
-wait_for_monitor_log 2 "$TEST_TMP/runtime_versions.log" 5 || echo "⚠️ Monitor slow to log v2"
 
 publish_version 3 "$TEST_TMP/config_v3.pvs"
 wait_for_version 3 10 || exit 1
-wait_for_monitor_log 3 "$TEST_TMP/runtime_versions.log" 5 || echo "⚠️ Monitor slow to log v3"
 
 publish_version 4 "$TEST_TMP/config_v4.pvs"
 echo "Published v2..v4"
 
 if ! wait_for_version 4 20; then
     echo "❌ Runtime did not apply version 4"
+    kill "$VERIFY_PID" 2>/dev/null || true
     exit 1
 fi
 echo "Runtime reached version 4"
 
-# Wait for monitor to capture v4 (longer timeout for CI environments)
-if ! wait_for_monitor_log 4 "$TEST_TMP/runtime_versions.log" 20; then
-    echo "⚠️ Monitor failed to log v4 within 20s, checking if process exited"
-    if ! kill -0 "$monitor_pid" 2>/dev/null; then
-        echo "❌ Monitor process exited prematurely"
-        exit 1
-    fi
-fi
-
-# Give monitor extra time to flush writes in high-latency environments
-sleep 1
-
-# Check if monitor is still running before waiting
-if kill -0 "$monitor_pid" 2>/dev/null; then
-    wait "$monitor_pid" 2>/dev/null || true
-fi
-
-if ! assert_versions_in_order "$TEST_TMP/runtime_versions.log" "2 3 4"; then
+# Wait for verification process to complete
+if ! wait "$VERIFY_PID"; then
     echo "❌ Runtime did not apply versions in order (2 -> 3 -> 4)"
     exit 1
 fi

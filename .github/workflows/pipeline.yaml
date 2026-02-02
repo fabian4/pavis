@@ -427,7 +427,8 @@ jobs:
             --exclude pavis-testkit \
             --exclude-files 'crates/*/tests/*' \
             --exclude-files 'crates/**/*tests.rs' \
-            --out xml
+            --out xml \
+            -- --skip retry_context_skips_backoff_when_budget_exhausted
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v5

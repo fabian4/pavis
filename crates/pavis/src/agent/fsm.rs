@@ -38,14 +38,32 @@ impl Context {
 
         // If we're in forced unconditional mode (after 410), don't send ETag
         if self.force_unconditional_count > 0 {
+            let before = self.force_unconditional_count;
             self.force_unconditional_count = self.force_unconditional_count.saturating_sub(1);
+            let after = self.force_unconditional_count;
+            tracing::debug!(
+                force_unconditional_before = before,
+                force_unconditional_after = after,
+                "conditional_etag: forced unconditional mode active, returning None"
+            );
             return None;
         }
 
-        if let Some(etag) = self.last_rejected_etag.as_deref() {
-            return Some(etag.to_string());
-        }
-        self.last_applied_etag.clone()
+        let result = if let Some(etag) = self.last_rejected_etag.as_deref() {
+            Some(etag.to_string())
+        } else {
+            self.last_applied_etag.clone()
+        };
+
+        tracing::debug!(
+            force_unconditional_count = self.force_unconditional_count,
+            has_last_applied = self.last_applied_etag.is_some(),
+            has_last_rejected = self.last_rejected_etag.is_some(),
+            returning_etag = result.is_some(),
+            "conditional_etag: normal mode"
+        );
+
+        result
     }
 
     fn clear_rejected_if_expired(&mut self, now: Instant) {
@@ -63,11 +81,21 @@ impl Context {
     }
 
     fn clear_conditional_state(&mut self) {
+        tracing::info!(
+            prev_last_applied_etag = ?self.last_applied_etag,
+            prev_last_rejected_etag = ?self.last_rejected_etag,
+            prev_force_unconditional_count = self.force_unconditional_count,
+            "clear_conditional_state: resetting state after 410 Gone"
+        );
         self.last_applied_etag = None;
         self.last_rejected_etag = None;
         self.last_rejected_until = None;
         // After 410, force at least 2 unconditional requests to ensure full resync
         self.force_unconditional_count = 2;
+        tracing::info!(
+            new_force_unconditional_count = self.force_unconditional_count,
+            "clear_conditional_state: set force_unconditional_count=2"
+        );
     }
 }
 
@@ -316,9 +344,16 @@ impl Fsm {
                         }
                     }
                     Response::NeedResync => {
+                        tracing::info!(
+                            "fsm: received NeedResync (410 Gone), clearing conditional state"
+                        );
                         self.ctx.clear_conditional_state();
                         self.ctx.backoff_attempt = 0;
                         self.state = State::Fetching;
+                        tracing::info!(
+                            force_unconditional_count = self.ctx.force_unconditional_count,
+                            "fsm: pushing FetchUnconditional effect after NeedResync"
+                        );
                         effects.push(Effect::FetchUnconditional { wait_ms: WAIT_MS });
                     }
                     Response::TransientUnavailable => {

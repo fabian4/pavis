@@ -125,7 +125,13 @@ impl RelayState {
     }
 
     pub fn next_script_attempt(&self) -> usize {
-        self.script_counter.fetch_add(1, Ordering::SeqCst)
+        let prev = self.script_counter.fetch_add(1, Ordering::SeqCst);
+        tracing::debug!(
+            prev_attempt = prev,
+            new_attempt = prev + 1,
+            "relay_state: script_counter incremented"
+        );
+        prev
     }
 
     pub async fn check_and_mark_resync(&self, is_unconditional: bool) -> bool {

@@ -52,10 +52,12 @@ REQ_URL="http://127.0.0.1:$PORT_RELAY/requests"
 # Wait longer in Docker environments for services to fully stabilize
 if [ "${TEST_MODE:-binary}" = "docker" ]; then
     echo "Docker mode detected, waiting for services to stabilize..."
-    sleep 2
+    sleep 5
+    # Long-poll cycle is 30s, need to wait for at least 2 cycles (60s+)
+    MAX_RETRIES=250  # 250 * 0.3s = 75s
+else
+    MAX_RETRIES=80   # Binary mode: 80 * 0.3s = 24s
 fi
-
-MAX_RETRIES=50
 for _ in $(seq 1 $MAX_RETRIES); do
     REQUESTS=$(curl -s "$REQ_URL" | tr -d '\r')
     COUNT=$(echo "$REQUESTS" | grep -o '"wait_ms"' | wc -l | tr -d ' ')

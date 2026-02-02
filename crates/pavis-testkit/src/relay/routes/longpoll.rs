@@ -34,6 +34,14 @@ pub async fn handler(
     let client_etag = client_if_none_match.clone().unwrap_or_default();
     let timeout_val = params.wait_ms.unwrap_or(args.default_timeout_ms);
     let timeout_dur = Duration::from_millis(timeout_val);
+
+    tracing::debug!(
+        wait_ms = params.wait_ms,
+        if_none_match = ?client_if_none_match,
+        mode = ?args.mode,
+        "mock-relay: received long-poll request"
+    );
+
     state
         .record_request(params.wait_ms, client_if_none_match.clone())
         .await;
@@ -42,10 +50,18 @@ pub async fn handler(
         match mode {
             MockMode::ResyncOnce => {
                 let attempt = state.next_script_attempt();
+                tracing::info!(
+                    attempt = attempt,
+                    "mock-relay: ResyncOnce mode, attempt counter"
+                );
                 // Return 410 only on the very first request, then normal processing
                 if attempt == 0 {
+                    tracing::info!(
+                        "mock-relay: ResyncOnce mode, returning 410 Gone for first request"
+                    );
                     return (StatusCode::GONE, "").into_response();
                 }
+                tracing::info!("mock-relay: ResyncOnce mode, falling through to normal processing");
                 // Fall through to normal processing after first 410
             }
             MockMode::CorruptOnce => {
@@ -68,22 +84,35 @@ pub async fn handler(
     if let Some((meta, data)) = state.get_current().await
         && meta.etag != client_etag
     {
+        tracing::debug!(
+            server_etag = meta.etag,
+            client_etag = client_etag,
+            "mock-relay: immediate return with artifact (etags differ)"
+        );
         return response_with_meta(&meta, data);
     }
+
+    tracing::debug!(
+        timeout_ms = timeout_val,
+        "mock-relay: no immediate change, entering long-poll wait"
+    );
 
     // Wait
     let mut rx = state.subscribe();
     match tokio::time::timeout(timeout_dur, rx.changed()).await {
         Ok(Ok(())) => {
             // Changed!
+            tracing::debug!("mock-relay: artifact changed during wait, returning new artifact");
             if let Some((meta, data)) = state.get_current().await {
                 return response_with_meta(&meta, data);
             }
             // Should not happen if changed() returned, unless it was cleared?
+            tracing::warn!("mock-relay: artifact changed but get_current returned None");
             (StatusCode::NOT_MODIFIED, "").into_response()
         }
         _ => {
             // Timeout or error
+            tracing::debug!("mock-relay: long-poll timeout, returning 304 Not Modified");
             (StatusCode::NOT_MODIFIED, "").into_response()
         }
     }
