@@ -124,7 +124,7 @@ impl RelayState {
         let mut inner = self.inner.write().await;
         if is_unconditional && !inner.resync_completed {
             inner.resync_completed = true;
-            false 
+            false
         } else {
             inner.resync_completed
         }
