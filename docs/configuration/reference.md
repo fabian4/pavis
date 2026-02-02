@@ -205,6 +205,29 @@ Defines how the proxy accepts inbound traffic.
 - **Default**: `0` (immediate rejection)
 - **Runtime Effect**: Maximum time (in milliseconds) to wait in queue.
 
+### `upstreams[].pool.tcp_keepalive`
+- **Type**: `duration`
+- **Required**: Optional
+- **Default**: None (uses Pingora/OS default)
+- **Example**: `"60s"`
+- **Runtime Effect**: TCP keepalive interval in milliseconds. Recommended: 60s for NAT/firewall traversal.
+- **Note**: Automatically configures keepalive probe interval as `tcp_keepalive/3` (RFC 1122 recommendation) and retry count as 3.
+
+### `upstreams[].pool.tcp_nodelay`
+- **Type**: `boolean`
+- **Required**: Optional
+- **Default**: None (uses Pingora default, typically `true`)
+- **Runtime Effect**: Enable TCP_NODELAY to disable Nagle's algorithm for lower latency. Set to `false` only for bulk transfer scenarios.
+- **Note**: **Not supported in Pingora v0.6.0** - field is accepted in config but not applied. A warning is logged if explicitly disabled.
+
+### `upstreams[].pool.recv_buffer_size`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: None (uses OS default)
+- **Example**: `65536` (64KB)
+- **Runtime Effect**: TCP receive buffer size in bytes. Typical range: 64KB (65536) to 512KB (524288) for high-throughput backends.
+- **Validation**: Values outside 4KB-1MB range are accepted but may indicate misconfiguration.
+
 ### `upstreams[].tls`
 - **Type**: `object`
 - **Required**: Optional

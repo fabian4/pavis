@@ -40,6 +40,12 @@ pub fn from_runtime(upstreams: Vec<pavis_core::Upstream>) -> Result<Vec<Upstream
             max: Some(u.pool.max.0.get() as i64),
             queue_capacity: Some(u.pool.queue.capacity as i64),
             queue_timeout_ms: Some(u.pool.queue.timeout_ms as i64),
+            tcp_keepalive: u
+                .pool
+                .tcp_keepalive
+                .map(|d| std::time::Duration::from_millis(d.0.get() as u64)),
+            tcp_nodelay: u.pool.tcp_nodelay,
+            recv_buffer_size: u.pool.recv_buffer_size,
         });
 
         let tls = match u.tls {

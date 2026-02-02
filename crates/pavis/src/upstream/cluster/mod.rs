@@ -483,6 +483,9 @@ mod tests {
                     capacity: 0,
                     timeout_ms: 0,
                 },
+                tcp_keepalive: None,
+                tcp_nodelay: None,
+                recv_buffer_size: None,
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 9000, 1))
@@ -516,6 +519,9 @@ mod tests {
                     capacity: 1,
                     timeout_ms: 50,
                 },
+                tcp_keepalive: None,
+                tcp_nodelay: None,
+                recv_buffer_size: None,
             })
             .tls(TlsPolicy::Disabled)
             .add_endpoint(make_endpoint(Ipv4Addr::new(127, 0, 0, 1), 9001, 1))

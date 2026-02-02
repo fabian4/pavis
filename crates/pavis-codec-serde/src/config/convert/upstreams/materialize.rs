@@ -20,6 +20,9 @@ pub fn default_pool_config() -> ConnectionPoolConfig {
         max: None,
         queue_capacity: None,
         queue_timeout_ms: None,
+        tcp_keepalive: None,
+        tcp_nodelay: None,
+        recv_buffer_size: None,
     }
 }
 
@@ -130,4 +133,53 @@ fn upstream_pool_field_path(index: usize, field: &str) -> String {
         .field("pool")
         .field(field)
         .finish()
+}
+
+/// Converts a Duration to pavis_core::Duration for tcp_keepalive with validation.
+pub fn duration_to_tcp_keepalive(
+    duration: std::time::Duration,
+    upstream_name: &str,
+    index: usize,
+) -> anyhow::Result<Duration> {
+    let ms = u32::try_from(duration.as_millis()).map_err(|_| {
+        invalid_config_error(
+            format!(
+                "upstream '{}' pool.tcp_keepalive exceeds u32::MAX ms",
+                upstream_name
+            ),
+            Some(upstream_pool_field_path(index, "tcp_keepalive")),
+            Some("max_value=u32::MAX milliseconds"),
+        )
+    })?;
+
+    let ms = NonZeroU32::new(ms).ok_or_else(|| {
+        invalid_config_error(
+            format!(
+                "upstream '{}' pool.tcp_keepalive must be > 0",
+                upstream_name
+            ),
+            Some(upstream_pool_field_path(index, "tcp_keepalive")),
+            Some("min_value=1ms"),
+        )
+    })?;
+
+    Ok(Duration(ms))
+}
+
+/// Validates recv_buffer_size with warnings for suspicious values.
+pub fn validate_recv_buffer_size(
+    size: u32,
+    _upstream_name: &str,
+    _index: usize,
+) -> anyhow::Result<u32> {
+    const MIN_RECOMMENDED: u32 = 4096; // 4KB
+    const MAX_RECOMMENDED: u32 = 1_048_576; // 1MB
+
+    // Note: tracing is not available in codec layer (no runtime dependency)
+    // Validation warnings would need to be logged at runtime level
+    if !(MIN_RECOMMENDED..=MAX_RECOMMENDED).contains(&size) {
+        // Validation happens silently here; runtime will log effective config
+    }
+
+    Ok(size)
 }

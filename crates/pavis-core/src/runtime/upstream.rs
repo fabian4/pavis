@@ -106,6 +106,18 @@ pub struct Pool {
     pub connect: ConnectTimeout,
     pub max: ConnectionLimit,
     pub queue: PoolQueue,
+
+    /// TCP keepalive duration in milliseconds. None = use Pingora/OS default.
+    /// Recommended: 60000ms (60s) for NAT/firewall traversal.
+    pub tcp_keepalive: Option<Duration>,
+
+    /// Enable TCP_NODELAY to disable Nagle's algorithm (lower latency).
+    /// None = use Pingora default (true). Set to false only for bulk transfer scenarios.
+    pub tcp_nodelay: Option<bool>,
+
+    /// TCP receive buffer size in bytes. None = use OS default.
+    /// Typical range: 64KB-512KB for high-throughput backends.
+    pub recv_buffer_size: Option<u32>,
 }
 
 #[derive(
@@ -138,6 +150,9 @@ impl Default for Pool {
                 NonZeroU32::new(DEFAULT_POOL_MAX).expect("DEFAULT_POOL_MAX is non-zero"),
             ),
             queue: PoolQueue::default(),
+            tcp_keepalive: None,
+            tcp_nodelay: None,
+            recv_buffer_size: None,
         }
     }
 }

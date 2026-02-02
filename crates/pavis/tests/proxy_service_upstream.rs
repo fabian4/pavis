@@ -230,6 +230,9 @@ async fn upstream_peer_returns_503_when_pool_full() {
                 capacity: 0,
                 timeout_ms: 0,
             },
+            tcp_keepalive: None,
+            tcp_nodelay: None,
+            recv_buffer_size: None,
         })
         .tls(TlsPolicy::Disabled)
         .add_endpoint(Endpoint {
@@ -294,6 +297,9 @@ async fn upstream_peer_returns_503_when_pool_wait_times_out() {
                 capacity: 1,
                 timeout_ms: 25,
             },
+            tcp_keepalive: None,
+            tcp_nodelay: None,
+            recv_buffer_size: None,
         })
         .tls(TlsPolicy::Disabled)
         .add_endpoint(Endpoint {

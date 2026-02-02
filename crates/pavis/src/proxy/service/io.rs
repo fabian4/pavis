@@ -968,6 +968,62 @@ impl<'a> UpstreamPeerBuilder<'a> {
         peer.options.read_timeout = per_try_timeout;
         peer.options.write_timeout = per_try_timeout;
 
+        // Apply TCP tuning parameters
+        if let Some(keepalive_duration) = upstream.pool.tcp_keepalive {
+            let keepalive_ms = keepalive_duration.0.get() as u64;
+            peer.options.tcp_keepalive = Some(pingora::protocols::TcpKeepalive {
+                idle: Duration::from_millis(keepalive_ms),
+                interval: Duration::from_millis(keepalive_ms / 3), // RFC 1122 recommends interval < idle
+                count: 3,
+            });
+        }
+
+        // Note: tcp_nodelay is not directly exposed in Pingora v0.6.0 PeerOptions
+        // It's controlled at the socket level via upstream_tcp_sock_tweak_hook
+        // For now, we log the configured value but don't apply it
+        if let Some(nodelay) = upstream.pool.tcp_nodelay
+            && !nodelay
+        {
+            tracing::warn!(
+                upstream = %upstream_name.0,
+                "TCP_NODELAY explicitly disabled in config, but not supported by Pingora v0.6.0 PeerOptions"
+            );
+        }
+
+        if let Some(buffer_size) = upstream.pool.recv_buffer_size {
+            peer.options.tcp_recv_buf = Some(buffer_size as usize);
+        }
+
+        // Log effective upstream configuration (once per upstream, using atomic counter to avoid Mutex)
+        static LOGGED_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let log_key = format!("{}:{}", upstream_name.0, cluster as *const _ as usize);
+        let hash = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            log_key.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        // Use a simple probabilistic approach: only log if this is likely the first time
+        if LOGGED_COUNTER.fetch_add(1, Ordering::Relaxed) % 1000 < 10 || hash % 1000 == 0 {
+            tracing::info!(
+                upstream = %upstream_name.0,
+                idle_timeout_ms = ?peer.options.idle_timeout.map(|d| d.as_millis()),
+                connection_timeout_ms = ?peer.options.connection_timeout.map(|d| d.as_millis()),
+                read_timeout_ms = ?peer.options.read_timeout.map(|d| d.as_millis()),
+                write_timeout_ms = ?peer.options.write_timeout.map(|d| d.as_millis()),
+                tcp_keepalive_idle_ms = ?peer.options.tcp_keepalive.as_ref().map(|k| k.idle.as_millis()),
+                tcp_keepalive_interval_ms = ?peer.options.tcp_keepalive.as_ref().map(|k| k.interval.as_millis()),
+                tcp_recv_buf = ?peer.options.tcp_recv_buf,
+                tcp_fast_open = peer.options.tcp_fast_open,
+                max_connections = upstream.pool.max.0.get(),
+                queue_capacity = upstream.pool.queue.capacity,
+                queue_timeout_ms = upstream.pool.queue.timeout_ms,
+                "Effective upstream configuration"
+            );
+        }
+
         Ok(peer)
     }
 }

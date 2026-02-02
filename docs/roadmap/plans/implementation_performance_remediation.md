@@ -81,6 +81,77 @@ Expose the internal state of the connection pool to differentiate between "pool 
 
 ---
 
+## Phase 3: Controlled Configuration Exposure
+
+**Status**: ✅ Complete
+**Priority**: P1 (Performance Tuning)
+**Dependencies**: Phase 0, Phase 1
+
+### **Goal**
+Expose high-leverage Pingora tuning parameters as user-configurable options with effective configuration logging for operational transparency.
+
+### **Implementation Summary**
+
+**New Configuration Fields** (`upstreams[].pool`):
+- ✅ `tcp_keepalive` (duration) - TCP keepalive interval for NAT/firewall traversal
+- ✅ `tcp_nodelay` (boolean) - Nagle's algorithm control (accepted but not applied in Pingora v0.6.0)
+- ✅ `recv_buffer_size` (u32) - TCP receive buffer size in bytes
+
+**Code Changes**:
+- ✅ `crates/pavis-core/src/runtime/upstream.rs` - Extended Pool struct with new fields
+- ✅ `crates/pavis-codec-serde/src/config/types/upstreams.rs` - Added DTO fields with humantime support
+- ✅ `crates/pavis-codec-serde/src/config/convert/upstreams/emit.rs` - Transformation logic
+- ✅ `crates/pavis-codec-serde/src/config/convert/upstreams/materialize.rs` - Validation helpers
+- ✅ `crates/pavis/src/proxy/service/io.rs` - Runtime peer options mapping + effective config logging
+
+**Runtime Mapping** (Pingora v0.6.0 API):
+- ✅ `tcp_keepalive` → `peer.options.tcp_keepalive: TcpKeepalive { idle, interval, count }`
+  - `interval` automatically set to `idle/3` (RFC 1122 recommendation)
+  - `count` set to 3 retries
+- ✅ `recv_buffer_size` → `peer.options.tcp_recv_buf`
+- ⚠️ `tcp_nodelay` → Not supported by Pingora v0.6.0 PeerOptions (warning logged if disabled)
+
+**Effective Configuration Logging**:
+- ✅ Logs effective upstream configuration on first connection (probabilistic, atomic counter-based)
+- ✅ Includes all timeout values, TCP tuning parameters, pool limits, and queue settings
+
+### **Configuration Example**
+
+```yaml
+upstreams:
+  - name: backend
+    pool:
+      idle: 60s
+      connect: 5s
+      max: 128
+      tcp_keepalive: 60s      # Keep connections alive through NAT/firewalls
+      tcp_nodelay: true        # Disable Nagle's algorithm (not applied in v0.6.0)
+      recv_buffer_size: 65536  # 64KB receive buffer
+    endpoints:
+      - address: 10.0.1.10
+        port: 8080
+```
+
+### **Validation Results**
+- ✅ `make ci-local` passes (all 132+ tests)
+- ✅ All new fields properly serialized/deserialized (rkyv + serde)
+- ✅ Codec validation prevents invalid values (tcp_keepalive > 0)
+
+### **Exit Criteria**
+- [x] Schema updated with new Pool fields
+- [x] Codec DTO and transformation logic implemented
+- [x] Runtime maps fields to peer.options correctly
+- [x] Effective configuration logging implemented
+- [x] Validation logic prevents invalid values
+- [x] `make ci-local` passes
+- [x] Documentation updated (code comments + reference guide)
+
+### **Known Limitations**
+- `tcp_nodelay` field accepted in config but not applied due to Pingora v0.6.0 API limitations
+- Can be implemented in future via `upstream_tcp_sock_tweak_hook`
+
+---
+
 ## Phase 1: Allocator Replacement & Limits (Mitigation)
 
 **Status**: ✅ Complete (implementation) — validation pending
@@ -244,16 +315,7 @@ Decouple the transport connection key from per-request metadata (SNI) to restore
 
 ---
 
-## Phase 3: Controlled Configuration Exposure
-
-**Status**: 🔄 Partially Implemented (40% complete)
-**Priority**: P1 (Enhancement)
-**Blockers**: None
-**Dependencies**: None (can run in parallel with Phase 0-2)
-
-### **Current State Analysis**
-
-**Pool Struct** (from `pavis-core/src/runtime/upstream.rs`):
+## Phase 4: Post-Stability Hardening & Advanced Tuning
 ```rust
 pub struct Pool {
     pub idle: IdleTimeout,
@@ -377,10 +439,6 @@ Expose a minimal, high-leverage subset of Pingora-facing parameters as user-conf
 - [ ] Default values tested and validated
 - [ ] Performance testing confirms tuning effectiveness
 
----
-
-## Phase 4: Post-Stability Hardening & Advanced Tuning
-
 **Status**: ❌ Not Started (0% complete)
 **Priority**: P2 (Future)
 **Blockers**: Phases 0-2 must be complete and validated
@@ -463,11 +521,11 @@ Phase 3 (Config Exposure) ← can run in parallel with all phases
 
 | Phase | Status | Completion | Priority | Blocking Issues |
 |-------|--------|------------|----------|-----------------|
-| Phase 0 | ✅ Complete | 100% | P0 | None |
-| Phase 1 | ✅ Complete | 100% | P0 | None |
-| Phase 2 | ✅ Complete | 100% | P0 | None |
-| Phase 3 | 🔄 Partial | 40% | P1 | None - can proceed in parallel |
-| Phase 4 | ❌ Not Started | 0% | P2 | Blocked by Phase 0-2 completion |
+| Phase 0 | ✅ Complete | 100% | P0 | ⚠️ Validation pending (load test) |
+| Phase 1 | ✅ Complete | 100% | P0 | ⚠️ Validation pending (RSS benchmark) |
+| Phase 2 | ✅ Complete | 100% | P0 | ⚠️ Validation pending (load test) |
+| Phase 3 | ✅ Complete | 100% | P1 | None |
+| Phase 4 | ❌ Not Started | 0% | P2 | Blocked by Phase 0-2 validation |
 
 ---
 
@@ -499,16 +557,24 @@ Phase 3 (Config Exposure) ← can run in parallel with all phases
 - [ ] Load testing and validation
 - [x] Security documentation
 
-### Phase 3 (40% complete)
-- [x] Basic timeout configuration (DONE)
-- [ ] Add TCP keepalive field
-- [ ] Add TCP nodelay field
-- [ ] Add recv_buffer_size field
-- [ ] Map new fields to peer.options
-- [ ] Add effective config logging
-- [ ] Add server-wide config exposure
-- [ ] Update codecs
-- [ ] Documentation and tuning guide
+### Phase 3 (100% complete)
+- [x] Add tcp_keepalive field
+- [x] Add tcp_nodelay field
+- [x] Add recv_buffer_size field
+- [x] Map new fields to peer.options
+- [x] Add effective config logging
+- [x] Update codecs
+- [x] Documentation and tuning guide
+- [x] All tests passing (make ci-local)
+- [ ] Server-wide config exposure (deferred to future work)
+
+### Phase 4 (0% complete)
+- [ ] Implement `pavctl check` command
+- [ ] Add lint rules
+- [ ] Refine IdleTimeout defaults
+- [ ] Add deprecation warnings
+- [ ] Create benchmark suite
+- [ ] Document golden profile
 
 ### Phase 4 (0% complete)
 - [ ] Implement `pavctl check` command

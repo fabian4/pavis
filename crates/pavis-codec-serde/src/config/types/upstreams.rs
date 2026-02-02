@@ -98,6 +98,22 @@ pub struct ConnectionPoolConfig {
     /// Maximum time (in milliseconds) a queued request may wait before being failed. Default: 0 (immediate failure).
     #[serde(default)]
     pub queue_timeout_ms: Option<i64>,
+
+    /// TCP keepalive interval. Example: "60s". Default: None (uses Pingora/OS default).
+    /// Recommended: 60s for NAT/firewall traversal.
+    #[serde(default, with = "humantime_serde")]
+    pub tcp_keepalive: Option<Duration>,
+
+    /// Enable TCP_NODELAY to disable Nagle's algorithm (lower latency).
+    /// Default: None (uses Pingora default of true).
+    /// Set to false only for bulk transfer scenarios.
+    #[serde(default)]
+    pub tcp_nodelay: Option<bool>,
+
+    /// TCP receive buffer size in bytes. Default: None (uses OS default).
+    /// Typical range: 65536 (64KB) to 524288 (512KB) for high-throughput backends.
+    #[serde(default)]
+    pub recv_buffer_size: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

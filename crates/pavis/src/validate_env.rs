@@ -291,6 +291,9 @@ mod tests {
                 connect: ConnectTimeout::Disabled,
                 max: ConnectionLimit(NonZeroU32::new(10).unwrap()),
                 queue: Default::default(),
+                tcp_keepalive: None,
+                tcp_nodelay: None,
+                recv_buffer_size: None,
             })
             .tls(TlsPolicy::Enabled {
                 verify: TlsVerify::Disabled,

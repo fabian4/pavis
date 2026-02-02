@@ -13,7 +13,8 @@ use super::dto_adapter;
 use super::materialize::{
     DEFAULT_POOL_QUEUE_CAPACITY, DEFAULT_POOL_QUEUE_TIMEOUT_MS, default_connection_timeout,
     default_idle_timeout, default_pool_config, duration_to_connect, duration_to_policy,
-    duration_to_required, materialize_pool_max, materialize_queue_value,
+    duration_to_required, duration_to_tcp_keepalive, materialize_pool_max, materialize_queue_value,
+    validate_recv_buffer_size,
 };
 use crate::config::types::{ClientCertChainMode, SniMode, Upstream as CodecUpstream};
 
@@ -82,6 +83,19 @@ pub fn to_runtime(upstreams: Vec<CodecUpstream>) -> Result<Vec<pavis_core::Upstr
             index,
         )?;
 
+        // Process TCP tuning parameters
+        let tcp_keepalive = match pool_config.tcp_keepalive {
+            Some(duration) => Some(duration_to_tcp_keepalive(duration, &u.name, index)?),
+            None => None,
+        };
+
+        let tcp_nodelay = pool_config.tcp_nodelay;
+
+        let recv_buffer_size = match pool_config.recv_buffer_size {
+            Some(size) => Some(validate_recv_buffer_size(size, &u.name, index)?),
+            None => None,
+        };
+
         let pool = pavis_core::Pool {
             idle,
             connect,
@@ -90,6 +104,9 @@ pub fn to_runtime(upstreams: Vec<CodecUpstream>) -> Result<Vec<pavis_core::Upstr
                 capacity: queue_capacity,
                 timeout_ms: queue_timeout_ms,
             },
+            tcp_keepalive,
+            tcp_nodelay,
+            recv_buffer_size,
         };
 
         let tls = match u.tls {
