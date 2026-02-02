@@ -438,14 +438,14 @@ run_pavis() {
         if command -v stdbuf >/dev/null 2>&1; then
             cmd=(stdbuf -oL -eL "${cmd[@]}")
         fi
-        RUST_LOG=debug "${cmd[@]}" > "$TEST_TMP/logs/${name}.log" 2>&1 &
+        RUST_LOG=info "${cmd[@]}" > "$TEST_TMP/logs/${name}.log" 2>&1 &
         record_pid $! "$name"
     else
         local docker_args=(
             run -d --rm
             --user "$(id -u):$(id -g)"
             --network host
-            -e RUST_LOG=debug
+            -e RUST_LOG=info
             -v "$TEST_TMP:$TEST_TMP:rw"
             -v "$CERTS_DIR:$CERTS_DIR:ro"
         )
