@@ -424,8 +424,9 @@ mod tests {
         let now = Instant::now() + Duration::from_millis(100);
         assert_eq!(scheduler.next_jobs(now).len(), 1);
         assert_eq!(scheduler.next_jobs(now).len(), 0);
+        // Account for jitter: interval=50ms, max_jitter=5ms, so check at +56ms to be safe
         assert_eq!(
-            scheduler.next_jobs(now + Duration::from_millis(51)).len(),
+            scheduler.next_jobs(now + Duration::from_millis(56)).len(),
             1
         );
     }
