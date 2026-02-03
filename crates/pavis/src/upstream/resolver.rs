@@ -57,7 +57,13 @@ impl UpstreamResolver {
 
             let name = name.clone();
             let resolver = self.resolver.clone();
-            join_set.spawn(async move { resolve_upstream(name, config, current, resolver).await });
+            let jitter = jitter_duration(self.interval);
+            join_set.spawn(async move {
+                if !jitter.is_zero() {
+                    tokio::time::sleep(jitter).await;
+                }
+                resolve_upstream(name, config, current, resolver).await
+            });
         }
 
         drop(state);
@@ -278,6 +284,15 @@ fn select_existing_or_first(resolved: &[SocketAddr], current: &[Endpoint]) -> Op
 fn endpoint_port(addr: SocketAddr) -> pavis_core::Port {
     use std::num::NonZeroU16;
     pavis_core::Port(NonZeroU16::new(addr.port()).expect("non-zero port"))
+}
+
+fn jitter_duration(base: Duration) -> Duration {
+    let jitter_ms = (base.as_millis() / 10).min(200);
+    if jitter_ms == 0 {
+        return Duration::ZERO;
+    }
+    let offset = rand::random::<u128>() % (jitter_ms + 1);
+    Duration::from_millis(offset as u64)
 }
 
 #[cfg(test)]

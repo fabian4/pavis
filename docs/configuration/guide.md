@@ -42,13 +42,13 @@ routes:
 
 ### Listeners
 Listeners define the "front door" of the proxy. You can define multiple listeners (e.g., one for HTTP and one for HTTPS).
-- [Reference: `listeners[]`](./runtime-config.reference.md#listeners)
+- [Reference: `listeners[]`](./reference.md#listeners)
 
 ### Routes & Matching
 Pavis uses a "First Match Wins" strategy. 
 - **Hosts**: Exact matching is tried first, then wildcard hosts (`*`).
 - **Paths**: Defined per host. Matchers can be `!prefix`, `!exact`, or `!regex`.
-- [Reference: `routes[]`](./runtime-config.reference.md#routes)
+- [Reference: `routes[]`](./reference.md#routes)
 
 ### Actions
 Every path must have exactly one action. Actions are "flattened" at the route level:
@@ -60,11 +60,11 @@ Every path must have exactly one action. Actions are "flattened" at the route le
 You can modify the request before it reaches the upstream:
 - **Path Rewrite**: Replaces the matched prefix with a new one.
 - **Host Rewrite**: Overwrites the `Host` header sent to the backend.
-- [Reference: `routes[].paths[].rewrite`](./runtime-config.reference.md#routes)
+- [Reference: `routes[].paths[].rewrite`](./reference.md#routes)
 
 ### Upstreams
 Upstreams are clusters of backend endpoints. They handle load balancing, protocol selection (H1/H2), and connection pooling.
-- [Reference: `upstreams[]`](./runtime-config.reference.md#upstreams)
+- [Reference: `upstreams[]`](./reference.md#upstreams)
 
 ---
 
@@ -81,7 +81,7 @@ Enable TLS for upstream connections by adding a `tls: {}` block to an upstream.
 - **SNI**: Defaults to `auto`. If `verify=full`, you must use DNS discovery or a route host rewrite unless `canonical_sni` is set.
 - **Canonical SNI**: `canonical_sni` pins the handshake SNI and pool key to a stable value for better connection reuse.
 - **Reuse Across SNI**: `reuse_across_sni` forces reuse across SNI values and requires valid certificates for all hosts.
-- [Reference: `upstreams[].tls`](./runtime-config.reference.md#upstreams)
+- [Reference: `upstreams[].tls`](./reference.md#upstreams)
 
 ### Outbound mTLS
 Provide a `cert` block within the upstream `tls` configuration.
@@ -98,8 +98,8 @@ Route traffic based on path prefixes.
 routes:
   - host: "api.example.com"
     paths:
-      - matcher: !prefix
-          path: "/v1"
+      - matcher:
+          path: !prefix { path: "/v1" }
         destinations:
           - upstream: "v1-backend"
             weight: 1
@@ -113,8 +113,8 @@ Split traffic between two versions of a service.
 **Config Snippet**:
 ```yaml
 paths:
-  - matcher: !prefix
-      path: "/"
+  - matcher:
+      path: !prefix { path: "/" }
     destinations:
       - upstream: "v1"
         weight: 90
@@ -145,8 +145,8 @@ Inject a tracking ID into requests and remove a sensitive header from responses.
 **Config Snippet**:
 ```yaml
 paths:
-  - matcher: !prefix
-      path: "/"
+  - matcher:
+      path: !prefix { path: "/" }
     request_headers:
       set_headers:
         - ["X-Pavis-Proxied", "true"]
@@ -163,8 +163,8 @@ Strip a version prefix before forwarding to a backend that doesn't expect it.
 **Config Snippet**:
 ```yaml
 paths:
-  - matcher: !prefix
-      path: "/service-a"
+  - matcher:
+      path: !prefix { path: "/service-a" }
     rewrite:
       path: "/"
     destinations:

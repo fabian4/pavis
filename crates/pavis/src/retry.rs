@@ -10,9 +10,58 @@
 use crate::telemetry::metrics::MetricsRegistry;
 use pavis_core::{BackoffStrategy, BodyReplayability, MethodIdempotency, RetryPolicy, RetryReason};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{debug, warn};
+
+const RETRY_BODY_GLOBAL_BUDGET_BYTES: u64 = 32 * 1024 * 1024;
+static RETRY_BODY_BUDGET_USED_BYTES: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug)]
+pub struct BudgetGuard {
+    bytes: u64,
+}
+
+impl Default for BudgetGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BudgetGuard {
+    pub fn new() -> Self {
+        Self { bytes: 0 }
+    }
+
+    pub fn try_add(&mut self, extra: u64) -> bool {
+        if extra == 0 {
+            return true;
+        }
+        loop {
+            let used = RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::Relaxed);
+            let new_used = used.saturating_add(extra);
+            if new_used > RETRY_BODY_GLOBAL_BUDGET_BYTES {
+                return false;
+            }
+            if RETRY_BODY_BUDGET_USED_BYTES
+                .compare_exchange(used, new_used, Ordering::SeqCst, Ordering::Relaxed)
+                .is_ok()
+            {
+                self.bytes = self.bytes.saturating_add(extra);
+                return true;
+            }
+        }
+    }
+}
+
+impl Drop for BudgetGuard {
+    fn drop(&mut self) {
+        if self.bytes > 0 {
+            RETRY_BODY_BUDGET_USED_BYTES.fetch_sub(self.bytes, Ordering::SeqCst);
+        }
+    }
+}
 
 /// Retry context tracking state across retry attempts
 pub struct RetryContext {
@@ -206,6 +255,8 @@ pub struct BufferedBody {
     pub bytes: Vec<u8>,
     /// Replayability status
     pub replayability: BodyReplayability,
+    /// Global buffer budget guard (releases on drop)
+    _budget_guard: Option<BudgetGuard>,
 }
 
 impl BufferedBody {
@@ -215,8 +266,12 @@ impl BufferedBody {
         max_buffer_size: u64,
         metrics: Option<Arc<MetricsRegistry>>,
         upstream_name: &str,
+        force_streaming: bool,
+        budget_guard: Option<BudgetGuard>,
     ) -> Self {
-        let replayability = if bytes.is_empty() {
+        let replayability = if force_streaming {
+            BodyReplayability::Streaming
+        } else if bytes.is_empty() {
             BodyReplayability::Empty
         } else if bytes.len() as u64 <= max_buffer_size {
             if let Some(metrics) = &metrics {
@@ -230,6 +285,7 @@ impl BufferedBody {
         Self {
             bytes,
             replayability,
+            _budget_guard: budget_guard,
         }
     }
 
@@ -408,14 +464,14 @@ mod tests {
 
     #[test]
     fn buffered_body_empty() {
-        let body = BufferedBody::new(vec![], 1024, None, "test");
+        let body = BufferedBody::new(vec![], 1024, None, "test", false, None);
         assert_eq!(body.replayability, BodyReplayability::Empty);
         assert!(body.can_replay());
     }
 
     #[test]
     fn buffered_body_buffered() {
-        let body = BufferedBody::new(vec![1, 2, 3], 1024, None, "test");
+        let body = BufferedBody::new(vec![1, 2, 3], 1024, None, "test", false, None);
         assert_eq!(body.replayability, BodyReplayability::Buffered);
         assert!(body.can_replay());
     }
@@ -423,21 +479,21 @@ mod tests {
     #[test]
     fn buffered_body_streaming() {
         let large_body = vec![0u8; 2048];
-        let body = BufferedBody::new(large_body, 1024, None, "test");
+        let body = BufferedBody::new(large_body, 1024, None, "test", false, None);
         assert_eq!(body.replayability, BodyReplayability::Streaming);
         assert!(!body.can_replay());
     }
 
     #[test]
     fn buffered_body_handle_non_replayable_strict() {
-        let body = BufferedBody::new(vec![0u8; 2048], 1024, None, "test");
+        let body = BufferedBody::new(vec![0u8; 2048], 1024, None, "test", false, None);
         let result = body.handle_non_replayable(true);
         assert!(result.is_err());
     }
 
     #[test]
     fn buffered_body_handle_non_replayable_lenient() {
-        let body = BufferedBody::new(vec![0u8; 2048], 1024, None, "test");
+        let body = BufferedBody::new(vec![0u8; 2048], 1024, None, "test", false, None);
         let result = body.handle_non_replayable(false);
         assert!(result.is_ok());
     }

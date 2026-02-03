@@ -140,15 +140,12 @@ impl HealthProbePlan {
 struct PlanState {
     plan: Arc<HealthProbePlan>,
     cluster: Arc<Cluster>,
-    last_run: Option<Instant>,
+    next_due: Instant,
 }
 
 impl PlanState {
     fn is_due(&self, now: Instant) -> bool {
-        match self.last_run {
-            Some(last) => now.duration_since(last) >= self.plan.interval(),
-            None => true,
-        }
+        now >= self.next_due
     }
 }
 
@@ -160,15 +157,17 @@ struct Scheduler {
 impl Scheduler {
     fn from_manager(manager: &Manager) -> Self {
         let mut plans = HashMap::new();
+        let now = Instant::now();
         for (name, cluster) in manager.iter() {
             match HealthProbePlan::build(name, &cluster) {
                 Ok(Some(plan)) => {
+                    let next_due = now + jitter_duration(plan.interval());
                     plans.insert(
                         name.clone(),
                         PlanState {
                             plan: Arc::new(plan),
                             cluster,
-                            last_run: None,
+                            next_due,
                         },
                     );
                 }
@@ -187,7 +186,8 @@ impl Scheduler {
         let mut jobs = Vec::new();
         for state in self.plans.values_mut() {
             if state.is_due(now) {
-                state.last_run = Some(now);
+                state.next_due =
+                    now + state.plan.interval() + jitter_duration(state.plan.interval());
                 jobs.push(ProbeJob::new(state.plan.clone(), state.cluster.clone()));
             }
         }
@@ -249,6 +249,15 @@ fn mark_all_unhealthy(cluster: &Cluster, endpoints: &[Endpoint]) {
 
 fn core_duration_to_std(duration: &pavis_core::Duration) -> Duration {
     Duration::from_millis(duration.0.get() as u64)
+}
+
+fn jitter_duration(base: Duration) -> Duration {
+    let jitter_ms = (base.as_millis() / 10).min(50);
+    if jitter_ms == 0 {
+        return Duration::ZERO;
+    }
+    let offset = rand::random::<u128>() % (jitter_ms + 1);
+    Duration::from_millis(offset as u64)
 }
 
 fn endpoint_label(addr: &EndpointAddr) -> String {
@@ -412,7 +421,7 @@ mod tests {
         let upstream = make_upstream(TlsPolicy::Disabled, health);
         let manager = Manager::new(&[upstream]).expect("manager");
         let mut scheduler = Scheduler::from_manager(&manager);
-        let now = Instant::now();
+        let now = Instant::now() + Duration::from_millis(100);
         assert_eq!(scheduler.next_jobs(now).len(), 1);
         assert_eq!(scheduler.next_jobs(now).len(), 0);
         assert_eq!(

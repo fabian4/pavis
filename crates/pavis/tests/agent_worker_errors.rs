@@ -183,61 +183,48 @@ async fn poll_once_applies_new_artifact_after_rejection() {
     let v2_bytes = Arc::new(pvs_bytes("v2"));
     let v2_etag = etag_for_bytes(v2_bytes.as_ref());
     let request_count = Arc::new(AtomicUsize::new(0));
+    let published_artifact = Arc::new(std::sync::Mutex::new((
+        Arc::clone(&bad_bytes),
+        bad_etag.clone(),
+    )));
 
     let app = {
-        let rejected_etag_outer = bad_etag.clone();
-        let bad_bytes_outer = Arc::clone(&bad_bytes);
-        let applied_bytes_outer = Arc::clone(&v2_bytes);
-        let applied_etag_outer = v2_etag.clone();
+        let published_artifact_outer = Arc::clone(&published_artifact);
         let request_count_outer = Arc::clone(&request_count);
         Router::new().route(
             "/v1/config",
             get(move |headers: axum::http::HeaderMap| {
-                let rejected_etag_inner = rejected_etag_outer.clone();
-                let bad_bytes_inner = Arc::clone(&bad_bytes_outer);
-                let applied_bytes_inner = Arc::clone(&applied_bytes_outer);
-                let applied_etag_inner = applied_etag_outer.clone();
+                let published_artifact_inner = Arc::clone(&published_artifact_outer);
                 let request_count_inner = Arc::clone(&request_count_outer);
                 async move {
                     use axum::response::Response;
-                    let attempt = request_count_inner.fetch_add(1, Ordering::SeqCst);
-                    if attempt == 0 {
-                        let mut response =
-                            Response::new(axum::body::Body::from(bad_bytes_inner.as_ref().clone()));
-                        *response.status_mut() = StatusCode::OK;
-                        response.headers_mut().insert(
-                            axum::http::header::ETAG,
-                            axum::http::HeaderValue::from_str(&format!(
-                                "\"{}\"",
-                                rejected_etag_inner
-                            ))
-                            .unwrap(),
-                        );
-                        return response;
-                    }
+                    let _attempt = request_count_inner.fetch_add(1, Ordering::SeqCst);
+
+                    let (current_bytes, current_etag) = {
+                        let lock = published_artifact_inner.lock().unwrap();
+                        (Arc::clone(&lock.0), lock.1.clone())
+                    };
+
                     let header_match = headers
                         .get(axum::http::header::IF_NONE_MATCH)
                         .and_then(|value| value.to_str().ok())
                         .map(|value| value.trim_matches('"').to_string());
-                    if header_match.as_deref() == Some(rejected_etag_inner.as_str()) {
-                        let mut response = Response::new(axum::body::Body::from(
-                            applied_bytes_inner.as_ref().clone(),
-                        ));
-                        *response.status_mut() = StatusCode::OK;
-                        response.headers_mut().insert(
-                            axum::http::header::ETAG,
-                            axum::http::HeaderValue::from_str(&format!(
-                                "\"{}\"",
-                                applied_etag_inner
-                            ))
-                            .unwrap(),
-                        );
-                        return response;
-                    }
-                    if header_match.as_deref() == Some(applied_etag_inner.as_str()) {
+
+                    // If client sent If-None-Match and it matches current etag → 304
+                    if header_match.as_deref() == Some(current_etag.as_str()) {
                         return StatusCode::NOT_MODIFIED.into_response();
                     }
-                    StatusCode::NOT_MODIFIED.into_response()
+
+                    // Otherwise return current artifact
+                    let mut response =
+                        Response::new(axum::body::Body::from(current_bytes.as_ref().clone()));
+                    *response.status_mut() = StatusCode::OK;
+                    response.headers_mut().insert(
+                        axum::http::header::ETAG,
+                        axum::http::HeaderValue::from_str(&format!("\"{}\"", current_etag))
+                            .unwrap(),
+                    );
+                    response
                 }
             }),
         )
@@ -251,15 +238,31 @@ async fn poll_once_applies_new_artifact_after_rejection() {
     let base = format!("http://{}", addr);
 
     let agent = make_agent(base, lkg.clone(), state_handle.clone());
+
+    // Poll 1: Receive bad artifact → should be rejected
     let outcome = agent.poll_once(0).await.expect("poll 1");
     assert!(!matches!(outcome, PollOutcome::Updated));
     assert_eq!(agent.last_rejected_etag_for_tests(), Some(bad_etag.clone()));
 
+    // Poll 2: Agent sends If-None-Match: bad_etag → Relay returns 304 (no change)
     let outcome = agent.poll_once(0).await.expect("poll 2");
+    assert!(matches!(outcome, PollOutcome::NoChange));
+    assert_eq!(agent.last_rejected_etag_for_tests(), Some(bad_etag.clone()));
+
+    // Simulate relay publishing new artifact
+    {
+        let mut lock = published_artifact.lock().unwrap();
+        *lock = (Arc::clone(&v2_bytes), v2_etag.clone());
+    }
+
+    // Poll 3: Relay has new artifact → Agent should apply it
+    let outcome = agent.poll_once(0).await.expect("poll 3");
     assert!(matches!(outcome, PollOutcome::Updated));
     assert_eq!(agent.last_applied_etag_for_tests(), Some(v2_etag.clone()));
     assert_eq!(agent.last_rejected_etag_for_tests(), None);
-    let outcome = agent.poll_once(0).await.expect("poll 3");
+
+    // Poll 4: No change
+    let outcome = agent.poll_once(0).await.expect("poll 4");
     assert!(matches!(outcome, PollOutcome::NoChange));
 }
 

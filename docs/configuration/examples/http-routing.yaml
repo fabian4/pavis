@@ -1,8 +1,8 @@
 routes:
   - host: "api.example.com"
     paths:
-      - matcher: !prefix
-          path: "/v1"
+      - matcher:
+          path: !prefix { path: "/v1" }
         rewrite:
           path: "/"
         request_headers:
@@ -11,12 +11,12 @@ routes:
         destinations:
           - upstream: "api-v1"
             weight: 1
-      - matcher: !exact
-          path: "/health"
+      - matcher:
+          path: !exact { path: "/health" }
         status: 200
         body: "Healthy"
-      - matcher: !regex
-          path: "^/v[0-9]/legacy"
+      - matcher:
+          path: !regex { path: "^/v[0-9]/legacy" }
         status: 302
         location: "/v1/new-api"
 

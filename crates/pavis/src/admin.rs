@@ -7,9 +7,32 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
-use tokio::time::Instant;
+use tokio::time::{Duration, Instant, timeout};
 
 use crate::state::RuntimeStateHandle;
+
+const ADMIN_REQUEST_LINE_LIMIT_BYTES: usize = 4096;
+const ADMIN_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn read_request_line(
+    reader: &mut BufReader<tokio::net::TcpStream>,
+) -> std::io::Result<Option<String>> {
+    let mut buf = Vec::new();
+    let read = timeout(ADMIN_READ_TIMEOUT, reader.read_until(b'\n', &mut buf))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "admin read timeout"))??;
+    if read == 0 {
+        return Ok(None);
+    }
+    if buf.len() > ADMIN_REQUEST_LINE_LIMIT_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "admin request line too long",
+        ));
+    }
+    let line = String::from_utf8_lossy(&buf);
+    Ok(Some(line.trim_end_matches(['\r', '\n']).to_string()))
+}
 
 /// Admin API worker service.
 ///
@@ -115,11 +138,9 @@ impl AdminApiWorker {
                     match accept_result {
                         Ok((stream, _peer_addr)) => {
                             let mut reader = BufReader::new(stream);
-                            let mut request_line = String::new();
-
-                            match reader.read_line(&mut request_line).await {
-                                Ok(0) => continue, // Connection closed
-                                Ok(_) => {
+                            match read_request_line(&mut reader).await {
+                                Ok(None) => continue, // Connection closed
+                                Ok(Some(request_line)) => {
                                     // Parse request line: "GET /path HTTP/1.1"
                                     let parts: Vec<&str> = request_line.split_whitespace().collect();
                                     if parts.len() >= 2 {

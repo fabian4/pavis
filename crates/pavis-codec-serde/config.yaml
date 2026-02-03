@@ -1,38 +1,55 @@
-server:
-  listen_addr: "0.0.0.0:8080"
-  # worker_threads: 4
-  # tls:
-  #   enabled: true
-  #   cert_path: "/path/to/cert.pem"
-  #   key_path: "/path/to/key.pem"
+listeners:
+  - name: "default"
+    address: "0.0.0.0:8080"
+    # workers: 4
+    # tls:
+    #   cert_path: "/path/to/cert.pem"
+    #   key_path: "/path/to/key.pem"
+    #   client_auth:
+    #     required:
+    #       ca_path: "/path/to/ca.pem"
 
 telemetry:
   level: "debug"
   pingora: "warn"
-  access_log: "stdout"  # Options: stdout (default), false, or file path
-  # service_name: "pavis-proxy" # Not supported yet
-  # prometheus_addr: "0.0.0.0:9090" # Not supported yet
-  # tracing: # Not supported yet
-  #   enabled: true
-  #   provider: "opentelemetry"
-  #   sampling_rate: 1.0
+  service_name: "pavis-proxy"
+  metrics: "0.0.0.0:9090"
+  access_log: Stdout
+  # tracing:
+  #   provider: "otlp"
+  #   sampling: 100
+  #   endpoint: "http://localhost:4317"
+
+shutdown:
+  enabled: true
+  drain_timeout_ms: 30000
+
+admin:
+  enabled: false
+  address: "127.0.0.1:9901"
+
+features:
+  routing:
+    advanced_matchers: false
+    regex_limits: {}
 
 upstreams:
   - name: "backend-v1"
-    lb: "round-robin" # Options: random, round-robin (default)
-    http: "h1"  # Options: h1 (default), h2, h2h1
+    balancer: "round-robin" # Options: round-robin, random, least-request
+    protocol: "h1" # Options: h1, h2, h2h1
     pool:
-      idle_timeout: "60s"      # Keep connections alive for 60s (default)
-      connection_timeout: "5s"  # Connection timeout (default: 5s)
+      idle: "60s" # Default: 60s
+      connect: "5s" # Default: 5s
+      # max: 128
+      queue_capacity: 0
+      queue_timeout_ms: 0
     # tls:
     #   enabled: true
     #   verify_cert: true
     #   verify_hostname: true
     #   sni_mode: auto
     #   # sni: "backend.example.com"
-    #   #
-    #   # OpenSSL is the only supported TLS backend; these options are enforced:
-    #   # ca_bundle_path: "/etc/pavis/certs/upstream-ca.pem"
+    #   # ca_bundle_path: "/etc/pavis/certs/upstream-ca.pem" # Ignored by Rustls backend
     #   # cert:
     #   #   cert_path: "/etc/pavis/certs/client.crt"
     #   #   key_path: "/etc/pavis/certs/client.key"
@@ -51,42 +68,43 @@ upstreams:
     #   healthy_threshold: 1
     #   unhealthy_threshold: 1
     endpoints:
-      - ip: "127.0.0.1"
+      - address: "127.0.0.1"
         port: 8081
         weight: 1
 
   - name: "backend-v2"
-    lb: "random"
-    http: "h2"
+    balancer: "random"
+    protocol: "h2"
     endpoints:
-      - ip: "127.0.0.1"
+      - address: "127.0.0.1"
         port: 8082
         weight: 1
 
 routes:
   - host: "backend"
     paths:
-      - match_type: "prefix" # Options: prefix (default), exact, regex
-        path: "/api/v1"
-        # timeout: "2s" # Not supported yet
-        # retry: # Not supported yet
-        #   attempts: 3
-        #   retry_on: [500, 502, 503, "gateway_error", "connect_failure"]
-        #   per_try_timeout: "500ms"
+      - matcher:
+          path: !prefix { path: "/api/v1" }
+        # timeout: "2s"
+        # retry:
+        #   max_attempts: 3
+        #   retryable_reasons: ["status_code", "connect_error"]
+        #   retryable_status_codes: [502, 503, 504]
+        #   per_try: "500ms"
         request_headers:
-          add:
-            x-sidecar-proxy: "pavis"
-          remove:
+          add_headers:
+            - ["x-sidecar-proxy", "pavis"]
+          remove_headers:
             - "x-internal-token"
         response_headers:
-          add:
-            x-served-by: "pavis"
+          add_headers:
+            - ["x-served-by", "pavis"]
         destinations:
           - upstream: "backend-v1"
             weight: 100
 
-      - match_type: "prefix"
-        path: "/api/v2"
+      - matcher:
+          path: !prefix { path: "/api/v2" }
         destinations:
           - upstream: "backend-v2"
             weight: 100

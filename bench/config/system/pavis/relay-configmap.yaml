@@ -64,7 +64,7 @@ data:
       level: "warn"
       pingora: "error"
       service_name: "pavis-benchmark"
-      access_log: false
+      access_log: Disabled
       metrics: "0.0.0.0:9090"
 
     upstreams:

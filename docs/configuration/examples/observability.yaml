@@ -3,7 +3,8 @@ telemetry:
   pingora: "warn"
   service_name: "pavis-gateway"
   metrics: "0.0.0.0:9090"
-  access_log: "/var/log/pavis/access.log"
+  access_log:
+    File: "/var/log/pavis/access.log"
   tracing:
     provider: "otlp"
     sampling: 10

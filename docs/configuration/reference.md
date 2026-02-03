@@ -6,12 +6,17 @@ This document provides a normative, exhaustive reference for the Pavis data plan
 
 The configuration flows through three validation layers: **Codec** (format/static checks), **Core** (semantic invariants), and **Runtime** (environment checks). After validation, it is converted into an immutable `RuntimeConfig` artifact used by the proxy engine.
 
+**Note**: The runtime artifact includes internal fields (e.g., `required_capabilities`) that are **derived by the codec** and are not user-configurable.
+
 ### Top-Level Schema
 
 - [`listeners[]`](#listeners) - Inbound entry points.
 - [`telemetry`](#telemetry) - Global observability.
+- [`shutdown`](#shutdown) - Graceful shutdown behavior.
+- [`admin`](#admin) - Admin API configuration.
 - [`upstreams[]`](#upstreams) - Backend clusters and endpoints.
 - [`routes[]`](#routes) - Virtual hosts and request routing.
+- [`features`](#features) - Routing feature flags and limits.
 
 ---
 
@@ -99,10 +104,13 @@ Defines how the proxy accepts inbound traffic.
 - **Runtime Effect**: Starts a Prometheus metrics exporter on this address.
 
 ### `telemetry.access_log`
-- **Type**: `scalar`
+- **Type**: `enum`
 - **Required**: Optional
-- **Default**: `stdout`
-- **Allowed values**: `disabled`, `stdout`, or a file path string.
+- **Default**: `Stdout`
+- **Allowed values**:
+  - `Stdout`
+  - `Disabled`
+  - `File: "<path>"`
 - **Runtime Effect**: Configures the request logging destination.
 
 ### `telemetry.tracing`
@@ -125,6 +133,40 @@ Defines how the proxy accepts inbound traffic.
 - **Type**: `string`
 - **Required**: Optional
 - **Default**: `"http://localhost:4317"`
+
+---
+
+## Shutdown <a id="shutdown"></a>
+
+### `shutdown.enabled`
+- **Type**: `boolean`
+- **Required**: Optional
+- **Default**: `true`
+- **Runtime Effect**: Enables graceful shutdown.
+
+### `shutdown.drain_timeout_ms`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `30000`
+- **Validation**: Must be `> 0` when shutdown is enabled.
+- **Runtime Effect**: Drain timeout in milliseconds.
+
+---
+
+## Admin <a id="admin"></a>
+
+### `admin.enabled`
+- **Type**: `boolean`
+- **Required**: Optional
+- **Default**: `false`
+- **Runtime Effect**: Enables the admin API.
+
+### `admin.address`
+- **Type**: `string`
+- **Required**: Optional
+- **Default**: `"127.0.0.1:9901"`
+- **Validation**: Must be a valid socket address (IP:PORT).
+- **Runtime Effect**: Binds the admin API to this address.
 
 ---
 
@@ -184,22 +226,18 @@ Defines how the proxy accepts inbound traffic.
 
 ### `upstreams[].pool.max`
 - **Type**: `integer`
-- **Required**: Required
+- **Required**: Optional
+- **Default**: `128`
 - **Validation**: Must be `> 0`. No unlimited pools supported (P0 enforcement).
 - **Runtime Effect**: Maximum concurrent connections. Enforced with semaphore-based gating.
 
-### `upstreams[].pool.queue`
-- **Type**: `object`
-- **Required**: Optional
-- **Runtime Effect**: Queue configuration for requests when pool is full.
-
-### `upstreams[].pool.queue.capacity`
+### `upstreams[].pool.queue_capacity`
 - **Type**: `integer`
 - **Required**: Optional
 - **Default**: `0` (no queueing)
 - **Runtime Effect**: Maximum number of requests to queue when pool is full.
 
-### `upstreams[].pool.queue.timeout_ms`
+### `upstreams[].pool.queue_timeout_ms`
 - **Type**: `integer`
 - **Required**: Optional
 - **Default**: `0` (immediate rejection)
@@ -337,6 +375,7 @@ Defines how the proxy accepts inbound traffic.
 - **Fields**:
   - `max_connections` (integer, required)
   - `max_pending_requests` (integer, required)
+- **Note**: `max_retries` is not supported (codec will reject it).
 
 ### `upstreams[].outlier_detection`
 - **Type**: `object`
@@ -429,6 +468,21 @@ Defines how the proxy accepts inbound traffic.
 - **Validation**: Valid regex pattern, max 256 bytes.
 - **Runtime Effect**: Header value must match regex pattern. Input limited to 4096 bytes.
 
+### `routes[].paths[].matcher.headers[]` (Legacy / P0 Form)
+An alternate legacy header predicate shape is supported for backward compatibility.
+
+- **Fields**:
+  - `name` (string, required)
+  - `value` (string, optional)
+  - `regex` (boolean, optional)
+  - `prefix` (boolean, optional)
+  - `absent` (boolean, optional)
+- **Rules**:
+  - `regex` and `prefix` are mutually exclusive.
+  - `regex=true` requires `value`.
+  - `prefix=true` requires `value`.
+  - `absent=true` cannot be combined with `value`, `regex`, or `prefix`.
+
 ### `routes[].paths[].timeout`
 - **Type**: `duration`
 - **Required**: Optional
@@ -442,13 +496,17 @@ Defines how the proxy accepts inbound traffic.
 
 ### `routes[].paths[].retry.max_attempts`
 - **Type**: `integer`
-- **Required**: Yes
+- **Required**: Optional
+- **Default**: `1`
 - **Validation**: `1` to `10` (strictly enforced).
+- **Alias**: `attempts`
 
 ### `routes[].paths[].retry.retryable_reasons`
 - **Type**: `list of string`
-- **Required**: Yes
+- **Required**: Optional
+- **Default**: `["status_code", "connect_timeout", "read_timeout"]`
 - **Allowed values**: `status_code`, `connect_timeout`, `read_timeout`, `per_try_timeout`, `pool_full`, `connect_error`.
+- **Alias**: `retry_on`
 
 ### `routes[].paths[].retry.retryable_status_codes`
 - **Type**: `list of integer`
@@ -459,7 +517,7 @@ Defines how the proxy accepts inbound traffic.
 ### `routes[].paths[].retry.backoff`
 - **Type**: `object`
 - **Required**: Optional
-- **Default**: `fixed` with `base_ms: 100`
+- **Default**: `exponential` with `base_ms: 100`, `max_ms: 5000`
 
 ### `routes[].paths[].retry.backoff.strategy`
 - **Type**: `string` (enum)
@@ -499,7 +557,9 @@ Defines how the proxy accepts inbound traffic.
 ### `routes[].paths[].retry.per_try`
 - **Type**: `duration`
 - **Required**: Optional
-- **Runtime Effect**: Per-attempt timeout (independent of global request timeout).
+- **Default**: Inherits from the route timeout.
+- **Validation**: Must be `<=` the overall route timeout when set.
+- **Runtime Effect**: Per-attempt timeout applied to upstream read/write operations.
 
 ### `routes[].paths[].request_headers` / `response_headers`
 - **Type**: `object`
@@ -563,12 +623,54 @@ Inferred if `status` and `body` fields are present.
 
 ---
 
+## Features <a id="features"></a>
+
+### `features.routing.advanced_matchers`
+- **Type**: `boolean`
+- **Required**: Optional
+- **Default**: `false`
+- **Runtime Effect**: Enables advanced matcher features (e.g., multi-method matching, header prefix/regex/absent).
+
+### `features.routing.regex_limits.pattern_max_bytes`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `256`
+- **Runtime Effect**: Maximum regex pattern length (bytes).
+
+### `features.routing.regex_limits.size_limit_bytes`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `10485760` (10 MB)
+- **Runtime Effect**: Regex engine size limit.
+
+### `features.routing.regex_limits.input_max_bytes`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `4096`
+- **Runtime Effect**: Maximum input size for regex evaluation.
+
+### `features.routing.regex_limits.max_regex_per_route`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `10`
+- **Runtime Effect**: Maximum number of regex predicates per route.
+
+### `features.routing.regex_limits.max_regex_per_config`
+- **Type**: `integer`
+- **Required**: Optional
+- **Default**: `100`
+- **Runtime Effect**: Maximum number of regex predicates per config.
+
+---
+
 ## Cross-Field Rules
 
 1. **Normalized Paths**: All paths in `matcher.path` (except regex) must start with `/` and not end with `/` unless the path is exactly `/`.
 2. **Upstream Referencing**: Every `upstream` name in a `forward` action must exist in the top-level `upstreams` list.
 3. **mTLS SNI**: `verify=full` with `sni_mode=auto` is rejected unless the upstream uses DNS discovery or the route specifies a `host` rewrite.
 4. **Rewrite Conflict**: `rewrite` cannot be used if the `matcher` is `regex`.
+5. **Matcher Methods**: `matcher.method` and `matcher.methods` are mutually exclusive.
+6. **Retry Per-Try Timeout**: `retry.per_try` must be `<=` the overall route timeout when set.
 
 ---
 

@@ -12,7 +12,10 @@ use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::protocols::Digest;
 use pingora::proxy::{ProxyHttp, Session};
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -27,6 +30,23 @@ use super::state::Proxy;
 static POOL_KEY_LOG_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static SNI_FRAGMENT_WARN_COUNTER: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+static LOGGED_UPSTREAM_CHECK_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+static LOGGED_UPSTREAM_KEYS: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+
+fn should_log_upstream_config(hash: u64) -> bool {
+    if !LOGGED_UPSTREAM_CHECK_COUNTER
+        .fetch_add(1, Ordering::Relaxed)
+        .is_multiple_of(256)
+    {
+        return false;
+    }
+    let set = LOGGED_UPSTREAM_KEYS.get_or_init(|| Mutex::new(HashSet::new()));
+    if let Ok(mut guard) = set.try_lock() {
+        return guard.insert(hash);
+    }
+    false
+}
 
 #[async_trait]
 impl ProxyHttp for Proxy {
@@ -363,15 +383,11 @@ impl ProxyHttp for Proxy {
                         .map(|d| d.as_millis() as u64)
                         .unwrap_or(60000);
 
-                    route_phase.set_retry_context(RetryContext::new(
-                        retry_policy.clone(),
-                        request_timeout_ms,
-                        self.telemetry.metrics.clone(),
-                        upstream_name.clone(),
-                    ));
-
                     let mut body_bytes = Vec::new();
                     let limit = *max_request_body_buffer_bytes;
+                    let mut budget_guard = crate::retry::BudgetGuard::new();
+                    let mut budget_exhausted = false;
+                    let mut truncated = false;
 
                     while let Some(chunk) = session.read_request_body().await? {
                         if (body_bytes.len() as u64) + (chunk.len() as u64) > limit {
@@ -380,19 +396,39 @@ impl ProxyHttp for Proxy {
                                 upstream = %upstream_name,
                                 "Request body exceeds buffer limit, marking as non-replayable"
                             );
-                            body_bytes.extend_from_slice(&chunk);
+                            truncated = true;
+                            break;
+                        }
+                        if !budget_guard.try_add(chunk.len() as u64) {
+                            budget_exhausted = true;
                             break;
                         }
                         body_bytes.extend_from_slice(&chunk);
                     }
 
-                    let buffered = crate::retry::BufferedBody::new(
-                        body_bytes,
-                        limit,
-                        self.telemetry.metrics.clone(),
-                        &upstream_name,
-                    );
-                    route_phase.set_buffered_body(buffered);
+                    if budget_exhausted {
+                        tracing::warn!(
+                            upstream = %upstream_name,
+                            "Retry body buffer budget exhausted; disabling retries for request"
+                        );
+                    } else {
+                        route_phase.set_retry_context(RetryContext::new(
+                            retry_policy.clone(),
+                            request_timeout_ms,
+                            self.telemetry.metrics.clone(),
+                            upstream_name.clone(),
+                        ));
+
+                        let buffered = crate::retry::BufferedBody::new(
+                            body_bytes,
+                            limit,
+                            self.telemetry.metrics.clone(),
+                            &upstream_name,
+                            truncated,
+                            Some(budget_guard),
+                        );
+                        route_phase.set_buffered_body(buffered);
+                    }
                 }
 
                 if let RouteAction::Forward(destinations) = &route.action {
@@ -996,8 +1032,7 @@ impl<'a> UpstreamPeerBuilder<'a> {
             peer.options.tcp_recv_buf = Some(buffer_size as usize);
         }
 
-        // Log effective upstream configuration (once per upstream, using atomic counter to avoid Mutex)
-        static LOGGED_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        // Log effective upstream configuration (rate-limited with a sampled, per-upstream set)
         let log_key = format!("{}:{}", upstream_name.0, cluster as *const _ as usize);
         let hash = {
             use std::collections::hash_map::DefaultHasher;
@@ -1007,8 +1042,7 @@ impl<'a> UpstreamPeerBuilder<'a> {
             hasher.finish()
         };
 
-        // Use a simple probabilistic approach: only log if this is likely the first time
-        if LOGGED_COUNTER.fetch_add(1, Ordering::Relaxed) % 1000 < 10 || hash % 1000 == 0 {
+        if should_log_upstream_config(hash) {
             tracing::info!(
                 upstream = %upstream_name.0,
                 idle_timeout_ms = ?peer.options.idle_timeout.map(|d| d.as_millis()),

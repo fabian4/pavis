@@ -391,16 +391,10 @@ impl Fsm {
             }
             (State::Verifying(_), Event::VerifyFail { etag, now }) => {
                 self.ctx.set_rejected(etag, now);
-                self.ctx.backoff_attempt = 0;
-                self.state = State::Fetching;
-                if let Some(etag) = self.ctx.conditional_etag(now) {
-                    effects.push(Effect::FetchConditional {
-                        wait_ms: WAIT_MS,
-                        etag,
-                    });
-                } else {
-                    effects.push(Effect::FetchUnconditional { wait_ms: WAIT_MS });
-                }
+                let delay = backoff_delay(self.ctx.backoff_attempt);
+                self.ctx.backoff_attempt = self.ctx.backoff_attempt.saturating_add(1);
+                self.state = State::BackoffSleeping;
+                effects.push(Effect::ScheduleTimer { duration: delay });
             }
             (State::Verifying(_), Event::Shutdown) => {
                 self.state = State::Stopped;
@@ -428,16 +422,10 @@ impl Fsm {
             }
             (State::Applying(_), Event::ApplyFail { etag, now }) => {
                 self.ctx.set_rejected(etag, now);
-                self.ctx.backoff_attempt = 0;
-                self.state = State::Fetching;
-                if let Some(etag) = self.ctx.conditional_etag(now) {
-                    effects.push(Effect::FetchConditional {
-                        wait_ms: WAIT_MS,
-                        etag,
-                    });
-                } else {
-                    effects.push(Effect::FetchUnconditional { wait_ms: WAIT_MS });
-                }
+                let delay = backoff_delay(self.ctx.backoff_attempt);
+                self.ctx.backoff_attempt = self.ctx.backoff_attempt.saturating_add(1);
+                self.state = State::BackoffSleeping;
+                effects.push(Effect::ScheduleTimer { duration: delay });
             }
             (State::Applying(_), Event::Shutdown) => {
                 self.state = State::Stopped;
@@ -632,10 +620,8 @@ mod tests {
             fsm.context().last_rejected_etag.as_deref(),
             Some("sha256:bad")
         );
-        assert!(effects.iter().any(|effect| matches!(
-            effect,
-            Effect::FetchConditional { .. } | Effect::FetchUnconditional { .. }
-        )));
+        assert!(matches!(fsm.state, State::BackoffSleeping));
+        assert!(matches!(effects.as_slice(), [Effect::ScheduleTimer { .. }]));
     }
 
     #[test]
@@ -656,10 +642,8 @@ mod tests {
             fsm.context().last_rejected_etag.as_deref(),
             Some("sha256:bad")
         );
-        assert!(effects.iter().any(|effect| matches!(
-            effect,
-            Effect::FetchConditional { .. } | Effect::FetchUnconditional { .. }
-        )));
+        assert!(matches!(fsm.state, State::BackoffSleeping));
+        assert!(matches!(effects.as_slice(), [Effect::ScheduleTimer { .. }]));
     }
 
     #[test]

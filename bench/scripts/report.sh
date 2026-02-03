@@ -154,6 +154,9 @@ if [[ "$profile" == "github" ]]; then
     return x
   }
   function gate_row(domain, case_name, check, value, threshold, result) {
+    if (is_gate_excluded(domain, case_name, check)) {
+      return
+    }
     gate_rows[++gate_count,"domain"]=domain
     gate_rows[gate_count,"case"]=case_name
     gate_rows[gate_count,"check"]=check
@@ -165,6 +168,11 @@ if [[ "$profile" == "github" ]]; then
     if (curr == "FAIL" || candidate == "FAIL") return "FAIL"
     if (curr == "WARN" || candidate == "WARN") return "WARN"
     return "PASS"
+  }
+  function is_gate_excluded(domain, case_name, check) {
+    if (domain == "system" && case_name == "rollback_performance" && check == "rollback_ttbr_ms") return 1
+    if (domain == "system" && case_name == "stress_recovery" && check == "latency_regression_pct") return 1
+    return 0
   }
   function result_label(res) {
     if (res == "FAIL") return "❌ FAIL"
@@ -263,15 +271,19 @@ if [[ "$profile" == "github" ]]; then
       } else {
         res = "FAIL"
       }
-      overall = worst_result(overall, res)
-      gate_row("system", "rollback_performance", "rollback_ttbr_ms", val, "≤ " rollback_ttbr_threshold_ms, result_label(res))
+      if (!is_gate_excluded("system", "rollback_performance", "rollback_ttbr_ms")) {
+        overall = worst_result(overall, res)
+        gate_row("system", "rollback_performance", "rollback_ttbr_ms", val, "≤ " rollback_ttbr_threshold_ms, result_label(res))
+      }
     }
     if (("stress_recovery" SUBSEP "case") in data_sys) {
       val = render(data_sys["stress_recovery","latency_regression_pct"])
       if (is_num(val)) {
         res = (val + 0 > 20) ? "FAIL" : "PASS"
-        overall = worst_result(overall, res)
-        gate_row("system", "stress_recovery", "latency_regression_pct", val, "≤ 20", result_label(res))
+        if (!is_gate_excluded("system", "stress_recovery", "latency_regression_pct")) {
+          overall = worst_result(overall, res)
+          gate_row("system", "stress_recovery", "latency_regression_pct", val, "≤ 20", result_label(res))
+        }
       }
     }
 

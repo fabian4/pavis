@@ -7,11 +7,31 @@ telemetry:
   pingora: "info"
   service_name: "pavis-full-example"
   metrics: "0.0.0.0:9090" # Alias: prometheus_addr
-  access_log: "stdout" # stdout, disabled, or file path
+  access_log: Stdout # Stdout, Disabled, or File: "/path"
   tracing:
     provider: "otlp" # otlp, jaeger, zipkin
     sampling: 100 # 0-100
     endpoint: "http://localhost:4317"
+
+# Global lifecycle controls
+shutdown:
+  enabled: true
+  drain_timeout_ms: 30000
+
+admin:
+  enabled: false
+  address: "127.0.0.1:9901"
+
+# Feature flags and limits
+features:
+  routing:
+    advanced_matchers: false
+    regex_limits:
+      pattern_max_bytes: 256
+      size_limit_bytes: 10485760
+      input_max_bytes: 4096
+      max_regex_per_route: 10
+      max_regex_per_config: 100
 
 # Inbound entry points
 listeners:
@@ -37,10 +57,9 @@ upstreams:
     pool:
       idle: "1m" # humantime format
       connect: "10s"
-      max: 500 # Required, no unlimited pools (P0 enforcement)
-      queue:
-        capacity: 10 # Max requests to queue when pool is full
-        timeout_ms: 1000 # Queue wait timeout in milliseconds
+      max: 500 # Optional, defaults to 128 (no unlimited pools)
+      queue_capacity: 10 # Max requests to queue when pool is full
+      queue_timeout_ms: 1000 # Queue wait timeout in milliseconds
     tls:
       enabled: true
       verify_cert: true
@@ -125,14 +144,14 @@ routes:
           - upstream: "backend-cluster-1"
             weight: 1
       
-      - matcher: !exact
-          path: "/ping"
+      - matcher:
+          path: !exact { path: "/ping" }
         status: 200
         body: "pong"
 
   - host: "legacy.example.com"
     paths:
-      - matcher: !prefix
-          path: "/"
+      - matcher:
+          path: !prefix { path: "/" }
         status: 301
         location: "https://app.example.com"

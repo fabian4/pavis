@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use tokio::time::timeout;
 
 #[async_trait]
 pub trait MetricsTransport: Send + Sync {
@@ -139,13 +140,41 @@ async fn serve_metrics(
 
     let (reader, mut writer) = stream.split();
     let mut reader = tokio::io::BufReader::new(reader);
-    let mut line = String::new();
-    reader.read_line(&mut line).await?;
+    let mut line = Vec::new();
+    let mut total_bytes = 0usize;
+
+    let read = timeout(METRICS_READ_TIMEOUT, reader.read_until(b'\n', &mut line))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "metrics read timeout"))??;
+    if read == 0 {
+        return Ok(());
+    }
+    if line.len() > METRICS_REQUEST_LINE_LIMIT_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "metrics request line too long",
+        ));
+    }
+    total_bytes = total_bytes.saturating_add(line.len());
 
     loop {
         line.clear();
-        let n = reader.read_line(&mut line).await?;
-        if n <= 2 {
+        let n = timeout(METRICS_READ_TIMEOUT, reader.read_until(b'\n', &mut line))
+            .await
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "metrics read timeout")
+            })??;
+        if n == 0 {
+            break;
+        }
+        total_bytes = total_bytes.saturating_add(line.len());
+        if total_bytes > METRICS_HEADER_LIMIT_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "metrics headers too large",
+            ));
+        }
+        if line == b"\n" || line == b"\r\n" {
             break;
         }
     }
@@ -170,6 +199,9 @@ pub struct MetricsRegistry {
 }
 
 pub const POOL_KEY_CARDINALITY_CAP: usize = 1024;
+const METRICS_REQUEST_LINE_LIMIT_BYTES: usize = 4096;
+const METRICS_HEADER_LIMIT_BYTES: usize = 16 * 1024;
+const METRICS_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct PoolKeyCardinalitySnapshot {
     pub cardinality: usize,

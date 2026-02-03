@@ -50,6 +50,11 @@ impl Service for AccessLogWorker {
         } else {
             None
         };
+        let mut stdout_writer = if matches!(self.config, AccessLogPolicy::Stdout) {
+            Some(BufWriter::new(tokio::io::stdout()))
+        } else {
+            None
+        };
 
         loop {
             tokio::select! {
@@ -63,7 +68,13 @@ impl Service for AccessLogWorker {
                             let log_line = format_log_line(&entry);
                             match &self.config {
                                 AccessLogPolicy::Stdout => {
-                                    print!("{}", log_line);
+                                    if let Some(w) = &mut stdout_writer {
+                                        if let Err(e) = w.write_all(log_line.as_bytes()).await {
+                                            eprintln!("Failed to write to stdout access log: {}", e);
+                                        } else if let Err(e) = w.flush().await {
+                                            eprintln!("Failed to flush stdout access log: {}", e);
+                                        }
+                                    }
                                     if let Some(delay_ms) = self.throttle_ms {
                                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                                     }
@@ -92,6 +103,9 @@ impl Service for AccessLogWorker {
 
         // Flush on exit
         if let Some(mut w) = file_writer {
+            let _ = w.flush().await;
+        }
+        if let Some(mut w) = stdout_writer {
             let _ = w.flush().await;
         }
     }

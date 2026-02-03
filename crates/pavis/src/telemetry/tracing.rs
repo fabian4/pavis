@@ -11,6 +11,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
+use tokio::time::timeout;
 use tracing::{Event, Id, Subscriber};
 use tracing_subscriber::{
     layer::{Context, Layer},
@@ -532,10 +533,18 @@ impl Service for TracingService {
         // 3. Shutdown logic
         if let Some(runtime) = self.runtime_slot.get() {
             ::tracing::info!("Flushing traces...");
-            if let Err(error) = runtime.provider.force_flush() {
-                ::tracing::warn!(%error, "Failed to flush tracing provider");
+            let provider = runtime.provider.clone();
+            let flush = tokio::task::spawn_blocking(move || {
+                if let Err(error) = provider.force_flush() {
+                    ::tracing::warn!(%error, "Failed to flush tracing provider");
+                }
+                if let Err(error) = provider.shutdown() {
+                    ::tracing::warn!(%error, "Failed to shut down tracing provider cleanly");
+                }
+            });
+            if let Err(error) = timeout(Duration::from_secs(5), flush).await {
+                ::tracing::warn!(%error, "Tracing shutdown timed out");
             }
-            runtime.shutdown();
         }
     }
 
