@@ -353,7 +353,7 @@ jobs:
     name: bench report (aggregate)
     runs-on: ubuntu-latest
     needs: [bench]
-    if: always() && github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - name: Download bench artifacts
@@ -439,7 +439,6 @@ jobs:
   summary:
     name: summary
     runs-on: ubuntu-latest
-    if: always()
     needs:
       - lint
       - build

@@ -118,17 +118,8 @@ pub(crate) fn match_request<'a>(
                         }
 
                         if !matches_method(&route.matcher.method, method) {
-                            println!(
-                                "DEBUG: Method mismatch for route {}: req={} predicate={:?}",
-                                compiled.index, method, route.matcher.method
-                            );
                             stats.record_method_miss();
                             continue;
-                        } else {
-                            println!(
-                                "DEBUG: Method MATCH for route {}: req={} predicate={:?}",
-                                compiled.index, method, route.matcher.method
-                            );
                         }
 
                         if !matches_headers(

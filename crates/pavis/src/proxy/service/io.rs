@@ -33,6 +33,9 @@ static SNI_FRAGMENT_WARN_COUNTER: std::sync::atomic::AtomicU64 =
 static LOGGED_UPSTREAM_CHECK_COUNTER: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 static LOGGED_UPSTREAM_KEYS: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+static POOL_KEY_SAMPLE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static POOL_KEY_SAMPLE_RATE: OnceLock<u64> = OnceLock::new();
+const DEFAULT_POOL_KEY_SAMPLE_RATE: u64 = 16;
 
 fn should_log_upstream_config(hash: u64) -> bool {
     if !LOGGED_UPSTREAM_CHECK_COUNTER
@@ -46,6 +49,23 @@ fn should_log_upstream_config(hash: u64) -> bool {
         return guard.insert(hash);
     }
     false
+}
+
+fn should_sample_pool_key() -> bool {
+    let rate =
+        *POOL_KEY_SAMPLE_RATE.get_or_init(|| match std::env::var("PAVIS_POOL_KEY_SAMPLE_RATE") {
+            Ok(value) => value
+                .parse::<u64>()
+                .ok()
+                .filter(|v| *v > 0)
+                .unwrap_or(DEFAULT_POOL_KEY_SAMPLE_RATE),
+            Err(_) => DEFAULT_POOL_KEY_SAMPLE_RATE,
+        });
+    if rate == 1 {
+        return true;
+    }
+    let count = POOL_KEY_SAMPLE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    count.is_multiple_of(rate)
 }
 
 #[async_trait]
@@ -875,7 +895,9 @@ impl<'a> UpstreamPeerBuilder<'a> {
         }
 
         let sni_label = sni_value.as_ref().map(|name| name.0.as_str()).unwrap_or("");
-        if let Some(tracker) = self.telemetry.pool_key_tracker.as_ref() {
+        if let Some(tracker) = self.telemetry.pool_key_tracker.as_ref()
+            && should_sample_pool_key()
+        {
             let snapshot = tracker.record(
                 upstream_name.0.as_str(),
                 reuse_key_hash(&addr, sni_label, verify_mode, cert),

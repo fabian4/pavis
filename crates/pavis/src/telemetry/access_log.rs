@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio::time::Duration;
 
 pub struct AccessLog {
-    tx: mpsc::Sender<LogEntry>,
+    tx: Option<mpsc::Sender<LogEntry>>,
     enabled: bool,
     metrics: Mutex<Option<Arc<MetricsRegistry>>>,
 }
@@ -32,6 +32,9 @@ impl Service for AccessLogWorker {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
         _threads: usize,
     ) {
+        if matches!(self.config, AccessLogPolicy::Disabled) || self.rx.is_none() {
+            return;
+        }
         let mut rx = self.rx.take().expect("Worker started twice");
 
         let mut file_writer = if let AccessLogPolicy::File(path) = &self.config {
@@ -117,12 +120,17 @@ impl Service for AccessLogWorker {
 
 impl AccessLog {
     pub fn new(config: &AccessLogPolicy) -> (Self, AccessLogWorker) {
-        let (tx, rx) = mpsc::channel::<LogEntry>(access_log_channel_capacity());
         let enabled = *config != AccessLogPolicy::Disabled;
+        let (tx, rx) = if enabled {
+            let (tx, rx) = mpsc::channel::<LogEntry>(access_log_channel_capacity());
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
         let throttle_ms = access_log_throttle_ms();
 
         let worker = AccessLogWorker {
-            rx: Some(rx),
+            rx,
             config: config.clone(),
             throttle_ms,
         };
@@ -159,6 +167,9 @@ impl AccessLog {
         if !enabled {
             return;
         }
+        let Some(tx) = &self.tx else {
+            return;
+        };
 
         let req = session.req_header();
         let method = req.method.clone();
@@ -212,7 +223,7 @@ impl AccessLog {
         };
 
         // Non-blocking send (lossy if full)
-        if let Err(mpsc::error::TrySendError::Full(_)) = self.tx.try_send(entry)
+        if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(entry)
             && let Some(handle) = self
                 .metrics
                 .lock()
@@ -348,6 +359,15 @@ mod tests {
 
         let (access_log, mut worker) = AccessLog::new(&config);
 
+        // Start worker first
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let worker_handle = tokio::spawn(async move {
+            worker.start_service(None, shutdown_rx, 1).await;
+        });
+
+        // Give worker time to initialize
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
         // Inject a log manually
         let entry = LogEntry {
             timestamp: chrono::DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
@@ -367,23 +387,29 @@ mod tests {
             upstream_duration_ms: Some(50),
         };
         let expected = format_log_line(&entry);
-        let _ = access_log.tx.try_send(entry);
+        if let Some(tx) = &access_log.tx {
+            let _ = tx.send(entry).await;
+        }
 
-        // Run worker briefly
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let worker_handle = tokio::spawn(async move {
-            worker.start_service(None, shutdown_rx, 1).await;
-        });
-
-        // Let it process
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Poll for file content with timeout (worker flushes immediately after write)
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        let content = loop {
+            if let Ok(c) = std::fs::read_to_string(&path)
+                && !c.is_empty()
+            {
+                break c;
+            }
+            if tokio::time::Instant::now() > deadline {
+                panic!("Timeout waiting for log file to be written");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        };
 
         // Shutdown
         let _ = shutdown_tx.send(true);
         let _ = worker_handle.await;
 
         // Verify content
-        let content = std::fs::read_to_string(&path).expect("read log file");
         assert_eq!(content, expected);
 
         let _ = std::fs::remove_file(path);

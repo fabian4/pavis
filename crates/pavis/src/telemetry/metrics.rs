@@ -1,6 +1,6 @@
 use crate::router::MatchVerdict;
 use async_trait::async_trait;
-use metrics::{counter, gauge, histogram};
+use metrics::{SharedString, counter, gauge, histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use pingora::services::Service;
 use std::collections::{HashMap, VecDeque};
@@ -48,6 +48,7 @@ impl<T: MetricsTransport> PrometheusEndpoint<T> {
             Ok(handle) => {
                 let registry = MetricsRegistry {
                     _handle: Arc::new(handle),
+                    labels: Arc::new(MetricLabels::new()),
                 };
                 (
                     Self {
@@ -196,9 +197,12 @@ async fn serve_metrics(
 #[derive(Clone)]
 pub struct MetricsRegistry {
     _handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
+    labels: Arc<MetricLabels>,
 }
 
 pub const POOL_KEY_CARDINALITY_CAP: usize = 1024;
+const METRIC_LABEL_CACHE_CAP: usize = 1024;
+const METRIC_ROUTE_LABEL_CACHE_CAP: usize = 4096;
 const METRICS_REQUEST_LINE_LIMIT_BYTES: usize = 4096;
 const METRICS_HEADER_LIMIT_BYTES: usize = 16 * 1024;
 const METRICS_READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -213,6 +217,87 @@ struct BoundedKeySet {
     ttl: Duration,
     entries: HashMap<u64, Instant>,
     order: VecDeque<(u64, Instant)>,
+}
+
+struct MetricLabels {
+    common: LabelCache,
+    route: LabelCache,
+    status: Mutex<HashMap<u16, SharedString>>,
+}
+
+impl MetricLabels {
+    fn new() -> Self {
+        Self {
+            common: LabelCache::new(METRIC_LABEL_CACHE_CAP),
+            route: LabelCache::new(METRIC_ROUTE_LABEL_CACHE_CAP),
+            status: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn common(&self, value: &str) -> SharedString {
+        self.common.get(value)
+    }
+
+    fn route(&self, value: &str) -> SharedString {
+        self.route.get(value)
+    }
+
+    fn status(&self, value: u16) -> SharedString {
+        let mut guard = self
+            .status
+            .lock()
+            .expect("metrics status cache lock poisoned");
+        if let Some(existing) = guard.get(&value) {
+            return existing.clone();
+        }
+        let shared = SharedString::from(value.to_string());
+        guard.insert(value, shared.clone());
+        shared
+    }
+}
+
+struct LabelCache {
+    cap: usize,
+    inner: Mutex<LabelCacheInner>,
+}
+
+struct LabelCacheInner {
+    map: HashMap<String, SharedString>,
+    order: VecDeque<String>,
+}
+
+impl LabelCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            inner: Mutex::new(LabelCacheInner {
+                map: HashMap::new(),
+                order: VecDeque::new(),
+            }),
+        }
+    }
+
+    fn get(&self, value: &str) -> SharedString {
+        let mut guard = self
+            .inner
+            .lock()
+            .expect("metrics label cache lock poisoned");
+        if let Some(existing) = guard.map.get(value) {
+            return existing.clone();
+        }
+        let shared = SharedString::from(value.to_string());
+        let key = value.to_string();
+        guard.map.insert(key.clone(), shared.clone());
+        guard.order.push_back(key);
+        while guard.map.len() > self.cap {
+            if let Some(evicted) = guard.order.pop_front() {
+                guard.map.remove(&evicted);
+            } else {
+                break;
+            }
+        }
+        shared
+    }
 }
 
 impl BoundedKeySet {
@@ -369,36 +454,43 @@ impl MetricsRegistry {
         upstream: &str,
         duration_secs: f64,
     ) {
+        let method = self.labels.common(method);
+        let route = self.labels.route(route_pattern);
+        let status = self.labels.status(status);
+        let upstream = self.labels.common(upstream);
+
         counter!(
             "pavis_http_requests_total",
-            "method" => method.to_string(),
-            "route" => route_pattern.to_string(),
-            "status" => status.to_string(),
-            "upstream" => upstream.to_string(),
+            "method" => method.clone(),
+            "route" => route.clone(),
+            "status" => status.clone(),
+            "upstream" => upstream.clone(),
         )
         .increment(1);
 
         histogram!(
             "pavis_http_request_duration_seconds",
-            "method" => method.to_string(),
-            "route" => route_pattern.to_string(),
-            "status" => status.to_string(),
-            "upstream" => upstream.to_string(),
+            "method" => method,
+            "route" => route,
+            "status" => status,
+            "upstream" => upstream,
         )
         .record(duration_secs);
     }
 
     pub fn record_upstream_request(&self, upstream: &str, status: u16, duration_secs: f64) {
+        let upstream = self.labels.common(upstream);
+        let status = self.labels.status(status);
         counter!(
             "pavis_upstream_requests_total",
-            "upstream" => upstream.to_string(),
-            "status" => status.to_string(),
+            "upstream" => upstream.clone(),
+            "status" => status.clone(),
         )
         .increment(1);
 
         histogram!(
             "pavis_upstream_request_duration_seconds",
-            "upstream" => upstream.to_string(),
+            "upstream" => upstream,
         )
         .record(duration_secs);
     }
@@ -413,10 +505,12 @@ impl MetricsRegistry {
     }
 
     pub fn record_pool_size(&self, upstream: &str, size: f64) {
-        gauge!("pavis_upstream_pool_size", "upstream" => upstream.to_string()).set(size);
+        let upstream = self.labels.common(upstream);
+        gauge!("pavis_upstream_pool_size", "upstream" => upstream).set(size);
     }
 
     pub fn record_pool_key_cardinality(&self, upstream: &str, cardinality: usize, saturated: bool) {
+        let upstream = self.labels.common(upstream);
         let reported = if saturated {
             (POOL_KEY_CARDINALITY_CAP + 1) as f64
         } else {
@@ -424,30 +518,34 @@ impl MetricsRegistry {
         };
         gauge!(
             "pavis_upstream_pool_key_cardinality_approx",
-            "upstream" => upstream.to_string()
+            "upstream" => upstream
         )
         .set(reported);
     }
 
     pub fn record_connection_reused(&self, upstream: &str) {
+        let upstream = self.labels.common(upstream);
         counter!(
             "pavis_upstream_connection_reused_total",
-            "upstream" => upstream.to_string()
+            "upstream" => upstream
         )
         .increment(1);
     }
 
     pub fn record_connection_new(&self, upstream: &str, reason: &str) {
+        let upstream = self.labels.common(upstream);
+        let reason = self.labels.common(reason);
         counter!(
             "pavis_upstream_connection_new_total",
-            "upstream" => upstream.to_string(),
-            "reason" => reason.to_string()
+            "upstream" => upstream,
+            "reason" => reason
         )
         .increment(1);
     }
 
     pub fn update_config_stats(&self, version: &str, size_bytes: u64) {
-        gauge!("pavis_runtime_config_version", "version" => version.to_string()).set(1.0);
+        let version = self.labels.common(version);
+        gauge!("pavis_runtime_config_version", "version" => version).set(1.0);
         gauge!("pavis_runtime_config_size_bytes").set(size_bytes as f64);
         gauge!("pavis_runtime_reload_last_timestamp").set(
             std::time::SystemTime::now()
@@ -462,18 +560,21 @@ impl MetricsRegistry {
     }
 
     pub fn record_config_validation(&self, result: &str, reason: &str) {
+        let result = self.labels.common(result);
+        let reason = self.labels.common(reason);
         counter!(
             "pavis_config_validation_total",
-            "result" => result.to_string(),
-            "reason" => reason.to_string(),
+            "result" => result,
+            "reason" => reason,
         )
         .increment(1);
     }
 
     pub fn record_config_apply(&self, result: &str) {
+        let result = self.labels.common(result);
         counter!(
             "pavis_config_apply_total",
-            "result" => result.to_string(),
+            "result" => result,
         )
         .increment(1);
     }

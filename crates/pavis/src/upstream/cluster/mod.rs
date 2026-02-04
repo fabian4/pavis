@@ -402,7 +402,7 @@ mod tests {
             })
             .outlier_detection(OutlierDetectionPolicy::Enabled {
                 consecutive_errors: ConsecutiveErrors(NonZeroU32::new(2).unwrap()),
-                eject_duration: Duration(NonZeroU32::new(10).unwrap()),
+                eject_duration: Duration(NonZeroU32::new(100).unwrap()),
             })
             .circuit_breaker(CircuitBreakerPolicy::Disabled)
             .health_check(ActiveHealthCheck::Disabled)
@@ -413,12 +413,18 @@ mod tests {
 
         let cluster = Cluster::new(upstream);
         let endpoint = cluster.select_endpoint().expect("endpoint");
+
+        // Record failures to trigger ejection
         cluster.record_outcome(&endpoint.address, super::UpstreamOutcome::Failure);
         cluster.record_outcome(&endpoint.address, super::UpstreamOutcome::Failure);
 
+        // Endpoint should be ejected immediately after recording failures
         assert!(cluster.select_endpoint().is_none());
 
-        std::thread::sleep(StdDuration::from_millis(20));
+        // Wait for ejection to expire
+        std::thread::sleep(StdDuration::from_millis(150));
+
+        // Endpoint should be re-enabled after ejection expires
         assert!(cluster.select_endpoint().is_some());
     }
 
