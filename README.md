@@ -35,16 +35,6 @@ The compiler pipeline, artifact sealing, runtime execution, security stack, obse
 Here’s a summary of the **current benchmark results** based on CI-level testing (which is limited by resources such as CPU cores and workers). 
 These results reflect the **current status** and are expected to improve with optimized production environments.
 
-### Key Observations:
-- **Throughput**: Pavis can handle high throughput scenarios with **low latency** and minimal dropped requests.
-- **Concurrency**: The system is designed to handle a large number of concurrent requests efficiently, but high concurrency scenarios may push memory usage higher, which is being actively optimized.
-- **Latency**: Pavis maintains **low p99 latency** in steady-state operation. Some **latency regression** can occur under stress, and this is an area of ongoing optimization.
-- **System Lifecycle**: Configuration reloads converge in **milliseconds**, and rollback times are currently under optimization for faster decision-making.
-
-### Bottlenecks:
-- **Connection Pool and Queue Capacity**: In high-concurrency scenarios, the connection pool capacity becomes a limiting factor, leading to **503 errors**. This will be addressed by further fine-tuning pool management.
-- **Stress and Recovery**: While the system performs well under load, the recovery time after high stress is an area that could be improved, particularly the **latency regression** during recovery.
-
 Performance benchmarks are executed continuously in CI.
 See the latest results here: https://github.com/fabian4/pavis/actions/workflows/pipeline.yaml
 
