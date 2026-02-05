@@ -829,3 +829,106 @@ fn parse_etag_header(value: &str) -> anyhow::Result<String> {
 
     Ok(format!("sha256:{}", hex.to_lowercase()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::telemetry::metrics::{PrometheusEndpoint, TcpMetricsTransport};
+    use pavis_core::{
+        AccessLogPolicy, ListenerBuilder, ListenerName, LogLevel, Metrics, RuntimeConfigBuilder,
+        ServiceName, Telemetry, TracingPolicy,
+    };
+    use pavis_pvs::PvsError;
+    use std::net::SocketAddr;
+
+    #[test]
+    fn test_classify_validation_error() {
+        let err = anyhow::anyhow!(PvsError::VersionMismatch {
+            file: 2,
+            expected: 1
+        });
+        assert_eq!(classify_validation_error(&err), "version");
+
+        let err = anyhow::anyhow!(PvsError::CorruptArchive("bad".to_string()));
+        assert_eq!(classify_validation_error(&err), "parse");
+
+        let err = anyhow::anyhow!("etag/sha256 mismatch: foo");
+        assert_eq!(classify_validation_error(&err), "parse");
+
+        let err = anyhow::anyhow!(CoreValidationError::DuplicateUpstream("u".to_string()));
+        assert_eq!(classify_validation_error(&err), "semantic");
+    }
+
+    #[test]
+    fn test_parse_config_version_header() {
+        assert_eq!(parse_config_version_header(" 42 ").unwrap().get(), 42);
+        assert!(parse_config_version_header("0").is_none());
+        assert!(parse_config_version_header("abc").is_none());
+    }
+
+    #[test]
+    fn test_parse_etag_header() {
+        let valid = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(parse_etag_header(valid).unwrap(), valid);
+
+        let quoted = format!("\"{}\"", valid);
+        assert_eq!(parse_etag_header(&quoted).unwrap(), valid);
+
+        assert!(parse_etag_header("W/\"weak\"").is_err());
+        assert!(parse_etag_header("invalid").is_err());
+        assert!(parse_etag_header("sha256:short").is_err());
+    }
+
+    #[test]
+    fn test_config_agent_basic_methods() {
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("lkg.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = ConfigAgent::new(
+            "http://localhost".to_string(),
+            lkg,
+            state,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        assert_eq!(agent.current_state().state, "Idle");
+
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let (_endpoint, metrics) = PrometheusEndpoint::<TcpMetricsTransport>::new(addr);
+        if let Some(m) = metrics {
+            agent.set_metrics_handle(Arc::new(m));
+        }
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+        agent.on_update(move |_| {
+            called_clone.store(true, Ordering::SeqCst);
+        });
+
+        // Test callback triggering manually
+        let guard = agent.on_update_callback.lock().unwrap();
+        if let Some(cb) = guard.as_ref() {
+            let listener = ListenerBuilder::new()
+                .name(ListenerName("test".to_string()))
+                .address("127.0.0.1:8080".parse().unwrap())
+                .build()
+                .unwrap();
+
+            let config = RuntimeConfigBuilder::new()
+                .telemetry(Telemetry {
+                    level: LogLevel::Info,
+                    pingora: LogLevel::Info,
+                    service_name: ServiceName("test".to_string()),
+                    metrics: Metrics::Disabled,
+                    access_log: AccessLogPolicy::Disabled,
+                    tracing: TracingPolicy::Disabled,
+                })
+                .add_listener(listener)
+                .build()
+                .unwrap();
+            cb(&config);
+        }
+        assert!(called.load(Ordering::SeqCst));
+    }
+}

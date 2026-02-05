@@ -252,3 +252,79 @@ pub struct WeightedDestination {
     pub upstream: String,
     pub weight: u32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_retry_policy_defaults() {
+        let policy: RetryPolicy = serde_json::from_str("{}").unwrap();
+        assert_eq!(policy.max_attempts, 1);
+        assert_eq!(policy.retryable_reasons.len(), 3);
+        assert_eq!(policy.max_request_body_buffer_bytes, 1_048_576);
+        match policy.backoff {
+            BackoffStrategyDTO::Exponential { base_ms, max_ms } => {
+                assert_eq!(base_ms, 100);
+                assert_eq!(max_ms, 5000);
+            }
+            _ => panic!("Expected exponential backoff"),
+        }
+    }
+
+    #[test]
+    fn test_backoff_strategy_dto_default() {
+        let default = BackoffStrategyDTO::default();
+        match default {
+            BackoffStrategyDTO::Exponential { base_ms, max_ms } => {
+                assert_eq!(base_ms, 100);
+                assert_eq!(max_ms, 5000);
+            }
+            _ => panic!("Expected exponential backoff"),
+        }
+    }
+
+    #[test]
+    fn test_route_action_deserialization() {
+        let forward: RouteAction =
+            serde_json::from_str(r#"{"destinations": [{"upstream": "u1", "weight": 1}]}"#).unwrap();
+        match forward {
+            RouteAction::Forward { destinations } => {
+                assert_eq!(destinations[0].upstream, "u1");
+            }
+            _ => panic!("Expected Forward"),
+        }
+
+        let redirect: RouteAction =
+            serde_json::from_str(r#"{"status": 301, "location": "loc"}"#).unwrap();
+        match redirect {
+            RouteAction::Redirect { status, location } => {
+                assert_eq!(status, 301);
+                assert_eq!(location, "loc");
+            }
+            _ => panic!("Expected Redirect"),
+        }
+
+        let direct: RouteAction = serde_json::from_str(r#"{"status": 200, "body": "ok"}"#).unwrap();
+        match direct {
+            RouteAction::Direct { status, body } => {
+                assert_eq!(status, 200);
+                assert_eq!(body, "ok");
+            }
+            _ => panic!("Expected Direct"),
+        }
+    }
+
+    #[test]
+    fn test_principal_config_deserialization() {
+        let any: PrincipalConfig = serde_json::from_str("\"any\"").unwrap();
+        assert_eq!(any, PrincipalConfig::Any);
+
+        let auth: PrincipalConfig =
+            serde_json::from_str(r#"{"authenticated": {"spiffe": "s1"}}"#).unwrap();
+        match auth {
+            PrincipalConfig::Authenticated { spiffe } => assert_eq!(spiffe, "s1"),
+            _ => panic!("Expected Authenticated"),
+        }
+    }
+}

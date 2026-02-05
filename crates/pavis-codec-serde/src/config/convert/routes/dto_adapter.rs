@@ -297,3 +297,213 @@ fn from_runtime_headers(h: &HeadersPolicy) -> Option<HeaderOperations> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use compact_str::CompactString;
+    use pavis_core::*;
+    use std::num::{NonZeroU16, NonZeroU32};
+    use std::sync::Arc;
+
+    fn empty_headers() -> pavis_core::Headers {
+        pavis_core::Headers {
+            set_headers: vec![],
+            append_headers: vec![],
+            add_headers: vec![],
+            remove_headers: vec![],
+        }
+    }
+
+    #[test]
+    fn test_from_runtime_empty() {
+        let routes = vec![];
+        let res = from_runtime(routes).unwrap();
+        assert!(res.is_empty());
+    }
+
+    #[test]
+    fn test_from_runtime_full() {
+        let vhost = pavis_core::VirtualHost {
+            host: Host("example.com".to_string()),
+            paths: vec![pavis_core::Route {
+                matcher: RouteMatcher {
+                    path: PathMatch::Exact {
+                        path: Path("/exact".to_string()),
+                    },
+                    method: MethodPredicate::Specific(HttpMethod::GET),
+                    headers: HeaderPredicates::Some(vec![pavis_core::HeaderPredicate {
+                        name: CompactString::from("X-Foo"),
+                        matcher: HeaderMatch::Regex(CompactString::from("bar.*")),
+                    }]),
+                },
+                timeout: Timeout::Enabled(Duration(NonZeroU32::new(5000).unwrap())),
+                retry: pavis_core::RetryPolicy::Enabled {
+                    max_attempts: NonZeroU16::new(3).unwrap(),
+                    per_try: TryTimeout::Enabled(Duration(NonZeroU32::new(1000).unwrap())),
+                    retryable_reasons: vec![RetryReason::StatusCode, RetryReason::ConnectTimeout],
+                    retryable_status_codes: Some(RetryableStatusCodes { codes: vec![503] }),
+                    backoff: BackoffStrategy::Exponential {
+                        base_ms: 100,
+                        max_ms: 1000,
+                    },
+                    retry_non_idempotent: true,
+                    fail_on_non_replayable_retry: false,
+                    max_request_body_buffer_bytes: 1024,
+                },
+                request_headers: Arc::new(HeadersPolicy::Enabled {
+                    rules: pavis_core::Headers {
+                        set_headers: vec![(HeaderName("X-Req".into()), HeaderValue("val".into()))],
+                        ..empty_headers()
+                    },
+                }),
+                response_headers: Arc::new(HeadersPolicy::Enabled {
+                    rules: pavis_core::Headers {
+                        remove_headers: vec![HeaderName("Server".into())],
+                        ..empty_headers()
+                    },
+                }),
+                principal: Principal::Authenticated {
+                    spiffe: SpiffeId("spiffe://foo".into()),
+                },
+                rewrite: Rewrite {
+                    path: RewritePath::Prefix {
+                        from: Path("/exact".into()),
+                        to: Path("/rewritten".into()),
+                    },
+                    host: RewriteHost::Literal {
+                        host: Hostname("backend.internal".into()),
+                    },
+                },
+                action: RouteAction::Forward(vec![Destination {
+                    upstream: UpstreamName("backend".to_string()),
+                    weight: Weight(NonZeroU16::new(1).unwrap()),
+                }]),
+            }],
+        };
+
+        let res = from_runtime(vec![vhost]).unwrap();
+        assert_eq!(res.len(), 1);
+        let v = &res[0];
+        assert_eq!(v.host, "example.com");
+        assert_eq!(v.paths.len(), 1);
+
+        let p = &v.paths[0];
+        match p.matcher.as_ref().unwrap().path {
+            crate::config::types::PathMatcher::Exact { ref path } => assert_eq!(path, "/exact"),
+            _ => panic!("wrong path matcher"),
+        }
+
+        if let crate::config::types::RouteAction::Forward { destinations } = &p.action {
+            assert_eq!(destinations[0].upstream, "backend");
+        } else {
+            panic!("wrong action");
+        }
+
+        let retry = p.retry.as_ref().unwrap();
+        assert_eq!(retry.max_attempts, 3);
+        assert!(retry.retryable_reasons.contains(&"status_code".to_string()));
+
+        let rewrite = p.rewrite.as_ref().unwrap();
+        assert_eq!(rewrite.path, Some("/rewritten".to_string()));
+        assert_eq!(rewrite.host, Some("backend.internal".to_string()));
+
+        if let Some(crate::config::types::PrincipalConfig::Authenticated { spiffe }) = &p.principal
+        {
+            assert_eq!(spiffe, "spiffe://foo");
+        } else {
+            panic!("wrong principal");
+        }
+    }
+
+    #[test]
+    fn test_from_runtime_redirect_direct() {
+        let vhost = pavis_core::VirtualHost {
+            host: Host("*".to_string()),
+            paths: vec![
+                pavis_core::Route {
+                    matcher: RouteMatcher {
+                        path: PathMatch::Prefix {
+                            path: Path("/old".to_string()),
+                        },
+                        method: MethodPredicate::Any,
+                        headers: HeaderPredicates::None,
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: pavis_core::RetryPolicy::Disabled,
+                    request_headers: Arc::new(HeadersPolicy::Disabled),
+                    response_headers: Arc::new(HeadersPolicy::Disabled),
+                    principal: Principal::Any,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    action: RouteAction::Redirect {
+                        status: 301,
+                        location: "new".into(),
+                    },
+                },
+                pavis_core::Route {
+                    matcher: RouteMatcher {
+                        path: PathMatch::Regex {
+                            path: Path("/direct/.*".to_string()),
+                        },
+                        method: MethodPredicate::List(vec![HttpMethod::POST]),
+                        headers: HeaderPredicates::Some(vec![
+                            pavis_core::HeaderPredicate {
+                                name: CompactString::from("X-Present"),
+                                matcher: HeaderMatch::Present,
+                            },
+                            pavis_core::HeaderPredicate {
+                                name: CompactString::from("X-Absent"),
+                                matcher: HeaderMatch::Absent,
+                            },
+                            pavis_core::HeaderPredicate {
+                                name: CompactString::from("X-Prefix"),
+                                matcher: HeaderMatch::Prefix(CompactString::from("pre")),
+                            },
+                        ]),
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: pavis_core::RetryPolicy::Disabled,
+                    request_headers: Arc::new(HeadersPolicy::Disabled),
+                    response_headers: Arc::new(HeadersPolicy::Disabled),
+                    principal: Principal::Prefix {
+                        prefix: "spiffe://foo/".into(),
+                    },
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    action: RouteAction::Direct {
+                        status: 200,
+                        body: "hello".into(),
+                    },
+                },
+            ],
+        };
+
+        let res = from_runtime(vec![vhost]).unwrap();
+        assert_eq!(res[0].paths.len(), 2);
+
+        let p1 = &res[0].paths[0];
+        assert!(matches!(
+            p1.action,
+            crate::config::types::RouteAction::Redirect { status: 301, .. }
+        ));
+
+        let p2 = &res[0].paths[1];
+        assert!(matches!(
+            p2.action,
+            crate::config::types::RouteAction::Direct { status: 200, .. }
+        ));
+        assert!(matches!(
+            p2.matcher.as_ref().unwrap().path,
+            crate::config::types::PathMatcher::Regex { .. }
+        ));
+        assert_eq!(
+            p2.matcher.as_ref().unwrap().methods.as_ref().unwrap()[0],
+            "POST"
+        );
+    }
+}

@@ -636,5 +636,136 @@ mod tests {
     fn validate_header_value_control_chars() {
         let err = validate_header_value("foo\x7fbar", 0).unwrap_err();
         assert!(err.to_string().contains("control characters"));
+
+        // HTAB should be allowed
+        assert!(validate_header_value("foo\tbar", 0).is_ok());
+    }
+
+    #[test]
+    fn test_parse_http_method_all() {
+        let methods = [
+            "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE",
+        ];
+        for m in methods {
+            assert_eq!(parse_http_method(m).unwrap().as_str(), m);
+        }
+    }
+
+    #[test]
+    fn test_predicate_node_dto_methods_single() {
+        let limits = RegexLimits::default();
+        let dto = PredicateNodeDTO::Methods {
+            methods: vec!["GET".to_string()],
+        };
+        let (node, adv) = dto.to_core(0, &limits).unwrap();
+        assert!(matches!(
+            node,
+            PredicateNode::Method(MethodMatcher::Exact(HttpMethod::GET))
+        ));
+        assert!(!adv);
+    }
+
+    #[test]
+    fn test_predicate_node_dto_empty_containers() {
+        let limits = RegexLimits::default();
+
+        let dto_and = PredicateNodeDTO::And { predicates: vec![] };
+        assert!(dto_and.to_core(0, &limits).is_err());
+
+        let dto_or = PredicateNodeDTO::Or { predicates: vec![] };
+        assert!(dto_or.to_core(0, &limits).is_err());
+
+        let dto_methods = PredicateNodeDTO::Methods { methods: vec![] };
+        assert!(dto_methods.to_core(0, &limits).is_err());
+    }
+
+    #[test]
+    fn test_header_matcher_dto_absent_and_regex() {
+        let limits = RegexLimits::default();
+
+        let dto_absent = HeaderMatcherDTO::Absent {
+            name: "X-Foo".to_string(),
+        };
+        let (node, adv) = dto_absent.to_core(0, &limits).unwrap();
+        assert!(matches!(
+            node,
+            PredicateNode::Header(HeaderMatcher::Present { .. })
+        ));
+        assert!(adv);
+
+        let dto_regex = HeaderMatcherDTO::Regex {
+            name: "X-Foo".to_string(),
+            pattern: ".*".to_string(),
+        };
+        let (node, adv) = dto_regex.to_core(0, &limits).unwrap();
+        assert!(matches!(
+            node,
+            PredicateNode::Header(HeaderMatcher::Regex { .. })
+        ));
+        assert!(adv);
+    }
+
+    #[test]
+    fn test_desugar_p0_headers_v2_and_v1_failures() {
+        let limits = RegexLimits::default();
+
+        // V2 success
+        let headers = vec![HeaderPredicate::V2(HeaderMatcherDTO::Present {
+            name: "X-Foo".to_string(),
+        })];
+        let (node, adv) = desugar_p0_headers(&headers, 0, &limits).unwrap();
+        assert!(matches!(
+            node,
+            PredicateNode::Header(HeaderMatcher::Present { .. })
+        ));
+        assert!(!adv);
+
+        // V1 empty name
+        let headers = vec![HeaderPredicate::V1(
+            crate::config::types::HeaderPredicateLegacy {
+                name: "".to_string(),
+                value: None,
+                regex: false,
+                prefix: false,
+                absent: false,
+            },
+        )];
+        assert!(desugar_p0_headers(&headers, 0, &limits).is_err());
+
+        // V1 absent with value
+        let headers = vec![HeaderPredicate::V1(
+            crate::config::types::HeaderPredicateLegacy {
+                name: "X-Foo".to_string(),
+                value: Some("val".to_string()),
+                regex: false,
+                prefix: false,
+                absent: true,
+            },
+        )];
+        assert!(desugar_p0_headers(&headers, 0, &limits).is_err());
+
+        // V1 regex without value
+        let headers = vec![HeaderPredicate::V1(
+            crate::config::types::HeaderPredicateLegacy {
+                name: "X-Foo".to_string(),
+                value: None,
+                regex: true,
+                prefix: false,
+                absent: false,
+            },
+        )];
+        assert!(desugar_p0_headers(&headers, 0, &limits).is_err());
+
+        // V1 prefix without value
+        let headers = vec![HeaderPredicate::V1(
+            crate::config::types::HeaderPredicateLegacy {
+                name: "X-Foo".to_string(),
+                value: None,
+                regex: false,
+                prefix: true,
+                absent: false,
+            },
+        )];
+        assert!(desugar_p0_headers(&headers, 0, &limits).is_err());
     }
 }

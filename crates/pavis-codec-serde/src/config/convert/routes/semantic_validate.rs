@@ -381,3 +381,303 @@ fn header_field_path(
         _ => builder.index(header_index).finish(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::types::{
+        BackoffStrategyDTO, HeaderMatcherDTO, HeaderPredicateLegacy, RetryPolicy,
+    };
+    use pavis_core::Timeout;
+
+    #[test]
+    fn test_parse_http_method_valid() {
+        assert!(parse_http_method("GET", "test".to_string()).is_ok());
+        assert!(parse_http_method("post", "test".to_string()).is_ok());
+        assert!(parse_http_method("PUT", "test".to_string()).is_ok());
+    }
+
+    #[test]
+    fn test_parse_http_method_invalid() {
+        let result = parse_http_method("INVALID", "test".to_string());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("invalid HTTP method"));
+    }
+
+    #[test]
+    fn test_validate_header_name_empty() {
+        let result = validate_header_name("", 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_header_name_invalid_characters() {
+        let result = validate_header_name("x-header!", 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("invalid header name"));
+    }
+
+    #[test]
+    fn test_validate_header_name_valid() {
+        assert!(validate_header_name("x-my-header", 0, 0, 0).is_ok());
+        assert!(validate_header_name("content-type", 0, 0, 0).is_ok());
+        assert!(validate_header_name("X_Custom_Header", 0, 0, 0).is_ok());
+    }
+
+    #[test]
+    fn test_header_predicate_dto_regex_too_long() {
+        let long_pattern = "a".repeat(257);
+        let dto = HeaderMatcherDTO::Regex {
+            name: "x-test".to_string(),
+            pattern: long_pattern,
+        };
+
+        let result = to_runtime_header_predicate_dto(dto, 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("exceeds 256 bytes"));
+    }
+
+    #[test]
+    fn test_header_predicate_dto_regex_invalid_syntax() {
+        let dto = HeaderMatcherDTO::Regex {
+            name: "x-test".to_string(),
+            pattern: "[invalid".to_string(),
+        };
+
+        let result = to_runtime_header_predicate_dto(dto, 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("invalid regex pattern"));
+    }
+
+    #[test]
+    fn test_header_predicate_dto_regex_valid() {
+        let dto = HeaderMatcherDTO::Regex {
+            name: "x-version".to_string(),
+            pattern: "^v[0-9]+$".to_string(),
+        };
+
+        let result = to_runtime_header_predicate_dto(dto, 0, 0, 0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_header_predicate_legacy_absent_with_value_conflict() {
+        let pred = HeaderPredicateLegacy {
+            name: "x-test".to_string(),
+            value: Some("test".to_string()),
+            regex: false,
+            prefix: false,
+            absent: true,
+        };
+
+        let result = to_runtime_header_predicate_legacy(pred, 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("absent=true is incompatible"));
+    }
+
+    #[test]
+    fn test_header_predicate_legacy_regex_without_value() {
+        let pred = HeaderPredicateLegacy {
+            name: "x-test".to_string(),
+            value: None,
+            regex: true,
+            prefix: false,
+            absent: false,
+        };
+
+        let result = to_runtime_header_predicate_legacy(pred, 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("regex=true requires a value"));
+    }
+
+    #[test]
+    fn test_header_predicate_legacy_prefix_without_value() {
+        let pred = HeaderPredicateLegacy {
+            name: "x-test".to_string(),
+            value: None,
+            regex: false,
+            prefix: true,
+            absent: false,
+        };
+
+        let result = to_runtime_header_predicate_legacy(pred, 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("prefix=true requires a value"));
+    }
+
+    #[test]
+    fn test_header_predicate_legacy_regex_and_prefix_exclusive() {
+        let pred = HeaderPredicateLegacy {
+            name: "x-test".to_string(),
+            value: Some("test".to_string()),
+            regex: true,
+            prefix: true,
+            absent: false,
+        };
+
+        let result = to_runtime_header_predicate_legacy(pred, 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn test_header_predicate_legacy_regex_too_long() {
+        let long_pattern = "a".repeat(257);
+        let pred = HeaderPredicateLegacy {
+            name: "x-test".to_string(),
+            value: Some(long_pattern),
+            regex: true,
+            prefix: false,
+            absent: false,
+        };
+
+        let result = to_runtime_header_predicate_legacy(pred, 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("exceeds 256 bytes"));
+    }
+
+    #[test]
+    fn test_header_predicate_legacy_regex_invalid_syntax() {
+        let pred = HeaderPredicateLegacy {
+            name: "x-test".to_string(),
+            value: Some("[invalid".to_string()),
+            regex: true,
+            prefix: false,
+            absent: false,
+        };
+
+        let result = to_runtime_header_predicate_legacy(pred, 0, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("invalid regex pattern"));
+    }
+
+    #[test]
+    fn test_convert_retry_policy_max_attempts_zero() {
+        let dto = RetryPolicy {
+            max_attempts: 0,
+            per_try: None,
+            retryable_reasons: vec![],
+            retryable_status_codes: None,
+            backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1_048_576,
+        };
+
+        let result = convert_retry_policy(dto, &Timeout::Disabled, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("must be >= 1"));
+    }
+
+    #[test]
+    fn test_convert_retry_policy_max_attempts_exceeds_limit() {
+        let dto = RetryPolicy {
+            max_attempts: 11,
+            per_try: None,
+            retryable_reasons: vec![],
+            retryable_status_codes: None,
+            backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1_048_576,
+        };
+
+        let result = convert_retry_policy(dto, &Timeout::Disabled, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum of 10"));
+    }
+
+    #[test]
+    fn test_convert_retry_policy_unknown_reason() {
+        let dto = RetryPolicy {
+            max_attempts: 3,
+            per_try: None,
+            retryable_reasons: vec!["unknown_reason".to_string()],
+            retryable_status_codes: None,
+            backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1_048_576,
+        };
+
+        let result = convert_retry_policy(dto, &Timeout::Disabled, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("unknown retryable reason"));
+    }
+
+    #[test]
+    fn test_convert_retry_policy_status_code_missing_codes() {
+        let dto = RetryPolicy {
+            max_attempts: 3,
+            per_try: None,
+            retryable_reasons: vec!["status_code".to_string()],
+            retryable_status_codes: None,
+            backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1_048_576,
+        };
+
+        let result = convert_retry_policy(dto, &Timeout::Disabled, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("retryable_status_codes is required")
+        );
+    }
+
+    #[test]
+    fn test_convert_retry_policy_status_code_empty_codes() {
+        let dto = RetryPolicy {
+            max_attempts: 3,
+            per_try: None,
+            retryable_reasons: vec!["status_code".to_string()],
+            retryable_status_codes: Some(vec![]),
+            backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1_048_576,
+        };
+
+        let result = convert_retry_policy(dto, &Timeout::Disabled, 0, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_convert_retry_policy_valid() {
+        let dto = RetryPolicy {
+            max_attempts: 3,
+            per_try: None,
+            retryable_reasons: vec!["status_code".to_string()],
+            retryable_status_codes: Some(vec![502, 503, 504]),
+            backoff: BackoffStrategyDTO::Exponential {
+                base_ms: 100,
+                max_ms: 5000,
+            },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1_048_576,
+        };
+
+        let result = convert_retry_policy(dto, &Timeout::Disabled, 0, 0);
+        assert!(result.is_ok());
+    }
+}

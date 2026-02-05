@@ -388,6 +388,9 @@ impl RouterContext {
 mod tests {
     use super::*;
     use pavis_core::{HeaderName, HeaderValue, Headers, HeadersPolicy, UpstreamName};
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::num::NonZeroU16;
+    use std::str::FromStr;
 
     #[test]
     fn router_context_holds_fields() {
@@ -626,5 +629,292 @@ mod tests {
         let id = RequestId::from_parts(0, 42);
         assert!(std::str::from_utf8(id.as_str().as_bytes()).is_ok());
         assert!(id.as_str().starts_with("req-"));
+    }
+
+    #[test]
+    fn test_request_id_from_parts_zero_values() {
+        let id = RequestId::from_parts(0, 0);
+        assert_eq!(id.as_str(), "req-0-0");
+    }
+
+    #[test]
+    fn test_request_id_from_parts_large_values() {
+        // Use values that fit in 48 bytes: "req-" (4) + 20 digits + "-" (1) + 10 digits = 35 < 48
+        let id = RequestId::from_parts(12345678901234567890, 4294967295);
+        assert!(id.as_str().starts_with("req-"));
+    }
+
+    #[test]
+    fn test_request_id_from_str_valid() {
+        let id = RequestId::from_str("custom-id").unwrap();
+        assert_eq!(id.as_str(), "custom-id");
+    }
+
+    #[test]
+    fn test_request_id_from_str_too_long() {
+        let long_id = "a".repeat(REQUEST_ID_MAX_LEN + 1);
+        assert!(RequestId::from_str(&long_id).is_err());
+    }
+
+    #[test]
+    fn test_request_id_display() {
+        let id = RequestId::from_str("foo").unwrap();
+        assert_eq!(format!("{}", id), "foo");
+    }
+
+    #[test]
+    fn test_request_id_debug() {
+        let id = RequestId::from_str("foo").unwrap();
+        let debug = format!("{:?}", id);
+        // It should contain the length at least
+        assert!(debug.contains("len: 3"));
+    }
+
+    #[test]
+    fn test_request_id_eq_same_values() {
+        let id1 = RequestId::from_str("foo").unwrap();
+        let id2 = RequestId::from_str("foo").unwrap();
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_request_id_eq_different_values() {
+        let id1 = RequestId::from_str("foo").unwrap();
+        let id2 = RequestId::from_str("bar").unwrap();
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_request_id_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let id = RequestId::from_str("foo").unwrap();
+        let mut hasher = DefaultHasher::new();
+        id.hash(&mut hasher);
+        let _ = hasher.finish();
+    }
+
+    #[test]
+    fn test_request_id_serialize() {
+        let id = RequestId::from_str("foo").unwrap();
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, "\"foo\"");
+    }
+
+    #[test]
+    fn test_request_id_parse_error_display() {
+        assert_eq!(format!("{}", RequestIdParseError), "request id is too long");
+    }
+
+    #[test]
+    fn test_request_telemetry_new() {
+        let id = RequestId::from_str("foo").unwrap();
+        let tel = RequestTelemetry::new(id);
+        assert_eq!(tel.request_id(), id);
+        assert!(matches!(tel.span(), TracingSpan::Disabled));
+    }
+
+    #[test]
+    fn test_request_telemetry_set_request_id() {
+        let mut tel = RequestTelemetry::new(RequestId::from_str("foo").unwrap());
+        let id2 = RequestId::from_str("bar").unwrap();
+        tel.set_request_id(id2);
+        assert_eq!(tel.request_id(), id2);
+    }
+
+    #[test]
+    fn test_request_telemetry_replace_span() {
+        let mut tel = RequestTelemetry::new(RequestId::from_str("foo").unwrap());
+        tel.replace_span(TracingSpan::Active(tracing::Span::none()));
+        assert!(matches!(tel.span(), TracingSpan::Active(_)));
+    }
+
+    #[test]
+    fn test_request_telemetry_span_mut() {
+        let mut tel = RequestTelemetry::new(RequestId::from_str("foo").unwrap());
+        *tel.span_mut() = TracingSpan::Active(tracing::Span::none());
+        assert!(matches!(tel.span(), TracingSpan::Active(_)));
+    }
+
+    #[test]
+    fn test_route_pattern_matched_as_label_opt() {
+        let pattern = RoutePattern::Matched {
+            pattern: Arc::from("/p"),
+        };
+        assert_eq!(pattern.as_label_opt(), Some("/p"));
+    }
+
+    #[test]
+    fn test_route_pattern_not_matched_as_label_opt() {
+        let pattern = RoutePattern::NotMatched;
+        assert_eq!(pattern.as_label_opt(), None);
+    }
+
+    #[test]
+    fn test_upstream_timing_clone() {
+        let t = UpstreamTiming::Started(Instant::now());
+        let _ = t.clone();
+    }
+
+    #[test]
+    fn test_upstream_timing_debug() {
+        let t = UpstreamTiming::NotStarted;
+        let _ = format!("{:?}", t);
+    }
+
+    #[test]
+    fn test_upstream_timing_not_started_elapsed() {
+        assert_eq!(UpstreamTiming::NotStarted.elapsed(), None);
+    }
+
+    #[test]
+    fn test_upstream_timing_started_elapsed() {
+        let t = UpstreamTiming::Started(Instant::now());
+        assert!(t.elapsed().is_some());
+    }
+
+    #[test]
+    fn test_tracing_span_debug() {
+        let s = TracingSpan::Disabled;
+        let _ = format!("{:?}", s);
+    }
+
+    #[test]
+    fn test_router_context_upstream_latency_not_started() {
+        let ctx = empty_context();
+        assert!(ctx.upstream_latency().is_none());
+    }
+
+    #[test]
+    fn test_router_context_upstream_latency_started() {
+        let mut ctx = empty_context();
+        ctx.start_upstream();
+        assert!(ctx.upstream_latency().is_some());
+    }
+
+    #[test]
+    fn test_router_context_request_id() {
+        let mut ctx = empty_context();
+        let id = RequestId::from_str("bar").unwrap();
+        ctx.set_request_id(id);
+        assert_eq!(ctx.request_id(), id);
+    }
+
+    #[test]
+    fn test_router_context_span() {
+        let mut ctx = empty_context();
+        assert!(matches!(ctx.span(), TracingSpan::Disabled));
+        *ctx.span_mut() = TracingSpan::Active(tracing::Span::none());
+        assert!(matches!(ctx.span(), TracingSpan::Active(_)));
+    }
+
+    #[test]
+    fn test_router_context_upstream_label_some() {
+        let mut ctx = empty_context();
+        ctx.upstream_name = Some(UpstreamName("u".into()));
+        assert_eq!(ctx.upstream_label(), "u");
+    }
+
+    #[test]
+    fn test_upstream_attempt_set_endpoint() {
+        let mut ctx = empty_context();
+        let mut attempt = UpstreamAttempt { ctx: &mut ctx };
+        let addr = EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: pavis_core::Port(NonZeroU16::new(80).unwrap()),
+        };
+        attempt.set_endpoint(addr.clone());
+        assert_eq!(ctx.upstream_endpoint, Some(addr));
+    }
+
+    #[test]
+    fn test_route_match_client_identity_none() {
+        let mut ctx = empty_context();
+        let route_match = RouteMatch { ctx: &mut ctx };
+        assert!(route_match.client_identity().is_none());
+    }
+
+    #[test]
+    fn test_route_match_client_identity_some() {
+        let mut ctx = empty_context();
+        let id = pavis_core::SpiffeId("s".into());
+        ctx.client_identity = Some(id.clone());
+        let route_match = RouteMatch { ctx: &mut ctx };
+        assert_eq!(route_match.client_identity(), Some(&id));
+    }
+
+    #[test]
+    fn test_route_match_mark_rbac_denied() {
+        let mut ctx = empty_context();
+        let mut route_match = RouteMatch { ctx: &mut ctx };
+        route_match.mark_rbac_denied();
+        assert!(ctx.rbac_denied);
+    }
+
+    #[test]
+    fn test_route_match_set_rewritten_uri() {
+        let mut ctx = empty_context();
+        let mut route_match = RouteMatch { ctx: &mut ctx };
+        let uri = "/new".parse::<Uri>().unwrap();
+        route_match.set_rewritten_uri(uri.clone());
+        assert_eq!(ctx.rewritten_uri, Some(uri));
+    }
+
+    #[test]
+    fn test_route_match_set_rewritten_host() {
+        let mut ctx = empty_context();
+        let mut route_match = RouteMatch { ctx: &mut ctx };
+        let host = pavis_core::Hostname("h".into());
+        route_match.set_rewritten_host(host.clone());
+        assert_eq!(ctx.rewritten_host, Some(host));
+    }
+
+    #[test]
+    fn test_request_id_push_u128_multiple_digits() {
+        let mut id = RequestId::empty();
+        id.push_u128(123);
+        assert_eq!(id.as_str(), "123");
+    }
+
+    #[test]
+    fn test_request_id_push_u128_single_digit() {
+        let mut id = RequestId::empty();
+        id.push_u128(7);
+        assert_eq!(id.as_str(), "7");
+    }
+
+    #[test]
+    fn test_request_id_copy_clone() {
+        let id = RequestId::from_str("foo").unwrap();
+        let id2 = id; // copy
+        assert_eq!(id, id2);
+        let id3 = id;
+        assert_eq!(id, id3);
+    }
+
+    fn empty_context() -> RouterContext {
+        RouterContext {
+            telemetry: RequestTelemetry::new("req-0".parse().unwrap()),
+            upstream_name: None,
+            upstream_endpoint: None,
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
+            sni_override: None,
+            start_time: Instant::now(),
+            client_identity: None,
+            rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
+            upstream_timing: UpstreamTiming::NotStarted,
+            route_pattern: RoutePattern::NotMatched,
+            pool_permit: None,
+            circuit_breaker_permit: None,
+            runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
+        }
     }
 }

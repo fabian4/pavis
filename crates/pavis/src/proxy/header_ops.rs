@@ -592,4 +592,40 @@ mod tests {
         resp.remove_all(&http::header::HeaderName::from_static("x-bar"));
         assert!(resp.headers.get("x-bar").is_none());
     }
+
+    #[test]
+    fn test_apply_append_multiple_existing() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.insert_header("X-Multi", "v1").unwrap();
+        req.append_header("X-Multi", "v2").unwrap();
+
+        super::apply_append(&mut req, "X-Multi", "v3", "test").unwrap();
+
+        let values: Vec<_> = req.headers.get_all("X-Multi").iter().collect();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].to_str().unwrap(), "v1, v2, v3");
+    }
+
+    #[test]
+    fn test_build_joined_value_single_existing() {
+        let existing = [http::HeaderValue::from_static("v1")];
+        let appended = http::HeaderValue::from_static("v2");
+        let res = super::build_joined_value(existing.iter(), &appended).unwrap();
+        assert_eq!(res, b"v1, v2");
+    }
+
+    #[test]
+    fn test_apply_append_invalid_joined_value() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        // We need existing headers that when joined with a new one produce an invalid HeaderValue.
+        // Actually HeaderValue::from_bytes checks for valid characters.
+        // If we join "v1" and a value with a newline, it might fail.
+
+        req.insert_header("X-Test", "v1").unwrap();
+        // apply_append should log a warning and do nothing if joined value is invalid
+        super::apply_append(&mut req, "X-Test", "v2\n", "test").unwrap();
+
+        // Should still have original
+        assert_eq!(req.headers.get("X-Test").unwrap(), "v1");
+    }
 }

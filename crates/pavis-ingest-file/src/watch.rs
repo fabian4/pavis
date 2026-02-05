@@ -163,3 +163,105 @@ pub async fn spawn_watcher(
 
     Ok(watcher)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn test_spawn_watcher_invalid_format() {
+        let tmp = NamedTempFile::new().unwrap();
+        // Create an invalid extension file
+        let path = tmp.path().with_extension("txt");
+        std::fs::rename(tmp.path(), &path).unwrap();
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let _watcher = spawn_watcher(path.clone(), Duration::from_millis(10), 1024, tx)
+            .await
+            .unwrap();
+
+        // Write to trigger event
+        std::fs::write(&path, "data").unwrap();
+
+        // Should get an error about unsupported format
+        let res = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Unsupported file format")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spawn_watcher_oversized_file() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().with_extension("yaml");
+        std::fs::rename(tmp.path(), &path).unwrap();
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let _watcher = spawn_watcher(path.clone(), Duration::from_millis(10), 1, tx)
+            .await
+            .unwrap(); // max 1 byte
+
+        // Write 10 bytes
+        std::fs::write(&path, "large data").unwrap();
+
+        let res = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("exceeds max_bytes"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_watcher_read_error() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().with_extension("yaml");
+        std::fs::rename(tmp.path(), &path).unwrap();
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let _watcher = spawn_watcher(path.clone(), Duration::from_millis(10), 1024, tx)
+            .await
+            .unwrap();
+
+        // Delete file to cause read error
+        std::fs::remove_file(&path).unwrap();
+
+        // Trigger by waiting for poll interval if events don't work on delete
+        // Actually, deleting the file should trigger an event on some OSes,
+        // or the poll loop will see mtime mismatch (None vs initial)
+
+        let res = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_spawn_watcher_mpsc_send_failure() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().with_extension("yaml");
+        std::fs::rename(tmp.path(), &path).unwrap();
+
+        let (tx, rx) = mpsc::channel(1);
+        let _watcher = spawn_watcher(path.clone(), Duration::from_millis(10), 1024, tx)
+            .await
+            .unwrap();
+
+        // Drop receiver to trigger send failure later
+        drop(rx);
+
+        // Trigger event
+        std::fs::write(&path, "data").unwrap();
+
+        // Wait for debounce and loop to exit
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}

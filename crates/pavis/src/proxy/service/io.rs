@@ -1085,3 +1085,245 @@ impl<'a> UpstreamPeerBuilder<'a> {
         Ok(peer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{RuntimeState, RuntimeStateHandle};
+    use pavis_core::{
+        AccessLogPolicy, Metrics, ServiceName, Telemetry as RuntimeTelemetry, TracingPolicy,
+    };
+    use pingora::prelude::Session;
+    use std::sync::Arc;
+    use tokio::io::AsyncWriteExt;
+
+    async fn session_for_request(request: &[u8]) -> (Session, tokio::io::DuplexStream) {
+        let (mut client, server) = tokio::io::duplex(1024);
+        client.write_all(request).await.expect("write request");
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.expect("read request");
+        (session, client)
+    }
+
+    fn test_telemetry() -> Arc<crate::telemetry::Telemetry> {
+        let (telemetry, _, _, _) = crate::telemetry::Telemetry::new(
+            &RuntimeTelemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            },
+            None,
+        );
+        Arc::new(telemetry)
+    }
+
+    #[test]
+    fn test_should_log_upstream_config() {
+        assert!(should_log_upstream_config(1));
+    }
+
+    #[test]
+    fn test_should_sample_pool_key() {
+        let mut saw_true = false;
+        for _ in 0..100 {
+            if should_sample_pool_key() {
+                saw_true = true;
+                break;
+            }
+        }
+        assert!(saw_true);
+    }
+
+    #[test]
+    fn test_proxy_new_ctx() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let ctx = proxy.new_ctx();
+        assert!(ctx.upstream_name.is_none());
+        assert!(!ctx.rbac_denied);
+    }
+
+    #[tokio::test]
+    async fn test_fail_to_connect_retry() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let peer = HttpPeer::new("127.0.0.1:80", false, "test".to_string());
+        let mut ctx = proxy.new_ctx();
+
+        // Enable retry
+        let retry_ctx = crate::retry::RetryContext::new(
+            pavis_core::RetryPolicy::Enabled {
+                max_attempts: std::num::NonZeroU16::new(3).unwrap(),
+                per_try: pavis_core::TryTimeout::Inherit,
+                retryable_reasons: vec![pavis_core::RetryReason::ConnectError],
+                retryable_status_codes: None,
+                backoff: pavis_core::BackoffStrategy::Fixed { base_ms: 0 },
+                retry_non_idempotent: false,
+                fail_on_non_replayable_retry: false,
+                max_request_body_buffer_bytes: 1024,
+            },
+            1000,
+            None,
+            "test".to_string(),
+        );
+        ctx.retry_ctx = Some(retry_ctx);
+
+        let e = Box::new(Error::new(ErrorType::ConnectError));
+        let e = proxy.fail_to_connect(&mut session, &peer, &mut ctx, *e);
+
+        assert!(e.retry());
+        assert_eq!(ctx.retry_ctx.as_ref().unwrap().attempt, 2);
+    }
+
+    #[tokio::test]
+    async fn test_error_while_proxy_retry_reused() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let peer = HttpPeer::new("127.0.0.1:80", false, "test".to_string());
+        let mut ctx = proxy.new_ctx();
+
+        let e = Box::new(Error::new(ErrorType::ReadError));
+        let e = proxy.error_while_proxy(&peer, &mut session, *e, &mut ctx, true);
+
+        assert!(e.retry());
+    }
+
+    #[tokio::test]
+    async fn test_upstream_request_filter_rewrites() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) =
+            session_for_request(b"GET / HTTP/1.1\r\nHost: original.com\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+
+        ctx.rewritten_uri = Some("/new-path".parse().unwrap());
+        ctx.rewritten_host = Some(pavis_core::Hostname("new-host.com".to_string()));
+
+        let mut upstream_req = RequestHeader::build("GET", b"/", None).unwrap();
+        proxy
+            .upstream_request_filter(&mut session, &mut upstream_req, &mut ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(upstream_req.uri.path(), "/new-path");
+        assert_eq!(upstream_req.headers.get("Host").unwrap(), "new-host.com");
+    }
+
+    #[tokio::test]
+    async fn test_upstream_response_filter() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+
+        ctx.response_headers = Arc::new(pavis_core::HeadersPolicy::Enabled {
+            rules: pavis_core::Headers {
+                add_headers: vec![(
+                    pavis_core::HeaderName("X-Added".to_string()),
+                    pavis_core::HeaderValue("val".to_string()),
+                )],
+                append_headers: vec![],
+                set_headers: vec![],
+                remove_headers: vec![],
+            },
+        });
+
+        let mut upstream_resp = ResponseHeader::build(200, None).unwrap();
+        proxy
+            .upstream_response_filter(&mut session, &mut upstream_resp, &mut ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(upstream_resp.headers.get("X-Added").unwrap(), "val");
+    }
+
+    #[tokio::test]
+    async fn test_response_filter_retryable_status() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+
+        // Enable retry for 502
+        let retry_ctx = crate::retry::RetryContext::new(
+            pavis_core::RetryPolicy::Enabled {
+                max_attempts: std::num::NonZeroU16::new(3).unwrap(),
+                per_try: pavis_core::TryTimeout::Inherit,
+                retryable_reasons: vec![pavis_core::RetryReason::StatusCode],
+                retryable_status_codes: Some(pavis_core::RetryableStatusCodes { codes: vec![502] }),
+                backoff: pavis_core::BackoffStrategy::Fixed { base_ms: 0 },
+                retry_non_idempotent: false,
+                fail_on_non_replayable_retry: false,
+                max_request_body_buffer_bytes: 1024,
+            },
+            1000,
+            None,
+            "test".to_string(),
+        );
+        ctx.retry_ctx = Some(retry_ctx);
+
+        let mut upstream_resp = ResponseHeader::build(502, None).unwrap();
+        let result = proxy
+            .response_filter(&mut session, &mut upstream_resp, &mut ctx)
+            .await;
+
+        let err = result.expect_err("should retry");
+        assert!(err.retry());
+        assert_eq!(ctx.retry_ctx.as_ref().unwrap().attempt, 2);
+    }
+
+    #[tokio::test]
+    async fn test_connected_to_upstream_records_metrics() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let peer = HttpPeer::new("127.0.0.1:80", false, "test-upstream".to_string());
+        let mut ctx = proxy.new_ctx();
+        ctx.upstream_name = Some(pavis_core::UpstreamName("test-upstream".to_string()));
+
+        // Should not panic even if metrics are disabled
+        #[cfg(unix)]
+        proxy
+            .connected_to_upstream(&mut session, true, &peer, 0, None, &mut ctx)
+            .await
+            .unwrap();
+        #[cfg(not(unix))]
+        proxy
+            .connected_to_upstream(
+                &mut session,
+                true,
+                &peer,
+                std::ptr::null_mut(),
+                None,
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+    }
+}

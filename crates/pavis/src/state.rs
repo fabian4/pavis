@@ -250,3 +250,182 @@ fn resolve_dns_once(host: &Hostname, port: Port) -> anyhow::Result<Vec<SocketAdd
     }
     Ok(addrs)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pavis_core::{
+        Discovery, Endpoint, EndpointAddr, HttpVersion, LoadBalancer, Port, UpstreamBuilder,
+        UpstreamId, UpstreamName, Weight,
+    };
+    use std::num::NonZeroU16;
+
+    #[test]
+    fn test_materialize_upstreams_empty() {
+        let res = materialize_upstreams(&[]);
+        assert!(res.is_ok());
+        assert!(res.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_materialize_static_ip() {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Ip {
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .unwrap();
+
+        let res = materialize_upstreams(&[upstream]).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res["test"].len(), 1);
+    }
+
+    #[test]
+    fn test_materialize_logical_dns_localhost() {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(Discovery::Logical)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Dns {
+                    host: Hostname("localhost".to_string()),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .unwrap();
+
+        let res = materialize_upstreams(&[upstream]).unwrap();
+        assert_eq!(res.len(), 1);
+        // localhost should resolve to at least 127.0.0.1 or ::1
+        assert!(!res["test"].is_empty());
+    }
+
+    #[test]
+    fn test_materialize_logical_dns_failure() {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(Discovery::Logical)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Dns {
+                    host: Hostname("nonexistent.invalid".to_string()),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .unwrap();
+
+        let res = materialize_upstreams(&[upstream]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_materialize_logical_dns_no_dns_endpoints() {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(Discovery::Logical)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .build()
+            .unwrap();
+
+        let res = materialize_logical_upstream(&upstream);
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("must define at least one DNS endpoint")
+        );
+    }
+
+    #[test]
+    fn test_materialize_all_endpoints_failure() {
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .build()
+            .unwrap();
+
+        let res = materialize_all_endpoints(&upstream);
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("has no resolvable endpoints")
+        );
+    }
+
+    #[test]
+    fn test_runtime_state_with_components() {
+        let router = Arc::new(Router::new(vec![]).unwrap());
+        let manager = Manager::new(&[]).unwrap();
+        let builder = RuntimeConfigBuilder::new();
+        let config = builder
+            .telemetry(Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Error,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            })
+            .add_listener(
+                pavis_core::ListenerBuilder::new()
+                    .name(pavis_core::ListenerName("test".to_string()))
+                    .address("127.0.0.1:0".parse().unwrap())
+                    .workers(pavis_core::WorkerCount::Auto)
+                    .tls(pavis_core::TlsConfig::Disabled)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+        let validated = unsafe { ValidatedRuntimeConfig::from_trusted(config) };
+
+        let state = RuntimeState::with_components(validated, router, manager);
+        assert!(
+            state
+                .router
+                .match_request(
+                    None,
+                    "/",
+                    "GET",
+                    &pingora::http::RequestHeader::build("GET", b"/", None).unwrap()
+                )
+                .selection
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_runtime_state_handle() {
+        let state = RuntimeState::default();
+        let handle = RuntimeStateHandle::new(state);
+        let loaded = handle.load();
+        assert_eq!(loaded.config.telemetry.service_name.0, "pavis");
+
+        let new_state = RuntimeState::default();
+        handle.store(new_state);
+    }
+}

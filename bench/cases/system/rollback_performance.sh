@@ -21,7 +21,7 @@ set -euo pipefail
 # CRITICAL INVARIANT:
 # -------------------
 # During TTBR measurement, there is exactly ONE load source:
-#   - Lightweight probe bursts (10 RPS, 1s duration)
+#   - Lightweight probe bursts (300 RPS, 1s duration)
 #   - NO concurrent background loadgen
 # This ensures we measure runtime recovery, not load interference artifacts.
 #
@@ -98,13 +98,13 @@ probe_p99_lightweight() {
   local temp_output
   temp_output=$(mktemp)
 
-  # Lightweight probe: 10 RPS for 1s = only 10 requests
+  # Lightweight probe: 300 RPS for 1s = only 300 requests
   # This is <1% of typical TARGET_RPS and won't interfere with pool/queue recovery
   if "${BENCH_LOADGEN_BIN}" \
     --url "$target_url" \
     --rate "$PROBE_RPS" \
     --duration "$PROBE_DURATION_S" \
-    --connections 10 \
+    --connections 300 \
     --output "$temp_output" \
     > /dev/null 2>&1; then
 

@@ -20,6 +20,7 @@ use tracing_subscriber::{
 
 /// Handle to the active tracing runtime (provider).
 /// Stored in OnceLock and accessed by Proxy.
+#[derive(Debug)]
 pub struct TracingRuntime {
     provider: SdkTracerProvider,
 }
@@ -720,6 +721,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maybe_init_tracing_jaeger_provider() {
+        let policy = pavis_core::TracingPolicy::Enabled {
+            provider: pavis_core::TracingProvider::Jaeger,
+            sampling: pavis_core::SampleRate(100),
+            endpoint: "http://127.0.0.1:14268".to_string(),
+        };
+        let reload = ReloadHandle::new();
+        let slot = Arc::new(OnceLock::new());
+
+        maybe_init_tracing(&policy, "svc", Some(&reload), &slot, None);
+
+        assert!(slot.get().is_some());
+        let guard = reload.inner.read().unwrap();
+        assert!(guard.is_some());
+    }
+
+    #[tokio::test]
+    async fn maybe_init_tracing_zipkin_provider() {
+        let policy = pavis_core::TracingPolicy::Enabled {
+            provider: pavis_core::TracingProvider::Zipkin,
+            sampling: pavis_core::SampleRate(100),
+            endpoint: "http://127.0.0.1:9411".to_string(),
+        };
+        let reload = ReloadHandle::new();
+        let slot = Arc::new(OnceLock::new());
+
+        maybe_init_tracing(&policy, "svc", Some(&reload), &slot, None);
+
+        assert!(slot.get().is_some());
+        let guard = reload.inner.read().unwrap();
+        assert!(guard.is_some());
+    }
+
+    #[tokio::test]
     async fn maybe_init_tracing_initializes_runtime_and_reload() {
         let policy = pavis_core::TracingPolicy::Enabled {
             provider: pavis_core::TracingProvider::Otlp,
@@ -846,5 +881,128 @@ mod tests {
         assert!(on_event.load(Ordering::SeqCst), "on_event not called");
         assert!(on_enter.load(Ordering::SeqCst), "on_enter not called");
         assert!(on_exit.load(Ordering::SeqCst), "on_exit not called");
+    }
+
+    #[test]
+    fn reloadable_layer_clone() {
+        let layer1 = ReloadHandle::new();
+        let layer2 = layer1.clone();
+
+        // Both should share the same inner Arc
+        assert!(Arc::ptr_eq(&layer1.inner, &layer2.inner));
+    }
+
+    #[test]
+    fn reloadable_layer_default() {
+        let layer = ReloadHandle::default();
+        let guard = layer.inner.read().unwrap();
+        assert!(guard.is_none(), "default layer should be empty");
+    }
+
+    #[test]
+    fn reloadable_layer_reload_updates_inner() {
+        let reload = ReloadHandle::new();
+
+        // Initially empty
+        {
+            let guard = reload.inner.read().unwrap();
+            assert!(guard.is_none());
+        }
+
+        // Reload with a spy layer
+        let spy = SpyLayer::new();
+        reload.reload(Box::new(spy));
+
+        // Now should have a layer
+        {
+            let guard = reload.inner.read().unwrap();
+            assert!(guard.is_some(), "reload should install layer");
+        }
+    }
+
+    #[test]
+    fn tracing_runtime_shutdown_succeeds() {
+        // Create a minimal tracer provider
+        let provider = SdkTracerProvider::builder().build();
+        let runtime = TracingRuntime { provider };
+
+        // Shutdown should not panic
+        runtime.shutdown();
+    }
+
+    #[test]
+    fn test_tracing_service_name() {
+        let slot = Arc::new(OnceLock::new());
+        let service = TracingService::new(
+            pavis_core::TracingPolicy::Disabled,
+            "svc".to_string(),
+            None,
+            slot,
+            None,
+        );
+        assert_eq!(service.name(), "tracing");
+    }
+
+    #[test]
+    fn reloadable_layer_more_delegation() {
+        use tracing_subscriber::prelude::*;
+
+        #[derive(Default)]
+        struct FullSpyLayer {
+            recorded: Arc<AtomicBool>,
+            enabled: Arc<AtomicBool>,
+            closed: Arc<AtomicBool>,
+        }
+        impl<S: Subscriber> Layer<S> for FullSpyLayer {
+            fn on_record(
+                &self,
+                _span: &Id,
+                _values: &tracing::span::Record<'_>,
+                _ctx: Context<'_, S>,
+            ) {
+                self.recorded.store(true, Ordering::SeqCst);
+            }
+            fn enabled(&self, _metadata: &tracing::Metadata<'_>, _ctx: Context<'_, S>) -> bool {
+                self.enabled.store(true, Ordering::SeqCst);
+                true
+            }
+            fn on_close(&self, _id: Id, _ctx: Context<'_, S>) {
+                self.closed.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let reload = ReloadHandle::new();
+        let spy = FullSpyLayer::default();
+        let recorded = spy.recorded.clone();
+        let enabled = spy.enabled.clone();
+        let closed = spy.closed.clone();
+
+        reload.reload(Box::new(spy));
+        let subscriber = tracing_subscriber::registry().with(reload);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::span!(Level::INFO, "test", field = "val");
+            span.record("field", "new_val");
+            assert!(enabled.load(Ordering::SeqCst));
+            drop(span);
+        });
+
+        assert!(recorded.load(Ordering::SeqCst));
+        assert!(closed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn maybe_init_tracing_existing_runtime_no_handle() {
+        let policy = pavis_core::TracingPolicy::Enabled {
+            provider: pavis_core::TracingProvider::Otlp,
+            sampling: pavis_core::SampleRate(100),
+            endpoint: "http://127.0.0.1:4317".to_string(),
+        };
+        let slot = Arc::new(OnceLock::new());
+        let provider = SdkTracerProvider::builder().build();
+        slot.set(TracingRuntime { provider }).unwrap();
+
+        // Should return early and do nothing
+        maybe_init_tracing(&policy, "svc", None, &slot, None);
     }
 }

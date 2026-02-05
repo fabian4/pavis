@@ -586,4 +586,219 @@ mod tests {
             "request body is not replayable (streaming body)"
         );
     }
+
+    #[test]
+    fn budget_guard_new() {
+        let guard = BudgetGuard::new();
+        assert_eq!(guard.bytes, 0);
+    }
+
+    #[test]
+    fn budget_guard_default() {
+        let guard = BudgetGuard::default();
+        assert_eq!(guard.bytes, 0);
+    }
+
+    #[test]
+    fn budget_guard_try_add_zero() {
+        let mut guard = BudgetGuard::new();
+        assert!(guard.try_add(0));
+        assert_eq!(guard.bytes, 0);
+    }
+
+    #[test]
+    fn budget_guard_try_add_success() {
+        let initial = RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst);
+        let mut guard = BudgetGuard::new();
+        assert!(guard.try_add(1024));
+        assert_eq!(guard.bytes, 1024);
+        assert!(RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst) >= initial + 1024);
+    }
+
+    #[test]
+    fn budget_guard_try_add_multiple() {
+        let initial = RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst);
+        let mut guard = BudgetGuard::new();
+        assert!(guard.try_add(1024));
+        assert!(guard.try_add(2048));
+        assert_eq!(guard.bytes, 3072);
+        assert!(RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst) >= initial + 3072);
+    }
+
+    #[test]
+    fn budget_guard_try_add_exceeds_limit() {
+        let mut guard = BudgetGuard::new();
+        // Try to add more than global budget (32MB)
+        assert!(!guard.try_add(RETRY_BODY_GLOBAL_BUDGET_BYTES + 1));
+        assert_eq!(guard.bytes, 0);
+    }
+
+    #[test]
+    fn budget_guard_try_add_partial_exceeds() {
+        // This test is hard to run in parallel without absolute reset.
+        // We skip exact value check and just verify rejection.
+        let mut guard = BudgetGuard::new();
+        if guard.try_add(RETRY_BODY_GLOBAL_BUDGET_BYTES) {
+            assert!(!guard.try_add(1));
+        }
+    }
+
+    #[test]
+    fn budget_guard_drop_releases_budget() {
+        let initial = RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst);
+        {
+            let mut guard = BudgetGuard::new();
+            if guard.try_add(4096) {
+                assert!(RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst) >= initial + 4096);
+            }
+        } // guard dropped here
+        assert!(
+            RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst)
+                <= initial + (RETRY_BODY_GLOBAL_BUDGET_BYTES.min(4096))
+        );
+    }
+
+    #[test]
+    fn budget_guard_drop_zero_bytes() {
+        let initial = RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst);
+        {
+            let guard = BudgetGuard::new();
+            drop(guard);
+        }
+        assert_eq!(RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst), initial);
+    }
+
+    #[test]
+    fn retry_context_record_outcome_success() {
+        let policy = create_test_policy(3);
+        let ctx = RetryContext::new(policy, 10000, None, "test".to_string());
+
+        // Should not panic
+        ctx.record_outcome(true);
+    }
+
+    #[test]
+    fn retry_context_record_outcome_exhausted() {
+        let policy = create_test_policy(3);
+        let ctx = RetryContext::new(policy, 10000, None, "test".to_string());
+
+        // Should not panic
+        ctx.record_outcome(false);
+    }
+
+    #[test]
+    fn retry_context_disabled_policy() {
+        let ctx = RetryContext::new(RetryPolicy::Disabled, 10000, None, "test".to_string());
+
+        assert_eq!(ctx.max_attempts, 1);
+        assert!(!ctx.can_retry()); // attempt=1, max=1
+        assert!(!ctx.is_retryable(RetryReason::StatusCode));
+        assert!(!ctx.is_status_code_retryable(502));
+        assert_eq!(ctx.calculate_backoff(), Duration::ZERO);
+    }
+
+    #[test]
+    fn retry_context_is_method_allowed_with_retry_non_idempotent() {
+        let policy = RetryPolicy::Enabled {
+            max_attempts: NonZeroU16::new(3).unwrap(),
+            per_try: pavis_core::TryTimeout::Inherit,
+            retryable_reasons: vec![RetryReason::StatusCode],
+            retryable_status_codes: Some(RetryableStatusCodes { codes: vec![502] }),
+            backoff: BackoffStrategy::Fixed { base_ms: 100 },
+            retry_non_idempotent: true, // Allow non-idempotent retries
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1024,
+        };
+        let ctx = RetryContext::new(policy, 10000, None, "test".to_string());
+
+        // Non-idempotent methods should be allowed
+        assert!(ctx.is_method_allowed(&pavis_core::HttpMethod::POST));
+        assert!(ctx.is_method_allowed(&pavis_core::HttpMethod::PUT));
+        assert!(ctx.is_method_allowed(&pavis_core::HttpMethod::PATCH));
+
+        // Idempotent methods still allowed
+        assert!(ctx.is_method_allowed(&pavis_core::HttpMethod::GET));
+    }
+
+    #[test]
+    fn retry_context_status_code_retryable_without_status_reason() {
+        let policy = RetryPolicy::Enabled {
+            max_attempts: NonZeroU16::new(3).unwrap(),
+            per_try: pavis_core::TryTimeout::Inherit,
+            retryable_reasons: vec![RetryReason::ConnectTimeout], // No StatusCode
+            retryable_status_codes: Some(RetryableStatusCodes { codes: vec![502] }),
+            backoff: BackoffStrategy::Fixed { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1024,
+        };
+        let ctx = RetryContext::new(policy, 10000, None, "test".to_string());
+
+        // Should return false even if 502 is in codes, because StatusCode is not in retryable_reasons
+        assert!(!ctx.is_status_code_retryable(502));
+    }
+
+    #[test]
+    fn retry_context_status_code_retryable_none_codes() {
+        let policy = RetryPolicy::Enabled {
+            max_attempts: NonZeroU16::new(3).unwrap(),
+            per_try: pavis_core::TryTimeout::Inherit,
+            retryable_reasons: vec![RetryReason::StatusCode],
+            retryable_status_codes: None, // No codes specified
+            backoff: BackoffStrategy::Fixed { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1024,
+        };
+        let ctx = RetryContext::new(policy, 10000, None, "test".to_string());
+
+        // Should return false when codes is None
+        assert!(!ctx.is_status_code_retryable(502));
+    }
+
+    #[test]
+    fn buffered_body_force_streaming() {
+        let body = BufferedBody::new(vec![1, 2, 3], 1024, None, "test", true, None);
+        assert_eq!(body.replayability, BodyReplayability::Streaming);
+        assert!(!body.can_replay());
+    }
+
+    #[test]
+    fn buffered_body_handle_replayable() {
+        let body = BufferedBody::new(vec![1, 2, 3], 1024, None, "test", false, None);
+
+        // Replayable body should always succeed
+        assert!(body.handle_non_replayable(true).is_ok());
+        assert!(body.handle_non_replayable(false).is_ok());
+    }
+
+    #[test]
+    fn buffered_body_with_budget_guard() {
+        let initial = RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst);
+        let mut guard = BudgetGuard::new();
+        if guard.try_add(100) {
+            {
+                let _body =
+                    BufferedBody::new(vec![1, 2, 3], 1024, None, "test", false, Some(guard));
+                assert!(RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst) >= initial + 100);
+            } // BufferedBody dropped here, guard dropped
+            assert!(
+                RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst)
+                    <= initial
+                        + (RETRY_BODY_GLOBAL_BUDGET_BYTES
+                            .min(RETRY_BODY_BUDGET_USED_BYTES.load(Ordering::SeqCst)))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_context_apply_backoff_skips_on_first_attempt() {
+        let policy = create_test_policy(3);
+        let ctx = RetryContext::new(policy, 10000, None, "test".to_string());
+
+        let start = Instant::now();
+        ctx.apply_backoff().await;
+        // Should return immediately (no backoff before first retry)
+        assert!(start.elapsed() < Duration::from_millis(10));
+    }
 }

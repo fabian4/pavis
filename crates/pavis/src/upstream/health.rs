@@ -443,4 +443,381 @@ mod tests {
             build_health_client(&upstream, Duration::from_millis(10), None, Arc::new(vec![]));
         assert!(client.is_ok());
     }
+
+    #[test]
+    fn jitter_duration_zero_base() {
+        let jitter = jitter_duration(Duration::ZERO);
+        assert_eq!(jitter, Duration::ZERO);
+    }
+
+    #[test]
+    fn jitter_duration_very_small_base() {
+        let jitter = jitter_duration(Duration::from_millis(5));
+        // With base=5ms, jitter_ms = 5/10 = 0, should return ZERO
+        assert_eq!(jitter, Duration::ZERO);
+    }
+
+    #[test]
+    fn jitter_duration_normal_base() {
+        let jitter = jitter_duration(Duration::from_millis(1000));
+        // With base=1000ms, jitter_ms = 100/10 = 50ms (capped at 50)
+        // Jitter should be in range [0, 50ms]
+        assert!(jitter.as_millis() <= 50);
+    }
+
+    #[test]
+    fn jitter_duration_large_base() {
+        let jitter = jitter_duration(Duration::from_secs(10));
+        // With base=10000ms, jitter_ms = 1000/10 = 100, but capped at 50
+        // Jitter should be in range [0, 50ms]
+        assert!(jitter.as_millis() <= 50);
+    }
+
+    #[test]
+    fn plan_state_is_due_before_time() {
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(1000).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(500).unwrap()),
+        };
+        let upstream = make_upstream(TlsPolicy::Disabled, health);
+        let manager = Manager::new(&[upstream]).expect("manager");
+
+        let start = Instant::now();
+        let scheduler = Scheduler::from_manager(&manager);
+        let state = scheduler.plans.get("test").unwrap();
+
+        // Use a timestamp unequivocally before next_due (which is now + [0..50]ms)
+        let before = start - Duration::from_millis(100);
+        assert!(!state.is_due(before));
+    }
+
+    #[test]
+    fn plan_state_is_due_after_time() {
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(10).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(5).unwrap()),
+        };
+        let upstream = make_upstream(TlsPolicy::Disabled, health);
+        let manager = Manager::new(&[upstream]).expect("manager");
+        let scheduler = Scheduler::from_manager(&manager);
+        let state = scheduler.plans.get("test").unwrap();
+        let far_future = Instant::now() + Duration::from_secs(100);
+        assert!(state.is_due(far_future));
+    }
+
+    #[test]
+    fn health_check_host_disabled_tls_with_dns() {
+        let health = ActiveHealthCheck::Disabled;
+        let upstream = make_upstream(TlsPolicy::Disabled, health);
+        let endpoint = EndpointAddr::Dns {
+            host: Hostname("backend.example.com".into()),
+            port: Port(NonZeroU16::new(8080).unwrap()),
+        };
+        let host = health_check_host(&upstream, &endpoint);
+        assert_eq!(host, Some("backend.example.com".to_string()));
+    }
+
+    #[test]
+    fn health_check_host_disabled_tls_with_ip() {
+        let health = ActiveHealthCheck::Disabled;
+        let upstream = make_upstream(TlsPolicy::Disabled, health);
+        let endpoint = EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: Port(NonZeroU16::new(8080).unwrap()),
+        };
+        let host = health_check_host(&upstream, &endpoint);
+        assert_eq!(host, None);
+    }
+
+    #[test]
+    fn health_check_host_tls_with_canonical_sni() {
+        let tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Enabled {
+                name: Hostname("canonical.example.com".into()),
+            },
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let health = ActiveHealthCheck::Disabled;
+        let mut upstream = make_upstream(tls, health);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Enabled {
+                name: Hostname("canonical.example.com".into()),
+            },
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let endpoint = EndpointAddr::Dns {
+            host: Hostname("backend.example.com".into()),
+            port: Port(NonZeroU16::new(443).unwrap()),
+        };
+        let host = health_check_host(&upstream, &endpoint);
+        assert_eq!(host, Some("canonical.example.com".to_string()));
+    }
+
+    #[test]
+    fn health_check_host_tls_reuse_sni_name() {
+        let mut upstream = make_upstream(TlsPolicy::Disabled, ActiveHealthCheck::Disabled);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Name(Hostname("sni.example.com".into())),
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Enabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let endpoint = EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: Port(NonZeroU16::new(443).unwrap()),
+        };
+        let host = health_check_host(&upstream, &endpoint);
+        assert_eq!(host, Some("sni.example.com".to_string()));
+    }
+
+    #[test]
+    fn health_check_host_tls_reuse_sni_auto_with_dns() {
+        let mut upstream = make_upstream(TlsPolicy::Disabled, ActiveHealthCheck::Disabled);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Enabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let endpoint = EndpointAddr::Dns {
+            host: Hostname("backend.example.com".into()),
+            port: Port(NonZeroU16::new(443).unwrap()),
+        };
+        let host = health_check_host(&upstream, &endpoint);
+        assert_eq!(host, Some("backend.example.com".to_string()));
+    }
+
+    #[test]
+    fn health_check_host_tls_reuse_sni_auto_with_ip() {
+        let mut upstream = make_upstream(TlsPolicy::Disabled, ActiveHealthCheck::Disabled);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Enabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let endpoint = EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: Port(NonZeroU16::new(443).unwrap()),
+        };
+        let host = health_check_host(&upstream, &endpoint);
+        assert_eq!(host, None);
+    }
+
+    #[test]
+    fn health_check_host_tls_reuse_sni_disabled() {
+        let mut upstream = make_upstream(TlsPolicy::Disabled, ActiveHealthCheck::Disabled);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::CaOnly,
+            sni: SniName::Disabled,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Enabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let endpoint = EndpointAddr::Dns {
+            host: Hostname("backend.example.com".into()),
+            port: Port(NonZeroU16::new(443).unwrap()),
+        };
+        let host = health_check_host(&upstream, &endpoint);
+        assert_eq!(host, None);
+    }
+
+    #[test]
+    fn health_check_host_tls_no_reuse_sni_name() {
+        let mut upstream = make_upstream(TlsPolicy::Disabled, ActiveHealthCheck::Disabled);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Name(Hostname("sni.example.com".into())),
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let endpoint = EndpointAddr::Ip {
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: Port(NonZeroU16::new(443).unwrap()),
+        };
+        let host = health_check_host(&upstream, &endpoint);
+        assert_eq!(host, Some("sni.example.com".to_string()));
+    }
+
+    #[test]
+    fn health_check_host_tls_no_reuse_sni_auto_with_dns() {
+        let mut upstream = make_upstream(TlsPolicy::Disabled, ActiveHealthCheck::Disabled);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let endpoint = EndpointAddr::Dns {
+            host: Hostname("backend.example.com".into()),
+            port: Port(NonZeroU16::new(443).unwrap()),
+        };
+        let host = health_check_host(&upstream, &endpoint);
+        assert_eq!(host, Some("backend.example.com".to_string()));
+    }
+
+    #[test]
+    fn build_client_tls_verify_disabled() {
+        let mut upstream = make_upstream(TlsPolicy::Disabled, ActiveHealthCheck::Disabled);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Disabled,
+            sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let client = build_health_client(
+            &upstream,
+            Duration::from_millis(100),
+            None,
+            Arc::new(vec![]),
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn build_client_tls_verify_ca_only() {
+        let mut upstream = make_upstream(TlsPolicy::Disabled, ActiveHealthCheck::Disabled);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::CaOnly,
+            sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let client = build_health_client(
+            &upstream,
+            Duration::from_millis(100),
+            None,
+            Arc::new(vec![]),
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn build_client_tls_verify_full() {
+        let mut upstream = make_upstream(TlsPolicy::Disabled, ActiveHealthCheck::Disabled);
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+            cert: pavis_core::ClientCert::Disabled,
+            ca: pavis_core::UpstreamCa::System,
+        };
+        let client = build_health_client(
+            &upstream,
+            Duration::from_millis(100),
+            None,
+            Arc::new(vec![]),
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn upstream_health_monitor_service_name() {
+        let validated = pavis_core::validate_runtime(
+            pavis_core::RuntimeConfigBuilder::new()
+                .telemetry(pavis_core::Telemetry {
+                    level: pavis_core::LogLevel::Info,
+                    pingora: pavis_core::LogLevel::Warn,
+                    service_name: pavis_core::ServiceName("test".to_string()),
+                    metrics: pavis_core::Metrics::Disabled,
+                    access_log: pavis_core::AccessLogPolicy::Disabled,
+                    tracing: pavis_core::TracingPolicy::Disabled,
+                })
+                .shutdown(pavis_core::ShutdownPolicy::Disabled)
+                .admin(pavis_core::AdminConfig::Disabled)
+                .add_listener(
+                    pavis_core::ListenerBuilder::new()
+                        .name(pavis_core::ListenerName("test".to_string()))
+                        .address(std::net::SocketAddr::new(
+                            IpAddr::V4(Ipv4Addr::LOCALHOST),
+                            8080,
+                        ))
+                        .workers(pavis_core::WorkerCount::Auto)
+                        .tls(pavis_core::TlsConfig::Disabled)
+                        .build()
+                        .unwrap(),
+                )
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+        let state = crate::state::RuntimeState::from_config(&validated).unwrap();
+        let monitor = UpstreamHealthMonitor::new(Arc::new(RuntimeStateHandle::new(state)));
+        assert_eq!(monitor.name(), "upstream_health_monitor");
+    }
+
+    #[tokio::test]
+    async fn test_probe_job_run_empty_endpoints() {
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(50).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(50).unwrap()),
+        };
+        let mut u = make_upstream(TlsPolicy::Disabled, health);
+        u.endpoints = vec![];
+        let cluster = Arc::new(Cluster::new(u));
+        let plan = Arc::new(HealthProbePlan::build("test", &cluster).unwrap().unwrap());
+
+        let job = ProbeJob::new(plan, cluster);
+        job.run().await; // Should return early without error
+    }
+
+    #[test]
+    fn test_mark_all_unhealthy() {
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+        };
+        let u = make_upstream(TlsPolicy::Disabled, health);
+        let endpoints = u.endpoints.clone();
+        let cluster = Cluster::new(u);
+        mark_all_unhealthy(&cluster, &endpoints);
+        // Should have no eligible endpoints now
+        assert!(cluster.select_endpoint().is_none());
+    }
+
+    #[test]
+    fn test_jitter_distribution() {
+        let base = Duration::from_millis(100);
+        let mut zero = false;
+        let mut positive = false;
+        for _ in 0..100 {
+            let j = jitter_duration(base);
+            assert!(j.as_millis() <= 10);
+            if j.as_millis() == 0 {
+                zero = true;
+            }
+            if j.as_millis() > 0 {
+                positive = true;
+            }
+        }
+        assert!(zero || positive);
+    }
 }

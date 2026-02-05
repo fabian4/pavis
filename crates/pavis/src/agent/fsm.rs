@@ -684,4 +684,107 @@ mod tests {
         fsm.tick(Event::Shutdown);
         assert!(matches!(fsm.state, State::Stopped));
     }
+
+    #[test]
+    fn test_context_force_unconditional() {
+        let mut ctx = Context::new();
+        ctx.last_applied_etag = Some("sha256:abc".into());
+        ctx.force_unconditional_count = 1;
+
+        let now = Instant::now();
+        assert_eq!(ctx.conditional_etag(now), None);
+        assert_eq!(ctx.force_unconditional_count, 0);
+        assert_eq!(ctx.conditional_etag(now), Some("sha256:abc".into()));
+    }
+
+    #[test]
+    fn test_fsm_shutdown_states() {
+        let mut fsm = Fsm::new();
+        fsm.state = State::Fetching;
+        fsm.tick(Event::Shutdown);
+        assert!(matches!(fsm.state, State::Stopped));
+
+        let mut fsm = Fsm::new();
+        fsm.state = State::Verifying(VerifyingData {
+            etag: "e".into(),
+            version: None,
+            size: None,
+            bytes: vec![],
+        });
+        fsm.tick(Event::Shutdown);
+        assert!(matches!(fsm.state, State::Stopped));
+
+        let mut fsm = Fsm::new();
+        fsm.state = State::Applying(VerifiedUpdate {
+            etag: "e".into(),
+            version: None,
+            size: None,
+            tmp_path: PathBuf::new(),
+        });
+        fsm.tick(Event::Shutdown);
+        assert!(matches!(fsm.state, State::Stopped));
+
+        let mut fsm = Fsm::new();
+        fsm.state = State::BackoffSleeping;
+        fsm.tick(Event::Shutdown);
+        assert!(matches!(fsm.state, State::Stopped));
+    }
+
+    #[test]
+    fn test_fsm_idle_timer_fired() {
+        let mut fsm = Fsm::new();
+        let now = Instant::now();
+        let effects = fsm.tick(Event::TimerFired { now });
+        assert!(matches!(fsm.state, State::Fetching));
+        assert!(matches!(effects[0], Effect::FetchUnconditional { .. }));
+
+        let mut fsm = Fsm::new();
+        fsm.context_mut().last_applied_etag = Some("e".into());
+        let effects = fsm.tick(Event::TimerFired { now });
+        assert!(matches!(effects[0], Effect::FetchConditional { .. }));
+    }
+
+    #[test]
+    fn test_fsm_current_state_summary() {
+        let mut fsm = Fsm::new();
+        assert_eq!(fsm.current_state().state, "Idle");
+        fsm.state = State::Fetching;
+        assert_eq!(fsm.current_state().state, "Fetching");
+        fsm.state = State::Verifying(VerifyingData {
+            etag: "e".into(),
+            version: None,
+            size: None,
+            bytes: vec![],
+        });
+        assert_eq!(fsm.current_state().state, "Verifying");
+        fsm.state = State::Applying(VerifiedUpdate {
+            etag: "e".into(),
+            version: None,
+            size: None,
+            tmp_path: PathBuf::new(),
+        });
+        assert_eq!(fsm.current_state().state, "Applying");
+        fsm.state = State::BackoffSleeping;
+        assert_eq!(fsm.current_state().state, "BackoffSleeping");
+        fsm.state = State::Stopped;
+        assert_eq!(fsm.current_state().state, "Stopped");
+    }
+
+    #[test]
+    fn test_fsm_drain_effects() {
+        let mut fsm = Fsm::new();
+        let mut events = VecDeque::new();
+        events.push_back(Event::Start {
+            now: Instant::now(),
+        });
+        let effects = fsm.drain_effects(events);
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(fsm.state, State::Fetching));
+    }
+
+    #[test]
+    fn test_fsm_new_with_lkg_path() {
+        let fsm = Fsm::new_with_lkg_path(PathBuf::from("test"));
+        assert!(matches!(fsm.state, State::Idle));
+    }
 }

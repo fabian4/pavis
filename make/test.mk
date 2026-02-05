@@ -2,7 +2,7 @@
 
 # Run unit and doc tests for all crates (excluding E2E)
 test:
-	cargo test --workspace
+	cargo test --workspace --all-targets --all-features
 
 # Run code coverage summary (requires cargo-llvm-cov)
 coverage:

@@ -2,7 +2,6 @@
 members = [
     "crates/pavis",
     "crates/pavctl",
-    "crates/pavis-pvs",
     "crates/pavis-core",
     "crates/pavis-codec-api",
     "crates/pavis-codec-serde",

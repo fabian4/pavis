@@ -133,7 +133,7 @@ shellcheck:
 		exit 0; \
 	fi; \
 	if ! command -v shellcheck >/dev/null 2>&1; then \
-		echo "shellcheck not found; skipping"; \
-		exit 0; \
+		echo "ERROR: shellcheck not found. Please install it to run shell script validation."; \
+		exit 1; \
 	fi; \
 	shellcheck -x -S warning $$files'

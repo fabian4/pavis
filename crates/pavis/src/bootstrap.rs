@@ -314,4 +314,66 @@ mod tests {
 
         assert_eq!(max_listener_threads(&validated), Some(4));
     }
+
+    #[test]
+    fn test_bootstrap_plan_build_fail_no_listeners() {
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("test".to_string()))
+            .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080))
+            .build()
+            .unwrap();
+        let telemetry = RuntimeTelemetry {
+            level: LogLevel::Info,
+            pingora: LogLevel::Info,
+            service_name: ServiceName("svc".to_string()),
+            metrics: Metrics::Disabled,
+            access_log: AccessLogPolicy::Disabled,
+            tracing: pavis_core::TracingPolicy::Disabled,
+        };
+        let mut config = RuntimeConfigBuilder::new()
+            .telemetry(telemetry)
+            .add_listener(listener)
+            .build()
+            .unwrap();
+        // Clear listeners to trigger the error
+        config.listeners.clear();
+
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let reload_handle: ReloadHandle = ReloadableLayer::new();
+        let options = BootstrapOptions {
+            config_path: PathBuf::from("/tmp/config.pvs"),
+            relay_url: None,
+        };
+
+        let res = BootstrapPlan::build(Arc::new(validated), reload_handle, options);
+        assert!(res.is_err());
+        let err_msg = format!("{}", res.err().unwrap());
+        assert!(err_msg.contains("No listeners configured"));
+    }
+
+    #[test]
+    fn test_build_server_conf_graceful_shutdown() {
+        let config = sample_config();
+        let mut inner = config.as_ref().clone();
+        inner.shutdown = pavis_core::ShutdownPolicy::Enabled {
+            drain_timeout: pavis_core::Duration(std::num::NonZeroU32::new(5000).unwrap()),
+        };
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(inner) };
+
+        let server_conf = super::build_server_conf(&validated);
+        assert_eq!(server_conf.grace_period_seconds, Some(5));
+    }
+
+    #[test]
+    fn test_bootstrap_plan_build_with_relay() {
+        let config = Arc::new(sample_config());
+        let reload_handle: ReloadHandle = ReloadableLayer::new();
+        let options = BootstrapOptions {
+            config_path: PathBuf::from("/tmp/config.pvs"),
+            relay_url: Some("http://localhost:8080".to_string()),
+        };
+
+        let plan = BootstrapPlan::build(config, reload_handle, options).expect("plan builds");
+        drop(plan);
+    }
 }
