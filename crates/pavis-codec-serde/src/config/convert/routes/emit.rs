@@ -178,3 +178,321 @@ pub fn to_runtime(routes: Vec<VirtualHost>) -> Result<Vec<CoreVirtualHost>> {
 pub fn from_runtime(routes: Vec<CoreVirtualHost>) -> Result<Vec<VirtualHost>> {
     dto_adapter::from_runtime(routes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::types::{RewritePolicy, Route, WeightedDestination};
+
+    #[test]
+    fn test_to_runtime_full() {
+        let routes = vec![VirtualHost {
+            host: "*".into(),
+            paths: vec![
+                Route {
+                    matcher: Some(Matcher {
+                        path: PathMatcher::Prefix { path: "/p".into() },
+                        method: Some("GET".into()),
+                        methods: None,
+                        headers: None,
+                    }),
+                    timeout: Some(std::time::Duration::from_millis(1000)),
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    rewrite: Some(RewritePolicy {
+                        path: Some("/new".into()),
+                        host: Some("new.com".into()),
+                    }),
+                    action: CodecRouteAction::Forward {
+                        destinations: vec![WeightedDestination {
+                            upstream: "u1".into(),
+                            weight: 1,
+                        }],
+                    },
+                    principal: Some(PrincipalConfig::Authenticated {
+                        spiffe: "s1".into(),
+                    }),
+                },
+                Route {
+                    matcher: Some(Matcher {
+                        path: PathMatcher::Exact { path: "/e".into() },
+                        method: None,
+                        methods: Some(vec!["POST".into()]),
+                        headers: None,
+                    }),
+                    timeout: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    rewrite: None,
+                    action: CodecRouteAction::Redirect {
+                        status: 301,
+                        location: "loc".into(),
+                    },
+                    principal: None,
+                },
+            ],
+        }];
+
+        let res = to_runtime(routes).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].paths.len(), 2);
+    }
+
+    #[test]
+    fn test_to_runtime_direct() {
+        let routes = vec![VirtualHost {
+            host: "h".into(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "ok".into(),
+                },
+                principal: Some(PrincipalConfig::Prefix {
+                    prefix: "p1".into(),
+                }),
+            }],
+        }];
+        let res = to_runtime(routes).unwrap();
+        assert!(matches!(
+            res[0].paths[0].action,
+            CoreRouteAction::Direct { status: 200, .. }
+        ));
+    }
+
+    #[test]
+    fn test_to_runtime_regex() {
+        let routes = vec![VirtualHost {
+            host: "h".into(),
+            paths: vec![Route {
+                matcher: Some(Matcher {
+                    path: PathMatcher::Regex {
+                        path: "/r/.*".into(),
+                    },
+                    method: None,
+                    methods: None,
+                    headers: None,
+                }),
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "ok".into(),
+                },
+                principal: None,
+            }],
+        }];
+        let res = to_runtime(routes).unwrap();
+        assert!(matches!(
+            res[0].paths[0].matcher.path,
+            pavis_core::PathMatch::Regex { .. }
+        ));
+    }
+
+    #[test]
+    fn test_to_runtime_missed_branches() {
+        let routes = vec![VirtualHost {
+            host: "h".into(),
+            paths: vec![
+                Route {
+                    matcher: Some(Matcher {
+                        path: PathMatcher::Exact { path: "/e".into() },
+                        method: None,
+                        methods: None,
+                        headers: None,
+                    }),
+                    timeout: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    rewrite: Some(RewritePolicy {
+                        path: None,
+                        host: Some("host.com".into()),
+                    }),
+                    action: CodecRouteAction::Redirect {
+                        status: 302,
+                        location: "/loc".into(),
+                    },
+                    principal: Some(PrincipalConfig::Prefix { prefix: "p".into() }),
+                },
+                Route {
+                    matcher: None,
+                    timeout: None,
+                    retry: None,
+                    request_headers: None,
+                    response_headers: None,
+                    rewrite: Some(RewritePolicy {
+                        path: Some("/to".into()),
+                        host: None,
+                    }),
+                    action: CodecRouteAction::Direct {
+                        status: 200,
+                        body: "".into(),
+                    },
+                    principal: None,
+                },
+            ],
+        }];
+        let res = to_runtime(routes).unwrap();
+        assert_eq!(res[0].paths.len(), 2);
+        assert!(matches!(
+            res[0].paths[0].action,
+            CoreRouteAction::Redirect { status: 302, .. }
+        ));
+        assert!(matches!(
+            res[0].paths[0].principal,
+            pavis_core::Principal::Prefix { .. }
+        ));
+        assert!(matches!(
+            res[0].paths[0].rewrite.host,
+            pavis_core::RewriteHost::Literal { .. }
+        ));
+        assert!(matches!(
+            res[0].paths[1].rewrite.path,
+            pavis_core::RewritePath::Prefix { .. }
+        ));
+    }
+
+    #[test]
+    fn test_to_runtime_weight_overflow() {
+        let routes = vec![VirtualHost {
+            host: "h".into(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                action: CodecRouteAction::Forward {
+                    destinations: vec![WeightedDestination {
+                        upstream: "u".into(),
+                        weight: u32::MAX,
+                    }],
+                },
+                principal: None,
+            }],
+        }];
+        assert!(to_runtime(routes).is_err());
+    }
+
+    #[test]
+    fn test_to_runtime_weight_zero() {
+        let routes = vec![VirtualHost {
+            host: "h".into(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                action: CodecRouteAction::Forward {
+                    destinations: vec![WeightedDestination {
+                        upstream: "u".into(),
+                        weight: 0,
+                    }],
+                },
+                principal: None,
+            }],
+        }];
+        assert!(to_runtime(routes).is_err());
+    }
+
+    #[test]
+    fn test_to_runtime_timeout_errors() {
+        // Zero timeout
+        let routes = vec![VirtualHost {
+            host: "h".into(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: Some(std::time::Duration::from_millis(0)),
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".into(),
+                },
+                principal: None,
+            }],
+        }];
+        assert!(to_runtime(routes).is_err());
+
+        // Overflow timeout
+        let routes = vec![VirtualHost {
+            host: "h".into(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: Some(std::time::Duration::from_secs(u32::MAX as u64 + 1)),
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".into(),
+                },
+                principal: None,
+            }],
+        }];
+        assert!(to_runtime(routes).is_err());
+    }
+
+    #[test]
+    fn test_to_runtime_principal_prefix_empty() {
+        let routes = vec![VirtualHost {
+            host: "h".into(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".into(),
+                },
+                principal: Some(PrincipalConfig::Prefix { prefix: "".into() }),
+            }],
+        }];
+        assert!(to_runtime(routes).is_err());
+    }
+
+    #[test]
+    fn test_to_runtime_principal_any() {
+        let routes = vec![VirtualHost {
+            host: "h".into(),
+            paths: vec![Route {
+                matcher: None,
+                timeout: None,
+                retry: None,
+                request_headers: None,
+                response_headers: None,
+                rewrite: None,
+                action: CodecRouteAction::Direct {
+                    status: 200,
+                    body: "".into(),
+                },
+                principal: Some(PrincipalConfig::Any),
+            }],
+        }];
+        let res = to_runtime(routes).unwrap();
+        assert!(matches!(
+            res[0].paths[0].principal,
+            pavis_core::Principal::Any
+        ));
+    }
+}

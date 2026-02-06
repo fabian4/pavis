@@ -269,4 +269,45 @@ mod tests {
         let res = publish_with_retry(&state, &validated, policy, "label", "source").await;
         assert!(res.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_publish_with_retry_exhausted() {
+        let mut state = RelayRuntimeState::new(0, Bytes::new()).unwrap();
+        // Set limits so that any new publish fails
+        state.options.max_pvs_bytes = 1;
+
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("test".to_string()))
+            .address(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080))
+            .build()
+            .unwrap();
+
+        let config = RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .unwrap();
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+
+        let policy = RetryPolicy {
+            max_attempts: 2,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(1),
+        };
+
+        let res = publish_with_retry(&state, &validated, policy, "label", "source").await;
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("publish config after retries")
+        );
+    }
 }

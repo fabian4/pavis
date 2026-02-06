@@ -820,4 +820,183 @@ mod tests {
         }
         assert!(zero || positive);
     }
+
+    #[tokio::test]
+    async fn test_health_probe_success() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
+            let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+            tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes())
+                .await
+                .unwrap();
+        });
+
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+        };
+        let upstream = make_upstream(TlsPolicy::Disabled, health);
+        let cluster = Arc::new(Cluster::new(upstream));
+        let plan = HealthProbePlan::build("test", &cluster).unwrap().unwrap();
+
+        let endpoint = Endpoint {
+            address: EndpointAddr::Ip {
+                address: addr.ip(),
+                port: Port(NonZeroU16::new(addr.port()).unwrap()),
+            },
+            weight: pavis_core::Weight(NonZeroU16::new(1).unwrap()),
+        };
+
+        let result = plan.probe(&cluster, &endpoint).await.unwrap();
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn test_health_probe_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
+            let response = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
+            tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes())
+                .await
+                .unwrap();
+        });
+
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+        };
+        let upstream = make_upstream(TlsPolicy::Disabled, health);
+        let cluster = Arc::new(Cluster::new(upstream));
+        let plan = HealthProbePlan::build("test", &cluster).unwrap().unwrap();
+
+        let endpoint = Endpoint {
+            address: EndpointAddr::Ip {
+                address: addr.ip(),
+                port: Port(NonZeroU16::new(addr.port()).unwrap()),
+            },
+            weight: pavis_core::Weight(NonZeroU16::new(1).unwrap()),
+        };
+
+        let result = plan.probe(&cluster, &endpoint).await.unwrap();
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_probe_job_execution() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+            tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes())
+                .await
+                .unwrap();
+        });
+
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+        };
+        let mut upstream = make_upstream(TlsPolicy::Disabled, health);
+        upstream.endpoints = vec![Endpoint {
+            address: EndpointAddr::Ip {
+                address: addr.ip(),
+                port: Port(NonZeroU16::new(addr.port()).unwrap()),
+            },
+            weight: pavis_core::Weight(NonZeroU16::new(1).unwrap()),
+        }];
+
+        let cluster = Arc::new(Cluster::new(upstream));
+        let plan = Arc::new(HealthProbePlan::build("test", &cluster).unwrap().unwrap());
+
+        let job = ProbeJob::new(plan, cluster.clone());
+        job.run().await;
+
+        // Verify endpoint is healthy
+        let endpoints = cluster.current_endpoints();
+        assert_eq!(endpoints.len(), 1);
+        assert!(cluster.select_endpoint().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_probe_job_mark_unhealthy() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
+            let response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
+            tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes())
+                .await
+                .unwrap();
+        });
+
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+        };
+        let mut upstream = make_upstream(TlsPolicy::Disabled, health);
+        upstream.endpoints = vec![Endpoint {
+            address: EndpointAddr::Ip {
+                address: addr.ip(),
+                port: Port(NonZeroU16::new(addr.port()).unwrap()),
+            },
+            weight: pavis_core::Weight(NonZeroU16::new(1).unwrap()),
+        }];
+
+        let cluster = Arc::new(Cluster::new(upstream));
+        let plan = Arc::new(HealthProbePlan::build("test", &cluster).unwrap().unwrap());
+
+        let job = ProbeJob::new(plan, cluster.clone());
+        job.run().await;
+
+        // Verify endpoint is unhealthy (filtered out by select_endpoint)
+        assert!(cluster.select_endpoint().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_probe_connection_refused() {
+        // Bind to get a free port, then drop listener so connection is refused
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(100).unwrap()),
+        };
+        let upstream = make_upstream(TlsPolicy::Disabled, health);
+        let cluster = Arc::new(Cluster::new(upstream));
+        let plan = HealthProbePlan::build("test", &cluster).unwrap().unwrap();
+
+        let endpoint = Endpoint {
+            address: EndpointAddr::Ip {
+                address: addr.ip(),
+                port: Port(NonZeroU16::new(addr.port()).unwrap()),
+            },
+            weight: pavis_core::Weight(NonZeroU16::new(1).unwrap()),
+        };
+
+        let result = plan.probe(&cluster, &endpoint).await;
+        // Should error (connection refused)
+        assert!(result.is_err());
+    }
 }

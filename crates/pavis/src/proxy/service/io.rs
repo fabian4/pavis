@@ -1090,11 +1090,14 @@ impl<'a> UpstreamPeerBuilder<'a> {
 mod tests {
     use super::*;
     use crate::state::{RuntimeState, RuntimeStateHandle};
+    use crate::upstream::Cluster;
     use pavis_core::{
-        AccessLogPolicy, Metrics, ServiceName, Telemetry as RuntimeTelemetry, TracingPolicy,
+        AccessLogPolicy, HeaderPredicates, HeadersPolicy, Metrics, RouteMatcher, RuntimeConfig,
+        ServiceName, Telemetry as RuntimeTelemetry, TracingPolicy, UpstreamBuilder,
     };
     use pingora::prelude::Session;
     use std::sync::Arc;
+    use std::time::Instant;
     use tokio::io::AsyncWriteExt;
 
     async fn session_for_request(request: &[u8]) -> (Session, tokio::io::DuplexStream) {
@@ -1178,8 +1181,8 @@ mod tests {
         );
         ctx.retry_ctx = Some(retry_ctx);
 
-        let e = Box::new(Error::new(ErrorType::ConnectError));
-        let e = proxy.fail_to_connect(&mut session, &peer, &mut ctx, *e);
+        let e = Error::new(ErrorType::ConnectError);
+        let e = proxy.fail_to_connect(&mut session, &peer, &mut ctx, e);
 
         assert!(e.retry());
         assert_eq!(ctx.retry_ctx.as_ref().unwrap().attempt, 2);
@@ -1325,5 +1328,881 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_logging_records_metrics() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let telemetry = test_telemetry();
+        let proxy = Proxy {
+            state,
+            telemetry: telemetry.clone(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+        ctx.route_pattern = crate::proxy::context::RoutePattern::Matched {
+            pattern: Arc::from("/api/*"),
+        };
+        ctx.upstream_name = Some(pavis_core::UpstreamName("u1".to_string()));
+
+        // Should not panic
+        proxy.logging(&mut session, None, &mut ctx).await;
+    }
+
+    fn test_config() -> RuntimeConfig {
+        use pavis_core::{ListenerBuilder, RuntimeConfigBuilder};
+        let listener = ListenerBuilder::new()
+            .name(pavis_core::ListenerName("test".to_string()))
+            .address("127.0.0.1:0".parse().unwrap())
+            .build()
+            .unwrap();
+
+        RuntimeConfigBuilder::new()
+            .telemetry(RuntimeTelemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_request_filter_body_buffering() {
+        let (mut client, server) = tokio::io::duplex(1024);
+        let client_handle = tokio::spawn(async move {
+            client
+                .write_all(b"POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\n\r\nbody")
+                .await
+                .unwrap();
+            // Read response to avoid BrokenPipe on server side
+            let mut buf = [0u8; 1024];
+            use tokio::io::AsyncReadExt;
+            let _ = client.read(&mut buf).await;
+        });
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.unwrap();
+
+        let mut config = test_config();
+        let vhost = pavis_core::VirtualHost {
+            host: pavis_core::Host("h".into()),
+            paths: vec![pavis_core::Route {
+                matcher: RouteMatcher {
+                    path: pavis_core::PathMatch::Prefix {
+                        path: pavis_core::Path("/".into()),
+                    },
+                    method: pavis_core::MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
+                },
+                timeout: pavis_core::Timeout::Disabled,
+                retry: pavis_core::RetryPolicy::Enabled {
+                    max_attempts: std::num::NonZeroU16::new(3).unwrap(),
+                    per_try: pavis_core::TryTimeout::Inherit,
+                    retryable_reasons: vec![],
+                    retryable_status_codes: None,
+                    backoff: pavis_core::BackoffStrategy::Fixed { base_ms: 0 },
+                    retry_non_idempotent: true,
+                    fail_on_non_replayable_retry: false,
+                    max_request_body_buffer_bytes: 1024,
+                },
+                request_headers: Arc::new(HeadersPolicy::Disabled),
+                response_headers: Arc::new(HeadersPolicy::Disabled),
+                rewrite: pavis_core::Rewrite {
+                    path: pavis_core::RewritePath::Disabled,
+                    host: pavis_core::RewriteHost::Disabled,
+                },
+                action: pavis_core::RouteAction::Direct {
+                    status: 200,
+                    body: "".into(),
+                },
+                principal: pavis_core::Principal::Any,
+            }],
+        };
+        config.routes.push(vhost);
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let state = Arc::new(RuntimeStateHandle::new(
+            RuntimeState::from_config(&validated).unwrap(),
+        ));
+
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let mut ctx = proxy.new_ctx();
+
+        proxy.request_filter(&mut session, &mut ctx).await.unwrap();
+
+        assert!(ctx.buffered_body.is_some());
+        assert_eq!(ctx.buffered_body.unwrap().bytes, b"body");
+        client_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_request_filter_rbac_denied() {
+        let (mut client, server) = tokio::io::duplex(1024);
+        let client_handle = tokio::spawn(async move {
+            client
+                .write_all(b"GET / HTTP/1.1\r\nHost: h\r\n\r\n")
+                .await
+                .unwrap();
+            let mut buf = [0u8; 1024];
+            use tokio::io::AsyncReadExt;
+            let n = client.read(&mut buf).await.unwrap();
+            let resp = String::from_utf8_lossy(&buf[..n]);
+            assert!(resp.contains("403 Forbidden"));
+        });
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.unwrap();
+
+        let mut config = test_config();
+        let vhost = pavis_core::VirtualHost {
+            host: pavis_core::Host("h".into()),
+            paths: vec![pavis_core::Route {
+                matcher: RouteMatcher {
+                    path: pavis_core::PathMatch::Prefix {
+                        path: pavis_core::Path("/".into()),
+                    },
+                    method: pavis_core::MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
+                },
+                timeout: pavis_core::Timeout::Disabled,
+                retry: pavis_core::RetryPolicy::Disabled,
+                request_headers: Arc::new(HeadersPolicy::Disabled),
+                response_headers: Arc::new(HeadersPolicy::Disabled),
+                rewrite: pavis_core::Rewrite {
+                    path: pavis_core::RewritePath::Disabled,
+                    host: pavis_core::RewriteHost::Disabled,
+                },
+                action: pavis_core::RouteAction::Direct {
+                    status: 200,
+                    body: "".into(),
+                },
+                principal: pavis_core::Principal::Authenticated {
+                    spiffe: pavis_core::SpiffeId("only-me".into()),
+                },
+            }],
+        };
+        config.routes.push(vhost);
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let state = Arc::new(RuntimeStateHandle::new(
+            RuntimeState::from_config(&validated).unwrap(),
+        ));
+
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let mut ctx = proxy.new_ctx();
+        ctx.client_identity = Some(pavis_core::SpiffeId("any".into()));
+
+        let res = proxy.request_filter(&mut session, &mut ctx).await.unwrap();
+        assert!(res); // Should have responded
+        assert!(ctx.rbac_denied);
+        client_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_request_filter_redirect() {
+        let (mut client, server) = tokio::io::duplex(1024);
+        let client_handle = tokio::spawn(async move {
+            client
+                .write_all(b"GET /old HTTP/1.1\r\nHost: h\r\n\r\n")
+                .await
+                .unwrap();
+            let mut buf = [0u8; 1024];
+            use tokio::io::AsyncReadExt;
+            let n = client.read(&mut buf).await.unwrap();
+            let resp = String::from_utf8_lossy(&buf[..n]);
+            assert!(resp.contains("301 Moved Permanently"));
+            assert!(resp.contains("Location: http://new.com/"));
+        });
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.unwrap();
+
+        let mut config = test_config();
+        let vhost = pavis_core::VirtualHost {
+            host: pavis_core::Host("h".into()),
+            paths: vec![pavis_core::Route {
+                matcher: RouteMatcher {
+                    path: pavis_core::PathMatch::Prefix {
+                        path: pavis_core::Path("/old".into()),
+                    },
+                    method: pavis_core::MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
+                },
+                timeout: pavis_core::Timeout::Disabled,
+                retry: pavis_core::RetryPolicy::Disabled,
+                request_headers: Arc::new(HeadersPolicy::Disabled),
+                response_headers: Arc::new(HeadersPolicy::Disabled),
+                rewrite: pavis_core::Rewrite {
+                    path: pavis_core::RewritePath::Disabled,
+                    host: pavis_core::RewriteHost::Disabled,
+                },
+                action: pavis_core::RouteAction::Redirect {
+                    status: 301,
+                    location: "http://new.com/".into(),
+                },
+                principal: pavis_core::Principal::Any,
+            }],
+        };
+        config.routes.push(vhost);
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let state = Arc::new(RuntimeStateHandle::new(
+            RuntimeState::from_config(&validated).unwrap(),
+        ));
+
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let mut ctx = proxy.new_ctx();
+
+        let res = proxy.request_filter(&mut session, &mut ctx).await.unwrap();
+        assert!(res);
+        client_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_request_filter_404() {
+        let (mut client, server) = tokio::io::duplex(1024);
+        let client_handle = tokio::spawn(async move {
+            client
+                .write_all(b"GET /not-found HTTP/1.1\r\nHost: h\r\n\r\n")
+                .await
+                .unwrap();
+            let mut buf = [0u8; 1024];
+            use tokio::io::AsyncReadExt;
+            let n = client.read(&mut buf).await.unwrap();
+            let resp = String::from_utf8_lossy(&buf[..n]);
+            assert!(resp.contains("404 Not Found"));
+        });
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.unwrap();
+
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let mut ctx = proxy.new_ctx();
+
+        let res = proxy.request_filter(&mut session, &mut ctx).await.unwrap();
+        assert!(res);
+        client_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_no_upstream() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+        ctx.upstream_name = None;
+
+        let res = proxy.upstream_peer(&mut session, &mut ctx).await;
+        let err = res.unwrap_err();
+        assert_eq!(err.etype(), &InternalError);
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_missing_snapshot() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+        ctx.upstream_name = Some(pavis_core::UpstreamName("u1".into()));
+        ctx.runtime_state = None;
+
+        let res = proxy.upstream_peer(&mut session, &mut ctx).await;
+        let err = res.unwrap_err();
+        assert_eq!(err.etype(), &InternalError);
+        assert!(err.to_string().contains("missing runtime snapshot"));
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_upstream_not_found() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state: state.clone(),
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+        ctx.upstream_name = Some(pavis_core::UpstreamName("u1".into()));
+        ctx.runtime_state = Some(state.load().clone());
+
+        let res = proxy.upstream_peer(&mut session, &mut ctx).await;
+        let err = res.unwrap_err();
+        assert_eq!(err.etype(), &InternalError);
+        assert!(err.to_string().contains("Upstream not found in config"));
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_no_endpoints() {
+        use pavis_core::{UpstreamBuilder, UpstreamId, UpstreamName};
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(std::num::NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("u1".into()))
+            .build()
+            .unwrap();
+
+        let manager = crate::upstream::Manager::new(std::slice::from_ref(&upstream)).unwrap();
+        let router = Arc::new(crate::router::Router::new(vec![]).unwrap());
+        let mut config = test_config();
+        config.upstreams.push(upstream);
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let state = RuntimeState::with_components(validated, router, manager);
+        let state_arc = Arc::new(state);
+
+        let proxy = Proxy {
+            state: Arc::new(RuntimeStateHandle::new(RuntimeState::default())),
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+        ctx.upstream_name = Some(pavis_core::UpstreamName("u1".into()));
+        ctx.runtime_state = Some(state_arc);
+
+        let res = proxy.upstream_peer(&mut session, &mut ctx).await;
+        let err = res.unwrap_err();
+        assert_eq!(err.etype(), &InternalError);
+        assert!(err.to_string().contains("Upstream has no endpoints"));
+    }
+
+    #[tokio::test]
+    async fn test_error_while_proxy_retry() {
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let peer = HttpPeer::new("127.0.0.1:80", false, "test".to_string());
+        let mut ctx = proxy.new_ctx();
+
+        // Enable retry
+        let retry_ctx = crate::retry::RetryContext::new(
+            pavis_core::RetryPolicy::Enabled {
+                max_attempts: std::num::NonZeroU16::new(3).unwrap(),
+                per_try: pavis_core::TryTimeout::Inherit,
+                retryable_reasons: vec![
+                    pavis_core::RetryReason::ReadTimeout,
+                    pavis_core::RetryReason::StatusCode,
+                ],
+                retryable_status_codes: None,
+                backoff: pavis_core::BackoffStrategy::Fixed { base_ms: 0 },
+                retry_non_idempotent: false,
+                fail_on_non_replayable_retry: false,
+                max_request_body_buffer_bytes: 1024,
+            },
+            1000,
+            None,
+            "test".to_string(),
+        );
+        ctx.retry_ctx = Some(retry_ctx);
+
+        let e = Box::new(Error::new(ErrorType::ReadError));
+        let e = proxy.error_while_proxy(&peer, &mut session, *e, &mut ctx, false);
+
+        assert!(e.retry());
+        assert_eq!(ctx.retry_ctx.as_ref().unwrap().attempt, 2);
+    }
+
+    #[tokio::test]
+    async fn test_logging_failure() {
+        use pavis_core::{
+            Endpoint, EndpointAddr, Port, UpstreamBuilder, UpstreamId, UpstreamName, Weight,
+        };
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(std::num::NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("u1".into()))
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Ip {
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: Port(std::num::NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(std::num::NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .unwrap();
+
+        let mut config = test_config();
+        config.upstreams.push(upstream);
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let state = Arc::new(RuntimeStateHandle::new(
+            RuntimeState::from_config(&validated).unwrap(),
+        ));
+
+        let proxy = Proxy {
+            state: state.clone(),
+            telemetry: test_telemetry(),
+        };
+        let (mut session, _) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = proxy.new_ctx();
+        ctx.upstream_name = Some(pavis_core::UpstreamName("u1".into()));
+        ctx.upstream_endpoint = Some(EndpointAddr::Ip {
+            address: "127.0.0.1".parse().unwrap(),
+            port: Port(std::num::NonZeroU16::new(8080).unwrap()),
+        });
+        ctx.runtime_state = Some(state.load().clone());
+
+        let err = Error::new(ErrorType::ConnectError);
+        proxy.logging(&mut session, Some(&err), &mut ctx).await;
+        // Verify no panic
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_builder_sni_variants() {
+        let telemetry = test_telemetry();
+        let builder = UpstreamPeerBuilder::new(&telemetry);
+        let mut ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-1".parse().unwrap()),
+            upstream_name: None,
+            upstream_endpoint: None,
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
+            sni_override: None,
+            start_time: Instant::now(),
+            client_identity: None,
+            rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
+            upstream_timing: crate::proxy::context::UpstreamTiming::NotStarted,
+            route_pattern: crate::proxy::context::RoutePattern::NotMatched,
+            pool_permit: None,
+            circuit_breaker_permit: None,
+            runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
+        };
+
+        let addr = "127.0.0.1:8080".parse().unwrap();
+        let mut upstream = UpstreamBuilder::new()
+            .id(pavis_core::UpstreamId(
+                std::num::NonZeroU16::new(1).unwrap(),
+            ))
+            .name(pavis_core::UpstreamName("u1".into()))
+            .tls(pavis_core::TlsPolicy::Enabled {
+                verify: pavis_core::TlsVerify::Full,
+                sni: pavis_core::SniName::Auto,
+                canonical_sni: pavis_core::CanonicalSni::Enabled {
+                    name: Hostname("canonical.com".into()),
+                },
+                reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+                cert: pavis_core::ClientCert::Disabled,
+                ca: pavis_core::UpstreamCa::System,
+            })
+            .build()
+            .unwrap();
+
+        let cluster = Cluster::new(upstream.clone());
+
+        // 1. Canonical SNI
+        let peer = builder
+            .build(
+                &ctx,
+                &upstream.name,
+                &upstream,
+                &cluster,
+                &pavis_core::Endpoint {
+                    address: pavis_core::EndpointAddr::Ip {
+                        address: "127.0.0.1".parse().unwrap(),
+                        port: pavis_core::Port(std::num::NonZeroU16::new(80).unwrap()),
+                    },
+                    weight: pavis_core::Weight(std::num::NonZeroU16::new(1).unwrap()),
+                },
+                None,
+                addr,
+            )
+            .unwrap();
+        assert_eq!(peer.sni, "canonical.com");
+
+        // 2. Reuse across SNI
+        if let pavis_core::TlsPolicy::Enabled {
+            ref mut reuse_across_sni,
+            ref mut canonical_sni,
+            ..
+        } = upstream.tls
+        {
+            *reuse_across_sni = pavis_core::ReuseAcrossSni::Enabled;
+            *canonical_sni = pavis_core::CanonicalSni::Disabled;
+        }
+        let peer = builder
+            .build(
+                &ctx,
+                &upstream.name,
+                &upstream,
+                &cluster,
+                &pavis_core::Endpoint {
+                    address: pavis_core::EndpointAddr::Ip {
+                        address: "127.0.0.1".parse().unwrap(),
+                        port: pavis_core::Port(std::num::NonZeroU16::new(80).unwrap()),
+                    },
+                    weight: pavis_core::Weight(std::num::NonZeroU16::new(1).unwrap()),
+                },
+                Some(Hostname("auto.com".into())),
+                addr,
+            )
+            .unwrap();
+        assert_eq!(peer.sni, "auto.com");
+
+        // 3. Explicit SNI
+        if let pavis_core::TlsPolicy::Enabled {
+            ref mut sni,
+            ref mut reuse_across_sni,
+            ..
+        } = upstream.tls
+        {
+            *sni = pavis_core::SniName::Name(Hostname("explicit.com".into()));
+            *reuse_across_sni = pavis_core::ReuseAcrossSni::Disabled;
+        }
+        let peer = builder
+            .build(
+                &ctx,
+                &upstream.name,
+                &upstream,
+                &cluster,
+                &pavis_core::Endpoint {
+                    address: pavis_core::EndpointAddr::Ip {
+                        address: "127.0.0.1".parse().unwrap(),
+                        port: pavis_core::Port(std::num::NonZeroU16::new(80).unwrap()),
+                    },
+                    weight: pavis_core::Weight(std::num::NonZeroU16::new(1).unwrap()),
+                },
+                None,
+                addr,
+            )
+            .unwrap();
+        assert_eq!(peer.sni, "explicit.com");
+
+        // 4. Verify Full without SNI should fail
+        if let pavis_core::TlsPolicy::Enabled { ref mut sni, .. } = upstream.tls {
+            *sni = pavis_core::SniName::Disabled;
+        }
+        let res = builder.build(
+            &ctx,
+            &upstream.name,
+            &upstream,
+            &cluster,
+            &pavis_core::Endpoint {
+                address: pavis_core::EndpointAddr::Ip {
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: pavis_core::Port(std::num::NonZeroU16::new(80).unwrap()),
+                },
+                weight: pavis_core::Weight(std::num::NonZeroU16::new(1).unwrap()),
+            },
+            None,
+            addr,
+        );
+        assert!(res.is_err());
+
+        // 5. SNI override
+        if let pavis_core::TlsPolicy::Enabled { ref mut sni, .. } = upstream.tls {
+            *sni = pavis_core::SniName::Auto;
+        }
+        ctx.sni_override = Some(Hostname("override.com".into()));
+        let peer = builder
+            .build(
+                &ctx,
+                &upstream.name,
+                &upstream,
+                &cluster,
+                &pavis_core::Endpoint {
+                    address: pavis_core::EndpointAddr::Ip {
+                        address: "127.0.0.1".parse().unwrap(),
+                        port: pavis_core::Port(std::num::NonZeroU16::new(80).unwrap()),
+                    },
+                    weight: pavis_core::Weight(std::num::NonZeroU16::new(1).unwrap()),
+                },
+                None,
+                addr,
+            )
+            .unwrap();
+        assert_eq!(peer.sni, "override.com");
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_builder_tls_modes() {
+        let telemetry = test_telemetry();
+        let builder = UpstreamPeerBuilder::new(&telemetry);
+        let ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-1".parse().unwrap()),
+            upstream_name: None,
+            upstream_endpoint: None,
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
+            sni_override: None,
+            start_time: Instant::now(),
+            client_identity: None,
+            rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
+            upstream_timing: crate::proxy::context::UpstreamTiming::NotStarted,
+            route_pattern: crate::proxy::context::RoutePattern::NotMatched,
+            pool_permit: None,
+            circuit_breaker_permit: None,
+            runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
+        };
+
+        let addr = "127.0.0.1:8080".parse().unwrap();
+        let mut upstream = UpstreamBuilder::new()
+            .id(pavis_core::UpstreamId(
+                std::num::NonZeroU16::new(1).unwrap(),
+            ))
+            .name(pavis_core::UpstreamName("u1".into()))
+            .tls(pavis_core::TlsPolicy::Enabled {
+                verify: pavis_core::TlsVerify::Disabled,
+                sni: pavis_core::SniName::Auto,
+                canonical_sni: pavis_core::CanonicalSni::Disabled,
+                reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+                cert: pavis_core::ClientCert::Disabled,
+                ca: pavis_core::UpstreamCa::System,
+            })
+            .build()
+            .unwrap();
+
+        let cluster = Cluster::new(upstream.clone());
+
+        // Disabled
+        let peer = builder
+            .build(
+                &ctx,
+                &upstream.name,
+                &upstream,
+                &cluster,
+                &pavis_core::Endpoint {
+                    address: pavis_core::EndpointAddr::Ip {
+                        address: "127.0.0.1".parse().unwrap(),
+                        port: pavis_core::Port(std::num::NonZeroU16::new(80).unwrap()),
+                    },
+                    weight: pavis_core::Weight(std::num::NonZeroU16::new(1).unwrap()),
+                },
+                None,
+                addr,
+            )
+            .unwrap();
+        assert!(!peer.options.verify_cert);
+
+        // CaOnly
+        if let pavis_core::TlsPolicy::Enabled { ref mut verify, .. } = upstream.tls {
+            *verify = pavis_core::TlsVerify::CaOnly;
+        }
+        let peer = builder
+            .build(
+                &ctx,
+                &upstream.name,
+                &upstream,
+                &cluster,
+                &pavis_core::Endpoint {
+                    address: pavis_core::EndpointAddr::Ip {
+                        address: "127.0.0.1".parse().unwrap(),
+                        port: pavis_core::Port(std::num::NonZeroU16::new(80).unwrap()),
+                    },
+                    weight: pavis_core::Weight(std::num::NonZeroU16::new(1).unwrap()),
+                },
+                None,
+                addr,
+            )
+            .unwrap();
+        assert!(peer.options.verify_cert);
+        assert!(!peer.options.verify_hostname);
+
+        // Full
+        if let pavis_core::TlsPolicy::Enabled {
+            ref mut verify,
+            ref mut sni,
+            ..
+        } = upstream.tls
+        {
+            *verify = pavis_core::TlsVerify::Full;
+            *sni = pavis_core::SniName::Name(Hostname("h".into()));
+        }
+        let peer = builder
+            .build(
+                &ctx,
+                &upstream.name,
+                &upstream,
+                &cluster,
+                &pavis_core::Endpoint {
+                    address: pavis_core::EndpointAddr::Ip {
+                        address: "127.0.0.1".parse().unwrap(),
+                        port: pavis_core::Port(std::num::NonZeroU16::new(80).unwrap()),
+                    },
+                    weight: pavis_core::Weight(std::num::NonZeroU16::new(1).unwrap()),
+                },
+                None,
+                addr,
+            )
+            .unwrap();
+        assert!(peer.options.verify_cert);
+        assert!(peer.options.verify_hostname);
+    }
+
+    #[tokio::test]
+    async fn test_request_filter_body_buffering_limit_exceeded() {
+        let (mut client, server) = tokio::io::duplex(1024);
+        let client_handle = tokio::spawn(async move {
+            client
+                .write_all(b"POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\n1234567890")
+                .await
+                .unwrap();
+            let mut buf = [0u8; 1024];
+            use tokio::io::AsyncReadExt;
+            let _ = client.read(&mut buf).await;
+        });
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.unwrap();
+
+        let mut config = test_config();
+        let vhost = pavis_core::VirtualHost {
+            host: pavis_core::Host("h".into()),
+            paths: vec![pavis_core::Route {
+                matcher: RouteMatcher {
+                    path: pavis_core::PathMatch::Prefix {
+                        path: pavis_core::Path("/".into()),
+                    },
+                    method: pavis_core::MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
+                },
+                timeout: pavis_core::Timeout::Disabled,
+                retry: pavis_core::RetryPolicy::Enabled {
+                    max_attempts: std::num::NonZeroU16::new(3).unwrap(),
+                    per_try: pavis_core::TryTimeout::Inherit,
+                    retryable_reasons: vec![],
+                    retryable_status_codes: None,
+                    backoff: pavis_core::BackoffStrategy::Fixed { base_ms: 0 },
+                    retry_non_idempotent: true,
+                    fail_on_non_replayable_retry: false,
+                    max_request_body_buffer_bytes: 5, // Limit smaller than body
+                },
+                request_headers: Arc::new(HeadersPolicy::Disabled),
+                response_headers: Arc::new(HeadersPolicy::Disabled),
+                rewrite: pavis_core::Rewrite {
+                    path: pavis_core::RewritePath::Disabled,
+                    host: pavis_core::RewriteHost::Disabled,
+                },
+                action: pavis_core::RouteAction::Direct {
+                    status: 200,
+                    body: "".into(),
+                },
+                principal: pavis_core::Principal::Any,
+            }],
+        };
+        config.routes.push(vhost);
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let state = Arc::new(RuntimeStateHandle::new(
+            RuntimeState::from_config(&validated).unwrap(),
+        ));
+
+        let proxy = Proxy {
+            state,
+            telemetry: test_telemetry(),
+        };
+        let mut ctx = proxy.new_ctx();
+
+        proxy.request_filter(&mut session, &mut ctx).await.unwrap();
+
+        assert!(ctx.buffered_body.is_some());
+        let body = ctx.buffered_body.as_ref().unwrap();
+        assert!(!body.can_replay());
+
+        client_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_builder_custom_tls() {
+        let telemetry = test_telemetry();
+        let builder = UpstreamPeerBuilder::new(&telemetry);
+        let ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-1".parse().unwrap()),
+            upstream_name: None,
+            upstream_endpoint: None,
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
+            sni_override: None,
+            start_time: Instant::now(),
+            client_identity: None,
+            rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
+            upstream_timing: crate::proxy::context::UpstreamTiming::NotStarted,
+            route_pattern: crate::proxy::context::RoutePattern::NotMatched,
+            pool_permit: None,
+            circuit_breaker_permit: None,
+            runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
+        };
+
+        let addr = "127.0.0.1:8080".parse().unwrap();
+        let upstream = UpstreamBuilder::new()
+            .id(pavis_core::UpstreamId(
+                std::num::NonZeroU16::new(1).unwrap(),
+            ))
+            .name(pavis_core::UpstreamName("u1".into()))
+            .tls(pavis_core::TlsPolicy::Enabled {
+                verify: pavis_core::TlsVerify::CaOnly,
+                sni: pavis_core::SniName::Auto,
+                canonical_sni: pavis_core::CanonicalSni::Disabled,
+                reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+                cert: pavis_core::ClientCert::Enabled {
+                    cert_path: pavis_core::Path("cert.pem".into()),
+                    key_path: pavis_core::Path("key.pem".into()),
+                    chain: pavis_core::ClientCertChain::None,
+                },
+                ca: pavis_core::UpstreamCa::File {
+                    path: pavis_core::Path("ca.pem".into()),
+                },
+            })
+            .build()
+            .unwrap();
+
+        // We can't easily mock Cluster's internal Arc<CertKey> and Arc<CaType> without real files
+        // but we can test that it tries to access them.
+        let cluster = Cluster::new(upstream.clone());
+        let res = builder.build(
+            &ctx,
+            &upstream.name,
+            &upstream,
+            &cluster,
+            &pavis_core::Endpoint {
+                address: pavis_core::EndpointAddr::Ip {
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: pavis_core::Port(std::num::NonZeroU16::new(80).unwrap()),
+                },
+                weight: pavis_core::Weight(std::num::NonZeroU16::new(1).unwrap()),
+            },
+            None,
+            addr,
+        );
+
+        // This will likely fail with "Client certificate not loaded" because we used dummy paths in Cluster::new
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Client certificate not loaded")
+        );
     }
 }

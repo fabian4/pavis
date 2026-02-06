@@ -20,9 +20,6 @@ This directory provides foundational utilities that are sourced by higher-level 
 - **time.sh** - Timestamp utilities
   - `timestamp_iso8601`, `timestamp_unix`, `timestamp_precise`, `duration_seconds`
 
-- **wait.sh** - Polling utilities
-  - `wait_for_url`, `wait_for_port`, `wait_for_file`
-
 - **contract.sh** - Artifact validation
   - `validate_benchmark_artifacts`, `validate_meta_json`, `validate_wrk_output`, `validate_loadgen_output`, `validate_docker_stats`, `require_cmd`
 

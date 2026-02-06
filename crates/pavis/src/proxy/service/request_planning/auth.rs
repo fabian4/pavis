@@ -22,3 +22,34 @@ pub fn is_authorized(principal: &Principal, client_identity: Option<&SpiffeId>) 
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_authorized() {
+        let id = SpiffeId("spiffe://td/ns/svc".to_string());
+
+        assert!(is_authorized(&Principal::Any, Some(&id)));
+        assert!(is_authorized(&Principal::Any, None));
+
+        let principal_auth = Principal::Authenticated { spiffe: id.clone() };
+        assert!(is_authorized(&principal_auth, Some(&id)));
+        assert!(!is_authorized(
+            &principal_auth,
+            Some(&SpiffeId("other".to_string()))
+        ));
+        assert!(!is_authorized(&principal_auth, None));
+
+        let principal_prefix = Principal::Prefix {
+            prefix: "spiffe://td".to_string(),
+        };
+        assert!(is_authorized(&principal_prefix, Some(&id)));
+        assert!(!is_authorized(
+            &principal_prefix,
+            Some(&SpiffeId("spiffe://other".to_string()))
+        ));
+        assert!(!is_authorized(&principal_prefix, None));
+    }
+}

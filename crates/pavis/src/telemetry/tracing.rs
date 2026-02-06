@@ -557,6 +557,7 @@ impl Service for TracingService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metrics_exporter_prometheus::PrometheusBuilder;
     use opentelemetry_sdk::error::OTelSdkError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -856,31 +857,99 @@ mod tests {
     }
 
     #[test]
-    fn reloadable_layer_delegation() {
-        use tracing::{Level, info, span};
+    fn reloadable_layer_delegation_full() {
         use tracing_subscriber::prelude::*;
 
+        #[derive(Default)]
+        struct FullSpy {
+            new_span: Arc<AtomicBool>,
+            event: Arc<AtomicBool>,
+            enter: Arc<AtomicBool>,
+            exit: Arc<AtomicBool>,
+            record: Arc<AtomicBool>,
+            close: Arc<AtomicBool>,
+        }
+        impl<S: Subscriber> Layer<S> for FullSpy {
+            fn on_new_span(
+                &self,
+                _attrs: &tracing::span::Attributes<'_>,
+                _id: &Id,
+                _ctx: Context<'_, S>,
+            ) {
+                self.new_span.store(true, Ordering::SeqCst);
+            }
+            fn on_event(&self, _event: &Event<'_>, _ctx: Context<'_, S>) {
+                self.event.store(true, Ordering::SeqCst);
+            }
+            fn on_enter(&self, _id: &Id, _ctx: Context<'_, S>) {
+                self.enter.store(true, Ordering::SeqCst);
+            }
+            fn on_exit(&self, _id: &Id, _ctx: Context<'_, S>) {
+                self.exit.store(true, Ordering::SeqCst);
+            }
+            fn on_record(
+                &self,
+                _span: &Id,
+                _values: &tracing::span::Record<'_>,
+                _ctx: Context<'_, S>,
+            ) {
+                self.record.store(true, Ordering::SeqCst);
+            }
+            fn on_close(&self, _id: Id, _ctx: Context<'_, S>) {
+                self.close.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let spy = Arc::new(FullSpy::default());
         let reload = ReloadHandle::new();
-        let spy = SpyLayer::new();
-        let on_new_span = spy.on_new_span.clone();
-        let on_event = spy.on_event.clone();
-        let on_enter = spy.on_enter.clone();
-        let on_exit = spy.on_exit.clone();
+        reload.reload(Box::new(FullSpy {
+            new_span: spy.new_span.clone(),
+            event: spy.event.clone(),
+            enter: spy.enter.clone(),
+            exit: spy.exit.clone(),
+            record: spy.record.clone(),
+            close: spy.close.clone(),
+        }));
 
-        reload.reload(Box::new(spy));
-
-        let subscriber = tracing_subscriber::registry().with(reload);
-
+        let subscriber = Registry::default().with(reload);
         tracing::subscriber::with_default(subscriber, || {
-            let span = span!(Level::INFO, "test_span");
-            let _enter = span.enter();
-            info!("test event");
+            let span = tracing::span!(Level::INFO, "test", f = 1);
+            span.record("f", 2);
+            let _guard = span.enter();
+            tracing::info!("event");
         });
 
-        assert!(on_new_span.load(Ordering::SeqCst), "on_new_span not called");
-        assert!(on_event.load(Ordering::SeqCst), "on_event not called");
-        assert!(on_enter.load(Ordering::SeqCst), "on_enter not called");
-        assert!(on_exit.load(Ordering::SeqCst), "on_exit not called");
+        assert!(spy.new_span.load(Ordering::SeqCst));
+        assert!(spy.event.load(Ordering::SeqCst));
+        assert!(spy.enter.load(Ordering::SeqCst));
+        assert!(spy.exit.load(Ordering::SeqCst));
+        assert!(spy.record.load(Ordering::SeqCst));
+        assert!(spy.close.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_tracing_service_shutdown_logic() {
+        let policy = pavis_core::TracingPolicy::Enabled {
+            provider: pavis_core::TracingProvider::Otlp,
+            sampling: pavis_core::SampleRate(100),
+            endpoint: "http://127.0.0.1:4317".to_string(),
+        };
+        let slot = Arc::new(OnceLock::new());
+        let provider = SdkTracerProvider::builder().build();
+        slot.set(TracingRuntime { provider }).unwrap();
+
+        let mut service = TracingService::new(policy, "svc".to_string(), None, slot.clone(), None);
+
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let handle = tokio::spawn(async move {
+            service.start_service(None, rx, 1).await;
+        });
+
+        tx.send(true).unwrap();
+        timeout(Duration::from_secs(1), handle)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[test]
@@ -944,54 +1013,6 @@ mod tests {
     }
 
     #[test]
-    fn reloadable_layer_more_delegation() {
-        use tracing_subscriber::prelude::*;
-
-        #[derive(Default)]
-        struct FullSpyLayer {
-            recorded: Arc<AtomicBool>,
-            enabled: Arc<AtomicBool>,
-            closed: Arc<AtomicBool>,
-        }
-        impl<S: Subscriber> Layer<S> for FullSpyLayer {
-            fn on_record(
-                &self,
-                _span: &Id,
-                _values: &tracing::span::Record<'_>,
-                _ctx: Context<'_, S>,
-            ) {
-                self.recorded.store(true, Ordering::SeqCst);
-            }
-            fn enabled(&self, _metadata: &tracing::Metadata<'_>, _ctx: Context<'_, S>) -> bool {
-                self.enabled.store(true, Ordering::SeqCst);
-                true
-            }
-            fn on_close(&self, _id: Id, _ctx: Context<'_, S>) {
-                self.closed.store(true, Ordering::SeqCst);
-            }
-        }
-
-        let reload = ReloadHandle::new();
-        let spy = FullSpyLayer::default();
-        let recorded = spy.recorded.clone();
-        let enabled = spy.enabled.clone();
-        let closed = spy.closed.clone();
-
-        reload.reload(Box::new(spy));
-        let subscriber = tracing_subscriber::registry().with(reload);
-
-        tracing::subscriber::with_default(subscriber, || {
-            let span = tracing::span!(Level::INFO, "test", field = "val");
-            span.record("field", "new_val");
-            assert!(enabled.load(Ordering::SeqCst));
-            drop(span);
-        });
-
-        assert!(recorded.load(Ordering::SeqCst));
-        assert!(closed.load(Ordering::SeqCst));
-    }
-
-    #[test]
     fn maybe_init_tracing_existing_runtime_no_handle() {
         let policy = pavis_core::TracingPolicy::Enabled {
             provider: pavis_core::TracingProvider::Otlp,
@@ -1004,5 +1025,20 @@ mod tests {
 
         // Should return early and do nothing
         maybe_init_tracing(&policy, "svc", None, &slot, None);
+    }
+
+    #[test]
+    fn test_tracing_metrics_recorder() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let registry = MetricsRegistry {
+            _handle: Arc::new(handle),
+            labels: Arc::new(crate::telemetry::metrics::test_exports::new_labels()),
+        };
+
+        // These should not panic
+        registry.record_span_created();
+        registry.record_span_exported();
+        registry.record_tracing_export_error();
     }
 }

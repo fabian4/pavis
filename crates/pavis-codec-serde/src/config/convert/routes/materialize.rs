@@ -117,3 +117,69 @@ fn route_method_field_path(vhost_index: usize, path_index: usize) -> String {
         .field("method")
         .finish()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pavis_core::Path;
+
+    #[test]
+    fn test_to_runtime_matcher_list() {
+        let path = PathMatch::Prefix {
+            path: Path("/".into()),
+        };
+        let methods = Some(vec!["GET".into(), "POST".into()]);
+        let res = to_runtime_matcher(path, None, methods, None, 0, 0).unwrap();
+        if let MethodPredicate::List(list) = res.method {
+            assert_eq!(list.len(), 2);
+            assert_eq!(list[0], pavis_core::HttpMethod::GET);
+            assert_eq!(list[1], pavis_core::HttpMethod::POST);
+        } else {
+            panic!("Expected List variant");
+        }
+    }
+
+    #[test]
+    fn test_to_runtime_headers_full() {
+        let ops = HeaderOperations {
+            set_headers: vec![("k1".into(), "v1".into())],
+            append_headers: vec![("k2".into(), "v2".into())],
+            add_headers: vec![("k3".into(), "v3".into())],
+            remove_headers: vec!["k4".into()],
+        };
+        let res = to_runtime_headers(Some(ops));
+        if let HeadersPolicy::Enabled { rules } = res {
+            assert_eq!(rules.set_headers.len(), 1);
+            assert_eq!(rules.append_headers.len(), 1);
+            assert_eq!(rules.add_headers.len(), 1);
+            assert_eq!(rules.remove_headers.len(), 1);
+        } else {
+            panic!("Expected Enabled variant");
+        }
+    }
+
+    #[test]
+    fn test_matcher_path_variants() {
+        let m1 = Matcher {
+            path: PathMatcher::Prefix { path: "/p".into() },
+            method: None,
+            methods: None,
+            headers: None,
+        };
+        assert_eq!(matcher_path(&m1), "/p");
+        let m2 = Matcher {
+            path: PathMatcher::Exact { path: "/e".into() },
+            method: None,
+            methods: None,
+            headers: None,
+        };
+        assert_eq!(matcher_path(&m2), "/e");
+        let m3 = Matcher {
+            path: PathMatcher::Regex { path: "/r".into() },
+            method: None,
+            methods: None,
+            headers: None,
+        };
+        assert_eq!(matcher_path(&m3), "/r");
+    }
+}

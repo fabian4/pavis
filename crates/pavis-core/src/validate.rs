@@ -938,4 +938,42 @@ mod tests {
             CoreValidationError::ForwardHasNoDestinations(..)
         ));
     }
+
+    #[test]
+    fn metrics_port_conflict_fails() {
+        let mut cfg = base_config();
+        cfg.telemetry.metrics = Metrics::Enabled {
+            addr: cfg.listeners[0].address,
+        };
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::PortConflict { .. }));
+    }
+
+    #[test]
+    fn unsupported_capability_fails() {
+        let mut cfg = base_config();
+        cfg.required_capabilities.push("unsupported".to_string());
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(err, CoreValidationError::UnsupportedCapability(_)));
+    }
+
+    #[test]
+    fn upstream_tls_reuse_across_sni_requires_dns() {
+        let mut cfg = base_config();
+        if let TlsPolicy::Enabled {
+            reuse_across_sni,
+            sni,
+            ..
+        } = &mut cfg.upstreams[0].tls
+        {
+            *reuse_across_sni = crate::runtime::ReuseAcrossSni::Enabled;
+            *sni = SniName::Auto;
+        }
+        // Current base_config has IP endpoint, so auto-SNI with reuse fails
+        let err = validate_runtime(cfg.clone()).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreValidationError::UpstreamTlsAutoSniRequiresDns(_)
+        ));
+    }
 }

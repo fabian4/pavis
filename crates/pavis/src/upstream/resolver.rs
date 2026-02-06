@@ -684,4 +684,94 @@ mod tests {
             .unwrap()
             .unwrap();
     }
+
+    #[tokio::test]
+    async fn test_resolve_strict_dns_mixed_endpoints() {
+        let config = build_upstream(
+            Discovery::Strict { ttl: 30 },
+            vec![
+                Endpoint {
+                    address: EndpointAddr::Ip {
+                        address: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                        port: Port(NonZeroU16::new(8080).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(10).unwrap()),
+                },
+                Endpoint {
+                    address: EndpointAddr::Dns {
+                        host: pavis_core::Hostname("localhost".to_string()),
+                        port: Port(NonZeroU16::new(8081).unwrap()),
+                    },
+                    weight: Weight(NonZeroU16::new(20).unwrap()),
+                },
+            ],
+        );
+
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
+        let state = Arc::new(crate::state::RuntimeStateHandle::new(
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
+        ));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
+
+        let res = resolve_strict_dns(&config, &resolver.resolver)
+            .await
+            .unwrap();
+
+        if let Some(endpoints) = res {
+            // Should have at least 2 endpoints (1 static + >=1 resolved)
+            assert!(endpoints.len() >= 2);
+
+            // Check preservation of weights
+            let static_ep = endpoints
+                .iter()
+                .find(|e| match e.address {
+                    EndpointAddr::Ip { address, port } => {
+                        address.to_string() == "127.0.0.1" && port.0.get() == 8080
+                    }
+                    _ => false,
+                })
+                .expect("static endpoint preserved");
+            assert_eq!(static_ep.weight.0.get(), 10);
+
+            let dns_ep = endpoints.iter().find(|e| match e.address {
+                EndpointAddr::Ip { port, .. } => port.0.get() == 8081,
+                _ => false,
+            });
+            if let Some(ep) = dns_ep {
+                assert_eq!(ep.weight.0.get(), 20);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_logical_dns_empty_resolution() {
+        let config = build_upstream(
+            Discovery::Logical,
+            vec![Endpoint {
+                address: EndpointAddr::Dns {
+                    host: pavis_core::Hostname("invalid host".to_string()),
+                    port: Port(NonZeroU16::new(8080).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            }],
+        );
+
+        let manager = crate::upstream::Manager::new(&[]).expect("manager");
+        let state = Arc::new(crate::state::RuntimeStateHandle::new(
+            crate::state::RuntimeState::with_components(
+                crate::state::RuntimeState::default().config,
+                Arc::new(crate::router::Router::new(vec![]).unwrap()),
+                manager,
+            ),
+        ));
+        let resolver = UpstreamResolver::new(state, Duration::from_secs(10)).expect("resolver");
+
+        // Should return Err because resolution failed
+        let res = resolve_logical_dns(&config, &[], &resolver.resolver).await;
+        assert!(res.is_err());
+    }
 }

@@ -110,7 +110,7 @@ pub(crate) struct RelayRuntimeState {
     history: Arc<RwLock<HashMap<u64, RelayArtifact>>>,
     notify: Arc<Notify>,
     publish_lock: Arc<Mutex<()>>,
-    options: RelayOptions,
+    pub(crate) options: RelayOptions,
     metrics: Arc<RelayMetrics>,
     last_error: Arc<RwLock<Option<String>>>,
     started_at: SystemTime,

@@ -183,3 +183,95 @@ pub fn validate_recv_buffer_size(
 
     Ok(size)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_duration_to_policy() {
+        assert!(
+            matches!(duration_to_policy(std::time::Duration::from_millis(100)).unwrap(), IdleTimeout::Enabled(Duration(ms)) if ms.get() == 100)
+        );
+        assert!(matches!(
+            duration_to_policy(std::time::Duration::from_millis(0)).unwrap(),
+            IdleTimeout::Disabled
+        ));
+        assert!(duration_to_policy(std::time::Duration::from_secs(u32::MAX as u64 + 1)).is_err());
+    }
+
+    #[test]
+    fn test_materialize_pool_max() {
+        assert_eq!(
+            materialize_pool_max(None, "u", 0).unwrap().get(),
+            DEFAULT_POOL_MAX
+        );
+        assert_eq!(materialize_pool_max(Some(10), "u", 0).unwrap().get(), 10);
+        assert!(materialize_pool_max(Some(0), "u", 0).is_err());
+        assert!(materialize_pool_max(Some(-1), "u", 0).is_err());
+    }
+
+    #[test]
+    fn test_materialize_queue_value() {
+        assert_eq!(materialize_queue_value(None, 10, "f", "u", 0).unwrap(), 10);
+        assert_eq!(
+            materialize_queue_value(Some(20), 10, "f", "u", 0).unwrap(),
+            20
+        );
+        assert!(materialize_queue_value(Some(-1), 10, "f", "u", 0).is_err());
+    }
+
+    #[test]
+    fn test_duration_to_tcp_keepalive() {
+        assert_eq!(
+            duration_to_tcp_keepalive(std::time::Duration::from_millis(100), "u", 0)
+                .unwrap()
+                .0
+                .get(),
+            100
+        );
+        assert!(duration_to_tcp_keepalive(std::time::Duration::from_millis(0), "u", 0).is_err());
+    }
+
+    #[test]
+    fn test_materialize_errors() {
+        assert!(duration_to_connect(std::time::Duration::from_secs(u32::MAX as u64 + 1)).is_err());
+        assert!(materialize_pool_max(Some(u32::MAX as i64 + 1), "u", 0).is_err());
+        assert!(materialize_queue_value(Some(u32::MAX as i64 + 1), 0, "f", "u", 0).is_err());
+        assert!(
+            duration_to_tcp_keepalive(std::time::Duration::from_secs(u32::MAX as u64 + 1), "u", 0)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_duration_to_required() {
+        assert_eq!(
+            duration_to_required(std::time::Duration::from_millis(100), "ctx")
+                .unwrap()
+                .0
+                .get(),
+            100
+        );
+        assert!(duration_to_required(std::time::Duration::from_millis(0), "ctx").is_err());
+        assert!(
+            duration_to_required(std::time::Duration::from_secs(u32::MAX as u64 + 1), "ctx")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_validate_recv_buffer_size() {
+        assert_eq!(validate_recv_buffer_size(8192, "u", 0).unwrap(), 8192);
+        assert_eq!(validate_recv_buffer_size(1024, "u", 0).unwrap(), 1024);
+        assert_eq!(validate_recv_buffer_size(2000000, "u", 0).unwrap(), 2000000);
+    }
+
+    #[test]
+    fn test_default_pool_config() {
+        let cfg = default_pool_config();
+        assert!(cfg.idle.is_some());
+        assert!(cfg.connect.is_some());
+        assert!(cfg.max.is_none());
+    }
+}

@@ -133,13 +133,16 @@ where
     }
 }
 
-async fn serve_metrics(
-    mut stream: tokio::net::TcpStream,
+async fn serve_metrics<S>(
+    stream: S,
     handle: metrics_exporter_prometheus::PrometheusHandle,
-) -> Result<(), std::io::Error> {
+) -> Result<(), std::io::Error>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-    let (reader, mut writer) = stream.split();
+    let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = tokio::io::BufReader::new(reader);
     let mut line = Vec::new();
     let mut total_bytes = 0usize;
@@ -196,8 +199,8 @@ async fn serve_metrics(
 
 #[derive(Clone)]
 pub struct MetricsRegistry {
-    _handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
-    labels: Arc<MetricLabels>,
+    pub(crate) _handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
+    pub(crate) labels: Arc<MetricLabels>,
 }
 
 pub const POOL_KEY_CARDINALITY_CAP: usize = 1024;
@@ -219,14 +222,14 @@ struct BoundedKeySet {
     order: VecDeque<(u64, Instant)>,
 }
 
-struct MetricLabels {
+pub struct MetricLabels {
     common: LabelCache,
     route: LabelCache,
     status: Mutex<HashMap<u16, SharedString>>,
 }
 
 impl MetricLabels {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             common: LabelCache::new(METRIC_LABEL_CACHE_CAP),
             route: LabelCache::new(METRIC_ROUTE_LABEL_CACHE_CAP),
@@ -628,6 +631,13 @@ impl MetricsRegistry {
 }
 
 #[cfg(test)]
+pub mod test_exports {
+    pub(crate) fn new_labels() -> super::MetricLabels {
+        super::MetricLabels::new()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::router::{MatchVerdict, PredicateStats};
@@ -711,19 +721,83 @@ mod tests {
     }
 
     #[test]
+
     fn test_metrics_registry_record_methods() {
-        let (_endpoint, registry) =
-            PrometheusEndpoint::<TcpMetricsTransport>::new("127.0.0.1:0".parse().unwrap());
-        if let Some(registry) = registry {
-            registry.record_request("GET", "/", 200, "upstream1", 0.05);
-            registry.record_upstream_request("upstream1", 200, 0.02);
-            registry.record_connection_reused("upstream1");
-            registry.record_connection_new("upstream1", "reason");
-            registry.record_pool_size("upstream1", 5.0);
-            registry.record_pool_key_cardinality("upstream1", 10, true);
-            registry.increment_active_connections();
-            registry.decrement_active_connections();
-        }
+        let recorder = PrometheusBuilder::new().build_recorder();
+
+        let handle = recorder.handle();
+
+        let registry = MetricsRegistry {
+            _handle: Arc::new(handle),
+
+            labels: Arc::new(MetricLabels::new()),
+        };
+
+        registry.record_request("GET", "/", 200, "upstream1", 0.05);
+
+        registry.record_upstream_request("upstream1", 200, 0.02);
+
+        registry.record_connection_reused("upstream1");
+
+        registry.record_connection_new("upstream1", "reason");
+
+        registry.record_pool_size("upstream1", 5.0);
+
+        registry.record_pool_key_cardinality("upstream1", 10, true);
+
+        registry.increment_active_connections();
+
+        registry.decrement_active_connections();
+
+        registry.record_access_log_dropped();
+
+        registry.record_tracing_export_error();
+
+        registry.record_span_created();
+
+        registry.record_span_exported();
+
+        registry.record_metrics_label_dropped();
+
+        registry.record_retry("u1", "r1", 1);
+
+        registry.record_retry_outcome("u1", "o1");
+
+        registry.record_retry_body_buffered("u1", 100);
+
+        registry.update_config_stats("v1", 100);
+
+        registry.increment_reload_count();
+
+        registry.record_config_validation("s", "r");
+
+        registry.record_config_apply("s");
+
+        let verdict = MatchVerdict {
+            selection: None,
+
+            stats: PredicateStats {
+                path_misses: 1,
+
+                method_misses: 1,
+
+                header_misses: 1,
+
+                exact_evals: 1,
+
+                prefix_evals: 1,
+
+                regex_evals: 1,
+
+                present_evals: 1,
+
+                absent_evals: 1,
+
+                regex_input_too_large: 1,
+            },
+        };
+
+        registry.record_route_match(&verdict);
     }
 
     static TEST_METADATA: Metadata = Metadata::new("test", Level::INFO, Some("test"));
@@ -854,5 +928,71 @@ mod tests {
         assert!(response.starts_with(b"HTTP/1.0 200 OK"));
         let body = String::from_utf8_lossy(&response);
         assert!(body.contains("pavis_test_counter"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_metrics_timeout() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let (client, server) = tokio::io::duplex(1024);
+
+        // Don't write anything, just let it timeout or fail on drop
+        let task = tokio::spawn(async move { serve_metrics(server, handle).await });
+
+        drop(client);
+        let res = task.await.unwrap();
+        if let Err(e) = res {
+            assert!(
+                e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::UnexpectedEof
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_serve_metrics_line_too_long() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let (mut client, server) = tokio::io::duplex(8192);
+
+        tokio::spawn(async move {
+            let large_line = vec![b'a'; METRICS_REQUEST_LINE_LIMIT_BYTES + 1];
+            client.write_all(&large_line).await.unwrap();
+            client.write_all(b"\n").await.unwrap();
+        });
+
+        let res = serve_metrics(server, handle).await;
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "metrics request line too long"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_serve_metrics_headers_too_large() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let (mut client, server) = tokio::io::duplex(32768);
+
+        tokio::spawn(async move {
+            let _ = client.write_all(b"GET /metrics HTTP/1.1\n").await;
+            for _ in 0..1000 {
+                if client
+                    .write_all(
+                        b"X-Large-Header: some-value-that-is-quite-long-to-fill-up-the-buffer\n",
+                    )
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            let _ = client.write_all(b"\n").await;
+        });
+
+        let res = serve_metrics(server, handle).await;
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().to_string(), "metrics headers too large");
     }
 }

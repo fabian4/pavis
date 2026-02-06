@@ -833,14 +833,11 @@ fn parse_etag_header(value: &str) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::telemetry::metrics::{PrometheusEndpoint, TcpMetricsTransport};
     use pavis_core::{
         AccessLogPolicy, ListenerBuilder, ListenerName, LogLevel, Metrics, RuntimeConfigBuilder,
         ServiceName, Telemetry, TracingPolicy,
     };
     use pavis_pvs::PvsError;
-    use std::net::SocketAddr;
-
     #[test]
     fn test_classify_validation_error() {
         let err = anyhow::anyhow!(PvsError::VersionMismatch {
@@ -879,6 +876,149 @@ mod tests {
         assert!(parse_etag_header("sha256:short").is_err());
     }
 
+    #[tokio::test]
+    async fn test_config_agent_bootstrap_missing_lkg() {
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("missing.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = Arc::new(
+            ConfigAgent::new(
+                "http://localhost".to_string(),
+                lkg,
+                state,
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        );
+        let worker = agent.clone().worker();
+
+        // bootstrap_from_lkg should succeed (do nothing) if file missing
+        worker.bootstrap_from_lkg().await.unwrap();
+        assert!(agent.last_applied_etag_for_tests().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_config_agent_verify_update_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("lkg.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = ConfigAgent::new(
+            "http://localhost".to_string(),
+            lkg,
+            state,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("test".to_string()))
+            .address("127.0.0.1:8080".parse().unwrap())
+            .build()
+            .unwrap();
+        let config = RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .unwrap();
+
+        let bytes = pavis_pvs::encode(&config).unwrap();
+        let etag = checksum_for_bytes(&bytes);
+
+        let update = agent
+            .verify_update(bytes, etag.clone(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(update.etag, etag);
+        assert!(update.tmp_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_config_agent_verify_update_etag_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("lkg.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = ConfigAgent::new(
+            "http://localhost".to_string(),
+            lkg,
+            state,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let res = agent
+            .verify_update(
+                vec![1, 2, 3],
+                "sha256:wrong_length_must_be_64_chars_0123456789abcdef0123456789abcdef01"
+                    .to_string(),
+                None,
+                None,
+            )
+            .await;
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("etag/sha256 mismatch")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_config_agent_apply_update_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("lkg.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = ConfigAgent::new(
+            "http://localhost".to_string(),
+            lkg.clone(),
+            state.clone(),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("test".to_string()))
+            .address("127.0.0.1:8080".parse().unwrap())
+            .build()
+            .unwrap();
+        let config = RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .unwrap();
+
+        let bytes = pavis_pvs::encode(&config).unwrap();
+        let etag = checksum_for_bytes(&bytes);
+        let tmp_path = tmp_path_for(&lkg);
+        write_atomic(&tmp_path, &bytes).await.unwrap();
+
+        let update = VerifiedUpdate {
+            etag: etag.clone(),
+            version: Some(ConfigVersion(std::num::NonZeroU64::new(1).unwrap())),
+            size: Some(bytes.len() as u64),
+            tmp_path,
+        };
+
+        let (applied_etag, version) = agent.apply_update(update).await.unwrap();
+        assert_eq!(applied_etag, etag);
+        assert_eq!(version.unwrap().get(), 1);
+        assert_eq!(state.load().config_version.unwrap().get(), 1);
+        assert!(lkg.exists());
+    }
+
     #[test]
     fn test_config_agent_basic_methods() {
         let dir = tempfile::tempdir().unwrap();
@@ -893,12 +1033,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(agent.current_state().state, "Idle");
-
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let (_endpoint, metrics) = PrometheusEndpoint::<TcpMetricsTransport>::new(addr);
-        if let Some(m) = metrics {
-            agent.set_metrics_handle(Arc::new(m));
-        }
 
         let called = Arc::new(AtomicBool::new(false));
         let called_clone = called.clone();
@@ -930,5 +1064,124 @@ mod tests {
             cb(&config);
         }
         assert!(called.load(Ordering::SeqCst));
+    }
+
+    use axum::{Router, extract::State, http::HeaderValue, response::IntoResponse, routing::get};
+
+    #[derive(Clone)]
+    struct RelayStub {
+        status: Arc<Mutex<u16>>,
+        etag: Arc<Mutex<Option<String>>>,
+        body: Arc<Mutex<Vec<u8>>>,
+    }
+
+    async fn relay_handler(State(stub): State<RelayStub>) -> impl IntoResponse {
+        let status = *stub.status.lock().unwrap();
+        let etag = stub.etag.lock().unwrap().clone();
+        let body = stub.body.lock().unwrap().clone();
+
+        let mut res = if status == 200 {
+            body.into_response()
+        } else {
+            axum::http::StatusCode::from_u16(status)
+                .unwrap()
+                .into_response()
+        };
+
+        if let Some(e) = etag {
+            res.headers_mut().insert(
+                "etag",
+                HeaderValue::from_str(&format!("\"{}\"", e)).unwrap(),
+            );
+        }
+        res
+    }
+
+    async fn spawn_stub(stub: RelayStub) -> String {
+        let app = Router::new()
+            .route("/v1/config", get(relay_handler))
+            .with_state(stub);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn test_poll_once_no_update() {
+        let stub = RelayStub {
+            status: Arc::new(Mutex::new(304)),
+            etag: Arc::new(Mutex::new(None)),
+            body: Arc::new(Mutex::new(vec![])),
+        };
+        let url = spawn_stub(stub).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("lkg.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = ConfigAgent::new(url, lkg, state, Duration::from_secs(1)).unwrap();
+
+        let outcome = agent.poll_once(100).await.unwrap();
+        assert!(matches!(outcome, PollOutcome::NoChange));
+    }
+
+    #[tokio::test]
+    async fn test_poll_once_transient_unavailable() {
+        let stub = RelayStub {
+            status: Arc::new(Mutex::new(503)),
+            etag: Arc::new(Mutex::new(None)),
+            body: Arc::new(Mutex::new(vec![])),
+        };
+        let url = spawn_stub(stub).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("lkg.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = ConfigAgent::new(url, lkg, state, Duration::from_secs(1)).unwrap();
+
+        let outcome = agent.poll_once(100).await.unwrap();
+        assert!(matches!(outcome, PollOutcome::NoChange));
+    }
+
+    #[tokio::test]
+    async fn test_poll_once_updated() {
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("test".to_string()))
+            .address("127.0.0.1:8080".parse().unwrap())
+            .build()
+            .unwrap();
+        let config = RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .unwrap();
+
+        let bytes = pavis_pvs::encode(&config).unwrap();
+        let etag = checksum_for_bytes(&bytes);
+
+        let stub = RelayStub {
+            status: Arc::new(Mutex::new(200)),
+            etag: Arc::new(Mutex::new(Some(etag.clone()))),
+            body: Arc::new(Mutex::new(bytes)),
+        };
+        let url = spawn_stub(stub).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("lkg.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = ConfigAgent::new(url, lkg, state, Duration::from_secs(1)).unwrap();
+
+        let outcome = agent.poll_once(100).await.unwrap();
+        assert!(matches!(outcome, PollOutcome::Updated));
+        assert_eq!(agent.last_applied_etag_for_tests().unwrap(), etag);
     }
 }
