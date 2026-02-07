@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
+use tracing::warn;
 
 use crate::state::RuntimeStateHandle;
 
@@ -324,12 +325,16 @@ fn build_health_client(
     if let TlsPolicy::Enabled { verify, .. } = &upstream.tls {
         match verify {
             TlsVerify::Disabled => {
-                builder = builder
-                    .danger_accept_invalid_certs(true)
-                    .danger_accept_invalid_hostnames(true);
+                warn!(
+                    "upstream '{}' requested tls.verify=disabled for health checks; using full verification instead",
+                    upstream.name.0
+                );
             }
             TlsVerify::CaOnly => {
-                builder = builder.danger_accept_invalid_hostnames(true);
+                warn!(
+                    "upstream '{}' requested tls.verify=ca-only for health checks; hostname verification remains enabled",
+                    upstream.name.0
+                );
             }
             TlsVerify::Full => {}
             #[allow(unreachable_patterns)]

@@ -77,10 +77,9 @@ fn init_state(
         .as_ref()
         .map(derive_state_from_lkg)
         .unwrap_or(RelayState { current_version: 0 });
-    let state_path = storage_root.as_path().join("state.json");
-    let cached_state = load_state(&state_path).context("failed to load state.json")?;
+    let cached_state = load_state(&storage_root).context("failed to load state.json")?;
     if cached_state.as_ref() != Some(&derived_state) {
-        save_state(&state_path, &derived_state).context("failed to persist state.json")?;
+        save_state(&storage_root, &derived_state).context("failed to persist state.json")?;
     }
 
     let orphans = find_orphaned_versions(&storage_root, derived_state.current_version)
@@ -333,8 +332,10 @@ mod tests {
         let (addr, state) = init_state(&config, Some(&dir)).expect("state");
         assert_eq!(addr.ip().to_string(), "127.0.0.1");
         assert_eq!(state.options().identity_name, "relay");
-        let state_path = dir.join("state.json");
-        let persisted = load_state(&state_path).expect("load state").expect("state");
+        let storage_root = ValidatedStorageRoot::new(dir.clone()).expect("validated storage root");
+        let persisted = load_state(&storage_root)
+            .expect("load state")
+            .expect("state");
         assert_eq!(persisted.current_version, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -375,8 +376,9 @@ mod tests {
             .block_on(state.snapshot());
 
         assert!(!snapshot.pvs_bytes.is_empty());
-        let state_path = dir.join("state.json");
-        let persisted = load_state(&state_path).expect("load state").expect("state");
+        let persisted = load_state(&storage_root)
+            .expect("load state")
+            .expect("state");
         assert_eq!(persisted.current_version, 1);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -496,9 +498,8 @@ mod tests {
         let storage_root = ValidatedStorageRoot::new(dir.clone()).unwrap();
         promote_to_lkg(&storage_root, &pvs_bytes, &meta).unwrap();
 
-        let state_path = dir.join("state.json");
         crate::state::save_state(
-            &state_path,
+            &storage_root,
             &crate::state::RelayState { current_version: 9 },
         )
         .unwrap();
@@ -507,7 +508,9 @@ mod tests {
         config.http.bind = "127.0.0.1:0".to_string();
         let (_addr, _state) = init_state(&config, Some(&dir)).expect("state");
 
-        let persisted = load_state(&state_path).expect("load state").expect("state");
+        let persisted = load_state(&storage_root)
+            .expect("load state")
+            .expect("state");
         assert_eq!(persisted.current_version, 2);
 
         let _ = std::fs::remove_dir_all(&dir);

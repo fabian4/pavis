@@ -100,8 +100,14 @@ impl ValidatedStorageRoot {
     /// Get the validated path as a `&Path`.
     ///
     /// This is safe because the path has been validated at construction time.
+    #[allow(dead_code)]
     pub fn as_path(&self) -> &Path {
         &self.canonical
+    }
+
+    /// Returns the canonical path to `state.json` under this storage root.
+    pub fn state_json_path(&self) -> PathBuf {
+        self.canonical.join("state.json")
     }
 
     /// Join a relative path component to this validated root.

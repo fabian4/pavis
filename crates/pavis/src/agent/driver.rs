@@ -970,7 +970,7 @@ mod tests {
 
         let listener = ListenerBuilder::new()
             .name(ListenerName("test".to_string()))
-            .address("127.0.0.1:8080".parse().unwrap())
+            .address("127.0.0.1:0".parse().unwrap())
             .build()
             .unwrap();
         let config = RuntimeConfigBuilder::new()
@@ -1042,7 +1042,7 @@ mod tests {
 
         let listener = ListenerBuilder::new()
             .name(ListenerName("test".to_string()))
-            .address("127.0.0.1:8080".parse().unwrap())
+            .address("127.0.0.1:0".parse().unwrap())
             .build()
             .unwrap();
         let config = RuntimeConfigBuilder::new()
@@ -1114,7 +1114,7 @@ mod tests {
 
         let listener = ListenerBuilder::new()
             .name(ListenerName("test".to_string()))
-            .address("127.0.0.1:8080".parse().unwrap())
+            .address("127.0.0.1:0".parse().unwrap())
             .build()
             .unwrap();
         let config = RuntimeConfigBuilder::new()
@@ -1175,7 +1175,7 @@ mod tests {
         if let Some(cb) = guard.as_ref() {
             let listener = ListenerBuilder::new()
                 .name(ListenerName("test".to_string()))
-                .address("127.0.0.1:8080".parse().unwrap())
+                .address("127.0.0.1:0".parse().unwrap())
                 .build()
                 .unwrap();
 
@@ -1279,7 +1279,7 @@ mod tests {
     async fn test_poll_once_updated() {
         let listener = ListenerBuilder::new()
             .name(ListenerName("test".to_string()))
-            .address("127.0.0.1:8080".parse().unwrap())
+            .address("127.0.0.1:0".parse().unwrap())
             .build()
             .unwrap();
         let config = RuntimeConfigBuilder::new()

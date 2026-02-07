@@ -3,16 +3,27 @@ use crate::storage::history::{
 };
 use crate::storage::metadata::ArtifactMetadata;
 use crate::storage::validated_path::ValidatedStorageRoot;
+use anyhow::Context;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+const LKG_DIR: &str = "lkg";
+const LKG_ARTIFACT_FILE: &str = "config.pvs";
+const LKG_METADATA_FILE: &str = "meta.json";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LkgFile {
+    Artifact,
+    Metadata,
+}
+
 pub(crate) fn lkg_artifact_path(base: &ValidatedStorageRoot) -> PathBuf {
-    base.join("lkg").join("config.pvs")
+    base.join(LKG_DIR).join(LKG_ARTIFACT_FILE)
 }
 
 pub(crate) fn lkg_metadata_path(base: &ValidatedStorageRoot) -> PathBuf {
-    base.join("lkg").join("meta.json")
+    base.join(LKG_DIR).join(LKG_METADATA_FILE)
 }
 
 pub(crate) fn promote_to_lkg(
@@ -20,14 +31,10 @@ pub(crate) fn promote_to_lkg(
     artifact: &[u8],
     meta: &ArtifactMetadata,
 ) -> anyhow::Result<()> {
-    let dir = base.join("lkg");
-    fs::create_dir_all(&dir)?;
-
-    let artifact_path = lkg_artifact_path(base);
-    let metadata_path = lkg_metadata_path(base);
-    write_atomic(&artifact_path, artifact)?;
+    let dir = ensure_lkg_dir(base)?;
+    write_atomic_in_dir(base, &dir, LKG_ARTIFACT_FILE, artifact)?;
     let meta_json = serde_json::to_vec_pretty(meta)?;
-    write_atomic(&metadata_path, &meta_json)?;
+    write_atomic_in_dir(base, &dir, LKG_METADATA_FILE, &meta_json)?;
     fsync_dir(&dir)?;
 
     Ok(())
@@ -36,66 +43,54 @@ pub(crate) fn promote_to_lkg(
 pub(crate) fn load_lkg(
     base: &ValidatedStorageRoot,
 ) -> anyhow::Result<Option<(Vec<u8>, ArtifactMetadata)>> {
-    let artifact_path = lkg_artifact_path(base);
-    let metadata_path = lkg_metadata_path(base);
+    let artifact_bytes = read_lkg_file_if_present(base, LkgFile::Artifact)?;
+    let metadata_bytes = read_lkg_file_if_present(base, LkgFile::Metadata)?;
 
-    let artifact_exists = artifact_path.exists();
-    let metadata_exists = metadata_path.exists();
-
-    match (artifact_exists, metadata_exists) {
-        (false, false) => Ok(None),
-        (true, true) => {
-            let bytes = fs::read(&artifact_path)?;
-            let meta_bytes = fs::read(&metadata_path)?;
+    match (artifact_bytes, metadata_bytes) {
+        (None, None) => Ok(None),
+        (Some(bytes), Some(meta_bytes)) => {
             let meta = serde_json::from_slice::<ArtifactMetadata>(&meta_bytes)?;
             Ok(Some((bytes, meta)))
         }
-        (true, false) => Err(anyhow::anyhow!("LKG artifact exists without metadata")),
-        (false, true) => Err(anyhow::anyhow!("LKG metadata exists without artifact")),
+        (Some(_), None) => Err(anyhow::anyhow!("LKG artifact exists without metadata")),
+        (None, Some(_)) => Err(anyhow::anyhow!("LKG metadata exists without artifact")),
     }
 }
 
 pub(crate) fn load_lkg_metadata(
     base: &ValidatedStorageRoot,
 ) -> anyhow::Result<Option<ArtifactMetadata>> {
-    let metadata_path = lkg_metadata_path(base);
-    if !metadata_path.exists() {
-        return Ok(None);
-    }
-    let meta_bytes = fs::read(&metadata_path)?;
+    let meta_bytes = match read_lkg_file_if_present(base, LkgFile::Metadata)? {
+        Some(bytes) => bytes,
+        None => return Ok(None),
+    };
     let meta = serde_json::from_slice::<ArtifactMetadata>(&meta_bytes)?;
     Ok(Some(meta))
 }
 
 pub(crate) fn repair_lkg(base: &ValidatedStorageRoot) -> anyhow::Result<()> {
-    let artifact_path = lkg_artifact_path(base);
-    let metadata_path = lkg_metadata_path(base);
+    let artifact_bytes = read_lkg_file_if_present(base, LkgFile::Artifact)?;
+    let metadata_bytes = read_lkg_file_if_present(base, LkgFile::Metadata)?;
 
-    let artifact_exists = artifact_path.exists();
-    let metadata_exists = metadata_path.exists();
-
-    if !artifact_exists && !metadata_exists {
-        return Ok(());
-    }
-
-    if metadata_exists && !artifact_exists {
-        let meta_bytes = fs::read(&metadata_path)?;
-        let meta = serde_json::from_slice::<ArtifactMetadata>(&meta_bytes)?;
-        recover_lkg_from_history(base, meta.version)?;
-        return Ok(());
-    }
-
-    if artifact_exists && !metadata_exists {
-        if let Some(version) = max_history_version(base)?
-            && recover_lkg_from_history(base, version).is_ok()
-        {
-            return Ok(());
+    match (artifact_bytes, metadata_bytes) {
+        (None, None) => Ok(()),
+        (None, Some(meta_bytes)) => {
+            let meta = serde_json::from_slice::<ArtifactMetadata>(&meta_bytes)?;
+            recover_lkg_from_history(base, meta.version)
         }
-        let _ = fs::remove_file(&artifact_path);
-        return Ok(());
+        (Some(_), None) => {
+            if let Some(version) = max_history_version(base)?
+                && recover_lkg_from_history(base, version).is_ok()
+            {
+                return Ok(());
+            }
+            if let Some(path) = lkg_file_path_if_exists(base, LkgFile::Artifact)? {
+                let _ = fs::remove_file(path);
+            }
+            Ok(())
+        }
+        (Some(_), Some(_)) => Ok(()),
     }
-
-    Ok(())
 }
 
 fn max_history_version(base: &ValidatedStorageRoot) -> anyhow::Result<Option<u64>> {
@@ -106,25 +101,97 @@ fn max_history_version(base: &ValidatedStorageRoot) -> anyhow::Result<Option<u64
 fn recover_lkg_from_history(base: &ValidatedStorageRoot, version: u64) -> anyhow::Result<()> {
     let artifact_path = history_artifact_path(base, version);
     let metadata_path = history_metadata_path(base, version);
-
-    if !artifact_path.exists() || !metadata_path.exists() {
-        return Err(anyhow::anyhow!(
-            "history entry missing for version {}",
-            version
-        ));
-    }
-
-    let bytes = fs::read(&artifact_path)?;
-    let meta_bytes = fs::read(&metadata_path)?;
+    let bytes = read_if_present(base, &artifact_path)?
+        .ok_or_else(|| anyhow::anyhow!("history entry missing artifact for version {}", version))?;
+    let meta_bytes = read_if_present(base, &metadata_path)?
+        .ok_or_else(|| anyhow::anyhow!("history entry missing metadata for version {}", version))?;
     let meta = serde_json::from_slice::<ArtifactMetadata>(&meta_bytes)?;
     promote_to_lkg(base, &bytes, &meta)
 }
 
-fn write_atomic(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+fn lkg_file_path_if_exists(
+    base: &ValidatedStorageRoot,
+    file: LkgFile,
+) -> anyhow::Result<Option<PathBuf>> {
+    let dir = match ensure_existing_path(base, &base.join(LKG_DIR)) {
+        Ok(path) => path,
+        Err(err) => {
+            if let Some(io) = err.downcast_ref::<std::io::Error>()
+                && io.kind() == std::io::ErrorKind::NotFound
+            {
+                return Ok(None);
+            }
+            return Err(err);
+        }
+    };
+    let candidate = match file {
+        LkgFile::Artifact => lkg_artifact_path(base),
+        LkgFile::Metadata => lkg_metadata_path(base),
+    };
+    let name = candidate
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("invalid LKG file name: {}", candidate.display()))?;
+    Ok(Some(dir.join(name)))
+}
+
+fn read_lkg_file_if_present(
+    base: &ValidatedStorageRoot,
+    file: LkgFile,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let path = match lkg_file_path_if_exists(base, file)? {
+        Some(path) => path,
+        None => return Ok(None),
+    };
+    read_if_present(base, &path)
+}
+
+fn ensure_lkg_dir(base: &ValidatedStorageRoot) -> anyhow::Result<PathBuf> {
+    let root = ensure_existing_path(base, base.as_path())?;
+    let dir = root.join(LKG_DIR);
+    match fs::create_dir(&dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) => return Err(err.into()),
     }
-    let tmp_path = path.with_extension("tmp");
+    ensure_existing_path(base, &dir)
+}
+
+fn read_if_present(base: &ValidatedStorageRoot, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+    let canonical = match ensure_existing_path(base, path) {
+        Ok(path) => path,
+        Err(err) => {
+            if let Some(io) = err.downcast_ref::<std::io::Error>()
+                && io.kind() == std::io::ErrorKind::NotFound
+            {
+                return Ok(None);
+            }
+            return Err(err);
+        }
+    };
+    match fs::read(canonical) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn write_atomic_in_dir(
+    base: &ValidatedStorageRoot,
+    dir: &Path,
+    file_name: &str,
+    contents: &[u8],
+) -> anyhow::Result<()> {
+    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+        anyhow::bail!("invalid file name: {file_name}");
+    }
+    let path = dir.join(file_name);
+    if !path.starts_with(base.as_path()) {
+        anyhow::bail!("path escaped storage root: {}", path.display());
+    }
+    let tmp_path = dir.join(format!("{file_name}.tmp"));
+    if !tmp_path.starts_with(base.as_path()) {
+        anyhow::bail!("tmp path escaped storage root: {}", tmp_path.display());
+    }
     let mut file = fs::File::create(&tmp_path)?;
     file.write_all(contents)?;
     file.sync_all()?;
@@ -136,6 +203,20 @@ fn fsync_dir(path: &Path) -> anyhow::Result<()> {
     let dir = fs::File::open(path)?;
     dir.sync_all()?;
     Ok(())
+}
+
+fn ensure_existing_path(base: &ValidatedStorageRoot, path: &Path) -> anyhow::Result<PathBuf> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize {}", path.display()))?;
+    if !canonical.starts_with(base.as_path()) {
+        anyhow::bail!(
+            "storage path escaped root: {} not under {}",
+            canonical.display(),
+            base.as_path().display()
+        );
+    }
+    Ok(canonical)
 }
 
 #[cfg(test)]

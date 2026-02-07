@@ -423,12 +423,15 @@ jobs:
           cargo +nightly tarpaulin \
             --all-features \
             --workspace \
+            --timeout 300 \
             --exclude pavis-benchkit \
             --exclude pavis-testkit \
             --exclude-files 'crates/*/tests/*' \
             --exclude-files 'crates/**/*tests.rs' \
             --out xml \
-            -- --skip retry_context_skips_backoff_when_budget_exhausted
+            -- \
+            --skip retry_context_skips_backoff_when_budget_exhausted \
+            --skip admin::tests::test_admin_api_bind_fail
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v5

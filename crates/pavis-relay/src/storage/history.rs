@@ -1,5 +1,6 @@
 use crate::storage::metadata::ArtifactMetadata;
 use crate::storage::validated_path::ValidatedStorageRoot;
+use anyhow::Context;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
@@ -8,15 +9,11 @@ use std::path::{Path, PathBuf};
 const VERSION_WIDTH: usize = 10;
 
 pub(crate) fn history_artifact_path(base: &ValidatedStorageRoot, version: u64) -> PathBuf {
-    base.join("history")
-        .join(format!("{version:0width$}.pvs", width = VERSION_WIDTH))
+    base.join("history").join(version_artifact_name(version))
 }
 
 pub(crate) fn history_metadata_path(base: &ValidatedStorageRoot, version: u64) -> PathBuf {
-    base.join("history").join(format!(
-        "{version:0width$}.meta.json",
-        width = VERSION_WIDTH
-    ))
+    base.join("history").join(version_metadata_name(version))
 }
 
 #[allow(dead_code)] // Used by publish flow in Phase 2 and tests.
@@ -26,14 +23,10 @@ pub(crate) fn append_to_history(
     artifact: &[u8],
     meta: &ArtifactMetadata,
 ) -> anyhow::Result<()> {
-    let dir = base.join("history");
-    fs::create_dir_all(&dir)?;
-    let artifact_path = history_artifact_path(base, version);
-    let metadata_path = history_metadata_path(base, version);
-
-    write_atomic(&artifact_path, artifact)?;
+    let dir = ensure_history_dir(base)?;
+    write_atomic_in_dir(base, &dir, &version_artifact_name(version), artifact)?;
     let meta_json = serde_json::to_vec_pretty(meta)?;
-    write_atomic(&metadata_path, &meta_json)?;
+    write_atomic_in_dir(base, &dir, &version_metadata_name(version), &meta_json)?;
     fsync_dir(&dir)?;
 
     Ok(())
@@ -71,15 +64,22 @@ pub(crate) fn find_corrupt_versions(base: &ValidatedStorageRoot) -> anyhow::Resu
 }
 
 fn scan_history_sets(base: &ValidatedStorageRoot) -> anyhow::Result<(HashSet<u64>, HashSet<u64>)> {
-    let dir = base.join("history");
-    if !dir.exists() {
-        return Ok((HashSet::new(), HashSet::new()));
-    }
+    let scan_dir = match ensure_existing_path(base, &base.join("history")) {
+        Ok(path) => path,
+        Err(err) => {
+            if let Some(io) = err.downcast_ref::<std::io::Error>()
+                && io.kind() == std::io::ErrorKind::NotFound
+            {
+                return Ok((HashSet::new(), HashSet::new()));
+            }
+            return Err(err);
+        }
+    };
 
     let mut artifact_versions = HashSet::new();
     let mut meta_versions = HashSet::new();
 
-    for entry in fs::read_dir(&dir)? {
+    for entry in fs::read_dir(&scan_dir)? {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -105,11 +105,42 @@ fn parse_version(name: &str, suffix: &str) -> Option<u64> {
     stem.parse::<u64>().ok()
 }
 
-fn write_atomic(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+fn version_artifact_name(version: u64) -> String {
+    format!("{version:0width$}.pvs", width = VERSION_WIDTH)
+}
+
+fn version_metadata_name(version: u64) -> String {
+    format!("{version:0width$}.meta.json", width = VERSION_WIDTH)
+}
+
+fn ensure_history_dir(base: &ValidatedStorageRoot) -> anyhow::Result<PathBuf> {
+    let root = ensure_existing_path(base, base.as_path())?;
+    let dir = root.join("history");
+    match fs::create_dir(&dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) => return Err(err.into()),
     }
-    let tmp_path = path.with_extension("tmp");
+    ensure_existing_path(base, &dir)
+}
+
+fn write_atomic_in_dir(
+    base: &ValidatedStorageRoot,
+    dir: &Path,
+    file_name: &str,
+    contents: &[u8],
+) -> anyhow::Result<()> {
+    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+        anyhow::bail!("invalid file name: {file_name}");
+    }
+    let path = dir.join(file_name);
+    if !path.starts_with(base.as_path()) {
+        anyhow::bail!("path escaped storage root: {}", path.display());
+    }
+    let tmp_path = dir.join(format!("{file_name}.tmp"));
+    if !tmp_path.starts_with(base.as_path()) {
+        anyhow::bail!("tmp path escaped storage root: {}", tmp_path.display());
+    }
     let mut file = fs::File::create(&tmp_path)?;
     file.write_all(contents)?;
     file.sync_all()?;
@@ -121,6 +152,20 @@ fn fsync_dir(path: &Path) -> anyhow::Result<()> {
     let dir = fs::File::open(path)?;
     dir.sync_all()?;
     Ok(())
+}
+
+fn ensure_existing_path(base: &ValidatedStorageRoot, path: &Path) -> anyhow::Result<PathBuf> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize {}", path.display()))?;
+    if !canonical.starts_with(base.as_path()) {
+        anyhow::bail!(
+            "storage path escaped root: {} not under {}",
+            canonical.display(),
+            base.as_path().display()
+        );
+    }
+    Ok(canonical)
 }
 
 #[cfg(test)]

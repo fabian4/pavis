@@ -288,8 +288,7 @@ async fn publish_persists_state_json() {
     let storage_root = &state.options().storage_root;
 
     let meta = state.publish_bytes(bytes).await.expect("publish");
-    let state_path = storage_root.as_path().join("state.json");
-    let loaded = crate::state::load_state(&state_path)
+    let loaded = crate::state::load_state(storage_root)
         .expect("load state")
         .expect("state exists");
 

@@ -360,13 +360,21 @@ impl RelayRuntimeState {
         if let Err(err) = promote_to_lkg(storage_root, &bytes, &metadata) {
             let artifact_path = history_artifact_path(storage_root, proposed_version);
             let meta_path = history_metadata_path(storage_root, proposed_version);
-            let _ = std::fs::remove_file(&artifact_path);
-            let _ = std::fs::remove_file(&meta_path);
+            if let Ok(path) = artifact_path.canonicalize()
+                && path.starts_with(storage_root.as_path())
+            {
+                let _ = std::fs::remove_file(path);
+            }
+            if let Ok(path) = meta_path.canonicalize()
+                && path.starts_with(storage_root.as_path())
+            {
+                let _ = std::fs::remove_file(path);
+            }
             return Err(RelayError::Storage(std::io::Error::other(err)));
         }
 
         if let Err(err) = save_state(
-            &storage_root.as_path().join("state.json"),
+            storage_root,
             &RelayState {
                 current_version: proposed_version,
             },
