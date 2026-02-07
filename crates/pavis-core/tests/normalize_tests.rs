@@ -22,6 +22,52 @@ fn test_flatten_nested_and() {
 }
 
 #[test]
+fn test_flatten_nested_and_deep() {
+    let a = PredicateNode::Header(HeaderMatcher::Present { name: "a".into() });
+    let b = PredicateNode::Header(HeaderMatcher::Present { name: "b".into() });
+    let c = PredicateNode::Header(HeaderMatcher::Present { name: "c".into() });
+
+    // And([And([a, b]), c]) -> And([a, b, c])
+    let pred = PredicateNode::And(vec![
+        PredicateNode::And(vec![a.clone(), b.clone()]),
+        c.clone(),
+    ]);
+
+    let normalized = pred.normalize();
+    if let PredicateNode::And(children) = normalized {
+        assert_eq!(children.len(), 3);
+        assert!(children.contains(&a));
+        assert!(children.contains(&b));
+        assert!(children.contains(&c));
+    } else {
+        panic!("Expected And node, got {:?}", normalized);
+    }
+}
+
+#[test]
+fn test_flatten_nested_or_deep() {
+    let a = PredicateNode::Header(HeaderMatcher::Present { name: "a".into() });
+    let b = PredicateNode::Header(HeaderMatcher::Present { name: "b".into() });
+    let c = PredicateNode::Header(HeaderMatcher::Present { name: "c".into() });
+
+    // Or([Or([a, b]), c]) -> Or([a, b, c])
+    let pred = PredicateNode::Or(vec![
+        PredicateNode::Or(vec![a.clone(), b.clone()]),
+        c.clone(),
+    ]);
+
+    let normalized = pred.normalize();
+    if let PredicateNode::Or(children) = normalized {
+        assert_eq!(children.len(), 3);
+        assert!(children.contains(&a));
+        assert!(children.contains(&b));
+        assert!(children.contains(&c));
+    } else {
+        panic!("Expected Or node, got {:?}", normalized);
+    }
+}
+
+#[test]
 fn test_flatten_nested_or() {
     let pred = PredicateNode::Or(vec![
         PredicateNode::Or(vec![
@@ -373,4 +419,14 @@ fn test_not_node_cost() {
     let cost = inner.cost();
     let pred = PredicateNode::Not(Box::new(inner));
     assert_eq!(pred.cost(), cost);
+}
+
+#[test]
+fn test_predicate_node_cost() {
+    assert_eq!(PredicateNode::True.cost(), MatcherCost(0));
+    assert_eq!(PredicateNode::False.cost(), MatcherCost(0));
+    assert_eq!(
+        PredicateNode::Method(MethodMatcher::Exact(HttpMethod::GET)).cost(),
+        MatcherCost(1)
+    );
 }

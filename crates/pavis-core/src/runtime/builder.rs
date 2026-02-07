@@ -370,4 +370,53 @@ mod tests {
         assert_eq!(cfg.listeners.len(), 1);
         assert_eq!(cfg.upstreams.len(), 1);
     }
+
+    #[test]
+    fn builder_comprehensive_test() {
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("default".to_string()))
+            .address(std::net::SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                8080,
+            ))
+            .workers(WorkerCount::Count(NonZeroU16::new(4).unwrap()))
+            .build()
+            .expect("listener");
+
+        let telemetry = Telemetry {
+            level: LogLevel::Info,
+            pingora: LogLevel::Info,
+            service_name: ServiceName("pavis".to_string()),
+            metrics: Metrics::Disabled,
+            access_log: AccessLogPolicy::Stdout,
+            tracing: TracingPolicy::Disabled,
+        };
+
+        let cfg = RuntimeConfigBuilder::new()
+            .telemetry(telemetry)
+            .add_listener(listener)
+            .add_required_capability("http/2".to_string())
+            .shutdown(ShutdownPolicy::Enabled {
+                drain_timeout: crate::runtime::Duration(std::num::NonZeroU32::new(5000).unwrap()),
+            })
+            .admin(AdminConfig::Enabled {
+                addr: std::net::SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9090),
+            })
+            .build()
+            .expect("config");
+
+        assert_eq!(cfg.required_capabilities, vec!["http/2".to_string()]);
+        assert!(matches!(cfg.shutdown, ShutdownPolicy::Enabled { .. }));
+        assert!(matches!(cfg.admin, AdminConfig::Enabled { .. }));
+        assert_eq!(
+            cfg.listeners[0].workers,
+            WorkerCount::Count(NonZeroU16::new(4).unwrap())
+        );
+    }
+
+    #[test]
+    fn builders_default_impls() {
+        let _ = ListenerBuilder::default();
+        let _ = UpstreamBuilder::default();
+    }
 }

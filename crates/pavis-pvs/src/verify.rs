@@ -650,12 +650,23 @@ mod tests {
     fn read_verified_file_rejects_payload_too_large() {
         let dir = std::env::temp_dir();
         let path = dir.join("pavis_too_large.pvs");
-        // Create a file larger than MAX_PAYLOAD_SIZE
-        let mut f = std::fs::File::create(&path).unwrap();
-        use std::io::Write;
-        f.write_all(&[0u8; HEADER_SIZE]).unwrap();
-        // This is tricky because we need to write 100MB+.
-        // Let's just mock it if we could, but here we can try to write it.
-        // Actually, 100MB is not THAT large for a test.
+        let f = std::fs::File::create(&path).unwrap();
+        // Use sparse file to avoid writing 100MB
+        f.set_len((100 * 1024 * 1024 + 64 + 1) as u64).unwrap();
+
+        let err = super::read_from_path(&path).expect_err("too large");
+        assert!(matches!(err, PvsError::PayloadTooLarge { .. }));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_verified_file_rejects_truncated_header() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("pavis_truncated_header.pvs");
+        std::fs::write(&path, b"PAVS").unwrap();
+
+        let err = super::read_from_path(&path).expect_err("too small");
+        assert!(matches!(err, PvsError::TooSmall { .. }));
+        let _ = std::fs::remove_file(&path);
     }
 }

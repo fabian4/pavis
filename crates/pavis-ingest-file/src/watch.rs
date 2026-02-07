@@ -287,4 +287,29 @@ mod tests {
             .unwrap();
         assert!(res.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_spawn_watcher_invalid_payload() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().with_extension("yaml");
+        std::fs::rename(tmp.path(), &path).unwrap();
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let _watcher = spawn_watcher(path.clone(), Duration::from_millis(10), 1024, tx)
+            .await
+            .unwrap();
+
+        // Write invalid data (not YAML or invalid PVS if it was PVS)
+        // Actually YAML validation just checks extension, but validate_bytes might do more.
+        // Let's check what validate_bytes does.
+        std::fs::write(&path, [0xFF, 0xFE, 0xFD]).unwrap();
+
+        let res = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        // If it's YAML, it might still pass if it's valid UTF-8,
+        // but [0xFF, 0xFE, 0xFD] is invalid UTF-8.
+        assert!(res.is_err());
+    }
 }

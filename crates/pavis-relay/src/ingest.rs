@@ -67,4 +67,20 @@ mod tests {
         let res = ingest.stream().await;
         assert!(res.is_err());
     }
+
+    #[tokio::test]
+    async fn test_ingest_box_explicit() {
+        struct Mock;
+        #[async_trait::async_trait]
+        impl Ingest for Mock {
+            type Stream = futures_util::stream::Empty<Result<Artifact, IngestError>>;
+            async fn stream(&mut self) -> Result<Self::Stream, IngestError> {
+                Ok(futures_util::stream::empty())
+            }
+        }
+
+        let mut ib = IngestBox(Mock);
+        let res = ib.stream().await;
+        assert!(res.is_ok());
+    }
 }

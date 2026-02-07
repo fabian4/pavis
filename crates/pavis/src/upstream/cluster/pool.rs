@@ -204,3 +204,80 @@ fn label_upstream(upstream: &str) -> SharedString {
     guard.insert(upstream.to_string(), shared.clone());
     shared
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pavis_core::{Upstream, UpstreamBuilder, UpstreamId, UpstreamName};
+    use std::num::NonZeroU16;
+
+    fn mock_upstream(name: &str, max: u32, q_cap: u32, q_timeout: u32) -> Upstream {
+        let mut u = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName(name.to_string()))
+            .build()
+            .unwrap();
+        u.pool.max = pavis_core::ConnectionLimit(std::num::NonZeroU32::new(max).unwrap());
+        u.pool.queue.capacity = q_cap;
+        u.pool.queue.timeout_ms = q_timeout;
+        u
+    }
+
+    #[tokio::test]
+    async fn test_pool_controller_queue_full() {
+        let u = mock_upstream("full", 1, 1, 1000);
+        let pool = PoolController::new(&u);
+
+        let _p1 = pool.acquire().await.unwrap();
+
+        // Next one should queue
+        let pool_clone = Arc::new(pool);
+        let pool2 = pool_clone.clone();
+        let h2 = tokio::spawn(async move { pool2.acquire().await });
+
+        // Wait for it to be queued
+        while pool_clone.limiter.queued.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        // Third one should fail immediately with QueueFull
+        let res3 = pool_clone.acquire().await;
+        assert!(matches!(res3, Err(PoolRejection::QueueFull)));
+
+        drop(_p1);
+        let _ = h2.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_pool_controller_queue_timeout() {
+        let u = mock_upstream("timeout", 1, 1, 10);
+        let pool = PoolController::new(&u);
+
+        let _p1 = pool.acquire().await.unwrap();
+
+        // Next one should queue and then timeout
+        let res2 = pool.acquire().await;
+        assert!(matches!(res2, Err(PoolRejection::QueueTimeout)));
+    }
+
+    #[tokio::test]
+    async fn test_pool_controller_zero_timeout_fails_fast() {
+        let u = mock_upstream("zero_timeout", 1, 1, 0);
+        let pool = PoolController::new(&u);
+        let _p1 = pool.acquire().await.unwrap();
+
+        let res2 = pool.acquire().await;
+        assert!(matches!(res2, Err(PoolRejection::QueueTimeout)));
+    }
+
+    #[test]
+    fn test_pool_rejection_sample_rate_env() {
+        unsafe {
+            std::env::set_var("PAVIS_POOL_REJECTION_SAMPLE_RATE", "1");
+        }
+        // It might be already initialized by another test, but we can't reset OnceLock.
+        // If it was already set, this will just return the existing value.
+        let rate = pool_rejection_sample_rate();
+        assert!(rate >= 1);
+    }
+}

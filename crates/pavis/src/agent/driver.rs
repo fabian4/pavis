@@ -1336,4 +1336,116 @@ mod tests {
         let outcome = agent.poll_once(100).await.unwrap();
         assert!(matches!(outcome, PollOutcome::Rejected));
     }
+
+    #[tokio::test]
+    async fn test_worker_run_loop_verify_and_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("lkg.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = Arc::new(
+            ConfigAgent::new(
+                "http://localhost".to_string(),
+                lkg.clone(),
+                state.clone(),
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        );
+
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("test".to_string()))
+            .address("127.0.0.1:0".parse().unwrap())
+            .build()
+            .unwrap();
+        let config = RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .unwrap();
+
+        let bytes = pavis_pvs::encode(&config).unwrap();
+        let etag = checksum_for_bytes(&bytes);
+
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let worker = agent.clone().worker();
+
+        // Inject initial events to trigger Verify and Apply
+        let mut event_queue = VecDeque::new();
+        let now = std::time::Instant::now();
+        event_queue.push_back(Event::Start { now });
+        event_queue.push_back(Event::Response {
+            response: Response::NewArtifact {
+                etag: etag.clone(),
+                version: Some(ConfigVersion(std::num::NonZeroU64::new(1).unwrap())),
+                size: Some(bytes.len() as u64),
+                bytes,
+            },
+            now,
+        });
+
+        let worker_handle = tokio::spawn(async move {
+            worker.run_loop(&mut shutdown_rx, event_queue).await;
+        });
+
+        // Give it time to process
+        let mut attempts = 0;
+        while attempts < 100 {
+            if agent.last_applied_etag_for_tests() == Some(etag.clone()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            attempts += 1;
+        }
+
+        assert_eq!(agent.last_applied_etag_for_tests().unwrap(), etag);
+
+        // Shutdown
+        let _ = shutdown_tx.send(true);
+        let _ = worker_handle.await;
+    }
+
+    #[tokio::test]
+
+    async fn test_config_agent_metrics_recording() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let lkg = dir.path().join("lkg.pvs");
+
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+
+        // Create a registry via PrometheusEndpoint
+
+        let (_worker, handle) = crate::telemetry::metrics::PrometheusEndpoint::<
+            crate::telemetry::metrics::TcpMetricsTransport,
+        >::new("127.0.0.1:0".parse().unwrap());
+
+        let agent = ConfigAgent::new(
+            "http://localhost".to_string(),
+            lkg,
+            state,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        if let Some(metrics) = handle {
+            agent.set_metrics_handle(Arc::new(metrics));
+        }
+
+        // Exercise metrics recording methods
+        agent.record_validation("ok", "none");
+        agent.record_apply("ok");
+        agent.record_config_stats(
+            Some(ConfigVersion(std::num::NonZeroU64::new(1).unwrap())),
+            Some(1024),
+            "test",
+        );
+        agent.record_config_stats(None, None, "none");
+    }
 }

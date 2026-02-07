@@ -14,9 +14,10 @@ use crate::state::RuntimeStateHandle;
 const ADMIN_REQUEST_LINE_LIMIT_BYTES: usize = 4096;
 const ADMIN_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn read_request_line(
-    reader: &mut BufReader<tokio::net::TcpStream>,
-) -> std::io::Result<Option<String>> {
+async fn read_request_line<R>(reader: &mut R) -> std::io::Result<Option<String>>
+where
+    R: AsyncBufReadExt + Unpin,
+{
     let mut buf = Vec::new();
     let read = timeout(ADMIN_READ_TIMEOUT, reader.read_until(b'\n', &mut buf))
         .await
@@ -348,13 +349,44 @@ mod tests {
     #[tokio::test]
     async fn test_read_request_line_too_long() {
         let (mut client, server) = tokio::io::duplex(ADMIN_REQUEST_LINE_LIMIT_BYTES + 100);
-        let _reader = BufReader::new(server);
+        let mut reader = BufReader::new(server);
 
         tokio::spawn(async move {
             let large_line = vec![b'a'; ADMIN_REQUEST_LINE_LIMIT_BYTES + 1];
             client.write_all(&large_line).await.unwrap();
             client.write_all(b"\n").await.unwrap();
         });
+
+        let res = read_request_line(&mut reader).await;
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn test_read_request_line_eof() {
+        let (client, server) = tokio::io::duplex(100);
+        let mut reader = BufReader::new(server);
+
+        tokio::spawn(async move {
+            drop(client);
+        });
+
+        let res = read_request_line(&mut reader).await.unwrap();
+        assert!(res.is_none());
+    }
+
+    #[tokio::test]
+    async fn stats_endpoint_with_version() {
+        let config = test_config();
+        let mut state_data = crate::state::RuntimeState::from_config(&config).unwrap();
+        state_data.config_version = Some(pavis_core::ConfigVersion(
+            std::num::NonZeroU64::new(42).unwrap(),
+        ));
+        let state = Arc::new(RuntimeStateHandle::new(state_data));
+
+        let worker = AdminApiWorker::new(AdminConfig::Disabled, state);
+        let response = worker.handle_request("GET", "/stats").await;
+        assert!(response.contains(r#""config_version":42"#));
     }
 
     #[tokio::test]

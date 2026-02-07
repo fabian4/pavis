@@ -680,4 +680,69 @@ mod tests {
         let result = convert_retry_policy(dto, &Timeout::Disabled, 0, 0);
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_header_predicate_legacy_present() {
+        let pred = HeaderPredicateLegacy {
+            name: "x-test".to_string(),
+            value: None,
+            regex: false,
+            prefix: false,
+            absent: false,
+        };
+
+        let result = to_runtime_header_predicate_legacy(pred, 0, 0, 0);
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap().matcher, HeaderMatch::Present));
+    }
+
+    #[test]
+    fn test_convert_retry_policy_per_try_timeout_exceeds() {
+        let dto = RetryPolicy {
+            max_attempts: 3,
+            per_try: Some(std::time::Duration::from_secs(10)),
+            retryable_reasons: vec![],
+            retryable_status_codes: None,
+            backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1_048_576,
+        };
+
+        // per_try 10s > route timeout 5s
+        let result = convert_retry_policy(
+            dto,
+            &Timeout::Enabled(pavis_core::Duration(5000.try_into().unwrap())),
+            0,
+            0,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("exceeds overall route timeout"));
+    }
+
+    #[test]
+    fn test_convert_retry_policy_no_status_code_reason() {
+        let dto = RetryPolicy {
+            max_attempts: 3,
+            per_try: None,
+            retryable_reasons: vec!["connect_timeout".to_string()],
+            retryable_status_codes: Some(vec![503]),
+            backoff: BackoffStrategyDTO::Fixed { base_ms: 100 },
+            retry_non_idempotent: false,
+            fail_on_non_replayable_retry: false,
+            max_request_body_buffer_bytes: 1_048_576,
+        };
+
+        let result = convert_retry_policy(dto, &Timeout::Disabled, 0, 0).unwrap();
+        if let CoreRetryPolicy::Enabled {
+            retryable_status_codes,
+            ..
+        } = result
+        {
+            assert_eq!(retryable_status_codes.unwrap().codes, vec![503]);
+        } else {
+            panic!("Expected Enabled policy");
+        }
+    }
 }

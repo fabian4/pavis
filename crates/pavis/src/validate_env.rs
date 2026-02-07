@@ -323,4 +323,62 @@ mod tests {
         assert!(matches!(err, RuntimeEnvError::MissingFile { .. }));
         assert!(err.to_string().contains("tls.ca.path"));
     }
+
+    #[test]
+    fn validate_env_skips_current_ports() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+
+        let mut cfg = base_runtime().into_inner();
+        cfg.listeners[0].address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        let validated = unsafe { ValidatedRuntimeConfig::from_trusted(cfg) };
+
+        // If we pass it as 'current', it should skip bind check and pass
+        assert!(validate_runtime_env(&validated, Some(&validated)).is_ok());
+        drop(listener);
+    }
+
+    #[test]
+    fn validate_env_rejects_missing_upstream_client_cert() {
+        use pavis_core::{
+            ClientCert, ClientCertChain, Endpoint, EndpointAddr, Port, TlsPolicy, UpstreamBuilder,
+            UpstreamId, UpstreamName, Weight,
+        };
+        use std::num::NonZeroU16;
+
+        let upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("u".to_string()))
+            .add_endpoint(Endpoint {
+                address: EndpointAddr::Ip {
+                    address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    port: Port(NonZeroU16::new(80).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .unwrap();
+
+        let mut cfg = base_runtime().into_inner();
+        let mut u = upstream;
+        u.tls = TlsPolicy::Enabled {
+            verify: pavis_core::TlsVerify::Disabled,
+            sni: pavis_core::SniName::Auto,
+            canonical_sni: pavis_core::CanonicalSni::Disabled,
+            reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+            cert: ClientCert::Enabled {
+                cert_path: pavis_core::Path("missing-cert.pem".into()),
+                key_path: pavis_core::Path("missing-key.pem".into()),
+                chain: ClientCertChain::File {
+                    path: pavis_core::Path("missing-chain.pem".into()),
+                },
+            },
+            ca: pavis_core::UpstreamCa::System,
+        };
+        cfg.upstreams.push(u);
+
+        let validated = unsafe { ValidatedRuntimeConfig::from_trusted(cfg) };
+        let err = validate_runtime_env(&validated, None).expect_err("missing upstream cert");
+        assert!(matches!(err, RuntimeEnvError::MissingFile { .. }));
+    }
 }

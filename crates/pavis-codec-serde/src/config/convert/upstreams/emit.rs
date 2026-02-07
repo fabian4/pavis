@@ -1058,4 +1058,76 @@ mod tests {
         assert_eq!(upstreams[0].name.0, "full-featured");
         assert_eq!(upstreams[0].id.0.get(), 42);
     }
+
+    #[test]
+    fn test_tls_sni_auto_default() {
+        let upstream = CodecUpstream {
+            tls: Some(UpstreamTlsConfig {
+                enabled: Some(true),
+                sni: None,
+                sni_mode: None,
+                ..Default::default()
+            }),
+            ..minimal_upstream("test")
+        };
+
+        let result = to_runtime(vec![upstream]).unwrap();
+        if let pavis_core::TlsPolicy::Enabled { sni, .. } = &result[0].tls {
+            assert!(matches!(sni, SniName::Auto));
+        } else {
+            panic!("Expected Enabled policy");
+        }
+    }
+
+    #[test]
+    fn test_tls_client_cert_chain_path_no_mode() {
+        let upstream = CodecUpstream {
+            tls: Some(UpstreamTlsConfig {
+                cert: Some(ClientCertConfig {
+                    cert_path: "cert.pem".to_string(),
+                    key_path: "key.pem".to_string(),
+                    chain_mode: None,
+                    chain_path: Some("chain.pem".to_string()),
+                }),
+                ..Default::default()
+            }),
+            ..minimal_upstream("test")
+        };
+
+        let result = to_runtime(vec![upstream]).unwrap();
+        if let pavis_core::TlsPolicy::Enabled { cert, .. } = &result[0].tls {
+            if let ClientCert::Enabled { chain, .. } = cert {
+                assert!(matches!(chain, ClientCertChain::File { .. }));
+            } else {
+                panic!("Expected Enabled cert");
+            }
+        } else {
+            panic!("Expected Enabled policy");
+        }
+    }
+
+    #[test]
+    fn test_health_check_no_timeout() {
+        let upstream = CodecUpstream {
+            health_check: Some(HealthCheck {
+                path: "/health".to_string(),
+                interval: std::time::Duration::from_secs(10),
+                timeout: None,
+                healthy_threshold: 1,
+                unhealthy_threshold: 1,
+            }),
+            ..minimal_upstream("test")
+        };
+
+        let result = to_runtime(vec![upstream]).unwrap();
+        if let ActiveHealthCheck::Enabled {
+            timeout, interval, ..
+        } = &result[0].health_check
+        {
+            assert_eq!(timeout.0.get(), 10000);
+            assert_eq!(interval.0.get(), 10000);
+        } else {
+            panic!("Expected Enabled health check");
+        }
+    }
 }

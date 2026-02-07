@@ -756,3 +756,117 @@ fn resolve_endpoint_for_tests(endpoint: &Endpoint) -> Vec<Endpoint> {
         _ => vec![endpoint.clone()],
     }
 }
+
+#[tokio::test]
+async fn test_upstream_peer_builder_canonical_sni() {
+    use pavis_core::{CanonicalSni, Hostname, SniName, TlsPolicy, TlsVerify};
+    use pingora::prelude::HttpPeer;
+
+    let mut config = minimal_config("test");
+    config.upstreams[0].tls = TlsPolicy::Enabled {
+        verify: TlsVerify::Full,
+        sni: SniName::Auto,
+        canonical_sni: CanonicalSni::Enabled {
+            name: Hostname("canonical.example.com".to_string()),
+        },
+        reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+        cert: pavis_core::ClientCert::Disabled,
+        ca: pavis_core::UpstreamCa::System,
+    };
+
+    let validated = pavis_core::validate_runtime(config).expect("validation");
+    let manager = Manager::new(&validated.upstreams).expect("manager");
+    materialize_test_upstreams(&manager, &validated.upstreams);
+    let state = RuntimeState::with_components(
+        validated,
+        Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+        manager,
+    );
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(state)),
+        telemetry: test_telemetry(),
+    };
+
+    let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
+    ctx.upstream_name = Some(UpstreamName("backend".to_string()));
+
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let peer: Box<HttpPeer> = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+    assert_eq!(peer.sni, "canonical.example.com");
+}
+
+#[tokio::test]
+async fn test_upstream_peer_builder_sni_disabled() {
+    use pavis_core::{CanonicalSni, SniName, TlsPolicy, TlsVerify};
+    use pingora::prelude::HttpPeer;
+
+    let mut config = minimal_config("test");
+    config.upstreams[0].tls = TlsPolicy::Enabled {
+        verify: TlsVerify::Disabled,
+        sni: SniName::Disabled,
+        canonical_sni: CanonicalSni::Disabled,
+        reuse_across_sni: pavis_core::ReuseAcrossSni::Disabled,
+        cert: pavis_core::ClientCert::Disabled,
+        ca: pavis_core::UpstreamCa::System,
+    };
+
+    let validated = pavis_core::validate_runtime(config).expect("validation");
+    let manager = Manager::new(&validated.upstreams).expect("manager");
+    materialize_test_upstreams(&manager, &validated.upstreams);
+    let state = RuntimeState::with_components(
+        validated,
+        Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+        manager,
+    );
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(state)),
+        telemetry: test_telemetry(),
+    };
+
+    let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
+    ctx.upstream_name = Some(UpstreamName("backend".to_string()));
+
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let peer: Box<HttpPeer> = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+    assert!(peer.sni.is_empty());
+}
+
+#[tokio::test]
+async fn test_upstream_peer_builder_sni_reuse() {
+    use pavis_core::{CanonicalSni, Hostname, ReuseAcrossSni, SniName, TlsPolicy, TlsVerify};
+    use pingora::prelude::HttpPeer;
+
+    let mut config = minimal_config("test");
+    config.upstreams[0].tls = TlsPolicy::Enabled {
+        verify: TlsVerify::Full,
+        sni: SniName::Name(Hostname("explicit.com".to_string())),
+        canonical_sni: CanonicalSni::Disabled,
+        reuse_across_sni: ReuseAcrossSni::Enabled,
+        cert: pavis_core::ClientCert::Disabled,
+        ca: pavis_core::UpstreamCa::System,
+    };
+
+    let validated = pavis_core::validate_runtime(config).expect("validation");
+    let manager = Manager::new(&validated.upstreams).expect("manager");
+    materialize_test_upstreams(&manager, &validated.upstreams);
+    let state = RuntimeState::with_components(
+        validated,
+        Arc::new(pavis::router::Router::new(vec![]).expect("empty routes")),
+        manager,
+    );
+    let proxy = Proxy {
+        state: Arc::new(RuntimeStateHandle::new(state)),
+        telemetry: test_telemetry(),
+    };
+
+    let mut ctx = proxy.new_ctx();
+    pin_runtime_state(&mut ctx, &proxy);
+    ctx.upstream_name = Some(UpstreamName("backend".to_string()));
+
+    let (mut session, _client) = session_for_request(b"GET / HTTP/1.1\r\n\r\n").await;
+    let peer: Box<HttpPeer> = proxy.upstream_peer(&mut session, &mut ctx).await.unwrap();
+    // Should still work, just exercises the SNI reuse branch
+    assert!(!peer.sni.is_empty());
+}

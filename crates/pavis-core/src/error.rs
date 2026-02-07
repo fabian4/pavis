@@ -203,6 +203,16 @@ mod tests {
     #[test]
     fn field_path_builder_panics_without_root() {
         assert!(std::panic::catch_unwind(|| { FieldPathBuilder::new().field("routes") }).is_err());
+        assert!(std::panic::catch_unwind(|| { FieldPathBuilder::new().index(0) }).is_err());
+        assert!(std::panic::catch_unwind(|| { FieldPathBuilder::new().map_key("k") }).is_err());
+        assert!(std::panic::catch_unwind(|| { FieldPathBuilder::new().finish() }).is_err());
+    }
+
+    #[test]
+    fn field_path_builder_panics_on_double_root() {
+        assert!(
+            std::panic::catch_unwind(|| { FieldPathBuilder::new().root("a").root("b") }).is_err()
+        );
     }
 
     #[test]

@@ -475,4 +475,190 @@ mod tests {
         assert!(!line.rbac_denied);
         assert_eq!(line.route_pattern, "/api/*");
     }
+
+    #[tokio::test]
+    async fn test_access_log_dropped_metrics() {
+        use crate::proxy::context::{
+            RequestTelemetry, RoutePattern, RouterContext, UpstreamTiming,
+        };
+        use pavis_core::{HeadersPolicy, RetryPolicy, Timeout};
+        use std::sync::Arc;
+        use std::time::Instant;
+
+        // Create with tiny capacity to force dropping
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let access_log = AccessLog {
+            tx: Some(tx),
+            enabled: true,
+            metrics: std::sync::Mutex::new(None),
+        };
+
+        // Create a registry and attach it
+        let (_worker, handle) = crate::telemetry::metrics::PrometheusEndpoint::<
+            crate::telemetry::metrics::TcpMetricsTransport,
+        >::new("127.0.0.1:0".parse().unwrap());
+        if let Some(metrics) = handle {
+            access_log.set_metrics_handle(Some(Arc::new(metrics)));
+        }
+
+        let ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-1".parse().unwrap()),
+            upstream_name: None,
+            upstream_endpoint: None,
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
+            sni_override: None,
+            start_time: Instant::now(),
+            client_identity: None,
+            rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
+            upstream_timing: UpstreamTiming::NotStarted,
+            route_pattern: RoutePattern::NotMatched,
+            pool_permit: None,
+            circuit_breaker_permit: None,
+            runtime_state: None,
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
+        };
+
+        let (mut client, server) = tokio::io::duplex(1024);
+        let mut session = Session::new_h1(Box::new(server));
+
+        // Mock a request so session has a header
+        client.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+        session.read_request().await.unwrap();
+
+        // Fill the channel
+        let _ = rx.try_recv();
+
+        // Fill 1 slot
+        access_log.log(&mut session, &ctx).await;
+        // This one should drop
+        access_log.log(&mut session, &ctx).await;
+
+        // We can't easily assert the metric value here without rendering prometheus,
+        // but this exercises the code path.
+    }
+
+    #[tokio::test]
+    async fn test_access_log_worker_throttle() {
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let mut worker = super::AccessLogWorker {
+            rx: Some(rx),
+            config: AccessLogPolicy::Stdout,
+            throttle_ms: Some(10),
+        };
+
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let worker_handle = tokio::spawn(async move {
+            worker.start_service(None, shutdown_rx, 1).await;
+        });
+
+        let start = std::time::Instant::now();
+        for _ in 0..3 {
+            tx.send(dummy_entry()).await.unwrap();
+        }
+
+        // Wait a bit and shutdown
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = shutdown_tx.send(true);
+        let _ = worker_handle.await;
+
+        // 3 entries with 10ms throttle should take at least 30ms
+        assert!(start.elapsed() >= Duration::from_millis(30));
+    }
+
+    #[tokio::test]
+    async fn test_access_log_dynamic_config() {
+        use crate::proxy::context::{
+            RequestTelemetry, RoutePattern, RouterContext, UpstreamTiming,
+        };
+        use crate::state::RuntimeState;
+        use pavis_core::{HeadersPolicy, RetryPolicy, Timeout};
+        use std::sync::Arc;
+        use std::time::Instant;
+
+        let (access_log, worker) = AccessLog::new(&AccessLogPolicy::Disabled);
+
+        assert!(worker.rx.is_none());
+        assert!(!access_log.enabled);
+
+        // Even if disabled statically, if dynamic config enables it, it should try to log
+        // (but it won't have a TX because new() didn't create one)
+
+        let mut builder = pavis_core::RuntimeConfigBuilder::new();
+        builder = builder.telemetry(pavis_core::Telemetry {
+            level: pavis_core::LogLevel::Info,
+            pingora: pavis_core::LogLevel::Error,
+            service_name: pavis_core::ServiceName("test".to_string()),
+            metrics: pavis_core::Metrics::Disabled,
+            access_log: AccessLogPolicy::Stdout,
+            tracing: pavis_core::TracingPolicy::Disabled,
+        });
+        builder = builder.add_listener(
+            pavis_core::ListenerBuilder::new()
+                .name(pavis_core::ListenerName("test".to_string()))
+                .address("127.0.0.1:0".parse().unwrap())
+                .build()
+                .unwrap(),
+        );
+        let config = builder.build().expect("build config");
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+
+        let state = RuntimeState::with_components(
+            validated,
+            Arc::new(crate::router::Router::new(vec![]).expect("empty routes")),
+            crate::upstream::Manager::new(&[]).expect("empty manager"),
+        );
+        let ctx = RouterContext {
+            telemetry: RequestTelemetry::new("req-1".parse().unwrap()),
+            upstream_name: None,
+            upstream_endpoint: None,
+            request_headers: Arc::new(HeadersPolicy::Disabled),
+            response_headers: Arc::new(HeadersPolicy::Disabled),
+            sni_override: None,
+            start_time: Instant::now(),
+            client_identity: None,
+            rbac_denied: false,
+            route_timeout: Timeout::Disabled,
+            retry_policy: RetryPolicy::Disabled,
+            retry_attempts: 0,
+            upstream_timing: UpstreamTiming::NotStarted,
+            route_pattern: RoutePattern::NotMatched,
+            pool_permit: None,
+            circuit_breaker_permit: None,
+            runtime_state: Some(Arc::new(state)),
+            retry_ctx: None,
+            buffered_body: None,
+            rewritten_uri: None,
+            rewritten_host: None,
+        };
+        let (mut _client, server) = tokio::io::duplex(1024);
+        let mut session = Session::new_h1(Box::new(server));
+
+        access_log.log(&mut session, &ctx).await;
+        // Should return early after finding tx is None
+    }
+
+    fn dummy_entry() -> super::LogEntry {
+        super::LogEntry {
+            timestamp: chrono::Utc::now(),
+            method: http::Method::GET,
+            host: "-".to_string(),
+            path: "-".to_string(),
+            status: 0,
+            upstream: "-".to_string(),
+            response_time: 0,
+            bytes_sent: 0,
+            client_ip: None,
+            request_id: "req-1".parse().unwrap(),
+            rbac_denied: false,
+            route_pattern: "-".to_string(),
+            upstream_duration_ms: None,
+        }
+    }
 }

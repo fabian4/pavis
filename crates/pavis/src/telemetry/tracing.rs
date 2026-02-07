@@ -1085,9 +1085,10 @@ mod tests {
             labels: Arc::new(crate::telemetry::metrics::test_exports::new_labels()),
         };
 
+        let dyn_metrics: &dyn TracingMetricsRecorder = &registry;
         // These should not panic
-        registry.record_span_created();
-        registry.record_span_exported();
-        registry.record_tracing_export_error();
+        dyn_metrics.record_span_created();
+        dyn_metrics.record_span_exported();
+        dyn_metrics.record_tracing_export_error();
     }
 }

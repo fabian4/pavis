@@ -327,4 +327,81 @@ mod tests {
             _ => panic!("Expected Authenticated"),
         }
     }
+
+    #[test]
+    fn test_backoff_strategy_field_defaults() {
+        let s: BackoffStrategyDTO = serde_json::from_str(r#"{"strategy": "fixed"}"#).unwrap();
+        match s {
+            BackoffStrategyDTO::Fixed { base_ms } => assert_eq!(base_ms, 100),
+            _ => panic!("Expected fixed"),
+        }
+
+        let s: BackoffStrategyDTO = serde_json::from_str(r#"{"strategy": "linear"}"#).unwrap();
+        match s {
+            BackoffStrategyDTO::Linear { base_ms } => assert_eq!(base_ms, 100),
+            _ => panic!("Expected linear"),
+        }
+
+        let s: BackoffStrategyDTO = serde_json::from_str(r#"{"strategy": "exponential"}"#).unwrap();
+        match s {
+            BackoffStrategyDTO::Exponential { base_ms, max_ms } => {
+                assert_eq!(base_ms, 100);
+                assert_eq!(max_ms, 5000);
+            }
+            _ => panic!("Expected exponential"),
+        }
+    }
+
+    #[test]
+    fn test_predicate_node_dto_deserialization() {
+        let t: PredicateNodeDTO = serde_json::from_str(r#"{"type": "true"}"#).unwrap();
+        assert_eq!(t, PredicateNodeDTO::True);
+
+        let f: PredicateNodeDTO = serde_json::from_str(r#"{"type": "false"}"#).unwrap();
+        assert_eq!(f, PredicateNodeDTO::False);
+
+        let m: PredicateNodeDTO =
+            serde_json::from_str(r#"{"type": "method", "method": "GET"}"#).unwrap();
+        match m {
+            PredicateNodeDTO::Method { method } => assert_eq!(method, "GET"),
+            _ => panic!("Expected Method"),
+        }
+
+        let h: PredicateNodeDTO =
+            serde_json::from_str(r#"{"type": "header", "operator": "present", "name": "X-Foo"}"#)
+                .unwrap();
+        match h {
+            PredicateNodeDTO::Header { matcher } => match matcher {
+                HeaderMatcherDTO::Present { name } => assert_eq!(name, "X-Foo"),
+                _ => panic!("Expected Present"),
+            },
+            _ => panic!("Expected Header"),
+        }
+
+        let and: PredicateNodeDTO =
+            serde_json::from_str(r#"{"type": "and", "predicates": [{"type": "true"}]}"#).unwrap();
+        match and {
+            PredicateNodeDTO::And { predicates } => assert_eq!(predicates.len(), 1),
+            _ => panic!("Expected And"),
+        }
+    }
+
+    #[test]
+    fn test_header_matcher_dto_variants() {
+        let exact: HeaderMatcherDTO =
+            serde_json::from_str(r#"{"operator": "exact", "name": "n", "value": "v"}"#).unwrap();
+        assert!(matches!(exact, HeaderMatcherDTO::Exact { .. }));
+
+        let prefix: HeaderMatcherDTO =
+            serde_json::from_str(r#"{"operator": "prefix", "name": "n", "prefix": "p"}"#).unwrap();
+        assert!(matches!(prefix, HeaderMatcherDTO::Prefix { .. }));
+
+        let regex: HeaderMatcherDTO =
+            serde_json::from_str(r#"{"operator": "regex", "name": "n", "pattern": "p"}"#).unwrap();
+        assert!(matches!(regex, HeaderMatcherDTO::Regex { .. }));
+
+        let absent: HeaderMatcherDTO =
+            serde_json::from_str(r#"{"operator": "absent", "name": "n"}"#).unwrap();
+        assert!(matches!(absent, HeaderMatcherDTO::Absent { .. }));
+    }
 }

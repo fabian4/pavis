@@ -787,4 +787,125 @@ mod tests {
         let fsm = Fsm::new_with_lkg_path(PathBuf::from("test"));
         assert!(matches!(fsm.state, State::Idle));
     }
+
+    #[test]
+    fn test_verify_ok_dedup_skips_apply_unconditional() {
+        let mut fsm = Fsm::new_with_lkg_path(PathBuf::from("/tmp/lkg"));
+        fsm.context_mut().last_applied_etag = Some("e1".to_string());
+        fsm.context_mut().force_unconditional_count = 1;
+
+        let update = VerifiedUpdate {
+            etag: "e1".to_string(),
+            version: None,
+            size: Some(100),
+            tmp_path: PathBuf::from("/tmp/t1"),
+        };
+
+        fsm.state = State::Verifying(VerifyingData {
+            etag: "e1".to_string(),
+            version: None,
+            size: Some(100),
+            bytes: vec![],
+        });
+
+        let effects = fsm.tick(Event::VerifyOk {
+            update,
+            now: Instant::now(),
+        });
+
+        // Should skip apply, discard temp, and fetch unconditional
+        assert!(matches!(fsm.state, State::Fetching));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::DiscardTemp { .. }))
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::FetchUnconditional { .. }))
+        );
+    }
+
+    #[test]
+    fn test_fsm_unexpected_events() {
+        let mut fsm = Fsm::new();
+        let now = Instant::now();
+
+        // Unexpected events in Idle state should do nothing
+        assert!(
+            fsm.tick(Event::Response {
+                response: Response::NoUpdate,
+                now,
+            })
+            .is_empty()
+        );
+        assert!(
+            fsm.tick(Event::VerifyOk {
+                update: VerifiedUpdate {
+                    etag: "e".into(),
+                    version: None,
+                    size: None,
+                    tmp_path: PathBuf::new(),
+                },
+                now,
+            })
+            .is_empty()
+        );
+        assert!(
+            fsm.tick(Event::VerifyFail {
+                etag: "e".into(),
+                now
+            })
+            .is_empty()
+        );
+        assert!(
+            fsm.tick(Event::ApplyOk {
+                etag: "e".into(),
+                version: None,
+                now,
+            })
+            .is_empty()
+        );
+        assert!(
+            fsm.tick(Event::ApplyFail {
+                etag: "e".into(),
+                now
+            })
+            .is_empty()
+        );
+
+        // Stopped state should ignore all events
+        fsm.state = State::Stopped;
+        assert!(fsm.tick(Event::Start { now }).is_empty());
+    }
+
+    #[test]
+    fn test_fsm_apply_ok_unconditional() {
+        let mut fsm = Fsm::new();
+        let now = Instant::now();
+        fsm.context_mut().force_unconditional_count = 1;
+        fsm.state = State::Applying(VerifiedUpdate {
+            etag: "e1".into(),
+            version: None,
+            size: None,
+            tmp_path: PathBuf::new(),
+        });
+
+        let effects = fsm.tick(Event::ApplyOk {
+            etag: "e1".into(),
+            version: None,
+            now,
+        });
+
+        // Should NOT save last_applied_etag if forced unconditional
+        assert!(fsm.context().last_applied_etag.is_none());
+        assert!(matches!(fsm.state, State::Fetching));
+        // Should fetch unconditional because count was 1
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::FetchUnconditional { .. }))
+        );
+    }
 }

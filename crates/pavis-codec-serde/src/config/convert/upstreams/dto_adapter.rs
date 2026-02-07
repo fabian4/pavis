@@ -458,4 +458,102 @@ mod tests {
         assert!(dto.tls.is_none());
         assert_eq!(dto.discovery, Some(Discovery::Logical));
     }
+
+    #[test]
+    fn test_from_runtime_tls_variants_extra() {
+        use crate::config::types::{ClientCertChainMode, SniMode};
+        let mut u = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .add_endpoint(pavis_core::Endpoint {
+                address: EndpointAddr::Ip {
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: Port(NonZeroU16::new(80).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .unwrap();
+
+        u.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::CaOnly,
+            sni: SniName::Disabled,
+            canonical_sni: CanonicalSni::Disabled,
+            reuse_across_sni: ReuseAcrossSni::Disabled,
+            cert: ClientCert::Enabled {
+                cert_path: Path("cert".into()),
+                key_path: Path("key".into()),
+                chain: ClientCertChain::File {
+                    path: Path("chain".into()),
+                },
+            },
+            ca: UpstreamCa::File {
+                path: Path("ca".into()),
+            },
+        };
+
+        let res = from_runtime(vec![u]).unwrap();
+        let tls = res[0].tls.as_ref().unwrap();
+        assert!(tls.verify_cert.unwrap());
+        assert!(!tls.verify_hostname.unwrap());
+        assert_eq!(tls.sni_mode.unwrap(), SniMode::Disabled);
+        assert_eq!(tls.ca_bundle_path.as_ref().unwrap(), "ca");
+        assert_eq!(
+            tls.cert.as_ref().unwrap().chain_mode.unwrap(),
+            ClientCertChainMode::File
+        );
+        assert_eq!(
+            tls.cert.as_ref().unwrap().chain_path.as_ref().unwrap(),
+            "chain"
+        );
+    }
+
+    #[test]
+    fn test_from_runtime_tls_variants_embedded() {
+        use crate::config::types::{ClientCertChainMode, SniMode};
+        let mut u = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .discovery(Discovery::Static)
+            .balancer(LoadBalancer::RoundRobin)
+            .protocol(HttpVersion::H1)
+            .add_endpoint(pavis_core::Endpoint {
+                address: EndpointAddr::Ip {
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: Port(NonZeroU16::new(80).unwrap()),
+                },
+                weight: Weight(NonZeroU16::new(1).unwrap()),
+            })
+            .build()
+            .unwrap();
+
+        u.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Disabled,
+            sni: SniName::Auto,
+            canonical_sni: CanonicalSni::Enabled {
+                name: Hostname("canonical".into()),
+            },
+            reuse_across_sni: ReuseAcrossSni::Enabled,
+            cert: ClientCert::Enabled {
+                cert_path: Path("cert".into()),
+                key_path: Path("key".into()),
+                chain: ClientCertChain::Embedded,
+            },
+            ca: UpstreamCa::System,
+        };
+
+        let res = from_runtime(vec![u]).unwrap();
+        let tls = res[0].tls.as_ref().unwrap();
+        assert!(!tls.verify_cert.unwrap());
+        assert_eq!(tls.sni_mode.unwrap(), SniMode::Auto);
+        assert_eq!(tls.canonical_sni.as_ref().unwrap(), "canonical");
+        assert!(tls.reuse_across_sni.unwrap());
+        assert_eq!(
+            tls.cert.as_ref().unwrap().chain_mode.unwrap(),
+            ClientCertChainMode::Embedded
+        );
+    }
 }

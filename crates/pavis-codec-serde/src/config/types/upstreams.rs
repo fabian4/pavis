@@ -40,7 +40,7 @@ pub struct Upstream {
     pub endpoints: Vec<Endpoint>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct UpstreamTlsConfig {
     pub enabled: Option<bool>,
     pub verify_hostname: Option<bool>,
@@ -55,7 +55,7 @@ pub struct UpstreamTlsConfig {
     pub cert: Option<ClientCertConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct ClientCertConfig {
     pub cert_path: String,
     pub key_path: String,

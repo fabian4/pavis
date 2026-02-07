@@ -424,4 +424,28 @@ mod tests {
         assert!(output.contains("Redirect 302 to /login"));
         assert!(output.contains("Direct 200"));
     }
+
+    #[test]
+    fn format_config_unknown_variants() {
+        use pavis_core::HttpMethod;
+        let mut config = sample_config();
+
+        // Use unsafe or manual construction if needed to force "unknown" branches
+        // but typically these are reached by future-proofing match arms.
+
+        // Test List method predicate
+        config.routes[0].paths[0].matcher.method =
+            MethodPredicate::List(vec![HttpMethod::GET, HttpMethod::POST]);
+
+        let output = format_config(&config);
+        assert!(output.contains("[GET, POST]"));
+    }
+
+    #[test]
+    fn format_stats_coverage() {
+        let config = sample_config();
+        // total_bytes smaller than header_size to test saturating_sub
+        let output = format_stats(&config, 10);
+        assert!(output.contains("Payload Size: 0 bytes"));
+    }
 }

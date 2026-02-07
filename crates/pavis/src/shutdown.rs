@@ -148,9 +148,12 @@ mod tests {
     }
 
     #[tokio::test]
+
     async fn test_shutdown_no_subscribers() {
         let (coordinator, rx) = ShutdownCoordinator::new(ShutdownPolicy::Disabled);
+
         drop(rx); // Drop the receiver to simulate no subscribers
+
         coordinator.simulate_signal().await;
     }
 }

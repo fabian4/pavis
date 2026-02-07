@@ -563,4 +563,48 @@ mod tests {
             BackoffStrategyDTO::Linear { base_ms: 200 }
         ));
     }
+
+    #[test]
+    fn test_from_runtime_headers_extra() {
+        let vhost = pavis_core::VirtualHost {
+            host: Host("*".into()),
+            paths: vec![pavis_core::Route {
+                matcher: RouteMatcher {
+                    path: PathMatch::Prefix {
+                        path: Path("/".into()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
+                },
+                timeout: Timeout::Disabled,
+                retry: pavis_core::RetryPolicy::Disabled,
+                request_headers: Arc::new(HeadersPolicy::Enabled {
+                    rules: pavis_core::Headers {
+                        set_headers: vec![],
+                        append_headers: vec![(
+                            HeaderName("X-App".into()),
+                            HeaderValue("v1".into()),
+                        )],
+                        add_headers: vec![(HeaderName("X-Add".into()), HeaderValue("v2".into()))],
+                        remove_headers: vec![],
+                    },
+                }),
+                response_headers: Arc::new(HeadersPolicy::Disabled),
+                principal: Principal::Any,
+                rewrite: Rewrite {
+                    path: RewritePath::Disabled,
+                    host: RewriteHost::Disabled,
+                },
+                action: RouteAction::Direct {
+                    status: 200,
+                    body: "".into(),
+                },
+            }],
+        };
+
+        let res = from_runtime(vec![vhost]).unwrap();
+        let ops = res[0].paths[0].request_headers.as_ref().unwrap();
+        assert_eq!(ops.append_headers[0].1, "v1");
+        assert_eq!(ops.add_headers[0].1, "v2");
+    }
 }

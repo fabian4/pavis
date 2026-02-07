@@ -1024,4 +1024,122 @@ mod tests {
             CoreValidationError::UpstreamTlsAutoSniRequiresDns(_)
         ));
     }
+
+    #[test]
+    fn regex_cache_hit_works() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].matcher = crate::runtime::RouteMatcher {
+            path: crate::runtime::PathMatch::Regex {
+                path: crate::runtime::Path("^/api/.*".to_string()),
+            },
+            method: crate::runtime::MethodPredicate::Any,
+            headers: crate::runtime::HeaderPredicates::None,
+        };
+        validate_runtime(cfg.clone()).expect("first validation");
+        validate_runtime(cfg).expect("second validation (cache hit)");
+    }
+
+    #[test]
+    fn header_add_append_validation() {
+        let mut cfg = base_config();
+        let headers = crate::runtime::Headers {
+            set_headers: vec![],
+            add_headers: vec![(
+                crate::runtime::HeaderName("X-Add".to_string()),
+                crate::runtime::HeaderValue("value".to_string()),
+            )],
+            append_headers: vec![(
+                crate::runtime::HeaderName("X-Append".to_string()),
+                crate::runtime::HeaderValue("value".to_string()),
+            )],
+            remove_headers: vec![],
+        };
+        cfg.routes[0].paths[0].request_headers =
+            Arc::new(crate::runtime::HeadersPolicy::Enabled { rules: headers });
+        validate_runtime(cfg).expect("add/append validation");
+    }
+
+    #[test]
+    fn invalid_append_header_name_fails() {
+        let mut cfg = base_config();
+        let headers = crate::runtime::Headers {
+            set_headers: vec![],
+            add_headers: vec![],
+            append_headers: vec![(
+                HeaderName("bad header".to_string()),
+                HeaderValue("v".into()),
+            )],
+            remove_headers: vec![],
+        };
+        cfg.routes[0].paths[0].request_headers =
+            Arc::new(crate::runtime::HeadersPolicy::Enabled { rules: headers });
+        let err = validate_runtime(cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
+    }
+
+    #[test]
+    fn invalid_add_header_name_fails() {
+        let mut cfg = base_config();
+        let headers = crate::runtime::Headers {
+            set_headers: vec![],
+            add_headers: vec![(
+                HeaderName("bad header".to_string()),
+                HeaderValue("v".into()),
+            )],
+            append_headers: vec![],
+            remove_headers: vec![],
+        };
+        cfg.routes[0].paths[0].request_headers =
+            Arc::new(crate::runtime::HeadersPolicy::Enabled { rules: headers });
+        let err = validate_runtime(cfg).unwrap_err();
+        assert!(matches!(err, CoreValidationError::InvalidHeaderName { .. }));
+    }
+
+    #[test]
+    fn forward_empty_destinations_exact_path_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].matcher.path = PathMatch::Exact {
+            path: Path("/exact".to_string()),
+        };
+        cfg.routes[0].paths[0].action = RouteAction::Forward(Vec::new());
+        let err = validate_runtime(cfg).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreValidationError::ForwardHasNoDestinations(path, _) if path == "/exact"
+        ));
+    }
+
+    #[test]
+    fn forward_empty_destinations_regex_path_fails() {
+        let mut cfg = base_config();
+        cfg.routes[0].paths[0].matcher.path = PathMatch::Regex {
+            path: Path("/regex/.*".to_string()),
+        };
+        cfg.routes[0].paths[0].action = RouteAction::Forward(Vec::new());
+        let err = validate_runtime(cfg).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreValidationError::ForwardHasNoDestinations(path, _) if path == "/regex/.*"
+        ));
+    }
+
+    #[test]
+    fn upstream_with_canonical_sni_skips_dns_check() {
+        let mut cfg = base_config();
+        if let TlsPolicy::Enabled {
+            sni,
+            canonical_sni,
+            verify,
+            ..
+        } = &mut cfg.upstreams[0].tls
+        {
+            *sni = SniName::Auto;
+            *verify = TlsVerify::Full;
+            *canonical_sni = CanonicalSni::Enabled {
+                name: Hostname("canonical.example.com".to_string()),
+            };
+        }
+        // Should pass even if endpoints are IP
+        validate_runtime(cfg).expect("canonical SNI bypasses DNS check");
+    }
 }
