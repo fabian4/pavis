@@ -286,15 +286,15 @@ fn validate_required_capabilities(capabilities: &[String]) -> CoreValidationResu
 mod tests {
     use super::*;
     use crate::runtime::{
-        AccessLogPolicy, ActiveHealthCheck, AdminConfig, CircuitBreakerPolicy, ClientAuth,
-        ClientCert, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration, Endpoint,
-        EndpointAddr, HeaderName, HeaderPredicates, HeaderValue, Headers, HeadersPolicy, Host,
-        Hostname, HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel,
+        AccessLogPolicy, ActiveHealthCheck, AdminConfig, CanonicalSni, CircuitBreakerPolicy,
+        ClientAuth, ClientCert, ConnectTimeout, ConnectionLimit, Destination, Discovery, Duration,
+        Endpoint, EndpointAddr, HeaderName, HeaderPredicates, HeaderValue, Headers, HeadersPolicy,
+        Host, Hostname, HttpVersion, IdleTimeout, Listener, ListenerName, LoadBalancer, LogLevel,
         MethodPredicate, Metrics, OutlierDetectionPolicy, Path, PathMatch, Pool, Port, Principal,
-        RetryPolicy, Rewrite, RewriteHost, RewritePath, Route, RouteAction, RouteMatcher,
-        RoutingFeatures, SampleRate, ServiceName, ShutdownPolicy, SniName, Telemetry, Timeout,
-        TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, Upstream, UpstreamCa,
-        UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
+        RetryPolicy, ReuseAcrossSni, Rewrite, RewriteHost, RewritePath, Route, RouteAction,
+        RouteMatcher, RoutingFeatures, SampleRate, ServiceName, ShutdownPolicy, SniName, Telemetry,
+        Timeout, TlsConfig, TlsPolicy, TlsVerify, TracingPolicy, TracingProvider, Upstream,
+        UpstreamBuilder, UpstreamCa, UpstreamId, UpstreamName, VirtualHost, Weight, WorkerCount,
     };
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -442,6 +442,54 @@ mod tests {
             err,
             CoreValidationError::HealthCheckTimeoutExceedsInterval("test".to_string())
         );
+    }
+
+    #[test]
+    fn upstream_tls_reuse_across_sni_requires_verify_fails() {
+        let mut cfg = base_config();
+        let mut upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .build()
+            .unwrap();
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Disabled,
+            sni: SniName::Auto,
+            canonical_sni: CanonicalSni::Disabled,
+            reuse_across_sni: ReuseAcrossSni::Enabled,
+            cert: ClientCert::Disabled,
+            ca: UpstreamCa::System,
+        };
+        cfg.upstreams = vec![upstream];
+        let err = validate_runtime(cfg).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreValidationError::UpstreamTlsReuseAcrossSniRequiresVerify(_)
+        ));
+    }
+
+    #[test]
+    fn upstream_tls_sni_disabled_with_full_verify_fails() {
+        let mut cfg = base_config();
+        let mut upstream = UpstreamBuilder::new()
+            .id(UpstreamId(NonZeroU16::new(1).unwrap()))
+            .name(UpstreamName("test".to_string()))
+            .build()
+            .unwrap();
+        upstream.tls = TlsPolicy::Enabled {
+            verify: TlsVerify::Full,
+            sni: SniName::Disabled,
+            canonical_sni: CanonicalSni::Disabled,
+            reuse_across_sni: ReuseAcrossSni::Disabled,
+            cert: ClientCert::Disabled,
+            ca: UpstreamCa::System,
+        };
+        cfg.upstreams = vec![upstream];
+        let err = validate_runtime(cfg).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreValidationError::UpstreamTlsSniDisabled(_)
+        ));
     }
 
     #[test]

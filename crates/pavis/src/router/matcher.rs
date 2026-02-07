@@ -975,4 +975,161 @@ mod tests {
             &mut PredicateStats::default(),
         ));
     }
+
+    #[test]
+    fn test_exact_map_miss_stats() {
+        let vhost = CompiledVirtualHost {
+            config: VirtualHost {
+                host: Host("example.com".to_string()),
+                paths: vec![Route {
+                    matcher: RouteMatcher {
+                        path: PathMatch::Exact {
+                            path: Path("/exact".to_string()),
+                        },
+                        method: MethodPredicate::Specific(pavis_core::HttpMethod::POST),
+                        headers: HeaderPredicates::None,
+                    },
+                    timeout: Timeout::Disabled,
+                    retry: RetryPolicy::Disabled,
+                    request_headers: HeadersPolicy::Disabled.into(),
+                    response_headers: HeadersPolicy::Disabled.into(),
+                    principal: pavis_core::Principal::Any,
+                    rewrite: Rewrite {
+                        path: RewritePath::Disabled,
+                        host: RewriteHost::Disabled,
+                    },
+                    action: RouteAction::Forward(vec![]),
+                }],
+            },
+            zones: vec![RouteZone::ExactMap({
+                let mut map = HashMap::new();
+                map.insert(
+                    "/exact".to_string(),
+                    CompiledRoute {
+                        index: 0,
+                        regex: None,
+                    },
+                );
+                map
+            })],
+        };
+
+        let router = Router {
+            exact_hosts: {
+                let mut map = HashMap::new();
+                map.insert("example.com".to_string(), vhost);
+                map
+            },
+            wildcard_hosts: vec![],
+            regex_cache: HashMap::new(),
+            regex_limits: RegexLimits::default(),
+        };
+
+        let req_header = mock_request_header("GET");
+        let verdict = match_request(&router, Some("example.com"), "/exact", "GET", &req_header);
+        assert!(verdict.selection.is_none());
+        assert_eq!(verdict.stats.method_misses, 1);
+
+        let verdict_path_miss =
+            match_request(&router, Some("example.com"), "/other", "GET", &req_header);
+        assert_eq!(verdict_path_miss.stats.path_misses, 1);
+    }
+
+    #[test]
+    fn test_header_predicate_absent() {
+        use pavis_core::{HeaderMatch, HeaderPredicate};
+
+        let mut req_with_header = mock_request_header("GET");
+        req_with_header.insert_header("X-Foo", "bar").unwrap();
+        let req_without_header = mock_request_header("GET");
+
+        let predicate = HeaderPredicate {
+            name: "x-foo".into(),
+            matcher: HeaderMatch::Absent,
+        };
+
+        assert!(!matches_header_predicate(
+            &predicate,
+            &req_with_header,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
+        assert!(matches_header_predicate(
+            &predicate,
+            &req_without_header,
+            &HashMap::new(),
+            &RegexLimits::default(),
+            &mut PredicateStats::default(),
+        ));
+    }
+
+    #[test]
+    fn test_header_regex_input_too_large() {
+        use crate::regex_validator::validate_and_compile_regexes;
+        use pavis_core::{HeaderMatch, HeaderPredicate};
+
+        let mut req = mock_request_header("GET");
+        req.insert_header("X-Regex", "too-long-input").unwrap();
+
+        let limits = RegexLimits {
+            input_max_bytes: 5,
+            ..Default::default()
+        };
+
+        let predicate = HeaderPredicate {
+            name: "x-regex".into(),
+            matcher: HeaderMatch::Regex(".*".into()),
+        };
+
+        let vhost = VirtualHost {
+            host: Host("*".to_string()),
+            paths: vec![Route {
+                matcher: RouteMatcher {
+                    path: PathMatch::Prefix {
+                        path: Path("/".into()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::Some(vec![predicate.clone()]),
+                },
+                timeout: Timeout::Disabled,
+                retry: RetryPolicy::Disabled,
+                request_headers: HeadersPolicy::Disabled.into(),
+                response_headers: HeadersPolicy::Disabled.into(),
+                principal: pavis_core::Principal::Any,
+                rewrite: Rewrite {
+                    path: RewritePath::Disabled,
+                    host: RewriteHost::Disabled,
+                },
+                action: RouteAction::Forward(vec![]),
+            }],
+        };
+        let config = pavis_core::RuntimeConfigBuilder::new()
+            .telemetry(pavis_core::Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Error,
+                service_name: pavis_core::ServiceName("test".to_string()),
+                metrics: pavis_core::Metrics::Disabled,
+                access_log: pavis_core::AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            })
+            .add_listener(
+                pavis_core::ListenerBuilder::new()
+                    .name(pavis_core::ListenerName("test".to_string()))
+                    .address("127.0.0.1:0".parse().unwrap())
+                    .build()
+                    .unwrap(),
+            )
+            .add_route(vhost)
+            .build()
+            .unwrap();
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let regex_cache = validate_and_compile_regexes(&validated, &limits).unwrap();
+
+        let mut stats = PredicateStats::default();
+        let matched = matches_header_predicate(&predicate, &req, &regex_cache, &limits, &mut stats);
+
+        assert!(!matched);
+        assert_eq!(stats.regex_input_too_large, 1);
+    }
 }

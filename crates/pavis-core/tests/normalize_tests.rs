@@ -349,3 +349,28 @@ fn test_complex_nested_normalization() {
         panic!("Expected Or node");
     }
 }
+
+#[test]
+fn test_cost_capping() {
+    let mut children = Vec::new();
+    for i in 0..30 {
+        children.push(PredicateNode::Header(HeaderMatcher::Regex {
+            name: CompactString::from(format!("x-foo-{}", i)),
+            pattern: CompactString::from(".*"),
+        }));
+    }
+    // Each regex has cost 10. 30 * 10 = 300. Should be capped at 255.
+    let pred = PredicateNode::And(children);
+    assert_eq!(pred.cost().0, 255);
+}
+
+#[test]
+fn test_not_node_cost() {
+    let inner = PredicateNode::Header(HeaderMatcher::Regex {
+        name: CompactString::new("x-foo"),
+        pattern: CompactString::new(".*"),
+    });
+    let cost = inner.cost();
+    let pred = PredicateNode::Not(Box::new(inner));
+    assert_eq!(pred.cost(), cost);
+}

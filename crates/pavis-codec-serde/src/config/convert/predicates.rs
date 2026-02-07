@@ -768,4 +768,45 @@ mod tests {
         )];
         assert!(desugar_p0_headers(&headers, 0, &limits).is_err());
     }
+
+    #[test]
+    fn test_desugar_p0_headers_multiple_and_regex_limit() {
+        let limits = RegexLimits {
+            pattern_max_bytes: 5,
+            ..Default::default()
+        };
+
+        let headers = vec![
+            HeaderPredicate::V1(crate::config::types::HeaderPredicateLegacy {
+                name: "X-A".to_string(),
+                value: Some("a".to_string()),
+                regex: false,
+                prefix: false,
+                absent: false,
+            }),
+            HeaderPredicate::V1(crate::config::types::HeaderPredicateLegacy {
+                name: "X-B".to_string(),
+                value: Some("b".to_string()),
+                regex: false,
+                prefix: false,
+                absent: false,
+            }),
+        ];
+
+        let (node, adv) = desugar_p0_headers(&headers, 0, &limits).unwrap();
+        assert!(matches!(node, PredicateNode::And(_)));
+        assert!(!adv);
+
+        // Regex limit in P0
+        let headers = vec![HeaderPredicate::V1(
+            crate::config::types::HeaderPredicateLegacy {
+                name: "X-Reg".to_string(),
+                value: Some("123456".to_string()),
+                regex: true,
+                prefix: false,
+                absent: false,
+            },
+        )];
+        assert!(desugar_p0_headers(&headers, 0, &limits).is_err());
+    }
 }

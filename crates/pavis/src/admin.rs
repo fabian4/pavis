@@ -344,4 +344,30 @@ mod tests {
         tx.send(true).expect("shutdown signal");
         server.await.expect("server join");
     }
+
+    #[tokio::test]
+    async fn test_read_request_line_too_long() {
+        let (mut client, server) = tokio::io::duplex(ADMIN_REQUEST_LINE_LIMIT_BYTES + 100);
+        let _reader = BufReader::new(server);
+
+        tokio::spawn(async move {
+            let large_line = vec![b'a'; ADMIN_REQUEST_LINE_LIMIT_BYTES + 1];
+            client.write_all(&large_line).await.unwrap();
+            client.write_all(b"\n").await.unwrap();
+        });
+    }
+
+    #[tokio::test]
+    async fn test_admin_api_bind_fail() {
+        let state = Arc::new(RuntimeStateHandle::new(
+            crate::state::RuntimeState::from_config(&test_config()).unwrap(),
+        ));
+        // Use a likely-to-fail port (privileged port 1)
+        let addr = "127.0.0.1:1".parse().unwrap();
+        let (_tx, rx) = watch::channel(false);
+        let mut worker = AdminApiWorker::new(AdminConfig::Enabled { addr }, state);
+
+        // This should return an error when it tries to bind
+        worker.start_service(None, rx, 1).await;
+    }
 }

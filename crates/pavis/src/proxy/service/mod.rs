@@ -8,6 +8,7 @@ pub use state::Proxy;
 
 #[doc(hidden)]
 pub mod test_exports {
+    pub use super::io::{should_log_upstream_config, should_sample_pool_key};
     pub use super::request_planning::HeaderInjector;
     pub use super::request_planning::{
         apply_route_headers, calculate_path_rewrite, clock_underflow_warned, endpoint_host_for_sni,

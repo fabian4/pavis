@@ -109,6 +109,31 @@ impl Default for RegexLimits {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::num::NonZeroU32;
+
+    #[test]
+    fn test_read_timeout_default() {
+        let default = ReadTimeout::default();
+        assert_eq!(
+            default,
+            ReadTimeout::Enabled(Duration(NonZeroU32::new(30000).unwrap()))
+        );
+    }
+
+    #[test]
+    fn test_regex_limits_default() {
+        let default = RegexLimits::default();
+        assert_eq!(default.pattern_max_bytes, 256);
+        assert_eq!(default.size_limit_bytes, 10 * 1024 * 1024);
+        assert_eq!(default.input_max_bytes, 4096);
+        assert_eq!(default.max_regex_per_route, 10);
+        assert_eq!(default.max_regex_per_config, 100);
+    }
+}
+
 #[derive(
     Debug,
     Clone,

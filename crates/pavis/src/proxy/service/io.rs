@@ -37,7 +37,7 @@ static POOL_KEY_SAMPLE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic
 static POOL_KEY_SAMPLE_RATE: OnceLock<u64> = OnceLock::new();
 const DEFAULT_POOL_KEY_SAMPLE_RATE: u64 = 16;
 
-fn should_log_upstream_config(hash: u64) -> bool {
+pub fn should_log_upstream_config(hash: u64) -> bool {
     if !LOGGED_UPSTREAM_CHECK_COUNTER
         .fetch_add(1, Ordering::Relaxed)
         .is_multiple_of(256)
@@ -51,7 +51,7 @@ fn should_log_upstream_config(hash: u64) -> bool {
     false
 }
 
-fn should_sample_pool_key() -> bool {
+pub fn should_sample_pool_key() -> bool {
     let rate =
         *POOL_KEY_SAMPLE_RATE.get_or_init(|| match std::env::var("PAVIS_POOL_KEY_SAMPLE_RATE") {
             Ok(value) => value

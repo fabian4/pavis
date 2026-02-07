@@ -506,4 +506,61 @@ mod tests {
             "POST"
         );
     }
+
+    #[test]
+    fn test_from_runtime_retry_reasons_and_backoff() {
+        let vhost = pavis_core::VirtualHost {
+            host: Host("*".into()),
+            paths: vec![pavis_core::Route {
+                matcher: RouteMatcher {
+                    path: PathMatch::Prefix {
+                        path: Path("/".into()),
+                    },
+                    method: MethodPredicate::Any,
+                    headers: HeaderPredicates::None,
+                },
+                timeout: Timeout::Disabled,
+                retry: pavis_core::RetryPolicy::Enabled {
+                    max_attempts: NonZeroU16::new(3).unwrap(),
+                    per_try: TryTimeout::Disabled,
+                    retryable_reasons: vec![
+                        RetryReason::ReadTimeout,
+                        RetryReason::PerTryTimeout,
+                        RetryReason::PoolFull,
+                        RetryReason::ConnectError,
+                    ],
+                    retryable_status_codes: None,
+                    backoff: BackoffStrategy::Linear { base_ms: 200 },
+                    retry_non_idempotent: false,
+                    fail_on_non_replayable_retry: true,
+                    max_request_body_buffer_bytes: 512,
+                },
+                request_headers: Arc::new(HeadersPolicy::Disabled),
+                response_headers: Arc::new(HeadersPolicy::Disabled),
+                principal: Principal::Any,
+                rewrite: Rewrite {
+                    path: RewritePath::Disabled,
+                    host: RewriteHost::Disabled,
+                },
+                action: RouteAction::Direct {
+                    status: 200,
+                    body: "".into(),
+                },
+            }],
+        };
+
+        let res = from_runtime(vec![vhost]).unwrap();
+        let retry = res[0].paths[0].retry.as_ref().unwrap();
+        assert_eq!(retry.retryable_reasons.len(), 4);
+        assert!(
+            retry
+                .retryable_reasons
+                .contains(&"read_timeout".to_string())
+        );
+        assert!(retry.retryable_reasons.contains(&"pool_full".to_string()));
+        assert!(matches!(
+            retry.backoff,
+            BackoffStrategyDTO::Linear { base_ms: 200 }
+        ));
+    }
 }

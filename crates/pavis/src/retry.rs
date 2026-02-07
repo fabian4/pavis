@@ -796,9 +796,13 @@ mod tests {
         let policy = create_test_policy(3);
         let ctx = RetryContext::new(policy, 10000, None, "test".to_string());
 
-        let start = Instant::now();
+        // First attempt should never incur backoff.
+        assert_eq!(ctx.attempt, 1);
+        assert_eq!(ctx.calculate_backoff(), Duration::ZERO);
+
         ctx.apply_backoff().await;
-        // Should return immediately (no backoff before first retry)
-        assert!(start.elapsed() < Duration::from_millis(10));
+
+        // apply_backoff must be side-effect free on first attempt.
+        assert_eq!(ctx.attempt, 1);
     }
 }

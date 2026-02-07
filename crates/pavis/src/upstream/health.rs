@@ -999,4 +999,60 @@ mod tests {
         // Should error (connection refused)
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_upstream_health_monitor_loop() {
+        let health = ActiveHealthCheck::Enabled {
+            path: pavis_core::Path("/health".into()),
+            interval: pavis_core::Duration(NonZeroU32::new(10).unwrap()),
+            timeout: pavis_core::Duration(NonZeroU32::new(10).unwrap()),
+        };
+        let upstream = make_upstream(TlsPolicy::Disabled, health);
+        let config = pavis_core::RuntimeConfigBuilder::new()
+            .telemetry(pavis_core::Telemetry {
+                level: pavis_core::LogLevel::Info,
+                pingora: pavis_core::LogLevel::Warn,
+                service_name: pavis_core::ServiceName("test".to_string()),
+                metrics: pavis_core::Metrics::Disabled,
+                access_log: pavis_core::AccessLogPolicy::Disabled,
+                tracing: pavis_core::TracingPolicy::Disabled,
+            })
+            .add_listener(
+                pavis_core::ListenerBuilder::new()
+                    .name(pavis_core::ListenerName("test".to_string()))
+                    .address(std::net::SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        8080,
+                    ))
+                    .build()
+                    .unwrap(),
+            )
+            .add_upstream(upstream)
+            .build()
+            .unwrap();
+        let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
+        let state = crate::state::RuntimeState::from_config(&validated).unwrap();
+        let handle = Arc::new(RuntimeStateHandle::new(state));
+        let mut monitor = UpstreamHealthMonitor::new(handle.clone());
+
+        let (tx, rx) = watch::channel(false);
+        let monitor_handle = tokio::spawn(async move {
+            monitor.start_service(None, rx, 1).await;
+        });
+
+        // Let it run for a bit
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Update state to trigger scheduler refresh
+        let mut new_config = validated.clone().into_inner();
+        new_config.upstreams[0].name = UpstreamName("new".to_string());
+        let new_validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(new_config) };
+        let new_state = crate::state::RuntimeState::from_config(&new_validated).unwrap();
+        handle.store(new_state);
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        tx.send(true).unwrap();
+        monitor_handle.await.unwrap();
+    }
 }

@@ -264,4 +264,27 @@ mod tests {
         // Wait for debounce and loop to exit
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+
+    #[tokio::test]
+    async fn test_spawn_watcher_polling_fallback() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().with_extension("yaml");
+        std::fs::rename(tmp.path(), &path).unwrap();
+
+        let (tx, mut rx) = mpsc::channel(1);
+        // Set short debounce to speed up test
+        let _watcher = spawn_watcher(path.clone(), Duration::from_millis(1), 1024, tx)
+            .await
+            .unwrap();
+
+        // Wait longer than WATCHER_POLL_INTERVAL (2s) to trigger poll branch
+        // We write first, then wait.
+        std::fs::write(&path, "data").unwrap();
+
+        let res = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(res.is_ok());
+    }
 }

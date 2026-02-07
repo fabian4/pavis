@@ -874,6 +874,136 @@ mod tests {
         assert!(parse_etag_header("W/\"weak\"").is_err());
         assert!(parse_etag_header("invalid").is_err());
         assert!(parse_etag_header("sha256:short").is_err());
+        assert!(
+            parse_etag_header(
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_config_agent_bootstrap_invalid_lkg() {
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("invalid.pvs");
+        // Write invalid data
+        std::fs::write(&lkg, b"not a pvs").unwrap();
+
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = Arc::new(
+            ConfigAgent::new(
+                "http://localhost".to_string(),
+                lkg,
+                state,
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        );
+        let worker = agent.clone().worker();
+
+        // bootstrap_from_lkg should return error if file is corrupt
+        let res = worker.bootstrap_from_lkg().await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_config_agent_bootstrap_env_validation_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("env_fail.pvs");
+
+        // Occupy a port
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let l_cfg = ListenerBuilder::new()
+            .name(ListenerName("test".to_string()))
+            .address(std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                port,
+            ))
+            .build()
+            .unwrap();
+        let config = RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            })
+            .add_listener(l_cfg)
+            .build()
+            .unwrap();
+
+        pavis_pvs::write(&lkg, &config).unwrap();
+
+        // Current state does NOT have this port, so validate_runtime_env should fail on preflight bind
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+
+        let agent = Arc::new(
+            ConfigAgent::new(
+                "http://localhost".to_string(),
+                lkg,
+                state,
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        );
+        // Pre-set some etag
+        agent.set_last_applied_etag_for_tests(Some("initial".to_string()));
+
+        let worker = agent.clone().worker();
+
+        // bootstrap_from_lkg swallows error and logs warning
+        let _ = worker.bootstrap_from_lkg().await;
+        // Should NOT have updated last_applied_etag because it failed validation
+        assert_eq!(agent.last_applied_etag_for_tests().unwrap(), "initial");
+
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn test_config_agent_bootstrap_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("success.pvs");
+
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("test".to_string()))
+            .address("127.0.0.1:8080".parse().unwrap())
+            .build()
+            .unwrap();
+        let config = RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName("test".to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .unwrap();
+
+        let bytes = pavis_pvs::encode(&config).unwrap();
+        let etag = checksum_for_bytes(&bytes);
+        std::fs::write(&lkg, &bytes).unwrap();
+
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = Arc::new(
+            ConfigAgent::new(
+                "http://localhost".to_string(),
+                lkg,
+                state,
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        );
+        let worker = agent.clone().worker();
+
+        worker.bootstrap_from_lkg().await.unwrap();
+        assert_eq!(agent.last_applied_etag_for_tests().unwrap(), etag);
     }
 
     #[tokio::test]
@@ -1183,5 +1313,27 @@ mod tests {
         let outcome = agent.poll_once(100).await.unwrap();
         assert!(matches!(outcome, PollOutcome::Updated));
         assert_eq!(agent.last_applied_etag_for_tests().unwrap(), etag);
+    }
+
+    #[tokio::test]
+    async fn test_poll_once_verify_failure() {
+        let stub = RelayStub {
+            status: Arc::new(Mutex::new(200)),
+            // Corrupt ETag or body will cause verify failure
+            etag: Arc::new(Mutex::new(Some(
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+            ))),
+            body: Arc::new(Mutex::new(b"invalid".to_vec())),
+        };
+        let url = spawn_stub(stub).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let lkg = dir.path().join("lkg.pvs");
+        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let agent = ConfigAgent::new(url, lkg, state, Duration::from_secs(1)).unwrap();
+
+        let outcome = agent.poll_once(100).await.unwrap();
+        assert!(matches!(outcome, PollOutcome::Rejected));
     }
 }

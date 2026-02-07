@@ -692,10 +692,6 @@ mod tests {
 
         let _listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
 
-        // We reuse the serve_metrics logic but test the StartService loop indirectly
-        // Actually, testing StartService with real TCP is easier if we can find the bound port.
-        // But start_service doesn't easily expose its bound port.
-
         // Let's test start_service with a failing bind
         let mut endpoint = PrometheusEndpoint::<TcpMetricsTransport> {
             addr: "1.1.1.1:1".parse().unwrap(), // Likely to fail bind
@@ -704,6 +700,42 @@ mod tests {
         };
         endpoint.start_service(None, shutdown_rx, 1).await;
         // Should return quickly on bind failure
+    }
+
+    #[tokio::test]
+    async fn test_prometheus_endpoint_start_no_handle() {
+        let mut endpoint = PrometheusEndpoint::<TcpMetricsTransport> {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            handle: None,
+            _transport: std::marker::PhantomData,
+        };
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        endpoint.start_service(None, rx, 1).await;
+        // Should return early
+    }
+
+    #[tokio::test]
+    async fn test_prometheus_endpoint_bind_fail() {
+        struct FailTransport;
+        #[async_trait]
+        impl MetricsTransport for FailTransport {
+            async fn bind(_: SocketAddr) -> std::io::Result<Self> {
+                Err(std::io::Error::other("fail"))
+            }
+            async fn accept(&self) -> std::io::Result<tokio::net::TcpStream> {
+                unreachable!()
+            }
+        }
+
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let mut endpoint = PrometheusEndpoint::<FailTransport> {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            handle: Some(recorder.handle()),
+            _transport: std::marker::PhantomData,
+        };
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        endpoint.start_service(None, rx, 1).await;
+        // Should return early on bind failure
     }
 
     #[test]

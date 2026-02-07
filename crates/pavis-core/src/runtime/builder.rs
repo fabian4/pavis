@@ -282,18 +282,45 @@ mod tests {
     fn runtime_builder_requires_telemetry_listeners_upstreams() {
         let err = RuntimeConfigBuilder::new().build().unwrap_err();
         assert_eq!(err, BuilderError::MissingListeners);
+
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("default".to_string()))
+            .address(std::net::SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                8080,
+            ))
+            .build()
+            .expect("listener");
+
+        let err = RuntimeConfigBuilder::new()
+            .add_listener(listener)
+            .build()
+            .unwrap_err();
+        assert_eq!(err, BuilderError::MissingTelemetry);
     }
 
     #[test]
     fn listener_builder_requires_name_and_address() {
         let err = ListenerBuilder::new().build().unwrap_err();
         assert_eq!(err, BuilderError::MissingListenerName);
+
+        let err = ListenerBuilder::new()
+            .name(ListenerName("default".to_string()))
+            .build()
+            .unwrap_err();
+        assert_eq!(err, BuilderError::MissingListenerAddress);
     }
 
     #[test]
     fn upstream_builder_requires_id_name_endpoints() {
         let err = UpstreamBuilder::new().build().unwrap_err();
         assert_eq!(err, BuilderError::MissingUpstreamId);
+
+        let err = UpstreamBuilder::new()
+            .id(UpstreamId(unsafe { NonZeroU16::new_unchecked(1) }))
+            .build()
+            .unwrap_err();
+        assert_eq!(err, BuilderError::MissingUpstreamName);
     }
 
     #[test]

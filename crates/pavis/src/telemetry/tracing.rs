@@ -927,6 +927,55 @@ mod tests {
         assert!(spy.close.load(Ordering::SeqCst));
     }
 
+    #[test]
+    fn reloadable_layer_delegation_extra() {
+        #[derive(Default)]
+        struct ExtraSpy {
+            follows_from: Arc<AtomicBool>,
+            enabled: Arc<AtomicBool>,
+            event_enabled: Arc<AtomicBool>,
+            id_change: Arc<AtomicBool>,
+        }
+        impl<S: Subscriber> Layer<S> for ExtraSpy {
+            fn on_follows_from(&self, _span: &Id, _follows: &Id, _ctx: Context<'_, S>) {
+                self.follows_from.store(true, Ordering::SeqCst);
+            }
+            fn enabled(&self, _metadata: &tracing::Metadata<'_>, _ctx: Context<'_, S>) -> bool {
+                self.enabled.store(true, Ordering::SeqCst);
+                true
+            }
+            fn event_enabled(&self, _event: &Event<'_>, _ctx: Context<'_, S>) -> bool {
+                self.event_enabled.store(true, Ordering::SeqCst);
+                true
+            }
+            fn on_id_change(&self, _old: &Id, _new: &Id, _ctx: Context<'_, S>) {
+                self.id_change.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let spy = Arc::new(ExtraSpy::default());
+        let reload = ReloadHandle::new();
+        reload.reload(Box::new(ExtraSpy {
+            follows_from: spy.follows_from.clone(),
+            enabled: spy.enabled.clone(),
+            event_enabled: spy.event_enabled.clone(),
+            id_change: spy.id_change.clone(),
+        }));
+
+        let subscriber = Registry::default().with(reload);
+        tracing::subscriber::with_default(subscriber, || {
+            let span1 = tracing::info_span!("span1");
+            let span2 = tracing::info_span!("span2");
+            span2.follows_from(span1.id().unwrap());
+            let _guard = span2.enter();
+            tracing::info!("event");
+        });
+
+        assert!(spy.enabled.load(Ordering::SeqCst));
+        assert!(spy.event_enabled.load(Ordering::SeqCst));
+        assert!(spy.follows_from.load(Ordering::SeqCst));
+    }
+
     #[tokio::test]
     async fn test_tracing_service_shutdown_logic() {
         let policy = pavis_core::TracingPolicy::Enabled {
