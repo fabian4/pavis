@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "Pavis runtime"
 
 [dependencies]
-pingora = { version = "0.7.0", default-features = false, features = ["proxy", "openssl"] }
+pingora = { version = "0.8.0", default-features = false, features = ["proxy", "openssl"] }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
