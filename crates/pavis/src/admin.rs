@@ -325,7 +325,7 @@ mod tests {
         let mut stream = loop {
             match tokio::net::TcpStream::connect(addr).await {
                 Ok(stream) => break stream,
-                Err(err) if attempts < 50 => {
+                Err(_) if attempts < 50 => {
                     attempts += 1;
                     sleep(Duration::from_millis(10)).await;
                     continue;
