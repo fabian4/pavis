@@ -23,6 +23,7 @@ use tokio::sync::watch;
 
 use crate::agent::fsm::{Effect, Event, Fsm, Response, VerifiedUpdate};
 use crate::agent::lkg::{load_lkg_config, tmp_path_for, write_atomic};
+use crate::reload::ensure_reload_safe;
 use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::metrics::MetricsRegistry;
 use crate::validate_env::{self, RuntimeEnvError};
@@ -674,6 +675,8 @@ impl ConfigAgent {
         };
         let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
         let current = self.state.load();
+        ensure_reload_safe(&current.config, &validated)
+            .map_err(|err| self.record_validation_failure(err))?;
         if let Err(err) = validate_env::validate_runtime_env(&validated, Some(&current.config)) {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err(self.record_validation_failure(err.into()));
@@ -838,6 +841,29 @@ mod tests {
         ServiceName, Telemetry, TracingPolicy,
     };
     use pavis_pvs::PvsError;
+
+    fn test_validated_config(service_name: &str) -> pavis_core::ValidatedRuntimeConfig {
+        let listener = ListenerBuilder::new()
+            .name(ListenerName("test".to_string()))
+            .address("127.0.0.1:0".parse().unwrap())
+            .build()
+            .unwrap();
+        let config = RuntimeConfigBuilder::new()
+            .telemetry(Telemetry {
+                level: LogLevel::Info,
+                pingora: LogLevel::Info,
+                service_name: ServiceName(service_name.to_string()),
+                metrics: Metrics::Disabled,
+                access_log: AccessLogPolicy::Disabled,
+                tracing: TracingPolicy::Disabled,
+            })
+            .add_listener(listener)
+            .build()
+            .unwrap();
+
+        pavis_core::validate_runtime(config).unwrap()
+    }
+
     #[test]
     fn test_classify_validation_error() {
         let err = anyhow::anyhow!(PvsError::VersionMismatch {
@@ -1031,7 +1057,10 @@ mod tests {
     async fn test_config_agent_verify_update_success() {
         let dir = tempfile::tempdir().unwrap();
         let lkg = dir.path().join("lkg.pvs");
-        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let current = test_validated_config("current");
+        let state = Arc::new(RuntimeStateHandle::new(
+            RuntimeState::from_config(&current).unwrap(),
+        ));
         let agent = ConfigAgent::new(
             "http://localhost".to_string(),
             lkg,
@@ -1040,25 +1069,9 @@ mod tests {
         )
         .unwrap();
 
-        let listener = ListenerBuilder::new()
-            .name(ListenerName("test".to_string()))
-            .address("127.0.0.1:0".parse().unwrap())
-            .build()
-            .unwrap();
-        let config = RuntimeConfigBuilder::new()
-            .telemetry(Telemetry {
-                level: LogLevel::Info,
-                pingora: LogLevel::Info,
-                service_name: ServiceName("test".to_string()),
-                metrics: Metrics::Disabled,
-                access_log: AccessLogPolicy::Disabled,
-                tracing: TracingPolicy::Disabled,
-            })
-            .add_listener(listener)
-            .build()
-            .unwrap();
+        let config = test_validated_config("next");
 
-        let bytes = pavis_pvs::encode(&config).unwrap();
+        let bytes = pavis_pvs::encode(config.as_ref()).unwrap();
         let etag = checksum_for_bytes(&bytes);
 
         let update = agent
@@ -1277,25 +1290,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_once_updated() {
-        let listener = ListenerBuilder::new()
-            .name(ListenerName("test".to_string()))
-            .address("127.0.0.1:0".parse().unwrap())
-            .build()
-            .unwrap();
-        let config = RuntimeConfigBuilder::new()
-            .telemetry(Telemetry {
-                level: LogLevel::Info,
-                pingora: LogLevel::Info,
-                service_name: ServiceName("test".to_string()),
-                metrics: Metrics::Disabled,
-                access_log: AccessLogPolicy::Disabled,
-                tracing: TracingPolicy::Disabled,
-            })
-            .add_listener(listener)
-            .build()
-            .unwrap();
+        let current = test_validated_config("current");
+        let config = test_validated_config("next");
 
-        let bytes = pavis_pvs::encode(&config).unwrap();
+        let bytes = pavis_pvs::encode(config.as_ref()).unwrap();
         let etag = checksum_for_bytes(&bytes);
 
         let stub = RelayStub {
@@ -1307,7 +1305,9 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let lkg = dir.path().join("lkg.pvs");
-        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let state = Arc::new(RuntimeStateHandle::new(
+            RuntimeState::from_config(&current).unwrap(),
+        ));
         let agent = ConfigAgent::new(url, lkg, state, Duration::from_secs(1)).unwrap();
 
         let outcome = agent.poll_once(100).await.unwrap();
@@ -1341,7 +1341,11 @@ mod tests {
     async fn test_worker_run_loop_verify_and_apply() {
         let dir = tempfile::tempdir().unwrap();
         let lkg = dir.path().join("lkg.pvs");
-        let state = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+        let current = test_validated_config("current");
+        let next = test_validated_config("next");
+        let state = Arc::new(RuntimeStateHandle::new(
+            RuntimeState::from_config(&current).unwrap(),
+        ));
         let agent = Arc::new(
             ConfigAgent::new(
                 "http://localhost".to_string(),
@@ -1352,25 +1356,7 @@ mod tests {
             .unwrap(),
         );
 
-        let listener = ListenerBuilder::new()
-            .name(ListenerName("test".to_string()))
-            .address("127.0.0.1:0".parse().unwrap())
-            .build()
-            .unwrap();
-        let config = RuntimeConfigBuilder::new()
-            .telemetry(Telemetry {
-                level: LogLevel::Info,
-                pingora: LogLevel::Info,
-                service_name: ServiceName("test".to_string()),
-                metrics: Metrics::Disabled,
-                access_log: AccessLogPolicy::Disabled,
-                tracing: TracingPolicy::Disabled,
-            })
-            .add_listener(listener)
-            .build()
-            .unwrap();
-
-        let bytes = pavis_pvs::encode(&config).unwrap();
+        let bytes = pavis_pvs::encode(next.as_ref()).unwrap();
         let etag = checksum_for_bytes(&bytes);
 
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);

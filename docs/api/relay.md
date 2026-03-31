@@ -49,7 +49,7 @@ Content-Length: <size>
 
 | Status | Condition | Response Body |
 |--------|-----------|---------------|
-| 400 Bad Request | Invalid PVS artifact | `"verification failed: invalid magic bytes"` |
+| 400 Bad Request | Invalid PVS artifact bytes | `"verification failed: invalid magic bytes"` |
 | 413 Payload Too Large | Exceeds `max_pvs_bytes` | `"pvs size X exceeds max_pvs_bytes Y"` |
 | 500 Internal Server Error | Storage failure | `"failed to write LKG: ..."` |
 
@@ -59,6 +59,7 @@ Content-Length: <size>
 - Publishing identical artifacts creates **distinct versions** with the **same checksum**
 - On failure, version is **NOT incremented**
 - Publishes are **serialized** (concurrent requests queued)
+- Relay validates artifact integrity only (magic bytes, checksum, archive shape). Canonical config semantics are expected to be enforced by the compiler pipeline before publish.
 
 **Example:**
 ```bash

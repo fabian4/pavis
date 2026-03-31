@@ -3,7 +3,7 @@
 ## 1. Axioms / Invariants
 - **Frozen Data Plane** — Every semantic decision (routing, retries, TLS, RBAC, health, observability) **MUST** be resolved before serialization. No runtime component may construct or reinterpret policy.
 - **No Runtime Interpretation** — The runtime **MUST NOT** parse text configs, infer defaults, evaluate scripts, or execute dynamic code. It only deserializes trusted `.pvs` artifacts produced by the compiler pipeline.
-- **Atomic Reload Only** — Configuration transitions **MUST** occur via an all-or-nothing swap of the entire artifact. Partial updates, incremental edits, and mutable in-place structures are forbidden.
+- **Atomic Runtime Swap Only** — Runtime-safe configuration transitions **MUST** occur via an all-or-nothing swap of the live `RuntimeState`. Fields that require listener, admin, metrics, access-log, or other boot-time service wiring are not hot-reloadable in the current architecture and **MUST** be rejected during reload.
 - **Fail-Closed Semantics** — Any validation error, environment violation, or artifact incompatibility **MUST** leave the runtime serving the last-known-good state. There is no graceful degradation, no fallback heuristics, and no best-effort mode.
 
 ## 2. Semantic Boundary
@@ -20,7 +20,7 @@
 - Corruption, mismatched architecture, or unsupported version **MUST** cause immediate rejection and a return to LKG. The relay is responsible for monotonic versioning; the runtime never mutates artifacts and never attempts repair.
 
 ## 4. Failure Semantics
-- Reload success is binary. Either the artifact validates and atomically replaces the live state, or it is rejected with no partial side effects.
+- Reload success is binary. Either the runtime-safe portion validates and atomically replaces the live state, or the artifact is rejected with no partial side effects.
 - Rollback is not a special path; refusal to load a new artifact simply keeps the current state. Manual rollback requires resealing or redelivering a prior artifact.
 - LKG is authoritative. The runtime **MUST** keep serving the last applied artifact until a new artifact is proven valid. There is no shadow config, preview mode, or best-effort merging.
 - There is no graceful degradation. If upstreams fail or artifacts are invalid, the runtime fails-closed and surfaces explicit errors instead of improvising behavior.
@@ -37,6 +37,7 @@
 - `build()` wires telemetry, runtime state, resolver/health monitors, listeners, agents, and admin endpoints **before** any service is started; `run()` is the only place that calls `Server::run_forever`.
 - `listener::tls::TlsRuntime` owns TLS materialization. Pingora never sees raw paths—TLS certificates, private keys, and client-auth CA bundles are loaded and validated upfront with explicit `Optional`/`Required` semantics.
 - All listener, telemetry, and agent wiring happens before `run()` is invoked, guaranteeing that a failed dependency (cert unreadable, metrics bind failure, etc.) aborts the boot rather than partially starting services.
+- Because those services are boot-wired, reload currently rejects changes to `listeners`, `admin`, `shutdown`, `telemetry.metrics`, and `telemetry.access_log` instead of trying to mutate the service graph in place.
 
 ## 7. Request Telemetry & Identity Handling
 - **RequestTelemetry** — Every inbound request now owns a `RequestTelemetry` struct that captures the immutable `RequestId` plus the active tracing span. `RouterContext` delegates all span/state mutations to this struct so Pingora phases cannot forget to emit span updates or accidentally swap request ids mid-flight.
@@ -51,7 +52,7 @@
 
 ## 9. Materialized Runtime Config
 - Reload now produces a `MaterializedRuntimeConfig` that owns the pre-built router and upstream manager so request threads never see partially-constructed state.
-- `RuntimeState` deref-coerces to the materialized struct and only exposes a single `ConfigVersion` newtype (non-zero) so metrics/admin surfaces no longer juggle `Option<u64>` defaults.
+- `RuntimeState` deref-coerces to the materialized struct, while boot-time resources remain owned by the bootstrap layer. Config versioning is still surfaced through `Option<ConfigVersion>` during pre-LKG/bootstrap phases and becomes concrete after a versioned artifact is applied.
 - Upstream clusters are segmented into `cluster/state.rs`, `cluster/health.rs`, `cluster/pool.rs`, and `cluster/tls.rs` modules, which keeps load balancing, health tracking, pooling, and TLS materialization isolated behind explicit APIs.
 
 ## 10. Health Monitoring & TLS Reuse
@@ -63,4 +64,3 @@
 - Metrics recording flows through `MetricsRegistry`, a thin wrapper around the Prometheus handle. All request/cluster/telemetry helpers share this registry so instrumentation stays centralized.
 - The Prometheus endpoint is implemented by `telemetry::metrics::PrometheusEndpoint`, which depends on a pluggable `MetricsTransport`. The default transport binds a `tokio::net::TcpListener`, but tests can now inject custom transports without touching network sockets.
 - Metrics exporting remains best-effort: if recorder installation fails or the listener cannot bind, the endpoint logs the error once and metrics stay disabled rather than partially-initialized.
-

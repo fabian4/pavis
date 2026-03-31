@@ -76,7 +76,11 @@ async fn test_apply_update_success() {
     let dir = tempfile::tempdir().expect("tempdir");
     let lkg = dir.path().join("config.pvs");
 
-    let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+    let current =
+        unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(minimal_config("bootstrap")) };
+    let state_handle = Arc::new(RuntimeStateHandle::new(
+        RuntimeState::from_config(&current).expect("state"),
+    ));
     let agent = make_agent(
         "http://127.0.0.1:1".to_string(),
         lkg.clone(),
@@ -146,6 +150,8 @@ async fn poll_once_no_change_on_matching_etag() {
 
 #[tokio::test]
 async fn test_poll_once_success() {
+    let current =
+        unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(minimal_config("bootstrap")) };
     let config = minimal_config("v1");
     let pvs = pavis_pvs::encode(&config).expect("encode");
     let etag = etag_for_bytes(&pvs);
@@ -178,7 +184,9 @@ async fn test_poll_once_success() {
     let dir = tempfile::tempdir().expect("tempdir");
     let lkg = dir.path().join("config.pvs");
 
-    let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+    let state_handle = Arc::new(RuntimeStateHandle::new(
+        RuntimeState::from_config(&current).expect("state"),
+    ));
     let agent = make_agent(base, lkg.clone(), state_handle);
 
     let outcome = agent.poll_once(0).await.expect("poll");
@@ -266,4 +274,73 @@ async fn poll_once_skips_intermediate_versions_entirely() {
     let observed_list = observed.lock().expect("lock").clone();
     assert_eq!(observed_list, vec!["v5"]);
     assert_eq!(agent.last_applied_etag_for_tests(), Some(v5_etag));
+}
+
+#[tokio::test]
+async fn apply_update_rejects_listener_changes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lkg = dir.path().join("config.pvs");
+
+    let initial = minimal_config("v1");
+    pavis_pvs::write(&lkg, &initial).expect("write");
+    let state =
+        RuntimeState::from_config(&pavis::load::load_file(lkg.to_str().unwrap()).expect("load"))
+            .expect("state");
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let agent = make_agent(
+        "http://127.0.0.1:1".to_string(),
+        lkg.clone(),
+        state_handle.clone(),
+    );
+
+    let mut next = minimal_config("v2");
+    next.listeners[0].address = "127.0.0.1:9090".parse().expect("addr");
+    let bytes = pavis_pvs::encode(&next).expect("encode");
+    let etag = etag_for_bytes(&bytes);
+    let err = agent
+        .apply_update_for_tests(bytes, etag, None)
+        .await
+        .expect_err("listener change rejected");
+    assert!(err.to_string().contains("boot-time config changed"));
+
+    let current = state_handle.load();
+    assert_eq!(
+        current.config.listeners[0].address.port(),
+        initial.listeners[0].address.port()
+    );
+}
+
+#[tokio::test]
+async fn apply_update_rejects_access_log_changes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lkg = dir.path().join("config.pvs");
+
+    let mut initial = minimal_config("v1");
+    initial.telemetry.access_log = pavis_core::AccessLogPolicy::Disabled;
+    pavis_pvs::write(&lkg, &initial).expect("write");
+    let state =
+        RuntimeState::from_config(&pavis::load::load_file(lkg.to_str().unwrap()).expect("load"))
+            .expect("state");
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
+    let agent = make_agent(
+        "http://127.0.0.1:1".to_string(),
+        lkg.clone(),
+        state_handle.clone(),
+    );
+
+    let mut next = minimal_config("v2");
+    next.telemetry.access_log = pavis_core::AccessLogPolicy::Stdout;
+    let bytes = pavis_pvs::encode(&next).expect("encode");
+    let etag = etag_for_bytes(&bytes);
+    let err = agent
+        .apply_update_for_tests(bytes, etag, None)
+        .await
+        .expect_err("access log change rejected");
+    assert!(err.to_string().contains("telemetry.access_log"));
+
+    let current = state_handle.load();
+    assert!(matches!(
+        current.config.telemetry.access_log,
+        pavis_core::AccessLogPolicy::Disabled
+    ));
 }

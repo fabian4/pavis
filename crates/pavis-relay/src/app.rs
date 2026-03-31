@@ -111,9 +111,7 @@ fn build_codec(config: &PipelineConfig) -> Result<BoxedCodec> {
         config::CodecKind::Serde => {
             #[cfg(feature = "codec-serde")]
             {
-                Ok(Box::new(pavis_codec_serde::SerdeCodec {
-                    format: pavis_codec_serde::SerdeFormat::Yaml,
-                }))
+                Ok(Box::new(crate::codec::AutoSerdeCodec))
             }
             #[cfg(not(feature = "codec-serde"))]
             {

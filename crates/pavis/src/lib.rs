@@ -5,6 +5,7 @@ pub mod listener;
 pub mod load;
 pub mod proxy;
 pub mod regex_validator;
+pub mod reload;
 pub mod retry;
 pub mod router;
 pub mod shutdown;

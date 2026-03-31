@@ -46,7 +46,7 @@
 - ❌ **Tap / packet capture** — Rejected; use system tooling (tcpdump/eBPF).
 
 ## Operational Lifecycle
-- ✅ **Hot reload** — Atomic pointer swaps via `ArcSwap` keep traffic flowing; constraint: entire artifacts swap or are rejected.
+- ⚠️ **Hot reload** — Atomic pointer swaps via `ArcSwap` keep traffic flowing for `RuntimeState`-safe fields; constraint: changes to listeners/admin/shutdown/metrics/access-log are rejected until boot-time service graph reload exists.
 - ✅ **Modularized bootstrap** — Startup and reload phases are isolated from core proxy logic; constraint: IO-layer is fully decoupled from config materialization.
 - ✅ **Graceful shutdown** — Draining behavior is encoded through the shutdown policy; constraint: no per-request overrides.
 - ✅ **LKG fallback** — Last-known-good artifacts remain live on rejection; constraint: manual rollback requires resealing a prior artifact.

@@ -261,8 +261,11 @@ async fn poller_updates_lkg_on_checksum_change() {
 async fn poller_records_wait_ms_and_conditional_headers() {
     let dir = tempfile::tempdir().expect("tempdir");
     let lkg_path = dir.path().join("config.pvs");
-    let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
     let bytes_v1 = write_pvs(&lkg_path, "v1");
+    let state =
+        RuntimeState::from_config(&pavis::load::load_file(lkg_path.to_str().unwrap()).unwrap())
+            .unwrap();
+    let state_handle = Arc::new(RuntimeStateHandle::new(state));
 
     let recorder = RelayRecorder {
         responses: Arc::new(RwLock::new(vec![

@@ -177,7 +177,11 @@ async fn poll_once_relay_violation_200_for_rejected_etag() {
     let dir = tempfile::tempdir().expect("tempdir");
     let lkg = dir.path().join("config.pvs");
 
-    let state_handle = Arc::new(RuntimeStateHandle::new(RuntimeState::default()));
+    let current =
+        unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(minimal_config("bootstrap")) };
+    let state_handle = Arc::new(RuntimeStateHandle::new(
+        RuntimeState::from_config(&current).expect("state"),
+    ));
     let good_bytes = pvs_bytes("v1");
     let good_etag = etag_for_bytes(&good_bytes);
     let bad_bytes = Arc::new(vec![0u8; 100]);

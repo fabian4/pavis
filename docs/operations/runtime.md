@@ -1,6 +1,6 @@
 # Runtime Operational Evidence
 
-This note documents how the frozen data plane runtime was exercised to prove its operational guarantees. It is **not** a deployment guide; it only records the experiments used to show that execution stays dumb, reloads are atomic, and failures stay fail-closed.
+This note documents how the frozen data plane runtime was exercised to prove its operational guarantees. It is **not** a deployment guide; it only records the experiments used to show that execution stays dumb, runtime-safe reloads are atomic, and failures stay fail-closed.
 
 ## Scope
 - Focuses exclusively on runtime behavior after a `.pvs` artifact is handed to the process.
@@ -12,7 +12,7 @@ This note documents how the frozen data plane runtime was exercised to prove its
 | ID | Scenario | Method | Evidence |
 | -- | -------- | ------ | -------- |
 | R-01 | Cold boot with verified artifact | `pavis --config <artifact>` after `pavis-pvs verify` | Process binds listeners, admin, and telemetry ports; emits `INFO runtime::server started`. |
-| R-02 | Reload via sealed artifact swap | Relay-driven fetch + atomic apply | Logs show `config_apply` on success; traffic swaps atomically; no partial configs observed. |
+| R-02 | Reload via sealed artifact swap | Relay-driven fetch + atomic apply | Logs show `config_apply` on success; `RuntimeState` swaps atomically for runtime-safe fields. |
 | R-03 | Relay-driven update | Relay publishes new ETAG; runtime long-poll returns `200` with bytes | Runtime writes artifact to LKG staging then repeats R-02 sequence automatically. |
 | R-04 | Invalid artifact guard | Corrupt header byte before reload | `ERROR reload_failed` + runtime stays on LKG with unchanged admin counters. |
 | R-05 | Listener bind failure | Reserve port with `nc -l 8080` before boot | Startup aborts with `ERROR listener_bind_failed`; no best-effort behavior. |
@@ -31,10 +31,12 @@ The runtime performs only the following environment interactions before executin
 
 If any step fails, execution halts and the prior Last Known Good (LKG) remains untouched.
 
+Reload additionally enforces a boot-time boundary before swapping state. Changes to `listeners`, `admin`, `shutdown`, `telemetry.metrics`, and `telemetry.access_log` are rejected because those services are still constructed during bootstrap rather than by the live `RuntimeState`.
+
 ## Reload / Rollback Semantics
-- Reload attempts are serialized. A new artifact is staged under `state::loader`, validated, and only then swapped into the live router.
-- `MaterializedRuntimeConfig` now captures the router + upstream managers as a unit so telemetry, admin, and proxy threads always see a coherent view of the data plane.
-- Config versions are represented by the `ConfigVersion` newtype; `/stats` and `pavis_runtime_config_version` always use the same stringified label once the runtime accepts a version.
+- Reload attempts are serialized. A new artifact is staged under `state::loader`, validated, checked for boot-time field drift, and only then swapped into the live router.
+- `MaterializedRuntimeConfig` now captures the router + upstream managers as a unit so proxy threads always see a coherent view of the data plane. Bootstrap-owned services continue to use their startup wiring until a full service-graph reload exists.
+- Config versions are represented by the `ConfigVersion` newtype after a versioned artifact is applied; admin and metrics surfaces may still report an unset version during pre-LKG/bootstrap phases.
 - If validation fails, the LKG pointer is not advanced and traffic continues on the previous snapshot.
 - Rollback is simply "publish the older artifact"; the runtime treats it as any other reload and does not special-case versions.
 

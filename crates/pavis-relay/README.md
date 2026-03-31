@@ -4,11 +4,11 @@ The central configuration distribution hub for the Pavis ecosystem.
 
 ## Purpose
 
-`pavis-relay` implements the control plane for configuration management, responsible for ingesting validated `.pvs` artifacts, assigning monotonic version numbers, and distributing updates to runtime instances via HTTP long-polling.
+`pavis-relay` implements the control plane for configuration management, responsible for ingesting `.pvs` artifacts that have already passed compiler-side validation, assigning monotonic version numbers, and distributing updates to runtime instances via HTTP long-polling.
 
 ## Responsibilities
 
-- Accepting and validating published configuration artifacts
+- Accepting published artifacts and verifying binary integrity
 - Assigning strictly monotonic version numbers
 - Maintaining Last Known Good (LKG) configuration on disk
 - Serving configurations via long-polling HTTP API
