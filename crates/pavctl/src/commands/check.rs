@@ -1,18 +1,26 @@
 use anyhow::{Context, Result};
-use std::fs;
 use std::path::PathBuf;
 
-use pavctl::parse_runtime_from_bytes;
-use pavis_codec_serde::SerdeFormat;
+use pavctl::parse_runtime_from_path;
 
-pub(crate) fn validate_config(input_path: PathBuf) -> Result<()> {
-    let bytes = fs::read(&input_path).context("Failed to read input file")?;
-    let format = match input_path.extension().and_then(|ext| ext.to_str()) {
-        Some("json") => SerdeFormat::Json,
-        Some("yaml") | Some("yml") | None => SerdeFormat::Yaml,
-        Some(other) => anyhow::bail!("Unsupported config extension: {other}"),
-    };
-    let _runtime = parse_runtime_from_bytes(format, &bytes)?;
+pub(crate) fn validate_config(input_path: PathBuf, against: Option<PathBuf>) -> Result<()> {
+    let runtime = parse_runtime_from_path(&input_path)?;
     println!("✅ Configuration is valid: {:?}", input_path);
+
+    if let Some(against_path) = against {
+        let baseline = parse_runtime_from_path(&against_path)?;
+        let baseline = pavis_core::validate_runtime(baseline)
+            .with_context(|| format!("Failed to validate baseline config: {:?}", against_path))?;
+        let runtime = pavis_core::validate_runtime(runtime)
+            .with_context(|| format!("Failed to validate candidate config: {:?}", input_path))?;
+        pavis_core::ensure_runtime_reload_safe(&baseline, &runtime).with_context(|| {
+            format!(
+                "Configuration is not runtime reload-safe against {:?}",
+                against_path
+            )
+        })?;
+        println!("✅ Runtime reload-safe against: {:?}", against_path);
+    }
+
     Ok(())
 }

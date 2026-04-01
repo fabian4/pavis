@@ -67,7 +67,7 @@ routes:
         let bad_path = unique_path("pavctl_bad_ext", "toml");
         write_yaml(&bad_path, minimal_yaml());
 
-        let err = validate_config(bad_path.clone()).expect_err("should fail");
+        let err = validate_config(bad_path.clone(), None).expect_err("should fail");
         assert!(err.to_string().contains("Unsupported config extension"));
 
         let _ = fs::remove_file(&bad_path);
@@ -113,7 +113,7 @@ routes:
         inspect_config(pvs_path.clone(), false).expect("inspect");
         convert_to_config(pvs_path.clone(), Some(out_yaml.clone()), SerdeFormat::Yaml)
             .expect("convert");
-        validate_config(out_yaml.clone()).expect("validate output");
+        validate_config(out_yaml.clone(), None).expect("validate output");
 
         let _ = fs::remove_file(&yaml_path);
         let _ = fs::remove_file(&pvs_path);
@@ -175,10 +175,82 @@ routes:
 "#;
         write_yaml(&yaml_path, content);
 
-        let err = validate_config(yaml_path.clone()).expect_err("should fail");
+        let err = validate_config(yaml_path.clone(), None).expect_err("should fail");
         let msg = format!("{err:#}");
         assert!(msg.contains("unknown upstream"), "{msg}");
 
         let _ = fs::remove_file(&yaml_path);
+    }
+
+    #[test]
+    fn validate_against_rejects_boot_time_changes() {
+        let baseline = unique_path("pavctl_reload_base", "yaml");
+        let candidate = unique_path("pavctl_reload_next", "yaml");
+        write_yaml(
+            &baseline,
+            r#"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:8080"
+telemetry: {}
+upstreams: []
+routes: []
+"#,
+        );
+        write_yaml(
+            &candidate,
+            r#"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:9090"
+telemetry: {}
+upstreams: []
+routes: []
+"#,
+        );
+
+        let err =
+            validate_config(candidate.clone(), Some(baseline.clone())).expect_err("should fail");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("not runtime reload-safe"));
+        assert!(msg.contains("listeners"));
+
+        let _ = fs::remove_file(&baseline);
+        let _ = fs::remove_file(&candidate);
+    }
+
+    #[test]
+    fn validate_against_accepts_runtime_safe_changes() {
+        let baseline = unique_path("pavctl_reload_ok_base", "yaml");
+        let candidate = unique_path("pavctl_reload_ok_next", "yaml");
+        write_yaml(
+            &baseline,
+            r#"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:8080"
+telemetry:
+  service_name: "svc-a"
+upstreams: []
+routes: []
+"#,
+        );
+        write_yaml(
+            &candidate,
+            r#"
+listeners:
+  - name: "default"
+    address: "127.0.0.1:8080"
+telemetry:
+  service_name: "svc-b"
+upstreams: []
+routes: []
+"#,
+        );
+
+        validate_config(candidate.clone(), Some(baseline.clone())).expect("reload-safe");
+
+        let _ = fs::remove_file(&baseline);
+        let _ = fs::remove_file(&candidate);
     }
 }

@@ -23,14 +23,13 @@ use tokio::sync::watch;
 
 use crate::agent::fsm::{Effect, Event, Fsm, Response, VerifiedUpdate};
 use crate::agent::lkg::{load_lkg_config, tmp_path_for, write_atomic};
-use crate::reload::ensure_reload_safe;
 use crate::state::{RuntimeState, RuntimeStateHandle};
 use crate::telemetry::metrics::MetricsRegistry;
 use crate::validate_env::{self, RuntimeEnvError};
 
 use pavis_core::{
     CONFIG_SIZE_HEADER, CONFIG_VERSION_HEADER, ConfigVersion, CoreValidationError, ETAG_HEADER,
-    RuntimeConfig,
+    RuntimeConfig, ensure_runtime_reload_safe,
 };
 use pavis_pvs::{PvsError, compute_checksum};
 
@@ -675,8 +674,8 @@ impl ConfigAgent {
         };
         let validated = unsafe { pavis_core::ValidatedRuntimeConfig::from_trusted(config) };
         let current = self.state.load();
-        ensure_reload_safe(&current.config, &validated)
-            .map_err(|err| self.record_validation_failure(err))?;
+        ensure_runtime_reload_safe(&current.config, &validated)
+            .map_err(|err| self.record_validation_failure(err.into()))?;
         if let Err(err) = validate_env::validate_runtime_env(&validated, Some(&current.config)) {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err(self.record_validation_failure(err.into()));

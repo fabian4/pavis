@@ -2,6 +2,7 @@ mod builder;
 pub mod listener;
 pub mod matcher;
 pub mod policy;
+mod reload;
 pub mod retry;
 mod routing;
 mod telemetry;
@@ -14,6 +15,7 @@ pub use matcher::{HeaderMatcher, MatcherCost, MethodMatcher, PredicateNode};
 pub use policy::{
     AdminConfig, Headers, HeadersPolicy, ReadTimeout, RegexLimits, RoutingFeatures, ShutdownPolicy,
 };
+pub use reload::{ReloadSafetyError, ensure_runtime_reload_safe};
 pub use retry::{
     BackoffStrategy, BodyReplayability, MethodIdempotency, RetryPolicy, RetryReason,
     RetryableStatusCodes,

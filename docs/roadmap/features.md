@@ -55,7 +55,7 @@
 
 ## Compiler & Artifact Pipeline
 - ✅ **Typed compiler stages** — Source intent passes through codec, core validation, and sealing; constraint: no bypass around validation.
-- ✅ **Artifact integrity tooling** — `pavctl` gen/check/view flows plus relay checksum enforcement are complete; constraint: runtime refuses any artifact that fails integrity.
+- ✅ **Artifact integrity tooling** — `pavctl` gen/check/view flows, `pavctl check --against` reload-boundary verification, and relay checksum enforcement are complete; constraint: runtime refuses any artifact that fails integrity.
 - 🧊 **Crash-consistency failpoints** — Optional hardening for relay publish/runtime apply is deferred; constraint: no failpoint harness today.
 - 🧊 **xDS ingest adapter** — Design-only ADS capture to `.pvs`; constraint: runtime will never speak xDS.
 - 🧊 **Kubernetes ingest/operator** — Design-only CRD compiler; constraint: runtime continues to consume sealed artifacts only.

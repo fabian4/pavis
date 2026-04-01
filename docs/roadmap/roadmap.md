@@ -8,7 +8,7 @@ This roadmap records semantic closure for an engineering thesis. It is not a fea
 **Goal:** all semantics pass through typed compilation stages so the runtime never interprets config. **Status:** closed. `Artifact → RuntimeConfig → ValidatedRuntimeConfig → .pvs` is implemented, enforced by Phase 3.5 guards, and covered by relay+proxy integration tests.
 
 ### Artifact Model
-**Goal:** `.pvs` is the only contract between compiler, relay, and runtime. **Status:** closed for structure and tooling. Magic bytes, checksums, corruption rejection, and `pavctl` generation/inspection flows are in place; relay handles artifacts opaquely.
+**Goal:** `.pvs` is the only contract between compiler, relay, and runtime. **Status:** closed for structure and tooling. Magic bytes, checksums, corruption rejection, `pavctl` generation/inspection flows, and reload-boundary comparison tooling are in place; relay handles artifacts opaquely.
 
 ### Execution & Reload Semantics
 **Goal:** fail-closed, atomic reload with deterministic recovery. **Status:** partially closed. File ingest, ETag distribution, `ArcSwap`-based runtime-state reloads, LKG persistence, graceful shutdown, admin API, lineage tracking, and the modular runtime architecture (isolated bootstrap, phase-typed contexts, and pre-resolved DNS) are implemented and exercised. Boot-time service graph changes (`listeners`, `admin`, `shutdown`, `telemetry.metrics`, `telemetry.access_log`) are now rejected during reload instead of being silently accepted, and full-service-graph hot reload remains open.

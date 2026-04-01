@@ -4,6 +4,7 @@
 - **Frozen Data Plane** — Every semantic decision (routing, retries, TLS, RBAC, health, observability) **MUST** be resolved before serialization. No runtime component may construct or reinterpret policy.
 - **No Runtime Interpretation** — The runtime **MUST NOT** parse text configs, infer defaults, evaluate scripts, or execute dynamic code. It only deserializes trusted `.pvs` artifacts produced by the compiler pipeline.
 - **Atomic Runtime Swap Only** — Runtime-safe configuration transitions **MUST** occur via an all-or-nothing swap of the live `RuntimeState`. Fields that require listener, admin, metrics, access-log, or other boot-time service wiring are not hot-reloadable in the current architecture and **MUST** be rejected during reload.
+- **Canonical Reload Boundary** — The boot-time/runtime-safe split is defined centrally in `pavis-core` and reused by the runtime and tooling. No crate may invent its own reload-boundary rules.
 - **Fail-Closed Semantics** — Any validation error, environment violation, or artifact incompatibility **MUST** leave the runtime serving the last-known-good state. There is no graceful degradation, no fallback heuristics, and no best-effort mode.
 
 ## 2. Semantic Boundary

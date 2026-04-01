@@ -30,6 +30,11 @@ This design is described in detail in: [**“Pavis: A Dumb Proxy for Boring Relo
 ## What Is Closed
 The compiler pipeline, artifact sealing, runtime execution, security stack, observability surface, and relay boundaries are implemented and verified under the Frozen Data Plane rule set. Capabilities are cataloged in [docs/roadmap/features.md](./docs/roadmap/features.md).
 
+## Developer Workflow
+- Use `pavctl check config.yaml` to validate a high-level config.
+- Use `pavctl check --against current.pvs next.yaml` to verify that a candidate change stays within the current runtime hot-reload boundary.
+- Use `pavctl gen`, `pavctl view`, and `pavctl publish` for artifact generation, inspection, and relay delivery.
+
 ## Performance Overview
 
 Here’s a summary of the **current benchmark results** based on CI-level testing (which is limited by resources such as CPU cores and workers). 

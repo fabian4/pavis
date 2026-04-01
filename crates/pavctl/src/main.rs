@@ -44,6 +44,10 @@ enum Commands {
     Check {
         /// Input config file (YAML/YML/JSON)
         input: PathBuf,
+
+        /// Optional baseline config/artifact to verify runtime reload safety against
+        #[arg(long)]
+        against: Option<PathBuf>,
     },
     /// Convert a Pavis binary file (.pvs) back to YAML/YML/JSON
     #[command(name = "convert")]
@@ -83,7 +87,7 @@ fn run(cli: Cli) -> Result<()> {
             compile_config(input, out)
         }
         Commands::View { input, hex } => inspect_config(input, hex),
-        Commands::Check { input } => validate_config(input),
+        Commands::Check { input, against } => validate_config(input, against),
         Commands::Convert {
             input,
             output,
@@ -152,6 +156,7 @@ routes: []
         run(Cli {
             command: Commands::Check {
                 input: yaml_path.clone(),
+                against: None,
             },
         })
         .expect("check");
