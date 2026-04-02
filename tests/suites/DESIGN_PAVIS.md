@@ -250,6 +250,30 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 **Scenario**:
 1. Start with valid V1 (backend-v1) + metrics enabled
 2. Publish V2 enabling TLS with missing cert/key paths
+3. Runtime should reject V2 at the boot-time reload boundary before apply
+
+**Oracle**:
+- Metrics: `pavis_config_validation_total{result="fail",reason="semantic"}`
+- Upstream echo (`instance_id`)
+
+**Assertions**:
+- Runtime emits boot-time reload rejection metric
+- Traffic remains on backend-v1 (LKG)
+- Runtime stays alive
+
+**Assessment**: PASS. Validates boot-time reload rejection with LKG preservation.
+
+---
+
+### `43_validation_runtime_env_upstream_tls_rejection`
+
+**Category**: Failure & LKG
+**Contracts**: B (LKG Preservation)
+**Maturity**: L3
+
+**Scenario**:
+1. Start with valid V1 (backend-v1) + metrics enabled
+2. Publish runtime-safe V2 that enables upstream TLS with a missing CA bundle path
 3. Runtime should reject V2 at env validation stage
 
 **Oracle**:
@@ -261,7 +285,7 @@ The Runtime Suite validates the **Frozen Data Plane** contract. The `pavis` bina
 - Traffic remains on backend-v1 (LKG)
 - Runtime stays alive
 
-**Assessment**: PASS. Validates runtime-only environment checks with LKG preservation.
+**Assessment**: PASS. Validates runtime env checks that still apply after the boot/runtime split.
 
 ---
 

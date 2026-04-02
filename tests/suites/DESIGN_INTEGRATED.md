@@ -110,7 +110,7 @@ The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`
 **Maturity**: L3
 **Status**: ACTIVE
 
-**Intent**: Validate runtime env rejection occurs before apply and preserves LKG while traffic continues.
+**Intent**: Validate boot-time reload boundary rejection occurs before apply and preserves LKG while traffic continues.
 
 ---
 
@@ -122,11 +122,11 @@ The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`
 3. Assert: Traffic routes correctly, runtime version = 1
 
 **Publish Invalid Artifact:**
-4. Publish artifact with missing TLS cert/key paths
-5. Wait for runtime validation failure metric/log
+4. Publish artifact enabling listener TLS with missing cert/key paths
+5. Wait for boot-time reload rejection metric/log
 
 **Observe Rejection:**
-6. Check logs/metrics for runtime env rejection
+6. Check logs/metrics for boot-time reload rejection
 7. Check runtime version: MUST remain at 1 (not advance to 2)
 
 **Assert LKG Behavior:**
@@ -138,7 +138,7 @@ The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`
 #### Key Assertions
 
 **Binary Evidence:**
-- ✓ Runtime rejected v2 for env reasons
+- ✓ Runtime rejected v2 for boot-time reload safety reasons
 - ✓ Runtime version remains at 1 (version did NOT advance)
 - ✓ Traffic continues using v1 routes (no disruption)
 
@@ -148,16 +148,16 @@ The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`
 
 **Determinism:**
 - No timing races (waits on validation failure metric/log)
-- No semantic ambiguity (invalid TLS paths fail at env validation)
+- No semantic ambiguity (listener TLS changes are outside the runtime-safe reload boundary)
 
 **Alignment with I4:**
 - Fetch occurs (relay version advances, runtime polls)
-- Rejection is explicit (runtime env validation before apply)
+- Rejection is explicit (boot-time reload boundary before apply)
 - LKG preserved (runtime does NOT update config; traffic uninterrupted)
 
 ---
 
-**Assessment**: PASS. Confirms pre-apply env validation and LKG preservation under load.
+**Assessment**: PASS. Confirms pre-apply boot-time reload rejection and LKG preservation under load.
 
 ---
 
@@ -169,7 +169,7 @@ The Integrated Suite proves that independent components (`pavctl`, `pavis-relay`
 
 **Scenario**:
 1. Start relay + pavis with valid V1 (backend-v1) and metrics enabled
-2. Publish V2 enabling TLS with missing cert/key paths
+2. Publish runtime-safe V2 enabling upstream TLS with a missing CA bundle path
 3. Runtime should reject V2 on env validation
 
 **Oracle**:

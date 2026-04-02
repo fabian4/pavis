@@ -6,7 +6,8 @@ set -e
 # Invariants: I4 (System LKG), Runtime env validation, A (No-Drop)
 #
 # This test verifies that:
-# 1. Configuration that fails runtime environment validation (missing certs) is rejected.
+# 1. A runtime-safe reload that introduces unreadable upstream TLS files is
+#    rejected by runtime environment validation.
 # 2. Existing traffic is NOT interrupted during this rejection (continuity).
 
 # shellcheck source=tests/scripts/env.sh
@@ -75,13 +76,17 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	listeners:
 	  - name: "default"
 	    address: "127.0.0.1:$PORT_PAVIS"
-	    tls:
-	      cert_path: "$TEST_TMP/missing_cert.pem"
-	      key_path: "$TEST_TMP/missing_key.pem"
 	telemetry:
 	  metrics: "127.0.0.1:$PORT_METRICS"
 	upstreams:
-	  - name: "backend-v2"
+	  - name: "backend"
+	    tls:
+	      enabled: true
+	      verify_cert: true
+	      verify_hostname: true
+	      sni_mode: name
+	      sni: "localhost"
+	      ca_bundle_path: "$TEST_TMP/missing_upstream_ca.pem"
 	    endpoints:
 	      - ip: "127.0.0.1"
 	        port: ${UPSTREAM_HTTP_PORT_V2}
@@ -91,20 +96,20 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        destinations:
-	          - upstream: "backend-v2"
+	          - upstream: "backend"
 	            weight: 1
 EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
 
-echo "Publishing invalid config (missing certs)..."
+echo "Publishing invalid config (missing upstream TLS CA)..."
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
 
 # Wait for rejection via metrics (more reliable than log grep)
 echo "Waiting for validation failure metric..."
-if ! wait_for_metric "pavis_config_validation_total.*result=\"fail\"" "> 0" 15 "http://127.0.0.1:$PORT_METRICS/metrics"; then
+if ! wait_for_metric "pavis_config_validation_total.*result=\"fail\".*reason=\"runtime\"" "> 0" 15 "http://127.0.0.1:$PORT_METRICS/metrics"; then
     # Fallback to log check if metric wait failed
-    if ! wait_for_log "config_validation.*fail" "$TEST_TMP/logs/pavis.log" 5; then
-        fail "Runtime did not detect configuration rejection"
+    if ! wait_for_log "config_validation.*fail.*reason.*runtime" "$TEST_TMP/logs/pavis.log" 5; then
+        fail "Runtime did not detect runtime env rejection"
     fi
 fi
 

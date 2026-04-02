@@ -1,12 +1,13 @@
 #!/bin/bash
 set -e
 
-# Case: 41_validation_runtime_env_rejection
+# Case: 43_validation_runtime_env_upstream_tls_rejection
 # Category: Failure & LKG
-# Invariants: B (LKG), Boot-time reload rejection, A (No-Drop)
+# Invariants: B (LKG), Runtime env validation, A (No-Drop)
 #
-# This test verifies that a reload changing boot-time listener TLS is rejected
-# before apply and the system continues serving the LKG.
+# This test verifies that a runtime-safe reload can still fail runtime env
+# validation when it introduces unreadable upstream TLS files, and that the
+# system keeps serving the LKG.
 
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
@@ -15,10 +16,9 @@ source "$(dirname "$0")/../../scripts/assert.sh"
 # shellcheck source=tests/scripts/wait_helpers.sh
 source "$(dirname "$0")/../../scripts/wait_helpers.sh"
 
-setup_test "41_validation_runtime_env_rejection"
+setup_test "43_validation_runtime_env_upstream_tls_rejection"
 cleanup_trap() { cleanup_test; }
 trap cleanup_trap EXIT
-
 
 PORT_PAVIS=$(get_free_port)
 PORT_RELAY=$(get_free_port)
@@ -35,7 +35,7 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	telemetry:
 	  metrics: "127.0.0.1:$PORT_METRICS"
 	upstreams:
-	  - name: "backend-v1"
+	  - name: "backend"
 	    endpoints:
 	      - ip: "127.0.0.1"
 	        port: ${UPSTREAM_HTTP_PORT_V1}
@@ -45,7 +45,7 @@ cat <<-EOF > "$TEST_TMP/config_v1.yaml"
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        destinations:
-	          - upstream: "backend-v1"
+	          - upstream: "backend"
 	            weight: 1
 EOF
 gen_pvs "$TEST_TMP/config_v1.yaml" "$TEST_TMP/config_v1.pvs"
@@ -70,20 +70,22 @@ BURST_COUNT=120
 ) &
 TRAFFIC_PID=$!
 
-# --- Step 1: Publish Boot-Time-Incompatible Config (v2) ---
-# Enabling listener TLS changes boot-time config and must be rejected before
-# runtime env validation is attempted.
+# --- Step 1: Publish Invalid Runtime-Safe Config (v2) ---
 cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	listeners:
 	  - name: "default"
 	    address: "127.0.0.1:$PORT_PAVIS"
-	    tls:
-	      cert_path: "$TEST_TMP/missing_cert.pem"
-	      key_path: "$TEST_TMP/missing_key.pem"
 	telemetry:
 	  metrics: "127.0.0.1:$PORT_METRICS"
 	upstreams:
-	  - name: "backend-v2"
+	  - name: "backend"
+	    tls:
+	      enabled: true
+	      verify_cert: true
+	      verify_hostname: true
+	      sni_mode: name
+	      sni: "localhost"
+	      ca_bundle_path: "$TEST_TMP/missing_upstream_ca.pem"
 	    endpoints:
 	      - ip: "127.0.0.1"
 	        port: ${UPSTREAM_HTTP_PORT_V2}
@@ -93,37 +95,33 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 	      - matcher:
 	          path: !prefix { path: "/" }
 	        destinations:
-	          - upstream: "backend-v2"
+	          - upstream: "backend"
 	            weight: 1
 EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
 publish_config "http://127.0.0.1:$PORT_RELAY" "$TEST_TMP/config_v2.pvs"
 
 # --- Step 2: Verify Rejection ---
-echo "Waiting for reload safety rejection metric..."
-# Metrics are primary source of truth for rejection
-if ! assert_metric_at_least 'pavis_config_validation_total.*result="fail".*reason="semantic"' 1 15; then
-    fail "Expected boot-time reload rejection metric"
+echo "Waiting for runtime validation failure metric..."
+if ! assert_metric_at_least 'pavis_config_validation_total.*result="fail".*reason="runtime"' 1 15; then
+    fail "Expected runtime validation failure metric"
 fi
 
-# Log check as secondary verification
-if ! grep -aq "result=.fail. reason=.semantic." "$TEST_TMP/logs/pavis.log"; then
+if ! grep -aq "result=.fail. reason=.runtime." "$TEST_TMP/logs/pavis.log"; then
     echo "WARN: Rejection metric present but log entry not found via grep"
 fi
 
 # --- Step 3: Serving State Assertion ---
 echo "Verifying system remains in LKG state (v1)..."
-# 1. Check response content
 assert_body "http://127.0.0.1:$PORT_PAVIS/echo" "backend-v1"
 
-# 2. Check metrics version
 VERSION=$(get_runtime_config_version "http://127.0.0.1:$PORT_METRICS/metrics")
 if [ "$VERSION" != "1" ]; then
     fail "Runtime configuration version mismatch: expected 1, got $VERSION"
 fi
 
 if ! check_sut_alive "pavis"; then
-    fail "Pavis died during boot-time reload rejection"
+    fail "Pavis died during runtime env validation"
 fi
 
 wait $TRAFFIC_PID
@@ -139,4 +137,4 @@ if [ ${#fail_files[@]} -gt 0 ]; then
     fail "Traffic was interrupted during runtime env rejection"
 fi
 
-echo "✅ boot_time_reload_rejection passed"
+echo "✅ runtime_env_upstream_tls_rejection passed"

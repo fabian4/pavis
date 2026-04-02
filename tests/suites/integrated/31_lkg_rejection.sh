@@ -5,8 +5,8 @@ set -e
 # Category: Failure & LKG
 # Invariants: I4 (System LKG), A2 (Immutable Execution State)
 #
-# This test verifies that runtime environment validation rejects invalid configs
-# before apply and preserves LKG while traffic continues.
+# This test verifies that boot-time reload boundary checks reject invalid
+# listener TLS changes before apply and preserve LKG while traffic continues.
 
 # shellcheck source=tests/scripts/env.sh
 source "$(dirname "$0")/../../scripts/env.sh"
@@ -103,14 +103,14 @@ cat <<-EOF > "$TEST_TMP/config_v2.yaml"
 EOF
 gen_pvs "$TEST_TMP/config_v2.yaml" "$TEST_TMP/config_v2.pvs"
 
-echo "Publishing invalid config (missing certs)..."
+echo "Publishing boot-time-incompatible config..."
 curl -s -f -X POST "http://127.0.0.1:$PORT_RELAY/v1/publish" \
     --data-binary "@$TEST_TMP/config_v2.pvs" > /dev/null
 
-echo "Waiting for runtime validation failure..."
-if ! wait_for_metric "pavis_config_validation_total.*result=\"fail\".*reason=\"runtime\"" "> 0" 15 "http://127.0.0.1:$PORT_METRICS/metrics"; then
-    if ! wait_for_log "config_validation.*fail.*reason.*runtime" "$TEST_TMP/logs/pavis.log" 5; then
-        fail "Runtime did not report env validation failure"
+echo "Waiting for boot-time reload rejection..."
+if ! wait_for_metric "pavis_config_validation_total.*result=\"fail\".*reason=\"semantic\"" "> 0" 15 "http://127.0.0.1:$PORT_METRICS/metrics"; then
+    if ! wait_for_log "config_validation.*fail.*reason.*semantic" "$TEST_TMP/logs/pavis.log" 5; then
+        fail "Runtime did not report boot-time reload rejection"
     fi
 fi
 
@@ -137,7 +137,7 @@ if [ "$VERSION" != "1" ]; then
 fi
 
 if ! check_sut_alive "pavis"; then
-    fail "Pavis died during runtime env validation"
+    fail "Pavis died during boot-time reload rejection"
 fi
 
 echo "✅ 31_lkg_rejection passed"
